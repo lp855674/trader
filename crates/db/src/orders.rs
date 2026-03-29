@@ -59,3 +59,28 @@ pub async fn count_orders_for_account(pool: &SqlitePool, account_id: &str) -> Re
         .await?;
     Ok(n)
 }
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct OrderListRow {
+    pub id: String,
+    pub account_id: String,
+    pub instrument_id: i64,
+    pub side: String,
+    pub qty: f64,
+    pub status: String,
+    pub created_at_ms: i64,
+}
+
+pub async fn list_orders_for_account(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Vec<OrderListRow>, DbError> {
+    sqlx::query_as::<_, OrderListRow>(
+        "SELECT id, account_id, instrument_id, side, qty, status, created_at_ms
+         FROM orders WHERE account_id = ? ORDER BY created_at_ms DESC",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}

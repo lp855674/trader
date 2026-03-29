@@ -4,6 +4,7 @@ use std::sync::Arc;
 use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
+use quantd::{run_one_tick_for_venue, VenueTickParams};
 use strategy::AlwaysLongOne;
 
 #[tokio::test]
@@ -38,13 +39,13 @@ async fn four_venues_minimal_closed_loop() {
             .for_venue(venue)
             .next()
             .expect("adapter for venue");
-        let tick = quantd::pipeline::VenueTickParams {
-            account_id: "acc_mvp_paper",
+        let tick = VenueTickParams {
+            account_id: "acc_mvp_paper".to_string(),
             venue,
-            symbol: "MVP",
+            symbol: "MVP".to_string(),
             ts_ms,
         };
-        quantd::pipeline::run_one_tick_for_venue(
+        run_one_tick_for_venue(
             &database,
             adapter.as_ref(),
             &router,

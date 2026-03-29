@@ -6,6 +6,7 @@ use domain::OrderIntent;
 use crate::adapter::{ExecutionAdapter, OrderAck};
 use crate::error::ExecError;
 
+#[derive(Clone)]
 pub struct ExecutionRouter {
     routes: HashMap<String, Arc<dyn ExecutionAdapter>>,
 }

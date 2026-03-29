@@ -9,7 +9,8 @@ pub struct StrategyContext {
     pub ts_ms: i64,
 }
 
-pub trait Strategy {
+/// `Send + Sync` so pipeline callers can hold `&dyn Strategy` across `await` (Axum handlers require `Send`).
+pub trait Strategy: Send + Sync {
     fn evaluate(&self, context: &StrategyContext) -> Option<Signal>;
 }
 

@@ -7,9 +7,31 @@ use config::AppConfig;
 use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
+use pipeline::{run_one_tick_for_venue, VenueTickParams};
 use strategy::AlwaysLongOne;
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
+
+fn build_ingest_registry() -> IngestRegistry {
+    let mut registry = IngestRegistry::default();
+    registry.register(Arc::new(MockBarsAdapter::new(
+        Venue::UsEquity,
+        "mock_us",
+    )));
+    registry.register(Arc::new(MockBarsAdapter::new(
+        Venue::HkEquity,
+        "mock_hk",
+    )));
+    registry.register(Arc::new(MockBarsAdapter::new(
+        Venue::Crypto,
+        "mock_crypto",
+    )));
+    registry.register(Arc::new(MockBarsAdapter::new(
+        Venue::Polymarket,
+        "mock_poly",
+    )));
+    registry
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,11 +57,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paper = Arc::new(PaperAdapter::new(database.clone()));
     let mut routes = HashMap::new();
     routes.insert("acc_mvp_paper".to_string(), paper as Arc<dyn ExecutionAdapter>);
-    let router = ExecutionRouter::new(routes);
+    let execution_router = ExecutionRouter::new(routes);
+
+    let ingest_registry = build_ingest_registry();
 
     let state = AppState {
         database: database.clone(),
         events: event_tx.clone(),
+        execution_router: execution_router.clone(),
+        ingest_registry: ingest_registry.clone(),
     };
 
     let listener = tokio::net::TcpListener::bind(app_config.http_bind).await?;
@@ -52,7 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    run_bootstrap_tick(&database, &router, &event_tx).await?;
+    run_bootstrap_tick(
+        &database,
+        &execution_router,
+        &ingest_registry,
+        &event_tx,
+    )
+    .await?;
 
     server.await?;
     Ok(())
@@ -68,26 +100,9 @@ fn redact_url(url: &str) -> String {
 async fn run_bootstrap_tick(
     database: &db::Db,
     router: &ExecutionRouter,
+    registry: &IngestRegistry,
     event_tx: &broadcast::Sender<api::StreamEvent>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut registry = IngestRegistry::default();
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::UsEquity,
-        "mock_us",
-    )));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::HkEquity,
-        "mock_hk",
-    )));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Crypto,
-        "mock_crypto",
-    )));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Polymarket,
-        "mock_poly",
-    )));
-
     let strategy = AlwaysLongOne;
     let ts_ms = chrono_like_now_ms();
 
@@ -97,20 +112,19 @@ async fn run_bootstrap_tick(
         Venue::Crypto,
         Venue::Polymarket,
     ] {
-        let adapter = registry
-            .for_venue(venue)
-            .next()
-            .ok_or_else(|| std::io::Error::new(
+        let adapter = registry.adapter_for_venue(venue).ok_or_else(|| {
+            std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "missing ingest adapter for venue",
-            ))?;
-        let tick = quantd::pipeline::VenueTickParams {
-            account_id: "acc_mvp_paper",
+            )
+        })?;
+        let tick = VenueTickParams {
+            account_id: "acc_mvp_paper".to_string(),
             venue,
-            symbol: "MVP",
+            symbol: "MVP".to_string(),
             ts_ms,
         };
-        quantd::pipeline::run_one_tick_for_venue(
+        run_one_tick_for_venue(
             database,
             adapter.as_ref(),
             router,

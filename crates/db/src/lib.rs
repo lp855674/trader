@@ -11,7 +11,10 @@ pub use bars::{insert_bar, last_bar_close, NewBar};
 pub use bootstrap::{ensure_account, ensure_mvp_seed};
 pub use error::DbError;
 pub use instruments::{list_instruments, upsert_instrument, InstrumentRow};
-pub use orders::{count_orders_for_account, insert_fill, insert_order, NewFill, NewOrder};
+pub use orders::{
+    count_orders_for_account, insert_fill, insert_order, list_orders_for_account, NewFill,
+    NewOrder, OrderListRow,
+};
 pub use signals::{insert_risk_decision, insert_signal};
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};

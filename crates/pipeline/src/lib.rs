@@ -1,3 +1,5 @@
+//! Ingest → strategy → risk → execution pipeline (shared by `quantd` and `api`).
+
 use domain::{InstrumentId, OrderIntent, Venue};
 use ingest::IngestAdapter;
 use strategy::{Strategy, StrategyContext};
@@ -15,11 +17,12 @@ pub enum PipelineError {
     Json(#[from] serde_json::Error),
 }
 
-/// Per-venue tick: account, symbol, and timestamps.
-pub struct VenueTickParams<'a> {
-    pub account_id: &'a str,
+/// Per-venue tick: account, symbol, and timestamps (owned strings so HTTP/async callers stay `Send`).
+#[derive(Clone)]
+pub struct VenueTickParams {
+    pub account_id: String,
     pub venue: Venue,
-    pub symbol: &'a str,
+    pub symbol: String,
     pub ts_ms: i64,
 }
 
@@ -29,11 +32,11 @@ pub async fn run_one_tick_for_venue(
     ingest_adapter: &dyn IngestAdapter,
     exec_router: &exec::ExecutionRouter,
     strategy: &dyn Strategy,
-    params: &VenueTickParams<'_>,
+    params: &VenueTickParams,
 ) -> Result<(), PipelineError> {
     let pool = database.pool();
     let venue_str = params.venue.as_str();
-    let iid = db::upsert_instrument(pool, venue_str, params.symbol).await?;
+    let iid = db::upsert_instrument(pool, venue_str, &params.symbol).await?;
 
     ingest_adapter.ingest_once(database, iid).await?;
 
@@ -41,7 +44,7 @@ pub async fn run_one_tick_for_venue(
 
     let instrument = InstrumentId {
         venue: params.venue,
-        symbol: params.symbol.to_string(),
+        symbol: params.symbol.clone(),
     };
 
     let context = StrategyContext {
@@ -87,7 +90,7 @@ pub async fn run_one_tick_for_venue(
     };
 
     exec_router
-        .place_order(params.account_id, &intent, None)
+        .place_order(&params.account_id, &intent, None)
         .await?;
 
     Ok(())

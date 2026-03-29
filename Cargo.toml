@@ -7,6 +7,7 @@ members = [
     "crates/ingest",
     "crates/exec",
     "crates/strategy",
+    "crates/pipeline",
     "crates/api",
     "crates/quantd",
 ]
@@ -16,6 +17,16 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+# Internal crates (path — single source of truth)
+domain = { path = "crates/domain" }
+config = { path = "crates/config" }
+db = { path = "crates/db" }
+ingest = { path = "crates/ingest" }
+exec = { path = "crates/exec" }
+strategy = { path = "crates/strategy" }
+pipeline = { path = "crates/pipeline" }
+api = { path = "crates/api" }
+
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -4,7 +4,7 @@ use domain::Venue;
 
 use crate::adapter::IngestAdapter;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct IngestRegistry {
     adapters: Vec<Arc<dyn IngestAdapter>>,
 }
@@ -18,5 +18,9 @@ impl IngestRegistry {
         self.adapters
             .iter()
             .filter(move |adapter| adapter.venue() == venue)
+    }
+
+    pub fn adapter_for_venue(&self, venue: Venue) -> Option<Arc<dyn IngestAdapter>> {
+        self.for_venue(venue).next().cloned()
     }
 }

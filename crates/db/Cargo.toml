@@ -8,4 +8,4 @@ sqlx.workspace = true
 serde.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
-domain = { path = "../domain" }
+domain.workspace = true

@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-domain = { path = "../domain" }
-db = { path = "../db" }
+domain.workspace = true
+db.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

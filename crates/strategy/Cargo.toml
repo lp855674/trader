@@ -4,4 +4,4 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-domain = { path = "../domain" }
+domain.workspace = true

@@ -1,17 +1,14 @@
 [package]
-name = "api"
+name = "pipeline"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-axum.workspace = true
 db.workspace = true
 domain.workspace = true
 exec.workspace = true
 ingest.workspace = true
-pipeline.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 strategy.workspace = true
-tokio.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 uuid.workspace = true

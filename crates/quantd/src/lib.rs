@@ -1,3 +1,3 @@
-//! quantd library surface (pipeline for tests and embedding).
+//! quantd library surface (re-exports for integration tests).
 
-pub mod pipeline;
+pub use pipeline::{run_one_tick_for_venue, PipelineError, VenueTickParams};
