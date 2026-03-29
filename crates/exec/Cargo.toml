@@ -1,0 +1,12 @@
+[package]
+name = "exec"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+domain = { path = "../domain" }
+db = { path = "../db" }
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
