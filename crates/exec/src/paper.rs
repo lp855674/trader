@@ -42,22 +42,28 @@ impl ExecutionAdapter for PaperAdapter {
         let pool = self.db.pool();
         let order_id = Uuid::new_v4().to_string();
         let ts = now_ms();
-        db::insert_order(
-            pool,
-            &order_id,
+        let order_row = db::NewOrder {
+            order_id: &order_id,
             account_id,
-            intent.instrument_db_id,
-            side_str(intent.side),
-            intent.qty,
-            "FILLED",
+            instrument_id: intent.instrument_db_id,
+            side: side_str(intent.side),
+            qty: intent.qty,
+            status: "FILLED",
             idempotency_key,
-            ts,
-        )
-        .await?;
+            created_at_ms: ts,
+        };
+        db::insert_order(pool, &order_row).await?;
 
         let fill_id = Uuid::new_v4().to_string();
         let price = 100.0_f64;
-        db::insert_fill(pool, &fill_id, &order_id, intent.qty, price, ts).await?;
+        let fill_row = db::NewFill {
+            fill_id: &fill_id,
+            order_id: &order_id,
+            qty: intent.qty,
+            price,
+            created_at_ms: ts,
+        };
+        db::insert_fill(pool, &fill_row).await?;
 
         Ok(OrderAck {
             order_id: order_id.clone(),

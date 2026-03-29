@@ -104,15 +104,18 @@ async fn run_bootstrap_tick(
                 std::io::ErrorKind::NotFound,
                 "missing ingest adapter for venue",
             ))?;
+        let tick = quantd::pipeline::VenueTickParams {
+            account_id: "acc_mvp_paper",
+            venue,
+            symbol: "MVP",
+            ts_ms,
+        };
         quantd::pipeline::run_one_tick_for_venue(
             database,
             adapter.as_ref(),
             router,
-            "acc_mvp_paper",
-            venue,
-            "MVP",
             &strategy,
-            ts_ms,
+            &tick,
         )
         .await?;
 

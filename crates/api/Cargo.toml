@@ -10,6 +10,5 @@ domain = { path = "../domain" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tower.workspace = true
 tracing.workspace = true
 uuid.workspace = true

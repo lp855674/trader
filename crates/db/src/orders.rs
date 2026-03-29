@@ -1,50 +1,52 @@
 use crate::error::DbError;
 use sqlx::SqlitePool;
 
-pub async fn insert_order(
-    pool: &SqlitePool,
-    order_id: &str,
-    account_id: &str,
-    instrument_id: i64,
-    side: &str,
-    qty: f64,
-    status: &str,
-    idempotency_key: Option<&str>,
-    created_at_ms: i64,
-) -> Result<(), DbError> {
+pub struct NewOrder<'a> {
+    pub order_id: &'a str,
+    pub account_id: &'a str,
+    pub instrument_id: i64,
+    pub side: &'a str,
+    pub qty: f64,
+    pub status: &'a str,
+    pub idempotency_key: Option<&'a str>,
+    pub created_at_ms: i64,
+}
+
+pub struct NewFill<'a> {
+    pub fill_id: &'a str,
+    pub order_id: &'a str,
+    pub qty: f64,
+    pub price: f64,
+    pub created_at_ms: i64,
+}
+
+pub async fn insert_order(pool: &SqlitePool, order: &NewOrder<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO orders (id, account_id, instrument_id, side, qty, status, idempotency_key, created_at_ms)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(order_id)
-    .bind(account_id)
-    .bind(instrument_id)
-    .bind(side)
-    .bind(qty)
-    .bind(status)
-    .bind(idempotency_key)
-    .bind(created_at_ms)
+    .bind(order.order_id)
+    .bind(order.account_id)
+    .bind(order.instrument_id)
+    .bind(order.side)
+    .bind(order.qty)
+    .bind(order.status)
+    .bind(order.idempotency_key)
+    .bind(order.created_at_ms)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-pub async fn insert_fill(
-    pool: &SqlitePool,
-    fill_id: &str,
-    order_id: &str,
-    qty: f64,
-    price: f64,
-    created_at_ms: i64,
-) -> Result<(), DbError> {
+pub async fn insert_fill(pool: &SqlitePool, fill: &NewFill<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO fills (id, order_id, qty, price, created_at_ms) VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(fill_id)
-    .bind(order_id)
-    .bind(qty)
-    .bind(price)
-    .bind(created_at_ms)
+    .bind(fill.fill_id)
+    .bind(fill.order_id)
+    .bind(fill.qty)
+    .bind(fill.price)
+    .bind(fill.created_at_ms)
     .execute(pool)
     .await?;
     Ok(())

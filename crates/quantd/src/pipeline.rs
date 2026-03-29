@@ -15,35 +15,40 @@ pub enum PipelineError {
     Json(#[from] serde_json::Error),
 }
 
+/// Per-venue tick: account, symbol, and timestamps.
+pub struct VenueTickParams<'a> {
+    pub account_id: &'a str,
+    pub venue: Venue,
+    pub symbol: &'a str,
+    pub ts_ms: i64,
+}
+
 /// One ingest → strategy → risk (allow) → paper order for a single venue/instrument.
 pub async fn run_one_tick_for_venue(
     database: &db::Db,
     ingest_adapter: &dyn IngestAdapter,
-    router: &exec::ExecutionRouter,
-    account_id: &str,
-    venue: Venue,
-    symbol: &str,
+    exec_router: &exec::ExecutionRouter,
     strategy: &dyn Strategy,
-    ts_ms: i64,
+    params: &VenueTickParams<'_>,
 ) -> Result<(), PipelineError> {
     let pool = database.pool();
-    let venue_str = venue.as_str();
-    let iid = db::upsert_instrument(pool, venue_str, symbol).await?;
+    let venue_str = params.venue.as_str();
+    let iid = db::upsert_instrument(pool, venue_str, params.symbol).await?;
 
     ingest_adapter.ingest_once(database, iid).await?;
 
     let last = db::last_bar_close(pool, iid, ingest_adapter.data_source_id()).await?;
 
     let instrument = InstrumentId {
-        venue,
-        symbol: symbol.to_string(),
+        venue: params.venue,
+        symbol: params.symbol.to_string(),
     };
 
     let context = StrategyContext {
         instrument: instrument.clone(),
         instrument_db_id: iid,
         last_bar_close: last,
-        ts_ms,
+        ts_ms: params.ts_ms,
     };
 
     let Some(signal) = strategy.evaluate(&context) else {
@@ -58,13 +63,20 @@ pub async fn run_one_tick_for_venue(
         iid,
         &signal.strategy_id,
         &payload,
-        ts_ms,
+        params.ts_ms,
     )
     .await?;
 
     let risk_id = Uuid::new_v4().to_string();
-    db::insert_risk_decision(pool, &risk_id, &signal_id, true, Some("mvp_allow_all"), ts_ms)
-        .await?;
+    db::insert_risk_decision(
+        pool,
+        &risk_id,
+        &signal_id,
+        true,
+        Some("mvp_allow_all"),
+        params.ts_ms,
+    )
+    .await?;
 
     let intent = OrderIntent {
         strategy_id: signal.strategy_id.clone(),
@@ -74,7 +86,9 @@ pub async fn run_one_tick_for_venue(
         qty: signal.qty,
     };
 
-    router.place_order(account_id, &intent, None).await?;
+    exec_router
+        .place_order(params.account_id, &intent, None)
+        .await?;
 
     Ok(())
 }

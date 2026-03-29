@@ -38,15 +38,18 @@ async fn four_venues_minimal_closed_loop() {
             .for_venue(venue)
             .next()
             .expect("adapter for venue");
+        let tick = quantd::pipeline::VenueTickParams {
+            account_id: "acc_mvp_paper",
+            venue,
+            symbol: "MVP",
+            ts_ms,
+        };
         quantd::pipeline::run_one_tick_for_venue(
             &database,
             adapter.as_ref(),
             &router,
-            "acc_mvp_paper",
-            venue,
-            "MVP",
             &strategy,
-            ts_ms,
+            &tick,
         )
         .await
         .expect("pipeline tick");

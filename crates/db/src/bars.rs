@@ -1,30 +1,32 @@
 use crate::error::DbError;
 use sqlx::SqlitePool;
 
-pub async fn insert_bar(
-    pool: &SqlitePool,
-    instrument_id: i64,
-    data_source_id: &str,
-    ts_ms: i64,
-    o: f64,
-    h: f64,
-    l: f64,
-    c: f64,
-    volume: f64,
-) -> Result<(), DbError> {
+/// OHLCV row to insert (conflict on instrument + source + ts ignored).
+pub struct NewBar<'a> {
+    pub instrument_id: i64,
+    pub data_source_id: &'a str,
+    pub ts_ms: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+}
+
+pub async fn insert_bar(pool: &SqlitePool, bar: &NewBar<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO bars (instrument_id, data_source_id, ts_ms, o, h, l, c, volume)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(instrument_id, data_source_id, ts_ms) DO NOTHING",
     )
-    .bind(instrument_id)
-    .bind(data_source_id)
-    .bind(ts_ms)
-    .bind(o)
-    .bind(h)
-    .bind(l)
-    .bind(c)
-    .bind(volume)
+    .bind(bar.instrument_id)
+    .bind(bar.data_source_id)
+    .bind(bar.ts_ms)
+    .bind(bar.open)
+    .bind(bar.high)
+    .bind(bar.low)
+    .bind(bar.close)
+    .bind(bar.volume)
     .execute(pool)
     .await?;
     Ok(())

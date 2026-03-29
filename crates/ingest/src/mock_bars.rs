@@ -29,18 +29,17 @@ impl IngestAdapter for MockBarsAdapter {
     }
 
     async fn ingest_once(&self, db: &Db, instrument_db_id: i64) -> Result<(), IngestError> {
-        db::insert_bar(
-            db.pool(),
-            instrument_db_id,
-            self.data_source_id,
-            1,
-            100.0,
-            100.0,
-            100.0,
-            100.0,
-            0.0,
-        )
-        .await?;
+        let bar = db::NewBar {
+            instrument_id: instrument_db_id,
+            data_source_id: self.data_source_id,
+            ts_ms: 1,
+            open: 100.0,
+            high: 100.0,
+            low: 100.0,
+            close: 100.0,
+            volume: 0.0,
+        };
+        db::insert_bar(db.pool(), &bar).await?;
         Ok(())
     }
 }

@@ -5,13 +5,17 @@
 - 独立量化后端 **`quantd`**：ingest → 策略 → 风控（MVP 全放行）→ paper 执行 → SQLite 台账。
 - 对外 **HTTP**（`/health`, `/v1/instruments`）与 **WebSocket**（`/v1/stream`）。
 
+## 流水线参数
+
+- `quantd::pipeline::VenueTickParams`：单次 `run_one_tick_for_venue` 的账户、标的 `symbol`、时间戳；与 `ingest` / `exec` 解耦。
+
 ## Crate 边界
 
 | crate     | 职责 |
 |-----------|------|
 | `domain`  | 纯类型 |
 | `config`  | 环境变量配置 |
-| `db`      | SQLite + 迁移 + 仓储函数 |
+| `db`      | SQLite + 迁移 + 仓储函数（`NewBar` / `NewOrder` / `NewFill` 封装写入） |
 | `ingest`  | `IngestAdapter` 与 mock 实现 |
 | `exec`    | `ExecutionAdapter`、`PaperAdapter`、`ExecutionRouter` |
 | `strategy`| 策略 trait 与 MVP 规则策略 |
