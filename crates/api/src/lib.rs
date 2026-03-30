@@ -2,6 +2,7 @@
 
 mod error;
 mod handlers;
+mod middleware;
 mod ws;
 
 pub use error::ApiError;
@@ -19,6 +20,7 @@ pub struct AppState {
     pub events: broadcast::Sender<StreamEvent>,
     pub execution_router: exec::ExecutionRouter,
     pub ingest_registry: ingest::IngestRegistry,
+    pub api_key: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -38,11 +40,18 @@ pub enum StreamEvent {
 
 pub fn router(state: AppState) -> Router {
     let shared = Arc::new(state);
+    let v1 = Router::new()
+        .route("/instruments", get(handlers::list_instruments))
+        .route("/orders", get(handlers::list_orders))
+        .route("/tick", post(handlers::post_tick))
+        .route("/stream", get(ws::ws_handler))
+        .route_layer(axum::middleware::from_fn_with_state(
+            shared.clone(),
+            middleware::require_api_key,
+        ));
+
     Router::new()
         .route("/health", get(handlers::health))
-        .route("/v1/instruments", get(handlers::list_instruments))
-        .route("/v1/orders", get(handlers::list_orders))
-        .route("/v1/tick", post(handlers::post_tick))
-        .route("/v1/stream", get(ws::ws_handler))
+        .nest("/v1", v1)
         .with_state(shared)
 }

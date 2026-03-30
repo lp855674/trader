@@ -51,7 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let database = db::Db::connect(&app_config.database_url).await?;
-    db::ensure_mvp_seed(database.pool()).await?;
+    let is_prod = app_config.env.eq_ignore_ascii_case("prod");
+    if !is_prod || app_config.allow_seed {
+        db::ensure_mvp_seed(database.pool()).await?;
+    }
 
     let (event_tx, _event_rx) = broadcast::channel::<api::StreamEvent>(64);
 
@@ -67,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         events: event_tx.clone(),
         execution_router: execution_router.clone(),
         ingest_registry: ingest_registry.clone(),
+        api_key: app_config.api_key.clone(),
     };
 
     let listener = tokio::net::TcpListener::bind(app_config.http_bind).await?;
@@ -79,13 +83,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    run_bootstrap_tick(
-        &database,
-        &execution_router,
-        &ingest_registry,
-        &event_tx,
-    )
-    .await?;
+    if !is_prod || app_config.allow_seed {
+        run_bootstrap_tick(
+            &database,
+            &execution_router,
+            &ingest_registry,
+            &event_tx,
+        )
+        .await?;
+    }
 
     server.await?;
     Ok(())

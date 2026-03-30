@@ -38,6 +38,9 @@
 
 - `QUANTD_DATABASE_URL`：默认 `sqlite:quantd.db`
 - `QUANTD_HTTP_BIND`：默认 `127.0.0.1:8080`
+- `QUANTD_API_KEY`：若设置，则 `/v1/*`（含 WebSocket `/v1/stream`）需要鉴权；支持 `Authorization: Bearer <key>` 或 `X-API-Key: <key>`。
+- `QUANTD_ENV`：默认 `dev`；`prod` 下默认不写入 MVP seed，除非 `QUANTD_ALLOW_SEED`。
+- `QUANTD_ALLOW_SEED`：`1/true/yes` 允许在 `prod` 写入 seed 并跑启动 tick。
 
 ## 非目标（当前）
 

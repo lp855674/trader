@@ -16,6 +16,9 @@ cargo run -p quantd
 - `QUANTD_DATABASE_URL` — SQLite 连接串（默认 `sqlite:quantd.db`）
 - `QUANTD_HTTP_BIND` — 监听地址（默认 `127.0.0.1:8080`）
 - `RUST_LOG` — 如 `info`
+- `QUANTD_API_KEY` — 若设置，则 `/v1/*` 需要鉴权（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`）
+- `QUANTD_ENV` — 默认 `dev`；`prod` 下默认不写入 seed（除非 `QUANTD_ALLOW_SEED`）
+- `QUANTD_ALLOW_SEED` — `1/true/yes` 允许在 `prod` 写入 seed 并跑启动 tick
 
 ## API
 
