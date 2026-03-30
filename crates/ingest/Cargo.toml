@@ -3,6 +3,9 @@ name = "ingest"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/ingest.rs"
+
 [dependencies]
 async-trait.workspace = true
 domain.workspace = true

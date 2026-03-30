@@ -3,6 +3,9 @@ name = "domain"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/domain.rs"
+
 [dependencies]
 serde.workspace = true
 

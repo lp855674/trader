@@ -3,5 +3,8 @@ name = "strategy"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/strategy.rs"
+
 [dependencies]
 domain.workspace = true

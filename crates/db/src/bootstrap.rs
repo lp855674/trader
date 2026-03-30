@@ -34,6 +34,29 @@ pub async fn ensure_mvp_seed(pool: &SqlitePool) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Longbridge 实盘账户与数据源元数据（与 `longbridge_adapters` 配合使用）。
+pub async fn ensure_longbridge_live_account(pool: &SqlitePool) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO data_sources (id, kind, config_json) VALUES ('longbridge', 'longbridge_quote', NULL)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO execution_profiles (id, kind, config_json) VALUES ('longbridge', 'longbridge_live', NULL)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO accounts (id, mode, execution_profile_id, venue) VALUES ('acc_lb_live', 'live', 'longbridge', NULL)",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn ensure_account(
     pool: &SqlitePool,
     id: &str,

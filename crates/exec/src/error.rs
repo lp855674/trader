@@ -4,6 +4,8 @@ pub enum ExecError {
     Db(#[from] db::DbError),
     #[error("execution_not_configured: live adapter is a stub")]
     NotConfigured,
+    #[error("longbridge: {0}")]
+    Longbridge(String),
 }
 
 impl ExecError {

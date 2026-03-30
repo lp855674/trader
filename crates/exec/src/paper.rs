@@ -55,7 +55,7 @@ impl ExecutionAdapter for PaperAdapter {
         db::insert_order(pool, &order_row).await?;
 
         let fill_id = Uuid::new_v4().to_string();
-        let price = 100.0_f64;
+        let price = intent.limit_price;
         let fill_row = db::NewFill {
             fill_id: &fill_id,
             order_id: &order_id,

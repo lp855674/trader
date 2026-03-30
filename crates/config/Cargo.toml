@@ -3,5 +3,8 @@ name = "config"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/config.rs"
+
 [dependencies]
 thiserror.workspace = true

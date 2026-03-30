@@ -4,7 +4,7 @@ use std::sync::Arc;
 use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
-use quantd::{run_one_tick_for_venue, VenueTickParams};
+use quantd::{run_one_tick_for_venue, RiskLimits, VenueTickParams};
 use strategy::AlwaysLongOne;
 
 #[tokio::test]
@@ -28,6 +28,7 @@ async fn four_venues_minimal_closed_loop() {
 
     let strategy = AlwaysLongOne;
     let ts_ms = 1_i64;
+    let risk_limits = RiskLimits::default();
 
     for venue in [
         Venue::UsEquity,
@@ -50,6 +51,7 @@ async fn four_venues_minimal_closed_loop() {
             adapter.as_ref(),
             &router,
             &strategy,
+            risk_limits,
             &tick,
         )
         .await

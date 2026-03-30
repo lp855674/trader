@@ -3,6 +3,9 @@ name = "exec"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/exec.rs"
+
 [dependencies]
 async-trait.workspace = true
 domain.workspace = true

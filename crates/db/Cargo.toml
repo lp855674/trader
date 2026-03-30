@@ -3,6 +3,9 @@ name = "db"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/db.rs"
+
 [dependencies]
 sqlx.workspace = true
 serde.workspace = true

@@ -18,13 +18,14 @@ pub struct AlwaysLongOne;
 
 impl Strategy for AlwaysLongOne {
     fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
-        context.last_bar_close?;
+        let limit_price = context.last_bar_close?;
         Some(Signal {
             strategy_id: "always_long_one".to_string(),
             instrument: context.instrument.clone(),
             instrument_db_id: context.instrument_db_id,
             side: Side::Buy,
             qty: 1.0,
+            limit_price,
             ts_ms: context.ts_ms,
         })
     }
@@ -46,6 +47,7 @@ mod tests {
         };
         let signal = strategy.evaluate(&context).expect("signal");
         assert_eq!(signal.qty, 1.0);
+        assert_eq!(signal.limit_price, 42.0);
     }
 
     #[test]

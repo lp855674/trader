@@ -8,7 +8,7 @@ mod orders;
 mod signals;
 
 pub use bars::{count_bars_for_source, insert_bar, last_bar_close, NewBar};
-pub use bootstrap::{ensure_account, ensure_mvp_seed};
+pub use bootstrap::{ensure_account, ensure_longbridge_live_account, ensure_mvp_seed};
 pub use error::DbError;
 pub use instruments::{list_instruments, upsert_instrument, InstrumentRow};
 pub use orders::{

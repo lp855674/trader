@@ -11,6 +11,7 @@ use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use http_body_util::BodyExt;
 use ingest::{IngestRegistry, MockBarsAdapter};
+use pipeline::RiskLimits;
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 
@@ -43,6 +44,7 @@ async fn test_app() -> Router {
         events: event_tx,
         execution_router,
         ingest_registry: registry,
+        risk_limits: RiskLimits::default(),
         api_key: None,
     };
     api::router(state)
@@ -76,6 +78,7 @@ async fn test_app_with_key(key: &str) -> Router {
         events: event_tx,
         execution_router,
         ingest_registry: registry,
+        risk_limits: RiskLimits::default(),
         api_key: Some(key.to_string()),
     };
     api::router(state)

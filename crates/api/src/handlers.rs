@@ -106,6 +106,7 @@ async fn run_tick_inner(state: Arc<AppState>, body: TickBody) -> Result<TickResp
         adapter.as_ref(),
         &state.execution_router,
         &strategy,
+        state.risk_limits,
         &tick,
     )
     .await

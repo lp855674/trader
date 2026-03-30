@@ -21,6 +21,8 @@ pub struct Signal {
     pub instrument_db_id: i64,
     pub side: Side,
     pub qty: f64,
+    /// 限价单价格（与 `OrderIntent.limit_price` 一致）。
+    pub limit_price: f64,
     pub ts_ms: i64,
 }
 
@@ -31,6 +33,7 @@ pub struct OrderIntent {
     pub instrument_db_id: i64,
     pub side: Side,
     pub qty: f64,
+    pub limit_price: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]

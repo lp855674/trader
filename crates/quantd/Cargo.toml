@@ -3,6 +3,9 @@ name = "quantd"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/quantd.rs"
+
 [[bin]]
 name = "quantd"
 path = "src/main.rs"
@@ -23,3 +26,4 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+longbridge_adapters.workspace = true

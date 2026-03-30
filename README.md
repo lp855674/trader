@@ -20,6 +20,23 @@ cargo run -p quantd
 - `QUANTD_ENV` — 默认 `dev`；`prod` 下默认不写入 seed（除非 `QUANTD_ALLOW_SEED`）
 - `QUANTD_ALLOW_SEED` — `1/true/yes` 允许在 `prod` 写入 seed 并跑启动 tick
 
+### Longbridge（可选：真实行情 + 实盘下单）
+
+在 [Longbridge OpenAPI 快速开始](https://open.longbridge.com/zh-CN/docs/getting-started) 开通应用凭证后，设置以下三个环境变量；**三者均非空**时 `quantd` 会连接 Longbridge，并为美股/港股 ingest 使用 K 线拉取（写入本地 `bars`），同时为账户 `acc_lb_live` 注册实盘执行适配器。
+
+- `LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN` — 用户中心「应用凭证」（传统 API Key；与 OAuth access token 不是同一种）
+
+可选：
+
+- `LONGBRIDGE_REGION` — 如 `cn`、`hk`，覆盖接入点（见官方文档）
+- `QUANTD_LB_US_SYMBOL` — 美股标的 Longbridge 符号，默认 `AAPL.US`
+- `QUANTD_LB_HK_SYMBOL` — 港股标的 Longbridge 符号，默认 `700.HK`
+
+**行为说明：**
+
+- **模拟盘**：`account_id` 为 `acc_mvp_paper`（或其它 paper 账户）时仍走本地 SQLite **PaperAdapter**，与 Longbridge 无关。
+- **实盘**：`POST /v1/tick` 使用 `account_id: "acc_lb_live"` 时，会通过 Longbridge **`TradeContext::submit_order`** 下单；当前实现为**市价单（MO）**，与真实账户资金与持仓联动，**请仅在理解风险的前提下使用**。
+
 ## API
 
 - `GET /health`
@@ -37,6 +54,6 @@ cargo run -p quantd
 }
 ```
 
-`account_id` 可省略，省略时与启动 seed 一致为 `acc_mvp_paper`。
+`account_id` 可省略，省略时与启动 seed 一致为 `acc_mvp_paper`。若已配置 Longbridge 且需**实盘**试单，将 `account_id` 设为 `acc_lb_live`（见上文风险说明）。
 
-- `GET /v1/stream` — WebSocket；连接后先发 `hello`，随后推送 `order_created` 等事件（每帧含 `event_id`）；若出现业务/序列化等问题可收到 `kind: error` 帧（含 `error_code`），与规格 §7.1 一致。
+- `GET /v1/stream` — WebSocket；连接后先发 `hello`，随后推送 `order_created` 等事件（每帧含 `event_id`）；若出现业务/序列化等问题可收到 `kind: error` 帧（含 `error_code`），与规格 §7.1 一致。券商侧错误可能映射为 HTTP **502**、`error_code: broker_error`。

@@ -1,10 +1,14 @@
 //! Ingest → strategy → risk → execution pipeline (shared by `quantd` and `api`).
 
+mod risk;
+
 use domain::{InstrumentId, OrderIntent, Venue};
 use exec::OrderAck;
 use ingest::IngestAdapter;
 use strategy::{Strategy, StrategyContext};
 use uuid::Uuid;
+
+pub use risk::RiskLimits;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
@@ -16,6 +20,8 @@ pub enum PipelineError {
     Exec(#[from] exec::ExecError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("risk denied: {0}")]
+    RiskDenied(String),
 }
 
 /// Per-venue tick: account, symbol, and timestamps (owned strings so HTTP/async callers stay `Send`).
@@ -27,13 +33,14 @@ pub struct VenueTickParams {
     pub ts_ms: i64,
 }
 
-/// One ingest → strategy → risk (allow) → paper order for a single venue/instrument.
+/// One ingest → strategy → risk → execution（限价） for a single venue/instrument.
 /// Returns [`Some(OrderAck)`] when an order was placed; [`None`] if the strategy did not emit a signal.
 pub async fn run_one_tick_for_venue(
     database: &db::Db,
     ingest_adapter: &dyn IngestAdapter,
     exec_router: &exec::ExecutionRouter,
     strategy: &dyn Strategy,
+    risk_limits: RiskLimits,
     params: &VenueTickParams,
 ) -> Result<Option<OrderAck>, PipelineError> {
     let pool = database.pool();
@@ -83,13 +90,34 @@ pub async fn run_one_tick_for_venue(
     )
     .await?;
 
+    if let Err(reason) = risk_limits.check(&signal) {
+        let risk_id = Uuid::new_v4().to_string();
+        db::insert_risk_decision(
+            pool,
+            &risk_id,
+            &signal_id,
+            false,
+            Some(reason.as_str()),
+            params.ts_ms,
+        )
+        .await?;
+        tracing::warn!(
+            channel = "pipeline",
+            venue = venue_str,
+            account_id = %params.account_id,
+            %reason,
+            "risk denied"
+        );
+        return Err(PipelineError::RiskDenied(reason));
+    }
+
     let risk_id = Uuid::new_v4().to_string();
     db::insert_risk_decision(
         pool,
         &risk_id,
         &signal_id,
         true,
-        Some("mvp_allow_all"),
+        Some("within_limits"),
         params.ts_ms,
     )
     .await?;
@@ -100,6 +128,7 @@ pub async fn run_one_tick_for_venue(
         instrument_db_id: iid,
         side: signal.side,
         qty: signal.qty,
+        limit_price: signal.limit_price,
     };
 
     let ack = exec_router

@@ -6,6 +6,8 @@ use domain::Venue;
 pub enum IngestError {
     #[error(transparent)]
     Db(#[from] db::DbError),
+    #[error("longbridge: {0}")]
+    Longbridge(String),
 }
 
 #[async_trait]

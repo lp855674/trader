@@ -41,6 +41,16 @@ impl ApiError {
                 code: exec::ExecError::ERROR_CODE_NOT_CONFIGURED,
                 message: "execution adapter not configured (paper/live profile missing)".to_string(),
             },
+            pipeline::PipelineError::Exec(exec::ExecError::Longbridge(msg)) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                code: "broker_error",
+                message: msg,
+            },
+            pipeline::PipelineError::RiskDenied(msg) => Self {
+                status: StatusCode::FORBIDDEN,
+                code: "risk_denied",
+                message: msg,
+            },
             other => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "pipeline_error",

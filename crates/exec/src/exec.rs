@@ -44,6 +44,7 @@ mod tests {
             instrument_db_id: iid,
             side: Side::Buy,
             qty: 1.0,
+            limit_price: 100.0,
         };
 
         router

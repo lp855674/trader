@@ -3,6 +3,9 @@ name = "api"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+path = "src/api.rs"
+
 [dependencies]
 axum.workspace = true
 db.workspace = true
@@ -22,6 +25,7 @@ domain.workspace = true
 exec.workspace = true
 http-body-util = "0.1"
 ingest.workspace = true
+pipeline.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tower.workspace = true

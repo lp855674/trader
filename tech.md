@@ -18,6 +18,7 @@
 | `config`   | 环境变量配置 |
 | `db`       | SQLite + 迁移 + 仓储函数（`NewBar` / `NewOrder` / `NewFill` 封装写入） |
 | `ingest`   | `IngestAdapter` 与 mock 实现 |
+| `longbridge_adapters` | Longbridge：`QuoteContext` K 线 ingest、`TradeContext` 实盘下单（MO） |
 | `exec`     | `ExecutionAdapter`、`PaperAdapter`、`ExecutionRouter` |
 | `strategy` | 策略 trait 与 MVP 规则策略 |
 | `pipeline` | ingest → 策略 → 风控 → 执行（`quantd` 与 `api` 共用） |
@@ -27,6 +28,7 @@
 ## Workspace 依赖
 
 - 内部 crate（`domain`、`db`、`pipeline` 等）在根 `Cargo.toml` 的 `[workspace.dependencies]` 中以 `path = "crates/…"` 声明一次；各 member 使用 `name.workspace = true`，避免重复 path。
+- **库入口路径（与内部其它 Rust 工程对齐）**：各 library crate 在 `Cargo.toml` 中显式写 `[lib] path = "src/<crate 名>.rs"`（例如 `domain` → `src/domain.rs`，`longbridge_adapters` → `src/longbridge_adapters.rs`），二进制 `quantd` 使用 `[[bin]] path = "src/main.rs"` 与 `[lib] path = "src/quantd.rs"`。工作区 `edition` 为 **2024**（见根 `Cargo.toml`）。
 
 ## WebSocket（规格 §7.1 对齐）
 
@@ -42,6 +44,12 @@
 - `QUANTD_ENV`：默认 `dev`；`prod` 下默认不写入 MVP seed，除非 `QUANTD_ALLOW_SEED`。
 - `QUANTD_ALLOW_SEED`：`1/true/yes` 允许在 `prod` 写入 seed 并跑启动 tick。
 
+### Longbridge（可选）
+
+- 凭证：`LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`（见 [官方快速开始](https://open.longbridge.com/zh-CN/docs/getting-started)）。
+- `quantd` 在三个变量均非空时 `LongbridgeClients::connect()`；成功则 `ensure_longbridge_live_account`，注册 `acc_lb_live` → `LongbridgeTradeAdapter`，并对 US/HK venue 使用 `LongbridgeCandleIngest`（否则回退 mock）。
+- Paper 账户路径不变；Longbridge 错误在 API 层可表现为 `PipelineError::Exec(ExecError::Longbridge(..))` → HTTP 502、`error_code: broker_error`。
+
 ## 非目标（当前）
 
-- 真实 live 券商/交易所接入、gRPC、Qlib 在线路径。
+- gRPC、Qlib 在线路径；除 Longbridge 外的其它券商/交易所接入。

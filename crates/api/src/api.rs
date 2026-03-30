@@ -20,6 +20,7 @@ pub struct AppState {
     pub events: broadcast::Sender<StreamEvent>,
     pub execution_router: exec::ExecutionRouter,
     pub ingest_registry: ingest::IngestRegistry,
+    pub risk_limits: pipeline::RiskLimits,
     pub api_key: Option<String>,
 }
 
