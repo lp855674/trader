@@ -1,6 +1,7 @@
 //! Ingest → strategy → risk → execution pipeline (shared by `quantd` and `api`).
 
 use domain::{InstrumentId, OrderIntent, Venue};
+use exec::OrderAck;
 use ingest::IngestAdapter;
 use strategy::{Strategy, StrategyContext};
 use uuid::Uuid;
@@ -27,25 +28,31 @@ pub struct VenueTickParams {
 }
 
 /// One ingest → strategy → risk (allow) → paper order for a single venue/instrument.
+/// Returns [`Some(OrderAck)`] when an order was placed; [`None`] if the strategy did not emit a signal.
 pub async fn run_one_tick_for_venue(
     database: &db::Db,
     ingest_adapter: &dyn IngestAdapter,
     exec_router: &exec::ExecutionRouter,
     strategy: &dyn Strategy,
     params: &VenueTickParams,
-) -> Result<(), PipelineError> {
+) -> Result<Option<OrderAck>, PipelineError> {
     let pool = database.pool();
     let venue_str = params.venue.as_str();
     let iid = db::upsert_instrument(pool, venue_str, &params.symbol).await?;
+
+    tracing::info!(
+        channel = "pipeline",
+        venue = venue_str,
+        account_id = %params.account_id,
+        data_source_id = ingest_adapter.data_source_id(),
+        "ingest_once start"
+    );
 
     ingest_adapter.ingest_once(database, iid).await?;
 
     let last = db::last_bar_close(pool, iid, ingest_adapter.data_source_id()).await?;
 
-    let instrument = InstrumentId {
-        venue: params.venue,
-        symbol: params.symbol.clone(),
-    };
+    let instrument = InstrumentId::new(params.venue, params.symbol.clone());
 
     let context = StrategyContext {
         instrument: instrument.clone(),
@@ -55,7 +62,13 @@ pub async fn run_one_tick_for_venue(
     };
 
     let Some(signal) = strategy.evaluate(&context) else {
-        return Ok(());
+        tracing::info!(
+            channel = "pipeline",
+            venue = venue_str,
+            account_id = %params.account_id,
+            "strategy skipped (no signal)"
+        );
+        return Ok(None);
     };
 
     let signal_id = Uuid::new_v4().to_string();
@@ -89,9 +102,18 @@ pub async fn run_one_tick_for_venue(
         qty: signal.qty,
     };
 
-    exec_router
+    let ack = exec_router
         .place_order(&params.account_id, &intent, None)
         .await?;
 
-    Ok(())
+    tracing::info!(
+        channel = "pipeline",
+        venue = venue_str,
+        account_id = %params.account_id,
+        order_id = %ack.order_id,
+        strategy_id = %signal.strategy_id,
+        "order placed"
+    );
+
+    Ok(Some(ack))
 }

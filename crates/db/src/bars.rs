@@ -32,6 +32,21 @@ pub async fn insert_bar(pool: &SqlitePool, bar: &NewBar<'_>) -> Result<(), DbErr
     Ok(())
 }
 
+pub async fn count_bars_for_source(
+    pool: &SqlitePool,
+    instrument_id: i64,
+    data_source_id: &str,
+) -> Result<i64, DbError> {
+    let n = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM bars WHERE instrument_id = ? AND data_source_id = ?",
+    )
+    .bind(instrument_id)
+    .bind(data_source_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
 pub async fn last_bar_close(
     pool: &SqlitePool,
     instrument_id: i64,

@@ -35,13 +35,14 @@ fn build_ingest_registry() -> IngestRegistry {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app_config = AppConfig::from_env()?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_new(&app_config.log_filter)
+                .unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-
-    let app_config = AppConfig::from_env()?;
     tracing::info!(
         channel = "quantd",
         database_url = %redact_url(&app_config.database_url),
@@ -124,7 +125,7 @@ async fn run_bootstrap_tick(
             symbol: "MVP".to_string(),
             ts_ms,
         };
-        run_one_tick_for_venue(
+        let ack = run_one_tick_for_venue(
             database,
             adapter.as_ref(),
             router,
@@ -133,7 +134,13 @@ async fn run_bootstrap_tick(
         )
         .await?;
 
-        let _ = event_tx.send(api::StreamEvent::OrderCycleDone { venue });
+        if let Some(ack) = ack {
+            let _ = event_tx.send(api::StreamEvent::OrderCreated {
+                order_id: ack.order_id,
+                venue,
+                symbol: tick.symbol.clone(),
+            });
+        }
     }
 
     Ok(())

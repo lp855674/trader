@@ -31,12 +31,14 @@ dependencies = [
  "db",
  "domain",
  "exec",
+ "http-body-util",
  "ingest",
  "pipeline",
  "serde",
  "serde_json",
  "strategy",
  "tokio",
+ "tower",
  "uuid",
 ]
 
@@ -1056,6 +1058,7 @@ dependencies = [
  "serde_json",
  "strategy",
  "thiserror 1.0.69",
+ "tracing",
  "uuid",
 ]
 

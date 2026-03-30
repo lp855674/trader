@@ -7,7 +7,7 @@ mod instruments;
 mod orders;
 mod signals;
 
-pub use bars::{insert_bar, last_bar_close, NewBar};
+pub use bars::{count_bars_for_source, insert_bar, last_bar_close, NewBar};
 pub use bootstrap::{ensure_account, ensure_mvp_seed};
 pub use error::DbError;
 pub use instruments::{list_instruments, upsert_instrument, InstrumentRow};
@@ -36,16 +36,5 @@ impl Db {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Db;
-
-    #[tokio::test]
-    async fn migrate_runs_clean() {
-        let database = Db::connect("sqlite::memory:").await;
-        assert!(database.is_ok(), "{:?}", database.err());
     }
 }

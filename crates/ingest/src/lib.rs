@@ -15,10 +15,10 @@ mod tests {
     use db::Db;
     use domain::Venue;
 
-    use super::{IngestAdapter, MockBarsAdapter};
+    use super::{IngestAdapter, IngestRegistry, MockBarsAdapter};
 
     #[tokio::test]
-    async fn mock_ingest_inserts_bar() {
+    async fn mock_ingest_inserts_one_bar_row() {
         let database = Db::connect("sqlite::memory:").await.expect("db");
         db::ensure_mvp_seed(database.pool()).await.expect("seed");
         let iid = db::upsert_instrument(database.pool(), Venue::UsEquity.as_str(), "TEST")
@@ -29,9 +29,24 @@ mod tests {
             .ingest_once(&database, iid)
             .await
             .expect("ingest");
+        let n = db::count_bars_for_source(database.pool(), iid, "mock_us")
+            .await
+            .expect("count");
+        assert_eq!(n, 1, "expected exactly one bar row (UNIQUE per ts/source)");
         let close = db::last_bar_close(database.pool(), iid, "mock_us")
             .await
             .expect("last");
         assert_eq!(close, Some(100.0));
+    }
+
+    #[test]
+    fn registry_for_venue_filters_adapters() {
+        let mut registry = IngestRegistry::default();
+        registry.register(Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us")));
+        registry.register(Arc::new(MockBarsAdapter::new(Venue::Crypto, "mock_crypto")));
+        assert_eq!(registry.for_venue(Venue::UsEquity).count(), 1);
+        assert_eq!(registry.for_venue(Venue::Crypto).count(), 1);
+        assert_eq!(registry.for_venue(Venue::HkEquity).count(), 0);
+        assert!(registry.adapter_for_venue(Venue::Crypto).is_some());
     }
 }

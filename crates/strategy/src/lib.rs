@@ -39,10 +39,7 @@ mod tests {
     fn long_one_when_bar_present() {
         let strategy = AlwaysLongOne;
         let context = StrategyContext {
-            instrument: InstrumentId {
-                venue: Venue::Crypto,
-                symbol: "X".to_string(),
-            },
+            instrument: InstrumentId::new(Venue::Crypto, "X"),
             instrument_db_id: 7,
             last_bar_close: Some(42.0),
             ts_ms: 99,
@@ -55,10 +52,7 @@ mod tests {
     fn no_signal_without_bar() {
         let strategy = AlwaysLongOne;
         let context = StrategyContext {
-            instrument: InstrumentId {
-                venue: Venue::Crypto,
-                symbol: "X".to_string(),
-            },
+            instrument: InstrumentId::new(Venue::Crypto, "X"),
             instrument_db_id: 7,
             last_bar_close: None,
             ts_ms: 99,

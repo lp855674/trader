@@ -14,12 +14,15 @@ mod tests {
 
     #[test]
     fn instrument_id_roundtrip_json() {
-        let id = InstrumentId {
-            venue: Venue::Crypto,
-            symbol: "BTC-USD".to_string(),
-        };
+        let id = InstrumentId::new(Venue::Crypto, "BTC-USD");
         let json = serde_json::to_string(&id).expect("serialize");
         let back: InstrumentId = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(id, back);
+    }
+
+    #[test]
+    fn instrument_id_display() {
+        let id = InstrumentId::new(Venue::Crypto, "BTC-USD");
+        assert_eq!(id.to_string(), "CRYPTO:BTC-USD");
     }
 }

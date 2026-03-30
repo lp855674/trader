@@ -40,10 +40,7 @@ mod tests {
 
         let intent = OrderIntent {
             strategy_id: "s1".to_string(),
-            instrument: InstrumentId {
-                venue: Venue::UsEquity,
-                symbol: "T".to_string(),
-            },
+            instrument: InstrumentId::new(Venue::UsEquity, "T"),
             instrument_db_id: iid,
             side: Side::Buy,
             qty: 1.0,

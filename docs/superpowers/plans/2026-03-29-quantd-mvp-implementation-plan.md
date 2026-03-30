@@ -46,7 +46,7 @@
 - Create: `crates/api/Cargo.toml`, `crates/api/src/lib.rs`
 - Create: `crates/quantd/Cargo.toml`, `crates/quantd/src/main.rs`
 
-- [ ] **Step 1: 写入根 workspace `Cargo.toml`**
+- [x] **Step 1: 写入根 workspace `Cargo.toml`**
 
 ```toml
 [workspace]
@@ -63,9 +63,9 @@ members = [
 ]
 ```
 
-- [ ] **Step 2: 各 member 先设 `edition = "2021"` 与空 `lib.rs` / `quantd` 的 `main` 打印 `hello`**
+- [x] **Step 2: 各 member 先设 `edition = "2021"` 与空 `lib.rs` / `quantd` 的 `main` 打印 `hello`**
 
-- [ ] **Step 3: 验证编译**
+- [x] **Step 3: 验证编译**
 
 Run: `cargo check -q`  
 Expected: 无 error（warnings 可暂忽略）。
@@ -87,7 +87,7 @@ git commit -m "chore: init quantd workspace crates"
 - Modify: `crates/domain/src/lib.rs`（`pub mod` 与重导出）
 - Create: `crates/domain/src/lib.rs` 内 `#[cfg(test)] mod tests`
 
-- [ ] **Step 1: 定义 `Venue` 四枚举值 + `InstrumentId`（venue + symbol 字符串）**
+- [x] **Step 1: 定义 `Venue` 四枚举值 + `InstrumentId`（venue + symbol 字符串）**
 
 `crates/domain/src/venue.rs`:
 
@@ -114,9 +114,9 @@ pub struct InstrumentId {
 }
 ```
 
-- [ ] **Step 2: 增加 `AccountMode`、`Side`、`Signal`、`OrderIntent`（字段与规格一致：strategy_id、instrument、qty、side、ts）**
+- [x] **Step 2: 增加 `AccountMode`、`Side`、`Signal`、`OrderIntent`（字段与规格一致：strategy_id、instrument、qty、side、ts）**
 
-- [ ] **Step 3: 写单元测试 `instrument_id_roundtrip_json`**
+- [x] **Step 3: 写单元测试 `instrument_id_roundtrip_json`**
 
 - [ ] **Step 4: `cargo test -p domain` 全绿后 commit**
 
@@ -134,7 +134,7 @@ git commit -m "feat(domain): venue, instrument id, signal types"
 - Create: `crates/db/src/error.rs`
 - Modify: `crates/db/src/lib.rs`
 
-- [ ] **Step 1: 编写 `001_initial.sql`（完整可执行）**
+- [x] **Step 1: 编写 `001_initial.sql`（完整可执行）**
 
 ```sql
 -- instruments: 全局可交易标的
@@ -215,11 +215,11 @@ CREATE TABLE IF NOT EXISTS fills (
 );
 ```
 
-- [ ] **Step 2: `db` crate 暴露 `pub struct Db { pool: SqlitePool }` 与 `pub async fn connect(database_url: &str) -> Result<Self, DbError>`，内部 `sqlx::sqlite::SqlitePoolOptions::new().max_connections(5).connect(database_url).await?` 与 `sqlx::migrate!("./migrations").run(&pool).await?`**
+- [x] **Step 2: `db` crate 暴露 `pub struct Db { pool: SqlitePool }` 与 `pub async fn connect(database_url: &str) -> Result<Self, DbError>`，内部 `sqlx::sqlite::SqlitePoolOptions::new().max_connections(5).connect(database_url).await?` 与 `sqlx::migrate!("./migrations").run(&pool).await?`**
 
 依赖：`sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }`，`tokio` 与 `thiserror`。
 
-- [ ] **Step 3: 集成测试 `crates/db/tests/connect_migrate.rs`：临时文件路径 `sqlite::memory:` 或 `tempfile` 文件**
+- [x] **Step 3: 集成测试 `crates/db/tests/connect_migrate.rs`：临时文件路径 `sqlite::memory:` 或 `tempfile` 文件**
 
 ```rust
 #[tokio::test]
@@ -248,11 +248,11 @@ git commit -m "feat(db): initial schema and connect+migrate"
 - Create: `crates/db/src/orders.rs`
 - Modify: `crates/db/src/lib.rs`
 
-- [ ] **Step 1: `insert_instrument_get_id(venue, symbol) -> i64` 与 `get_by_venue_symbol`**
+- [x] **Step 1: `insert_instrument_get_id(venue, symbol) -> i64` 与 `get_by_venue_symbol`**
 
-- [ ] **Step 2: `insert_order` / `list_orders_by_account`（MVP 查询即可）**
+- [x] **Step 2: `insert_order` / `list_orders_by_account`（MVP 查询即可）**
 
-- [ ] **Step 3: 测试：插入 instrument → 插入 order → 读出**
+- [x] **Step 3: 测试：插入 instrument → 插入 order → 读出**
 
 Run: `cargo test -p db`  
 Expected: PASS
@@ -269,7 +269,7 @@ Expected: PASS
 - Create: `crates/ingest/src/registry.rs`
 - Modify: `crates/ingest/Cargo.toml`（依赖 `domain`, `db`, `async-trait`）
 
-- [ ] **Step 1: 定义 trait**
+- [x] **Step 1: 定义 trait**
 
 ```rust
 #[async_trait::async_trait]
@@ -281,11 +281,11 @@ pub trait IngestAdapter: Send + Sync {
 }
 ```
 
-- [ ] **Step 2: `MockBarsAdapter`：固定 `ts_ms = 1`，OHLC 全 100.0，`venue` 构造时传入**
+- [x] **Step 2: `MockBarsAdapter`：固定 `ts_ms = 1`，OHLC 全 100.0，`venue` 构造时传入**
 
-- [ ] **Step 3: `IngestRegistry`：`Vec<Arc<dyn IngestAdapter>>` + `for_venue(Venue) -> impl Iterator`**
+- [x] **Step 3: `IngestRegistry`：`Vec<Arc<dyn IngestAdapter>>` + `for_venue(Venue) -> impl Iterator`**
 
-- [ ] **Step 4: 单测：内存库 + mock ingest 后 `bars` 表有 1 行**
+- [x] **Step 4: 单测：内存库 + mock ingest 后 `bars` 表有 1 行**
 
 Run: `cargo test -p ingest`  
 Expected: PASS
@@ -303,15 +303,15 @@ Expected: PASS
 - Create: `crates/exec/src/router.rs`
 - Modify: `crates/exec/Cargo.toml`
 
-- [ ] **Step 1: `ExecutionAdapter`：`place_order(intent, idempotency_key) -> Result<OrderAck, ExecError>`，`OrderAck` 含 `exchange_order_id` 字符串（paper 用 `paper-uuid`）**
+- [x] **Step 1: `ExecutionAdapter`：`place_order(intent, idempotency_key) -> Result<OrderAck, ExecError>`，`OrderAck` 含 `exchange_order_id` 字符串（paper 用 `paper-uuid`）**
 
-- [ ] **Step 2: `PaperAdapter`：在 `orders`/`fills` 表写入（通过 `db` 新方法 `insert_fill`）— 成交价用 domain 传入或固定 100.0**
+- [x] **Step 2: `PaperAdapter`：在 `orders`/`fills` 表写入（通过 `db` 新方法 `insert_fill`）— 成交价用 domain 传入或固定 100.0**
 
-- [ ] **Step 3: `LiveStubAdapter`：`Err(ExecError::NotConfigured)`，`error_code = execution_not_configured`（`thiserror` + 字段或关联常量）**
+- [x] **Step 3: `LiveStubAdapter`：`Err(ExecError::NotConfigured)`，`error_code = execution_not_configured`（`thiserror` + 字段或关联常量）**
 
-- [ ] **Step 4: `ExecutionRouter`：`resolve(account_id) -> Arc<dyn ExecutionAdapter>`，由内存 `HashMap` 配置；`paper` 账户指向 `PaperAdapter`，`live` 测试账户指向 `LiveStubAdapter`**
+- [x] **Step 4: `ExecutionRouter`：`resolve(account_id) -> Arc<dyn ExecutionAdapter>`，由内存 `HashMap` 配置；`paper` 账户指向 `PaperAdapter`，`live` 测试账户指向 `LiveStubAdapter`**
 
-- [ ] **Step 5: 单测 paper 路径落库 order+fill**
+- [x] **Step 5: 单测 paper 路径落库 order+fill**
 
 Run: `cargo test -p exec`  
 Expected: PASS
@@ -326,13 +326,13 @@ Expected: PASS
 - Create: `crates/strategy/src/lib.rs`
 - Create: `crates/strategy/src/fixed_signal.rs`
 
-- [ ] **Step 1: `trait Strategy`：`fn evaluate(&self, ctx: &StrategyContext) -> Option<Signal>`**
+- [x] **Step 1: `trait Strategy`：`fn evaluate(&self, ctx: &StrategyContext) -> Option<Signal>`**
 
 `StrategyContext` 含 `instrument_db_id`、`venue`、`last_bar_close`（f64）。
 
-- [ ] **Step 2: `AlwaysLongOne`：若有 bar 则返回 `qty = 1.0` 的买入意向**
+- [x] **Step 2: `AlwaysLongOne`：若有 bar 则返回 `qty = 1.0` 的买入意向**
 
-- [ ] **Step 3: 单测（mock context）**
+- [x] **Step 3: 单测（mock context）**
 
 Run: `cargo test -p strategy`  
 Expected: PASS
@@ -344,12 +344,13 @@ Expected: PASS
 ### Task 8: 端到端流水线函数（供 `quantd` 与集成测试复用）
 
 **Files:**
-- Create: `crates/quantd/src/pipeline.rs`（或新建 `crates/core` — YAGNI 放 `quantd` 即可）
-- Modify: `crates/quantd/Cargo.toml` 依赖 `db`, `ingest`, `exec`, `strategy`, `domain`, `uuid`
+- Create: `crates/pipeline/src/lib.rs`（独立 crate，供 `quantd` 与 `api` 复用）
+- Modify: `crates/pipeline/Cargo.toml` 依赖 `db`, `ingest`, `exec`, `strategy`, `domain`, `uuid`
+- Modify: `crates/quantd/tests/four_venues_mvp.rs` 使用 `quantd` 重导出的 `pipeline` 接口（见 `crates/quantd/src/lib.rs`）
 
-- [ ] **Step 1: `pub async fn run_one_tick(...)` 顺序：`ingest_once` → 读 last bar → `strategy.evaluate` → 写 `signals` → 风控（MVP：`allow = true` 写 `risk_decisions`）→ `router.place_order`**
+- [x] **Step 1: `pub async fn run_one_tick(...)` 顺序：`ingest_once` → 读 last bar → `strategy.evaluate` → 写 `signals` → 风控（MVP：`allow = true` 写 `risk_decisions`）→ `router.place_order`**
 
-- [ ] **Step 2: 集成测试 `tests/four_venues_mvp.rs`（位于 `crates/quantd/tests/`）**
+- [x] **Step 2: 集成测试 `tests/four_venues_mvp.rs`（位于 `crates/quantd/tests/`）**
 
 伪代码流程：
 
@@ -371,9 +372,9 @@ Expected: PASS
 - Modify: `crates/config/src/lib.rs`
 - Modify: `crates/quantd/src/main.rs`
 
-- [ ] **Step 1: `AppConfig { database_url: String, http_bind: SocketAddr }`，从 `figment`+`toml` 或最小 `std::env::var("QUANTD_DATABASE_URL")` 默认 `sqlite:quantd.db`**
+- [x] **Step 1: `AppConfig { database_url: String, http_bind: SocketAddr }`，从 `figment`+`toml` 或最小 `std::env::var("QUANTD_DATABASE_URL")` 默认 `sqlite:quantd.db`**
 
-- [ ] **Step 2: `main`：`tracing_subscriber::fmt::init()`，加载配置，`Db::connect`，`axum::serve`**
+- [x] **Step 2: `main`：`tracing_subscriber::fmt::init()`，加载配置，`Db::connect`，`axum::serve`**
 
 - [ ] **Step 3: Commit** `feat(config): env-based app config`
 
@@ -382,14 +383,15 @@ Expected: PASS
 ### Task 10: `api` — HTTP `GET /health` 与 `GET /v1/instruments`
 
 **Files:**
-- Create: `crates/api/src/lib.rs`（`pub fn router(db: Arc<Db>) -> Router`）
+- Create: `crates/api/src/lib.rs`（`pub fn router(state: AppState) -> Router`）
 - Create: `crates/api/src/handlers.rs`
+- Create: `crates/api/tests/http_smoke.rs`（使用 `tower::ServiceExt::oneshot`）
 
-- [ ] **Step 1: `GET /health` 返回 `{"status":"ok"}`**
+- [x] **Step 1: `GET /health` 返回 `{"status":"ok"}`**
 
-- [ ] **Step 2: `GET /v1/instruments` 返回 DB 中列表（JSON 数组）**
+- [x] **Step 2: `GET /v1/instruments` 返回 DB 中列表（JSON 数组）**
 
-- [ ] **Step 3: 集成测试 `tower::ServiceExt` 调用 router 或使用 `axum_test_helper` 风格手写 Request**
+- [x] **Step 3: 集成测试 `tower::ServiceExt` 调用 router（MVP 采用 `crates/api/tests/http_smoke.rs`）**
 
 Run: `cargo test -p api`  
 Expected: PASS
@@ -403,12 +405,13 @@ Expected: PASS
 **Files:**
 - Modify: `crates/api/src/lib.rs`
 - Create: `crates/api/src/ws.rs`
+- Create: `crates/api/src/error.rs`（HTTP JSON `error_code` 统一返回）
 
-- [ ] **Step 1: 使用 `axum::extract::ws::WebSocketUpgrade`，握手后发送一条 `{"kind":"hello","schema_version":1}`**
+- [x] **Step 1: 使用 `axum::extract::ws::WebSocketUpgrade`，握手后发送一条 `{"kind":"hello","schema_version":1}`**
 
-- [ ] **Step 2: 在 `pipeline` 完成下单后 `tokio::sync::broadcast::Sender` 发事件 `{ event_id, kind: order_created, payload }`；`api` 订阅该 sender 并向所有连接广播（MVP 单进程足够）**
+- [x] **Step 2: 在 `pipeline` 完成下单后 `tokio::sync::broadcast::Sender` 发事件 `{ event_id, kind: order_created, payload }`；`api` 订阅该 sender 并向所有连接广播（MVP 单进程足够）**
 
-- [ ] **Step 3: 文档字段与规格 §7.1 对齐：`event_id` UUID、`error_code` 仅用于 error 帧**
+- [x] **Step 3: 文档字段与规格 §7.1 对齐：`event_id` UUID、`error_code` 仅用于 error 帧**
 
 - [ ] **Step 4: Commit** `feat(api): websocket stream with order broadcast`
 
@@ -421,11 +424,11 @@ Expected: PASS
 - Create: `tech.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: `rules.md` 摘录 `bot` 的 DB 边界、禁止 `unwrap`、结构化 tracing 字段**
+- [x] **Step 1: `rules.md` 摘录 `bot` 的 DB 边界、禁止 `unwrap`、结构化 tracing 字段**
 
-- [ ] **Step 2: `tech.md` 描述 crate 职责、配置来源、MVP 限制**
+- [x] **Step 2: `tech.md` 描述 crate 职责、配置来源、MVP 限制**
 
-- [ ] **Step 3: `README`：如何 `cargo run -p quantd`、环境变量、跑测试**
+- [x] **Step 3: `README`：如何 `cargo run -p quantd`、环境变量、跑测试**
 
 - [ ] **Step 4: Commit** `docs: rules, tech, readme for trader`
 

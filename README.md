@@ -22,7 +22,7 @@ cargo run -p quantd
 - `GET /health`
 - `GET /v1/instruments`
 - `GET /v1/orders?account_id=<id>` — 返回该账户订单列表（MVP paper 账户默认 `acc_mvp_paper`）
-- `POST /v1/tick` — 对指定 `venue` + `symbol` 跑一轮 ingest → 策略 → 风控 → 模拟成交；成功后会向 WebSocket 订阅者广播 `order_cycle_done`
+- `POST /v1/tick` — 对指定 `venue` + `symbol` 跑一轮 ingest → 策略 → 风控 → 模拟成交；若实际下单成功，会向 WebSocket 订阅者广播 `order_created`（含 `order_id` / `venue` / `symbol`）
 
 `POST /v1/tick` 请求体示例：
 
@@ -36,4 +36,4 @@ cargo run -p quantd
 
 `account_id` 可省略，省略时与启动 seed 一致为 `acc_mvp_paper`。
 
-- `GET /v1/stream` — WebSocket；连接后先发 `hello`，随后推送 `order_cycle_done` 等事件（含 `event_id`）。
+- `GET /v1/stream` — WebSocket；连接后先发 `hello`，随后推送 `order_created` 等事件（每帧含 `event_id`）；若出现业务/序列化等问题可收到 `kind: error` 帧（含 `error_code`），与规格 §7.1 一致。
