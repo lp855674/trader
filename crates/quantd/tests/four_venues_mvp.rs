@@ -18,13 +18,10 @@ async fn four_venues_minimal_closed_loop() {
     let router = ExecutionRouter::new(routes);
 
     let mut registry = IngestRegistry::default();
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::HkEquity, "mock_hk")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::Crypto, "mock_crypto")));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Polymarket,
-        "mock_poly",
-    )));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::HkEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Crypto)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Polymarket)));
 
     let strategy = AlwaysLongOne;
     let ts_ms = 1_i64;

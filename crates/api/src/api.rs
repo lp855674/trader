@@ -21,6 +21,8 @@ pub struct AppState {
     pub execution_router: exec::ExecutionRouter,
     pub ingest_registry: ingest::IngestRegistry,
     pub risk_limits: pipeline::RiskLimits,
+    /// `/v1/tick` 使用的策略（由 `quantd` 根据 `QUANTD_STRATEGY` 注入）。
+    pub strategy: std::sync::Arc<dyn strategy::Strategy>,
     pub api_key: Option<String>,
 }
 

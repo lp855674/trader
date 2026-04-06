@@ -37,4 +37,4 @@ pub mod trading;
 pub mod config;
 pub mod api;
 
-pub use strategy::{AlwaysLongOne, Strategy, StrategyContext};
+pub use strategy::{AlwaysLongOne, NoOpStrategy, Strategy, StrategyContext};

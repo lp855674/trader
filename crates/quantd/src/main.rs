@@ -8,8 +8,8 @@ use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
 use longbridge_adapters::{LongbridgeCandleIngest, LongbridgeClients, LongbridgeTradeAdapter};
-use pipeline::{run_one_tick_for_venue, RiskLimits, VenueTickParams};
-use strategy::AlwaysLongOne;
+use pipeline::RiskLimits;
+use strategy::{AlwaysLongOne, NoOpStrategy, Strategy};
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
@@ -22,6 +22,24 @@ fn longbridge_env_configured() -> bool {
     let s = std::env::var("LONGBRIDGE_APP_SECRET").unwrap_or_default();
     let t = std::env::var("LONGBRIDGE_ACCESS_TOKEN").unwrap_or_default();
     !k.is_empty() && !s.is_empty() && !t.is_empty()
+}
+
+/// `QUANTD_STRATEGY`: `noop`（默认，不下单）| `always_long_one`（有 bar 则 paper 限价买 1 手，用于打通管线自测）。
+fn live_strategy_from_env() -> Arc<dyn Strategy> {
+    match std::env::var("QUANTD_STRATEGY")
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default()
+        .as_str()
+    {
+        "always_long_one" | "mvp" => {
+            tracing::info!(channel = "quantd", strategy = "always_long_one", "live strategy");
+            Arc::new(AlwaysLongOne)
+        }
+        _ => {
+            tracing::info!(channel = "quantd", strategy = "noop", "live strategy");
+            Arc::new(NoOpStrategy)
+        }
+    }
 }
 
 fn build_ingest_registry(
@@ -42,23 +60,11 @@ fn build_ingest_registry(
             hk_symbol,
         )));
     } else {
-        registry.register(Arc::new(MockBarsAdapter::new(
-            Venue::UsEquity,
-            "mock_us",
-        )));
-        registry.register(Arc::new(MockBarsAdapter::new(
-            Venue::HkEquity,
-            "mock_hk",
-        )));
+        registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity)));
+        registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::HkEquity)));
     }
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Crypto,
-        "mock_crypto",
-    )));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Polymarket,
-        "mock_poly",
-    )));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Crypto)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Polymarket)));
     registry
 }
 
@@ -72,6 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    let strategy = live_strategy_from_env();
+
     tracing::info!(
         channel = "quantd",
         database_url = %redact_url(&app_config.database_url),
@@ -100,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::warn!(
                     channel = "quantd",
                     %err,
-                    "longbridge: connect failed; US/HK ingest falls back to mock"
+                    "longbridge: connect failed; US/HK ingest uses synthetic paper bars"
                 );
                 None
             }
@@ -132,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         execution_router: execution_router.clone(),
         ingest_registry: ingest_registry.clone(),
         risk_limits,
+        strategy,
         api_key: app_config.api_key.clone(),
     };
 
@@ -145,17 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    if !is_prod || app_config.allow_seed {
-        run_bootstrap_tick(
-            &database,
-            &execution_router,
-            &ingest_registry,
-            risk_limits,
-            &event_tx,
-        )
-        .await?;
-    }
-
     server.await?;
     Ok(())
 }
@@ -165,62 +163,4 @@ fn redact_url(url: &str) -> String {
         return "sqlite:***".to_string();
     }
     "***".to_string()
-}
-
-async fn run_bootstrap_tick(
-    database: &db::Db,
-    router: &ExecutionRouter,
-    registry: &IngestRegistry,
-    risk_limits: RiskLimits,
-    event_tx: &broadcast::Sender<api::StreamEvent>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let strategy = AlwaysLongOne;
-    let ts_ms = chrono_like_now_ms();
-
-    for venue in [
-        Venue::UsEquity,
-        Venue::HkEquity,
-        Venue::Crypto,
-        Venue::Polymarket,
-    ] {
-        let adapter = registry.adapter_for_venue(venue).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "missing ingest adapter for venue",
-            )
-        })?;
-        let tick = VenueTickParams {
-            account_id: "acc_mvp_paper".to_string(),
-            venue,
-            symbol: "MVP".to_string(),
-            ts_ms,
-        };
-        let ack = run_one_tick_for_venue(
-            database,
-            adapter.as_ref(),
-            router,
-            &strategy,
-            risk_limits,
-            &tick,
-        )
-        .await?;
-
-        if let Some(ack) = ack {
-            let _ = event_tx.send(api::StreamEvent::OrderCreated {
-                order_id: ack.order_id,
-                venue,
-                symbol: tick.symbol.clone(),
-            });
-        }
-    }
-
-    Ok(())
-}
-
-fn chrono_like_now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }

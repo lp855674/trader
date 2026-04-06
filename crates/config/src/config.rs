@@ -24,12 +24,13 @@ pub enum ConfigError {
 }
 
 impl AppConfig {
-    /// Loads config. `QUANTD_DATABASE_URL` defaults to `sqlite:quantd.db`.
+    /// Loads config. `QUANTD_DATABASE_URL` defaults to `sqlite:quantd.db?mode=rwc` (create file if missing).
     /// `QUANTD_HTTP_BIND` defaults to `127.0.0.1:8080`.
+    /// `QUANTD_STRATEGY`（仅 `quantd` 进程）：未设置或 `noop` 为不下单；`always_long_one` 为演示管线（有 bar 则 paper 买）。
     /// Log filter: `RUST_LOG` if set, else `QUANTD_LOG`, else `info`.
     pub fn from_env() -> Result<Self, ConfigError> {
         let database_url = std::env::var("QUANTD_DATABASE_URL")
-            .unwrap_or_else(|_| "sqlite:quantd.db".to_string());
+            .unwrap_or_else(|_| "sqlite:quantd.db?mode=rwc".to_string());
         let bind_str =
             std::env::var("QUANTD_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
         let http_bind = bind_str

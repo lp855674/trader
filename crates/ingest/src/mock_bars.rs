@@ -4,6 +4,9 @@ use domain::Venue;
 
 use crate::adapter::{IngestAdapter, IngestError};
 
+/// Matches [`db::bootstrap::PAPER_BARS_DATA_SOURCE_ID`] for FK on `bars`.
+pub const PAPER_BARS_DATA_SOURCE_ID: &str = db::PAPER_BARS_DATA_SOURCE_ID;
+
 pub struct MockBarsAdapter {
     venue: Venue,
     data_source_id: &'static str,
@@ -15,6 +18,10 @@ impl MockBarsAdapter {
             venue,
             data_source_id,
         }
+    }
+
+    pub const fn paper_bars(venue: Venue) -> Self {
+        Self::new(venue, PAPER_BARS_DATA_SOURCE_ID)
     }
 }
 

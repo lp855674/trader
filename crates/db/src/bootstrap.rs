@@ -1,23 +1,19 @@
-//! Seed rows required for MVP integration tests and local runs.
+//! Seed rows for paper trading (`paper` profile, accounts, synthetic bar source).
 
 use crate::error::DbError;
 use sqlx::SqlitePool;
 
+/// `bars.data_source_id` FK for [`ingest::MockBarsAdapter`] synthetic bars.
+pub const PAPER_BARS_DATA_SOURCE_ID: &str = "paper_bars";
+
 pub async fn ensure_mvp_seed(pool: &SqlitePool) -> Result<(), DbError> {
-    for (id, kind) in [
-        ("mock_us", "mock_bars"),
-        ("mock_hk", "mock_bars"),
-        ("mock_crypto", "mock_bars"),
-        ("mock_poly", "mock_bars"),
-    ] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO data_sources (id, kind, config_json) VALUES (?, ?, NULL)",
-        )
-        .bind(id)
-        .bind(kind)
-        .execute(pool)
-        .await?;
-    }
+    sqlx::query(
+        "INSERT OR IGNORE INTO data_sources (id, kind, config_json) VALUES (?, ?, NULL)",
+    )
+    .bind(PAPER_BARS_DATA_SOURCE_ID)
+    .bind("synthetic_bars")
+    .execute(pool)
+    .await?;
 
     sqlx::query(
         "INSERT OR IGNORE INTO execution_profiles (id, kind, config_json) VALUES ('paper', 'paper_sim', NULL)",

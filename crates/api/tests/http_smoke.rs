@@ -1,7 +1,6 @@
 //! Task 10: integration-style HTTP checks via `tower::ServiceExt::oneshot`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -12,6 +11,8 @@ use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use http_body_util::BodyExt;
 use ingest::{IngestRegistry, MockBarsAdapter};
 use pipeline::RiskLimits;
+use std::sync::Arc;
+use strategy::NoOpStrategy;
 use tokio::sync::broadcast;
 use tower::ServiceExt;
 
@@ -30,13 +31,10 @@ async fn test_app() -> Router {
     let execution_router = ExecutionRouter::new(routes);
 
     let mut registry = IngestRegistry::default();
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::HkEquity, "mock_hk")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::Crypto, "mock_crypto")));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Polymarket,
-        "mock_poly",
-    )));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::HkEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Crypto)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Polymarket)));
 
     let (event_tx, _event_rx) = broadcast::channel::<api::StreamEvent>(8);
     let state = api::AppState {
@@ -45,6 +43,7 @@ async fn test_app() -> Router {
         execution_router,
         ingest_registry: registry,
         risk_limits: RiskLimits::default(),
+        strategy: Arc::new(NoOpStrategy),
         api_key: None,
     };
     api::router(state)
@@ -64,13 +63,10 @@ async fn test_app_with_key(key: &str) -> Router {
     let execution_router = ExecutionRouter::new(routes);
 
     let mut registry = IngestRegistry::default();
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::HkEquity, "mock_hk")));
-    registry.register(Arc::new(MockBarsAdapter::new(Venue::Crypto, "mock_crypto")));
-    registry.register(Arc::new(MockBarsAdapter::new(
-        Venue::Polymarket,
-        "mock_poly",
-    )));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::HkEquity)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Crypto)));
+    registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Polymarket)));
 
     let (event_tx, _event_rx) = broadcast::channel::<api::StreamEvent>(8);
     let state = api::AppState {
@@ -79,6 +75,7 @@ async fn test_app_with_key(key: &str) -> Router {
         execution_router,
         ingest_registry: registry,
         risk_limits: RiskLimits::default(),
+        strategy: Arc::new(NoOpStrategy),
         api_key: Some(key.to_string()),
     };
     api::router(state)

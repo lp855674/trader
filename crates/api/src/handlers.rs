@@ -93,7 +93,6 @@ async fn run_tick_inner(state: Arc<AppState>, body: TickBody) -> Result<TickResp
         return Err(ApiError::bad_request("symbol must not be empty"));
     }
 
-    let strategy = strategy::AlwaysLongOne;
     let tick = pipeline::VenueTickParams {
         account_id,
         venue,
@@ -105,7 +104,7 @@ async fn run_tick_inner(state: Arc<AppState>, body: TickBody) -> Result<TickResp
         &state.database,
         adapter.as_ref(),
         &state.execution_router,
-        &strategy,
+        state.strategy.as_ref(),
         state.risk_limits,
         &tick,
     )

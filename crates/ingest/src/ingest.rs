@@ -24,16 +24,16 @@ mod tests {
         let iid = db::upsert_instrument(database.pool(), Venue::UsEquity.as_str(), "TEST")
             .await
             .expect("instrument");
-        let adapter = Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us"));
+        let adapter = Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity));
         adapter
             .ingest_once(&database, iid)
             .await
             .expect("ingest");
-        let n = db::count_bars_for_source(database.pool(), iid, "mock_us")
+        let n = db::count_bars_for_source(database.pool(), iid, db::PAPER_BARS_DATA_SOURCE_ID)
             .await
             .expect("count");
         assert_eq!(n, 1, "expected exactly one bar row (UNIQUE per ts/source)");
-        let close = db::last_bar_close(database.pool(), iid, "mock_us")
+        let close = db::last_bar_close(database.pool(), iid, db::PAPER_BARS_DATA_SOURCE_ID)
             .await
             .expect("last");
         assert_eq!(close, Some(100.0));
@@ -42,8 +42,8 @@ mod tests {
     #[test]
     fn registry_for_venue_filters_adapters() {
         let mut registry = IngestRegistry::default();
-        registry.register(Arc::new(MockBarsAdapter::new(Venue::UsEquity, "mock_us")));
-        registry.register(Arc::new(MockBarsAdapter::new(Venue::Crypto, "mock_crypto")));
+        registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity)));
+        registry.register(Arc::new(MockBarsAdapter::paper_bars(Venue::Crypto)));
         assert_eq!(registry.for_venue(Venue::UsEquity).count(), 1);
         assert_eq!(registry.for_venue(Venue::Crypto).count(), 1);
         assert_eq!(registry.for_venue(Venue::HkEquity).count(), 0);

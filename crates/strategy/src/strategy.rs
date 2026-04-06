@@ -14,6 +14,16 @@ pub trait Strategy: Send + Sync {
     fn evaluate(&self, context: &StrategyContext) -> Option<Signal>;
 }
 
+/// 不下单、不产出信号；用于生产默认，避免演示策略自动成交。
+pub struct NoOpStrategy;
+
+impl Strategy for NoOpStrategy {
+    fn evaluate(&self, _context: &StrategyContext) -> Option<Signal> {
+        None
+    }
+}
+
+/// 仅用于单元测试与集成测试：有 bar 则做多 1 手。
 pub struct AlwaysLongOne;
 
 impl Strategy for AlwaysLongOne {
