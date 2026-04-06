@@ -36,7 +36,7 @@ pub struct OrderIntent {
     pub limit_price: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NormalizedBar {
     pub ts_ms: i64,
     pub open: f64,

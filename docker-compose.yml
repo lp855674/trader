@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  trader:
+    build: .
+    container_name: trader_app
+    ports:
+      - "8080:8080"   # REST API
+      - "9090:9090"   # gRPC
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=sqlite:///data/trader.db
+    volumes:
+      - trader_data:/data
+      - ./crates/config:/app/config:ro
+    networks:
+      - trader_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: prometheus for metrics scraping
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: trader_prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./k8s/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - trader_net
+    restart: unless-stopped
+
+volumes:
+  trader_data:
+  prometheus_data:
+
+networks:
+  trader_net:
+    driver: bridge

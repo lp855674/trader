@@ -6,6 +6,19 @@ mod live_stub;
 mod paper;
 mod router;
 
+pub mod adapters;
+pub mod api;
+pub mod core;
+pub mod monitor;
+pub mod orders;
+pub mod persistence;
+pub mod quality;
+pub mod queue;
+pub mod report;
+pub mod trading;
+pub mod config;
+pub mod system;
+
 pub use adapter::{ExecutionAdapter, OrderAck};
 pub use error::ExecError;
 pub use live_stub::LiveStubAdapter;

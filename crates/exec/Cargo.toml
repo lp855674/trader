@@ -6,6 +6,11 @@ edition.workspace = true
 [lib]
 path = "src/exec.rs"
 
+[[bench]]
+name = "quality_bench"
+path = "benches/quality_bench.rs"
+harness = false
+
 [dependencies]
 async-trait.workspace = true
 domain.workspace = true
@@ -13,3 +18,5 @@ db.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

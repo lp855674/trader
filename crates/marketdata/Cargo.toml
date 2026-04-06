@@ -1,0 +1,19 @@
+[package]
+name = "marketdata"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/marketdata.rs"
+
+[[bench]]
+name = "data_bench"
+path = "benches/data_bench.rs"
+harness = false
+
+[dependencies]
+domain.workspace = true
+polars.workspace = true
+thiserror.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo test:*)",
+      "Bash(cargo build:*)",
+      "Bash(python -c \"import sys,json; lines=[l for l in sys.stdin if l.strip\\(\\)]; d=json.loads\\(lines[-1]\\) if lines else {}; print\\(d.get\\('message',{}\\).get\\('content',''\\)[:200] if isinstance\\(d.get\\('message',{}\\).get\\('content',''\\),str\\) else str\\(d.get\\('message',{}\\).get\\('content',''\\)\\)[:200]\\)\")",
+      "Bash(python -c \"import sys,json; lines=[l for l in sys.stdin if l.strip\\(\\)]; d=json.loads\\(lines[-1]\\) if lines else {}; c=d.get\\('message',{}\\).get\\('content',''\\); print\\(\\(c if isinstance\\(c,str\\) else str\\(c\\)\\)[:300]\\)\")",
+      "Bash(xargs echo:*)"
+    ]
+  }
+}

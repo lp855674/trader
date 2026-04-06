@@ -24,6 +24,7 @@
 | `pipeline` | ingest → 策略 → 风控 → 执行（`quantd` 与 `api` 共用） |
 | `api`      | axum 路由 |
 | `quantd`   | 二进制；集成测试通过 `quantd` lib 重导出 `pipeline` |
+| `marketdata` | 研究/离线数据处理（Polars DataFrame 与 `NormalizedBar` 对齐） |
 
 ## Workspace 依赖
 
@@ -49,6 +50,12 @@
 - 凭证：`LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`（见 [官方快速开始](https://open.longbridge.com/zh-CN/docs/getting-started)）。
 - `quantd` 在三个变量均非空时 `LongbridgeClients::connect()`；成功则 `ensure_longbridge_live_account`，注册 `acc_lb_live` → `LongbridgeTradeAdapter`，并对 US/HK venue 使用 `LongbridgeCandleIngest`（否则回退 mock）。
 - Paper 账户路径不变；Longbridge 错误在 API 层可表现为 `PipelineError::Exec(ExecError::Longbridge(..))` → HTTP 502、`error_code: broker_error`。
+
+## 股票数据（研究侧：Polars / Rust）
+
+- 运行期 K 线仍以 SQLite `bars` + `domain::NormalizedBar` 为准；**离线/研究** 以 **Rust 版 Polars** 作为 OHLCV 的基础表示。
+- `crates/marketdata` 提供 `BarsFrame`：DataFrame 列与 `NormalizedBar` 一致：`ts_ms`, `open`, `high`, `low`, `close`, `volume`。
+- 若需多标的面板，可在 DataFrame 上增加 `symbol`（Utf8）列，与 `ts_ms` 联合使用（目前未在 `BarsFrame` 强制建模）。
 
 ## 非目标（当前）
 

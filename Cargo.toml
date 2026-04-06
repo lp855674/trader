@@ -11,6 +11,9 @@ members = [
     "crates/api",
     "crates/quantd",
     "crates/longbridge_adapters",
+    "crates/marketdata",
+    "crates/risk",
+    "crates/infra",
 ]
 
 [workspace.package]
@@ -28,6 +31,8 @@ strategy = { path = "crates/strategy" }
 pipeline = { path = "crates/pipeline" }
 api = { path = "crates/api" }
 longbridge_adapters = { path = "crates/longbridge_adapters" }
+marketdata = { path = "crates/marketdata" }
+risk = { path = "crates/risk" }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 longbridge = "4.0.5"
@@ -42,3 +47,63 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 async-trait = "0.1"
+polars = { version = "0.53.0", features = ["lazy"] }
+arrow = "53"
+arrow-odbc = "53"
+arrow-schema = "53"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"
+comfy-table = "7"
+console-subscriber = "0.3"
+ctrlc = { version = "3.4", features = ["termination"] }
+dotenvy = "0.15"
+flume = "0.11"
+futures = "0.3"
+hashbrown = "0.15"
+heck = "0.5"
+home = "0.5"
+hyper = { version = "1.4", features = ["full"] }
+indicatif = "0.17"
+insta = { version = "1.41", features = ["glob", "filters"] }
+notify = "7.0"
+opentelemetry = { version = "0.23", features = ["metrics"] }
+opentelemetry-otlp = { version = "0.16", features = ["tonic", "metrics_http"] }
+opentelemetry_sdk = { version = "0.23", features = ["rt-tokio"] }
+parquet = "53"
+parking_lot = "0.12"
+percent-encoding = "2.3"
+pgvector = "0.4"
+prometheus = "0.13"
+prost = "0.13"
+prost-types = "0.13"
+rand = "0.8"
+rand_distr = "0.4"
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+regex = "1.11"
+reqwest = { version = "0.12", features = ["json"] }
+ripgrep = "0.3"
+roaring = "0.10"
+schemars = "0.8"
+serde_bytes = "0.11"
+sha2 = "0.10"
+signal-hook = "0.3"
+socket2 = "0.5"
+sqlx-macros = "0.8"
+sqlx-macros-core = "0.8"
+sqlx-sqlite = "0.8"
+sqlx-postgres = "0.8"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+timezone = "3.0"
+tonic = "0.12"
+tracing-appender = "0.2"
+tracing-opentelemetry = "0.28"
+tracing-forest = "0.1"
+tracing-log = "0.2"
+tree-sitter = "0.24"
+twox = "0.8"
+v_htmlescape = "0.15"
+web-time = "1.1"
+whoami = "1.5"
+yaml-rust2 = "0.9"
+zeroize = "1.8"
+zip = "2.2"
