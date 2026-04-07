@@ -38,3 +38,6 @@ pub mod config;
 pub mod api;
 
 pub use strategy::{AlwaysLongOne, NoOpStrategy, Strategy, StrategyContext};
+
+pub mod lstm;
+pub use lstm::LstmStrategy;

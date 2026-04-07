@@ -15,10 +15,14 @@ serde_json = "1.0"
 thiserror = "1.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
+reqwest = { workspace = true, features = ["json"] }
+db = { path = "../db" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 futures.workspace = true
+wiremock = "0.6"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "strategy_bench"
