@@ -9,7 +9,6 @@ use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
 use longbridge_adapters::{LongbridgeCandleIngest, LongbridgeClients, LongbridgeTradeAdapter};
 use pipeline::RiskLimits;
-use strategy::{AlwaysLongOne, NoOpStrategy, Strategy};
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
@@ -24,8 +23,154 @@ fn longbridge_env_configured() -> bool {
     !k.is_empty() && !s.is_empty() && !t.is_empty()
 }
 
-/// `QUANTD_STRATEGY`: `noop`（默认，不下单）| `always_long_one`（有 bar 则 paper 限价买 1 手，用于打通管线自测）。
-fn live_strategy_from_env() -> Arc<dyn Strategy> {
+async fn build_execution_router_from_db(
+    database: &db::Db,
+    env_lb: Option<&LongbridgeClients>,
+) -> ExecutionRouter {
+    let mut routes: HashMap<String, Arc<dyn ExecutionAdapter>> = HashMap::new();
+
+    // 1. Always register local paper adapter
+    let paper = Arc::new(PaperAdapter::new(database.clone()));
+    routes.insert("acc_mvp_paper".to_string(), paper as Arc<dyn ExecutionAdapter>);
+
+    // 2. Load execution profiles from DB
+    let profiles = db::load_execution_profiles_by_kind(
+        database.pool(),
+        &["longbridge_live", "longbridge_paper"],
+    )
+    .await
+    .unwrap_or_default();
+
+    // 3. Load all accounts from DB
+    let accounts = db::load_accounts(database.pool()).await.unwrap_or_default();
+
+    // 4. For each longbridge profile, try to build adapter from config_json credentials
+    for profile in &profiles {
+        let config_json = match &profile.config_json {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                // No credentials in DB for this profile — fall back to env for live
+                if profile.kind == "longbridge_live" {
+                    if let Some(lb) = env_lb {
+                        for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                            routes.insert(
+                                acc.id.clone(),
+                                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
+                                    as Arc<dyn ExecutionAdapter>,
+                            );
+                            tracing::info!(channel = "quantd", account_id = %acc.id, "registered via env creds");
+                        }
+                    }
+                }
+                continue;
+            }
+        };
+
+        let creds: serde_json::Value = match serde_json::from_str(config_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(channel = "quantd", profile_id = %profile.id, err = %e, "invalid config_json");
+                continue;
+            }
+        };
+
+        let app_key = creds["app_key"].as_str().unwrap_or("");
+        let app_secret = creds["app_secret"].as_str().unwrap_or("");
+        let access_token = creds["access_token"].as_str().unwrap_or("");
+
+        if app_key.is_empty() || app_secret.is_empty() || access_token.is_empty() {
+            // Incomplete credentials — env fallback for live
+            if profile.kind == "longbridge_live" {
+                if let Some(lb) = env_lb {
+                    for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                        routes.insert(
+                            acc.id.clone(),
+                            Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
+                                as Arc<dyn ExecutionAdapter>,
+                        );
+                        tracing::info!(channel = "quantd", account_id = %acc.id, "registered via env creds (incomplete db creds)");
+                    }
+                }
+            }
+            continue;
+        }
+
+        match LongbridgeClients::connect_with_credentials(app_key, app_secret, access_token) {
+            Ok(lb) => {
+                for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                    routes.insert(
+                        acc.id.clone(),
+                        Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
+                            as Arc<dyn ExecutionAdapter>,
+                    );
+                    tracing::info!(
+                        channel = "quantd",
+                        account_id = %acc.id,
+                        profile_id = %profile.id,
+                        "registered via db creds"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(channel = "quantd", profile_id = %profile.id, err = %e, "failed to connect with db creds");
+            }
+        }
+    }
+
+    // 5. If acc_lb_live was not registered from DB, fall back to env
+    if !routes.contains_key("acc_lb_live") {
+        if let Some(lb) = env_lb {
+            routes.insert(
+                "acc_lb_live".to_string(),
+                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone())) as Arc<dyn ExecutionAdapter>,
+            );
+            tracing::info!(channel = "quantd", account_id = "acc_lb_live", "registered via env fallback");
+        }
+    }
+
+    ExecutionRouter::new(routes)
+}
+
+async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
+    let account_id = std::env::var("QUANTD_ACCOUNT_ID")
+        .unwrap_or_else(|_| "acc_lb_paper".to_string());
+
+    // Try loading from system_config DB first
+    let cfg_key = format!("strategy.{}", account_id);
+    if let Ok(Some(cfg_json)) = db::get_system_config(database.pool(), &cfg_key).await {
+        if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_json) {
+            if cfg["type"].as_str() == Some("lstm") {
+                let service_url = db::get_system_config(database.pool(), "lstm.service_url")
+                    .await
+                    .unwrap_or_default()
+                    .unwrap_or_else(|| "http://127.0.0.1:8000".to_string());
+                let model_type = cfg["model_type"].as_str().unwrap_or("alstm").to_string();
+                let lookback = cfg["lookback"].as_i64().unwrap_or(60);
+                let buy_threshold = cfg["buy_threshold"].as_f64().unwrap_or(0.6);
+                let sell_threshold = cfg["sell_threshold"].as_f64().unwrap_or(-0.6);
+                let data_source_id = std::env::var("QUANTD_DATA_SOURCE_ID")
+                    .unwrap_or_else(|_| "longbridge".to_string());
+                tracing::info!(
+                    channel = "quantd",
+                    strategy = "lstm",
+                    model_type = %model_type,
+                    service_url = %service_url,
+                    "loaded lstm strategy from system_config"
+                );
+                return Arc::new(strategy::LstmStrategy::new(
+                    service_url,
+                    model_type,
+                    lookback,
+                    buy_threshold,
+                    sell_threshold,
+                    database.clone(),
+                    data_source_id,
+                ));
+            }
+        }
+    }
+
+    // Fall back to env var
     match std::env::var("QUANTD_STRATEGY")
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default()
@@ -33,11 +178,11 @@ fn live_strategy_from_env() -> Arc<dyn Strategy> {
     {
         "always_long_one" | "mvp" => {
             tracing::info!(channel = "quantd", strategy = "always_long_one", "live strategy");
-            Arc::new(AlwaysLongOne)
+            Arc::new(strategy::AlwaysLongOne)
         }
         _ => {
             tracing::info!(channel = "quantd", strategy = "noop", "live strategy");
-            Arc::new(NoOpStrategy)
+            Arc::new(strategy::NoOpStrategy)
         }
     }
 }
@@ -78,7 +223,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    let strategy = live_strategy_from_env();
 
     tracing::info!(
         channel = "quantd",
@@ -120,16 +264,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let us_lb = env_symbol("QUANTD_LB_US_SYMBOL", "AAPL.US");
     let hk_lb = env_symbol("QUANTD_LB_HK_SYMBOL", "700.HK");
 
-    let paper = Arc::new(PaperAdapter::new(database.clone()));
-    let mut routes = HashMap::new();
-    routes.insert("acc_mvp_paper".to_string(), paper as Arc<dyn ExecutionAdapter>);
-    if let Some(ref lb) = lb_clients {
-        routes.insert(
-            "acc_lb_live".to_string(),
-            Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone())) as Arc<dyn ExecutionAdapter>,
-        );
-    }
-    let execution_router = ExecutionRouter::new(routes);
+    let strategy = build_strategy(&database).await;
+    let execution_router = build_execution_router_from_db(&database, lb_clients.as_ref()).await;
 
     let ingest_registry = build_ingest_registry(lb_clients.as_ref(), &us_lb, &hk_lb);
     let risk_limits = RiskLimits::from_env();
