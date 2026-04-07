@@ -8,7 +8,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .predict import _model_path, _bars_to_features, _load_model, LOOKBACK, Bar
 
@@ -18,6 +18,7 @@ router = APIRouter()
 
 
 class BacktestRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     symbol: str
     start: str
     end: str
