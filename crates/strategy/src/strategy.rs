@@ -1,5 +1,6 @@
 //! Trading strategies.
 
+use async_trait::async_trait;
 use domain::{InstrumentId, Side, Signal};
 
 pub struct StrategyContext {
@@ -9,25 +10,26 @@ pub struct StrategyContext {
     pub ts_ms: i64,
 }
 
-/// `Send + Sync` so pipeline callers can hold `&dyn Strategy` across `await` (Axum handlers require `Send`).
+/// `Send + Sync` so pipeline callers can hold `Arc<dyn Strategy>` across `await`.
+#[async_trait]
 pub trait Strategy: Send + Sync {
-    fn evaluate(&self, context: &StrategyContext) -> Option<Signal>;
+    async fn evaluate(&self, context: &StrategyContext) -> Option<Signal>;
 }
 
-/// 不下单、不产出信号；用于生产默认，避免演示策略自动成交。
 pub struct NoOpStrategy;
 
+#[async_trait]
 impl Strategy for NoOpStrategy {
-    fn evaluate(&self, _context: &StrategyContext) -> Option<Signal> {
+    async fn evaluate(&self, _context: &StrategyContext) -> Option<Signal> {
         None
     }
 }
 
-/// 仅用于单元测试与集成测试：有 bar 则做多 1 手。
 pub struct AlwaysLongOne;
 
+#[async_trait]
 impl Strategy for AlwaysLongOne {
-    fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
+    async fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
         let limit_price = context.last_bar_close?;
         Some(Signal {
             strategy_id: "always_long_one".to_string(),
@@ -46,8 +48,8 @@ mod tests {
     use super::{AlwaysLongOne, Strategy, StrategyContext};
     use domain::{InstrumentId, Venue};
 
-    #[test]
-    fn long_one_when_bar_present() {
+    #[tokio::test]
+    async fn long_one_when_bar_present() {
         let strategy = AlwaysLongOne;
         let context = StrategyContext {
             instrument: InstrumentId::new(Venue::Crypto, "X"),
@@ -55,13 +57,13 @@ mod tests {
             last_bar_close: Some(42.0),
             ts_ms: 99,
         };
-        let signal = strategy.evaluate(&context).expect("signal");
+        let signal = strategy.evaluate(&context).await.expect("signal");
         assert_eq!(signal.qty, 1.0);
         assert_eq!(signal.limit_price, 42.0);
     }
 
-    #[test]
-    fn no_signal_without_bar() {
+    #[tokio::test]
+    async fn no_signal_without_bar() {
         let strategy = AlwaysLongOne;
         let context = StrategyContext {
             instrument: InstrumentId::new(Venue::Crypto, "X"),
@@ -69,6 +71,6 @@ mod tests {
             last_bar_close: None,
             ts_ms: 99,
         };
-        assert!(strategy.evaluate(&context).is_none());
+        assert!(strategy.evaluate(&context).await.is_none());
     }
 }

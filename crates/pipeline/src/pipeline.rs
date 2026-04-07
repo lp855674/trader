@@ -22,6 +22,8 @@ pub enum PipelineError {
     Json(#[from] serde_json::Error),
     #[error("risk denied: {0}")]
     RiskDenied(String),
+    #[error("strategy error: {0}")]
+    Strategy(String),
 }
 
 /// Per-venue tick: account, symbol, and timestamps (owned strings so HTTP/async callers stay `Send`).
@@ -68,7 +70,7 @@ pub async fn run_one_tick_for_venue(
         ts_ms: params.ts_ms,
     };
 
-    let Some(signal) = strategy.evaluate(&context) else {
+    let Some(signal) = strategy.evaluate(&context).await else {
         tracing::info!(
             channel = "pipeline",
             venue = venue_str,
