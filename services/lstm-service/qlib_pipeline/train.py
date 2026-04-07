@@ -185,3 +185,36 @@ async def train(req: TrainRequest) -> TrainResponse:
     date_str = datetime.utcnow().strftime("%Y%m%d")
     model_id = f"lstm_{req.symbol.replace('.', '_')}_{req.model_type}_{date_str}"
     return TrainResponse(model_id=model_id, metrics=TrainMetrics(**metrics))
+
+
+class ModelInfo(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+    model_id: str
+    symbol: str
+    model_type: str
+    trained_at: str
+    ic: float
+    sharpe: float
+
+
+@router.get("/models", response_model=list[ModelInfo])
+async def list_models() -> list[ModelInfo]:
+    results = []
+    for pt in MODELS_DIR.glob("*.pt"):
+        try:
+            ckpt = torch.load(pt, map_location="cpu", weights_only=False)
+            m = ckpt.get("metrics", {})
+            date_str = ckpt.get("trained_at", "")[:10].replace("-", "")
+            symbol = ckpt.get("symbol", pt.stem)
+            mt = ckpt.get("model_type", "lstm")
+            results.append(ModelInfo(
+                model_id=f"lstm_{symbol.replace('.', '_')}_{mt}_{date_str}",
+                symbol=symbol,
+                model_type=mt,
+                trained_at=ckpt.get("trained_at", ""),
+                ic=m.get("ic", 0.0),
+                sharpe=m.get("sharpe", 0.0),
+            ))
+        except Exception:
+            continue
+    return results
