@@ -2,16 +2,14 @@
 from __future__ import annotations
 
 import os
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import torch
 import torch.nn as nn
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 MODELS_DIR = Path(os.getenv("LSTM_MODELS_DIR", "models"))
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -22,6 +20,8 @@ router = APIRouter()
 
 
 class TrainRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     symbol: str
     model_type: str = "alstm"
     start: str = "2020-01-01"
@@ -43,6 +43,8 @@ class TrainMetrics(BaseModel):
 
 
 class TrainResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: str
     metrics: TrainMetrics
 
