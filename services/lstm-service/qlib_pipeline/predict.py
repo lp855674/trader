@@ -80,12 +80,30 @@ class _SimpleLSTM(nn.Module):
         return self.fc(out[:, -1, :]).squeeze(-1)
 
 
+class _ALSTM(nn.Module):
+    """LSTM with additive attention over time steps."""
+    def __init__(self, input_size=158, hidden_size=64, num_layers=2):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.attention = nn.Linear(hidden_size, 1)
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)                            # (B, T, H)
+        attn_w = torch.softmax(self.attention(out), dim=1)  # (B, T, 1)
+        context = (attn_w * out).sum(dim=1)              # (B, H)
+        return self.fc(context).squeeze(-1)
+
+
 def _load_model(path: Path, checkpoint: dict) -> nn.Module:
     model_type = checkpoint.get("model_type", "lstm")
     input_size = checkpoint.get("input_size", 158)
     hidden_size = checkpoint.get("hidden_size", 64)
     num_layers = checkpoint.get("num_layers", 2)
-    model = _SimpleLSTM(input_size, hidden_size, num_layers)
+    if model_type == "alstm":
+        model = _ALSTM(input_size, hidden_size, num_layers)
+    else:
+        model = _SimpleLSTM(input_size, hidden_size, num_layers)
     model.load_state_dict(checkpoint["model_state"])
     model.eval()
     return model

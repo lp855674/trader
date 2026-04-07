@@ -56,3 +56,28 @@ def test_predict_schema():
         assert "confidence" in data
     finally:
         stub_path.unlink(missing_ok=True)
+
+
+def test_predict_schema_alstm():
+    """ALSTM model loads and predicts correctly."""
+    import torch, os
+    from pathlib import Path
+    from qlib_pipeline.predict import _ALSTM
+    models_dir = Path(os.getenv("LSTM_MODELS_DIR", "models"))
+    models_dir.mkdir(parents=True, exist_ok=True)
+    stub_path = models_dir / "AAPL_US_alstm.pt"
+    m = _ALSTM()
+    torch.save({"model_state": m.state_dict(), "model_type": "alstm",
+                "input_size": 158, "hidden_size": 64, "num_layers": 2,
+                "lookback": 60}, stub_path)
+    try:
+        resp = client.post("/predict", json={
+            "symbol": "AAPL.US",
+            "model_type": "alstm",
+            "bars": SAMPLE_BARS,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["side"] in ("buy", "sell", "hold")
+    finally:
+        stub_path.unlink(missing_ok=True)
