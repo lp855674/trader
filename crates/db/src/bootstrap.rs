@@ -69,3 +69,33 @@ pub async fn ensure_account(
     .await?;
     Ok(())
 }
+
+/// 写入长桥 paper 账号凭证（凭证存 execution_profiles.config_json）。
+pub async fn ensure_longbridge_paper_account(
+    pool: &SqlitePool,
+    app_key: &str,
+    app_secret: &str,
+    access_token: &str,
+) -> Result<(), DbError> {
+    let config_json = format!(
+        r#"{{"app_key":"{}","app_secret":"{}","access_token":"{}"}}"#,
+        app_key, app_secret, access_token
+    );
+
+    sqlx::query(
+        "INSERT INTO execution_profiles (id, kind, config_json) VALUES ('longbridge_paper', 'longbridge_paper', ?)
+         ON CONFLICT(id) DO UPDATE SET config_json = excluded.config_json",
+    )
+    .bind(&config_json)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO accounts (id, mode, execution_profile_id, venue)
+         VALUES ('acc_lb_paper', 'paper', 'longbridge_paper', NULL)",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
