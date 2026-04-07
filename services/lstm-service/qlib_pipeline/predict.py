@@ -86,7 +86,7 @@ def _load_model(path: Path, checkpoint: dict) -> nn.Module:
     hidden_size = checkpoint.get("hidden_size", 64)
     num_layers = checkpoint.get("num_layers", 2)
     model = _SimpleLSTM(input_size, hidden_size, num_layers)
-    model.load_state_dict(checkpoint["model_state"], strict=False)
+    model.load_state_dict(checkpoint["model_state"])
     model.eval()
     return model
 

@@ -36,8 +36,9 @@ def test_predict_schema():
     models_dir.mkdir(parents=True, exist_ok=True)
     stub_path = models_dir / "AAPL_US_lstm.pt"
     # save minimal state dict
+    from qlib_pipeline.predict import _SimpleLSTM
     import torch.nn as nn
-    m = nn.Linear(158, 1)
+    m = _SimpleLSTM()
     torch.save({"model_state": m.state_dict(), "model_type": "lstm",
                 "input_size": 158, "hidden_size": 64, "num_layers": 2,
                 "lookback": 60}, stub_path)
