@@ -11,7 +11,7 @@ from qlib_pipeline.backtest import router as backtest_router
 from qlib_pipeline.features import router as features_router
 
 MODELS_DIR = Path(os.getenv("LSTM_MODELS_DIR", "models"))
-MODELS_DIR.mkdir(exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="lstm-service", version="0.1.0")
 
