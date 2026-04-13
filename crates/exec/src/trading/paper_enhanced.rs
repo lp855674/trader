@@ -37,7 +37,9 @@ impl EnhancedPaperAdapter {
     pub fn submit(&mut self, request: OrderRequest, ts_ms: i64) -> Result<String, OrderError> {
         let id = self.order_manager.submit(request, ts_ms)?;
         // Transition to Submitted
-        let _ = self.order_manager.apply_event(&id, OrderEvent::Submit, ts_ms);
+        let _ = self
+            .order_manager
+            .apply_event(&id, OrderEvent::Submit, ts_ms);
         Ok(id)
     }
 
@@ -55,7 +57,10 @@ impl EnhancedPaperAdapter {
                 continue;
             }
             // Only fill Submitted orders
-            if !matches!(order.state, OrderState::Submitted | OrderState::PartiallyFilled { .. }) {
+            if !matches!(
+                order.state,
+                OrderState::Submitted | OrderState::PartiallyFilled { .. }
+            ) {
                 continue;
             }
             // Check fill delay
@@ -118,7 +123,10 @@ impl EnhancedPaperAdapter {
             // Apply fill event to order
             let _ = self.order_manager.apply_event(
                 &order_id,
-                OrderEvent::Fill { qty, price: fill_price },
+                OrderEvent::Fill {
+                    qty,
+                    price: fill_price,
+                },
                 ts_ms,
             );
 

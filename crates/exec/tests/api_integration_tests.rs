@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use domain::{InstrumentId, Side, Venue};
+use exec::adapters::longbridge::{LongbridgeAdapter, LongbridgeConfig};
 use exec::api::grpc::{ExecGrpcService, ExecServiceRequest};
 use exec::api::health::{HealthChecker, HealthStatus};
 use exec::api::http::ExecHttpHandler;
 use exec::api::ws::{WsEvent, WsEventBus, WsEventKind};
-use exec::adapters::longbridge::{LongbridgeAdapter, LongbridgeConfig};
 use exec::core::order::OrderManager;
 use exec::core::types::{OrderKind, OrderRequest, TimeInForce};
 
@@ -31,10 +31,17 @@ fn grpc_submit_creates_order() {
     let svc = ExecGrpcService::new(mgr.clone());
 
     let payload = serde_json::to_value(make_order_request("c1")).unwrap();
-    let req = ExecServiceRequest { action: "submit".to_string(), payload };
+    let req = ExecServiceRequest {
+        action: "submit".to_string(),
+        payload,
+    };
     let resp = svc.handle(&req);
 
-    assert!(resp.success, "expected success, got error: {:?}", resp.error);
+    assert!(
+        resp.success,
+        "expected success, got error: {:?}",
+        resp.error
+    );
     assert!(resp.data.get("order_id").is_some());
 
     // Verify order is in the manager
@@ -102,5 +109,8 @@ fn longbridge_connect_and_submit() {
     let req = make_order_request("c3");
     let order_id = adapter.submit_order(&req).expect("submit should succeed");
     assert!(!order_id.is_empty(), "order_id should not be empty");
-    assert!(order_id.contains("c3"), "order_id should reference client_order_id");
+    assert!(
+        order_id.contains("c3"),
+        "order_id should reference client_order_id"
+    );
 }

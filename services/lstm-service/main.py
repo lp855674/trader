@@ -10,8 +10,10 @@ from qlib_pipeline.predict import router as predict_router
 from qlib_pipeline.backtest import router as backtest_router
 from qlib_pipeline.features import router as features_router
 
-MODELS_DIR = Path(os.getenv("LSTM_MODELS_DIR", "models"))
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+def get_models_dir() -> Path:
+    path = Path(os.getenv("LSTM_MODELS_DIR", "models"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 app = FastAPI(title="lstm-service", version="0.1.0")
 
@@ -23,5 +25,6 @@ app.include_router(features_router)
 
 @app.get("/health")
 async def health() -> dict:
-    model_files = list(MODELS_DIR.glob("*.pt"))
+    models_dir = get_models_dir()
+    model_files = list(models_dir.glob("*.pt"))
     return {"status": "ok", "models_loaded": len(model_files)}

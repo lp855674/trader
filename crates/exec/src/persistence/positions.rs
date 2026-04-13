@@ -11,7 +11,10 @@ pub struct PositionRepository {
 
 impl PositionRepository {
     pub fn new(max_snapshots: usize) -> Self {
-        Self { snapshots: Vec::new(), max_snapshots }
+        Self {
+            snapshots: Vec::new(),
+            max_snapshots,
+        }
     }
 
     pub fn take_snapshot(&mut self, manager: &ExecPositionManager, ts_ms: i64) {
@@ -25,27 +28,32 @@ impl PositionRepository {
         self.snapshots.last().map(|(_, positions)| positions)
     }
 
-    pub fn history_since(
-        &self,
-        since_ms: i64,
-    ) -> Vec<&(i64, HashMap<InstrumentId, ExecPosition>)> {
-        self.snapshots.iter().filter(|(ts, _)| *ts >= since_ms).collect()
+    pub fn history_since(&self, since_ms: i64) -> Vec<&(i64, HashMap<InstrumentId, ExecPosition>)> {
+        self.snapshots
+            .iter()
+            .filter(|(ts, _)| *ts >= since_ms)
+            .collect()
     }
 
     /// Aggregation query: total notional exposure across all instruments in latest snapshot.
     pub fn total_notional(&self, prices: &HashMap<InstrumentId, f64>) -> f64 {
         match self.latest() {
             None => 0.0,
-            Some(positions) => positions.iter().map(|(id, pos)| {
-                let price = prices.get(id).copied().unwrap_or(0.0);
-                pos.net_qty.abs() * price
-            }).sum(),
+            Some(positions) => positions
+                .iter()
+                .map(|(id, pos)| {
+                    let price = prices.get(id).copied().unwrap_or(0.0);
+                    pos.net_qty.abs() * price
+                })
+                .sum(),
         }
     }
 
     /// Aggregation query: count of open positions (non-zero net qty).
     pub fn open_position_count(&self) -> usize {
-        self.latest().map(|p| p.values().filter(|pos| pos.net_qty.abs() > 1e-9).count()).unwrap_or(0)
+        self.latest()
+            .map(|p| p.values().filter(|pos| pos.net_qty.abs() > 1e-9).count())
+            .unwrap_or(0)
     }
 }
 

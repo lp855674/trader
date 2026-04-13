@@ -48,8 +48,18 @@ mod tests {
     #[test]
     fn register_and_filter_healthy() {
         let mut reg = ServiceRegistry::new();
-        reg.register(ServiceInfo { name: "strategy".to_string(), address: "127.0.0.1:9001".to_string(), healthy: true, version: "1.0".to_string() });
-        reg.register(ServiceInfo { name: "risk".to_string(), address: "127.0.0.1:9002".to_string(), healthy: true, version: "1.0".to_string() });
+        reg.register(ServiceInfo {
+            name: "strategy".to_string(),
+            address: "127.0.0.1:9001".to_string(),
+            healthy: true,
+            version: "1.0".to_string(),
+        });
+        reg.register(ServiceInfo {
+            name: "risk".to_string(),
+            address: "127.0.0.1:9002".to_string(),
+            healthy: true,
+            version: "1.0".to_string(),
+        });
         reg.heartbeat("risk", false);
         assert_eq!(reg.healthy_services().len(), 1);
         assert_eq!(reg.healthy_services()[0].name, "strategy");
@@ -58,7 +68,12 @@ mod tests {
     #[test]
     fn deregister_removes_service() {
         let mut reg = ServiceRegistry::new();
-        reg.register(ServiceInfo { name: "exec".to_string(), address: "127.0.0.1:9003".to_string(), healthy: true, version: "1.0".to_string() });
+        reg.register(ServiceInfo {
+            name: "exec".to_string(),
+            address: "127.0.0.1:9003".to_string(),
+            healthy: true,
+            version: "1.0".to_string(),
+        });
         reg.deregister("exec");
         assert!(reg.find("exec").is_none());
     }

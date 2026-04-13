@@ -1,5 +1,5 @@
-use serde::Serialize;
 use crate::monitor::metrics::DataMetricsSnapshot;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum DataHealthStatus {

@@ -18,7 +18,8 @@ impl StrategyServiceStub {
     }
 
     pub fn register(&mut self, id: &str) {
-        self.strategies.insert(id.to_string(), StrategyStatus::Active);
+        self.strategies
+            .insert(id.to_string(), StrategyStatus::Active);
     }
 
     pub fn pause(&mut self, id: &str) -> bool {
@@ -46,7 +47,10 @@ impl StrategyServiceStub {
     }
 
     pub fn active_count(&self) -> usize {
-        self.strategies.values().filter(|s| **s == StrategyStatus::Active).count()
+        self.strategies
+            .values()
+            .filter(|s| **s == StrategyStatus::Active)
+            .count()
     }
 }
 

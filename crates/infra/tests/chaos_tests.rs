@@ -1,17 +1,24 @@
 // Chaos engineering tests: inject failures and verify resilience.
 
+use infra::lifecycle::cleanup::{ResourceCleanup, ResourceType};
 use infra::lifecycle::shutdown::GracefulShutdown;
 use infra::lifecycle::watchdog::Watchdog;
 use infra::services::circuit::{CircuitBreaker, CircuitState};
-use infra::services::discovery::{ServiceRegistry, ServiceInfo};
-use infra::lifecycle::cleanup::{ResourceCleanup, ResourceType};
+use infra::services::discovery::{ServiceInfo, ServiceRegistry};
 
 /// Simulate a random failure pattern using a deterministic LCG.
-struct LcgRng { state: u64 }
+struct LcgRng {
+    state: u64,
+}
 impl LcgRng {
-    fn new(seed: u64) -> Self { Self { state: seed } }
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
     fn next(&mut self) -> u64 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.state >> 33
     }
     fn next_bool(&mut self, probability_pct: u64) -> bool {
@@ -63,9 +70,8 @@ fn resource_exhaustion_cleanup_handles_many_resources() {
 #[test]
 fn concurrent_shutdown_phases_complete_safely() {
     // Simulate multiple concurrent shutdown sequences (single-threaded deterministic)
-    let mut shutdowns: Vec<GracefulShutdown> = (0..10)
-        .map(|_| GracefulShutdown::new(5000))
-        .collect();
+    let mut shutdowns: Vec<GracefulShutdown> =
+        (0..10).map(|_| GracefulShutdown::new(5000)).collect();
 
     // Advance each through all phases
     for sd in &mut shutdowns {
@@ -90,12 +96,18 @@ fn watchdog_multiple_services_partial_failure() {
     wd.tick(1050);
     // svc_0 (timeout 1000) is the only one that timed out
     let unhealthy = wd.unhealthy();
-    assert!(unhealthy.contains(&"svc_0".to_string()), "svc_0 should be unhealthy");
+    assert!(
+        unhealthy.contains(&"svc_0".to_string()),
+        "svc_0 should be unhealthy"
+    );
     // Heartbeat svc_0 and tick again — it should recover
     wd.heartbeat("svc_0");
     wd.tick(50);
     let unhealthy2 = wd.unhealthy();
-    assert!(!unhealthy2.contains(&"svc_0".to_string()), "svc_0 should recover after heartbeat");
+    assert!(
+        !unhealthy2.contains(&"svc_0".to_string()),
+        "svc_0 should recover after heartbeat"
+    );
 }
 
 #[test]
@@ -115,10 +127,16 @@ fn service_registry_flapping_health() {
     for _ in 0..100 {
         let healthy = rng.next_bool(60); // 60% healthy
         reg.heartbeat("flapping_svc", healthy);
-        if reg.healthy_services().len() == 1 { healthy_snapshots += 1; }
+        if reg.healthy_services().len() == 1 {
+            healthy_snapshots += 1;
+        }
         total += 1;
     }
     // Roughly 60% of snapshots should show healthy
     let ratio = healthy_snapshots as f64 / total as f64;
-    assert!(ratio > 0.4 && ratio < 0.8, "health ratio {} out of expected range", ratio);
+    assert!(
+        ratio > 0.4 && ratio < 0.8,
+        "health ratio {} out of expected range",
+        ratio
+    );
 }

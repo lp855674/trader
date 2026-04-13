@@ -1,8 +1,8 @@
 use domain::{InstrumentId, Side, Venue};
-use exec::orders::{IcebergOrder, TrailingStop, TwapOrder, AlgoState};
-use exec::queue::{BatchConfig, BatchExecutionQueue, OrderPriority, PriorityQueue};
-use exec::core::{OrderRequest};
+use exec::core::OrderRequest;
 use exec::core::types::{OrderKind, TimeInForce};
+use exec::orders::{AlgoState, IcebergOrder, TrailingStop, TwapOrder};
+use exec::queue::{BatchConfig, BatchExecutionQueue, OrderPriority, PriorityQueue};
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -30,10 +30,18 @@ fn trailing_stop_follows_price_up_triggers_on_reversal() {
 
     // Price rises — stop should follow
     assert!(!ts.update_price(1050.0));
-    assert!((ts.current_stop - 1000.0).abs() < 1e-9, "stop after 1050={}", ts.current_stop);
+    assert!(
+        (ts.current_stop - 1000.0).abs() < 1e-9,
+        "stop after 1050={}",
+        ts.current_stop
+    );
 
     assert!(!ts.update_price(1200.0));
-    assert!((ts.current_stop - 1150.0).abs() < 1e-9, "stop after 1200={}", ts.current_stop);
+    assert!(
+        (ts.current_stop - 1150.0).abs() < 1e-9,
+        "stop after 1200={}",
+        ts.current_stop
+    );
 
     assert!(!ts.update_price(1300.0));
     assert!((ts.current_stop - 1250.0).abs() < 1e-9);
@@ -102,7 +110,11 @@ fn twap_schedules_slices_at_correct_intervals() {
 /// Test 4: BatchQueue respects rate limit.
 #[test]
 fn batch_queue_respects_rate_limit() {
-    let config = BatchConfig { max_batch_size: 50, flush_interval_ms: 100, rate_limit_per_sec: 3 };
+    let config = BatchConfig {
+        max_batch_size: 50,
+        flush_interval_ms: 100,
+        rate_limit_per_sec: 3,
+    };
     let mut queue = BatchExecutionQueue::new(config);
 
     for i in 0..10 {
@@ -211,10 +223,14 @@ fn complex_twap_produces_slices() {
 #[test]
 fn queue_stress_batch_many_orders() {
     use domain::{InstrumentId, Side, Venue};
-    use exec::queue::batch::{BatchExecutionQueue, BatchConfig};
     use exec::core::types::{OrderKind, OrderRequest, TimeInForce};
+    use exec::queue::batch::{BatchConfig, BatchExecutionQueue};
 
-    let config = BatchConfig { max_batch_size: 50, flush_interval_ms: 0, rate_limit_per_sec: 10_000 };
+    let config = BatchConfig {
+        max_batch_size: 50,
+        flush_interval_ms: 0,
+        rate_limit_per_sec: 10_000,
+    };
     let mut q = BatchExecutionQueue::new(config);
     let instrument = InstrumentId::new(Venue::Crypto, "BTC-USD");
 
@@ -236,7 +252,9 @@ fn queue_stress_batch_many_orders() {
     let mut ts = 5000i64;
     loop {
         let batch = q.flush(ts);
-        if batch.is_empty() { break; }
+        if batch.is_empty() {
+            break;
+        }
         flushed += batch.len();
         ts += 1000;
     }
@@ -246,8 +264,8 @@ fn queue_stress_batch_many_orders() {
 #[test]
 fn queue_stress_priority_under_load() {
     use domain::{InstrumentId, Side, Venue};
-    use exec::queue::priority::{PriorityQueue, OrderPriority};
     use exec::core::types::{OrderKind, OrderRequest, TimeInForce};
+    use exec::queue::priority::{OrderPriority, PriorityQueue};
 
     let mut pq = PriorityQueue::new();
     let instrument = InstrumentId::new(Venue::Crypto, "ETH-USD");
@@ -280,7 +298,11 @@ fn queue_stress_priority_under_load() {
             OrderPriority::Normal => 1,
             OrderPriority::Delayed => 2,
         };
-        assert!(val >= last_priority_val, "priority order violated: {:?}", item.priority);
+        assert!(
+            val >= last_priority_val,
+            "priority order violated: {:?}",
+            item.priority
+        );
         last_priority_val = val;
     }
 }

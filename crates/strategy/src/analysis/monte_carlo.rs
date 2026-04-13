@@ -24,11 +24,14 @@ struct Lcg {
 
 impl Lcg {
     fn new(seed: u64) -> Self {
-        Self { state: if seed == 0 { 1 } else { seed } }
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.state = self.state
+        self.state = self
+            .state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.state
@@ -44,7 +47,9 @@ impl Lcg {
     }
 
     fn next_usize(&mut self, n: usize) -> usize {
-        if n == 0 { return 0; }
+        if n == 0 {
+            return 0;
+        }
         (self.next_u64() % n as u64) as usize
     }
 }
@@ -63,7 +68,12 @@ impl SimulationPath {
         let final_value = values.last().copied().unwrap_or(0.0);
         let peak = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let max_drawdown = compute_max_drawdown(&values);
-        Self { values, final_value, max_drawdown, peak }
+        Self {
+            values,
+            final_value,
+            max_drawdown,
+            peak,
+        }
     }
 }
 
@@ -71,10 +81,14 @@ fn compute_max_drawdown(values: &[f64]) -> f64 {
     let mut max_dd = 0.0_f64;
     let mut running_peak = f64::NEG_INFINITY;
     for &v in values {
-        if v > running_peak { running_peak = v; }
+        if v > running_peak {
+            running_peak = v;
+        }
         if running_peak > 0.0 {
             let dd = (running_peak - v) / running_peak;
-            if dd > max_dd { max_dd = dd; }
+            if dd > max_dd {
+                max_dd = dd;
+            }
         }
     }
     max_dd
@@ -98,7 +112,9 @@ pub struct SimulationResult {
 }
 
 fn compute_percentile(sorted: &[f64], pct: f64) -> f64 {
-    if sorted.is_empty() { return 0.0; }
+    if sorted.is_empty() {
+        return 0.0;
+    }
     let idx_f = pct / 100.0 * (sorted.len() - 1) as f64;
     let lo = idx_f.floor() as usize;
     let hi = (lo + 1).min(sorted.len() - 1);
@@ -111,11 +127,12 @@ fn aggregate(paths: &[SimulationPath], initial_value: f64) -> SimulationResult {
     finals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let mean_final = finals.iter().sum::<f64>() / finals.len() as f64;
-    let variance = finals.iter().map(|v| (v - mean_final).powi(2)).sum::<f64>() / finals.len() as f64;
+    let variance =
+        finals.iter().map(|v| (v - mean_final).powi(2)).sum::<f64>() / finals.len() as f64;
     let std_final = variance.sqrt();
 
-    let prob_profit = finals.iter().filter(|&&v| v > initial_value).count() as f64
-        / finals.len() as f64;
+    let prob_profit =
+        finals.iter().filter(|&&v| v > initial_value).count() as f64 / finals.len() as f64;
 
     let mean_max_drawdown = if paths.is_empty() {
         0.0
@@ -267,7 +284,9 @@ mod tests {
     #[test]
     fn bootstrap_produces_correct_count() {
         let sim = MonteCarloSimulator::new(make_config(50));
-        let returns: Vec<f64> = (0..252).map(|i| if i % 2 == 0 { 0.01 } else { -0.01 }).collect();
+        let returns: Vec<f64> = (0..252)
+            .map(|i| if i % 2 == 0 { 0.01 } else { -0.01 })
+            .collect();
         let result = sim.bootstrap_returns(&returns, 50);
         assert_eq!(result.paths.len(), 50);
     }

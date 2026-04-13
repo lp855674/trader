@@ -13,13 +13,12 @@ pub async fn upsert_instrument(
     venue: &str,
     symbol: &str,
 ) -> Result<i64, DbError> {
-    let r = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM instruments WHERE venue = ? AND symbol = ?",
-    )
-    .bind(venue)
-    .bind(symbol)
-    .fetch_optional(pool)
-    .await?;
+    let r =
+        sqlx::query_scalar::<_, i64>("SELECT id FROM instruments WHERE venue = ? AND symbol = ?")
+            .bind(venue)
+            .bind(symbol)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some(id) = r {
         return Ok(id);
@@ -31,13 +30,12 @@ pub async fn upsert_instrument(
         .execute(pool)
         .await?;
 
-    let id = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM instruments WHERE venue = ? AND symbol = ?",
-    )
-    .bind(venue)
-    .bind(symbol)
-    .fetch_one(pool)
-    .await?;
+    let id =
+        sqlx::query_scalar::<_, i64>("SELECT id FROM instruments WHERE venue = ? AND symbol = ?")
+            .bind(venue)
+            .bind(symbol)
+            .fetch_one(pool)
+            .await?;
 
     Ok(id)
 }

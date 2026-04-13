@@ -25,7 +25,11 @@ pub struct LoadBalancer {
 
 impl LoadBalancer {
     pub fn new(strategy: BalanceStrategy) -> Self {
-        Self { nodes: Vec::new(), strategy, rr_index: 0 }
+        Self {
+            nodes: Vec::new(),
+            strategy,
+            rr_index: 0,
+        }
     }
 
     pub fn add_node(&mut self, id: &str, address: &str, weight: u32) {
@@ -58,7 +62,10 @@ impl LoadBalancer {
 
     /// Select a backend node according to the configured strategy.
     pub fn select(&mut self, key: Option<&str>) -> Option<&BackendNode> {
-        let healthy: Vec<usize> = self.nodes.iter().enumerate()
+        let healthy: Vec<usize> = self
+            .nodes
+            .iter()
+            .enumerate()
             .filter(|(_, n)| n.healthy)
             .map(|(i, _)| i)
             .collect();
@@ -71,24 +78,33 @@ impl LoadBalancer {
                 self.rr_index = self.rr_index.wrapping_add(1);
                 healthy[idx]
             }
-            BalanceStrategy::LeastConnections => {
-                *healthy.iter().min_by_key(|&&i| self.nodes[i].connections).unwrap()
-            }
+            BalanceStrategy::LeastConnections => *healthy
+                .iter()
+                .min_by_key(|&&i| self.nodes[i].connections)
+                .unwrap(),
             BalanceStrategy::ConsistentHash => {
-                let hash = key.map(|k| {
-                    k.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64))
-                }).unwrap_or(0);
+                let hash = key
+                    .map(|k| {
+                        k.bytes()
+                            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64))
+                    })
+                    .unwrap_or(0);
                 healthy[(hash as usize) % healthy.len()]
             }
             BalanceStrategy::Weighted => {
                 let total_weight: u32 = healthy.iter().map(|&i| self.nodes[i].weight).sum();
-                if total_weight == 0 { return None; }
+                if total_weight == 0 {
+                    return None;
+                }
                 let mut pick = (self.rr_index as u32) % total_weight;
                 self.rr_index = self.rr_index.wrapping_add(1);
                 let mut chosen = healthy[0];
                 for &i in &healthy {
                     let w = self.nodes[i].weight;
-                    if pick < w { chosen = i; break; }
+                    if pick < w {
+                        chosen = i;
+                        break;
+                    }
                     pick -= w;
                 }
                 chosen

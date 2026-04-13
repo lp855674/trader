@@ -37,7 +37,7 @@ impl ExecGrpcService {
                             success: false,
                             data: serde_json::Value::Null,
                             error: Some(format!("invalid payload: {}", e)),
-                        }
+                        };
                     }
                 };
                 let ts_ms = order_req.submitted_ts_ms;
@@ -63,11 +63,14 @@ impl ExecGrpcService {
                             success: false,
                             data: serde_json::Value::Null,
                             error: Some("missing order_id".to_string()),
-                        }
+                        };
                     }
                 };
-                let ts_ms =
-                    req.payload.get("ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                let ts_ms = req
+                    .payload
+                    .get("ts_ms")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
                 let mut mgr = self.manager.lock().unwrap();
                 match mgr.cancel(&order_id, ts_ms) {
                     Ok(()) => ExecServiceResponse {
@@ -102,7 +105,8 @@ impl ExecGrpcService {
                 let positions: std::collections::HashMap<String, f64> = {
                     let mut map = std::collections::HashMap::new();
                     for o in &open {
-                        *map.entry(o.request.instrument.to_string()).or_insert(0.0) += o.request.quantity;
+                        *map.entry(o.request.instrument.to_string()).or_insert(0.0) +=
+                            o.request.quantity;
                     }
                     map
                 };
@@ -150,7 +154,10 @@ mod tests {
     #[test]
     fn submit_creates_order() {
         let svc = make_service();
-        let req = ExecServiceRequest { action: "submit".to_string(), payload: order_payload() };
+        let req = ExecServiceRequest {
+            action: "submit".to_string(),
+            payload: order_payload(),
+        };
         let resp = svc.handle(&req);
         assert!(resp.success, "{:?}", resp.error);
         assert!(resp.data.get("order_id").is_some());
@@ -159,7 +166,10 @@ mod tests {
     #[test]
     fn list_returns_open_orders() {
         let svc = make_service();
-        let submit = ExecServiceRequest { action: "submit".to_string(), payload: order_payload() };
+        let submit = ExecServiceRequest {
+            action: "submit".to_string(),
+            payload: order_payload(),
+        };
         svc.handle(&submit);
         let list = ExecServiceRequest {
             action: "list".to_string(),

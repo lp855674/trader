@@ -111,15 +111,25 @@ mod bars_tests {
             .execute(db.pool())
             .await
             .unwrap();
-        let iid = crate::upsert_instrument(db.pool(), "US_EQUITY", "AAPL").await.unwrap();
+        let iid = crate::upsert_instrument(db.pool(), "US_EQUITY", "AAPL")
+            .await
+            .unwrap();
         for i in 0..5_i64 {
-            insert_bar(db.pool(), &NewBar {
-                instrument_id: iid,
-                data_source_id: "test",
-                ts_ms: 1000 + i * 1000,
-                open: 1.0, high: 2.0, low: 0.5, close: 1.5 + i as f64 * 0.1,
-                volume: 100.0,
-            }).await.unwrap();
+            insert_bar(
+                db.pool(),
+                &NewBar {
+                    instrument_id: iid,
+                    data_source_id: "test",
+                    ts_ms: 1000 + i * 1000,
+                    open: 1.0,
+                    high: 2.0,
+                    low: 0.5,
+                    close: 1.5 + i as f64 * 0.1,
+                    volume: 100.0,
+                },
+            )
+            .await
+            .unwrap();
         }
         let rows = get_recent_bars(db.pool(), iid, "test", 3).await.unwrap();
         assert_eq!(rows.len(), 3);

@@ -6,11 +6,29 @@ use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone)]
 pub enum QualityIssue {
-    MissingData { instrument: String, ts_ms: i64 },
-    StaleData { instrument: String, last_update_ms: i64, current_ms: i64 },
-    AnomalousPrice { instrument: String, price: f64, expected_range: (f64, f64) },
-    ZeroVolume { instrument: String, ts_ms: i64 },
-    GapDetected { instrument: String, gap_ms: u64, expected_ms: u64 },
+    MissingData {
+        instrument: String,
+        ts_ms: i64,
+    },
+    StaleData {
+        instrument: String,
+        last_update_ms: i64,
+        current_ms: i64,
+    },
+    AnomalousPrice {
+        instrument: String,
+        price: f64,
+        expected_range: (f64, f64),
+    },
+    ZeroVolume {
+        instrument: String,
+        ts_ms: i64,
+    },
+    GapDetected {
+        instrument: String,
+        gap_ms: u64,
+        expected_ms: u64,
+    },
 }
 
 // ── QualityReport ─────────────────────────────────────────────────────────────
@@ -61,8 +79,8 @@ impl AnomalyDetector {
         let z = if deque.len() >= 2 {
             let prices: Vec<f64> = deque.iter().cloned().collect();
             let mean = prices.iter().sum::<f64>() / prices.len() as f64;
-            let variance = prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>()
-                / prices.len() as f64;
+            let variance =
+                prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
             let std = variance.sqrt();
             if std < 1e-12 {
                 0.0
@@ -104,8 +122,8 @@ impl AnomalyDetector {
             }
             let prices: Vec<f64> = deque.iter().cloned().collect();
             let mean = prices.iter().sum::<f64>() / prices.len() as f64;
-            let variance = prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>()
-                / prices.len() as f64;
+            let variance =
+                prices.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / prices.len() as f64;
             let std = variance.sqrt();
             if std < 1e-12 {
                 0.0
@@ -142,12 +160,7 @@ impl DataQualityChecker {
         }
     }
 
-    pub fn check_price(
-        &mut self,
-        instrument: &str,
-        price: f64,
-        ts_ms: i64,
-    ) -> Vec<QualityIssue> {
+    pub fn check_price(&mut self, instrument: &str, price: f64, ts_ms: i64) -> Vec<QualityIssue> {
         let mut issues = Vec::new();
 
         // Check gap from last update
@@ -172,12 +185,7 @@ impl DataQualityChecker {
         issues
     }
 
-    pub fn check_volume(
-        &mut self,
-        instrument: &str,
-        volume: f64,
-        ts_ms: i64,
-    ) -> Vec<QualityIssue> {
+    pub fn check_volume(&mut self, instrument: &str, volume: f64, ts_ms: i64) -> Vec<QualityIssue> {
         if volume == 0.0 {
             vec![QualityIssue::ZeroVolume {
                 instrument: instrument.to_string(),
@@ -227,11 +235,12 @@ mod tests {
 
         // Now send a 10σ outlier
         let issues = checker.check_price(instrument, 50_000.0 * 2.0, 40_000);
+        assert!(!issues.is_empty(), "Anomalous price should generate issues");
         assert!(
-            !issues.is_empty(),
-            "Anomalous price should generate issues"
+            issues
+                .iter()
+                .any(|i| matches!(i, QualityIssue::AnomalousPrice { .. }))
         );
-        assert!(issues.iter().any(|i| matches!(i, QualityIssue::AnomalousPrice { .. })));
     }
 
     #[test]
@@ -240,7 +249,11 @@ mod tests {
         checker.check_price("ETH-USD", 2_000.0, 0);
         let issues = checker.check_staleness(10_000); // 10s later > 5s max_stale
         assert!(!issues.is_empty(), "Should detect stale data");
-        assert!(issues.iter().any(|i| matches!(i, QualityIssue::StaleData { .. })));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, QualityIssue::StaleData { .. }))
+        );
     }
 
     #[test]
@@ -249,7 +262,9 @@ mod tests {
         checker.check_price("SOL-USD", 100.0, 0);
         let issues = checker.check_price("SOL-USD", 101.0, 10_000); // 10s gap > 2*1s expected
         assert!(
-            issues.iter().any(|i| matches!(i, QualityIssue::GapDetected { .. })),
+            issues
+                .iter()
+                .any(|i| matches!(i, QualityIssue::GapDetected { .. })),
             "Should detect data gap"
         );
     }
@@ -259,7 +274,11 @@ mod tests {
         let mut checker = DataQualityChecker::new(10, 3.0, 60_000, 1_000);
         let issues = checker.check_volume("BTC-USD", 0.0, 1_000);
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| matches!(i, QualityIssue::ZeroVolume { .. })));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, QualityIssue::ZeroVolume { .. }))
+        );
     }
 
     #[test]

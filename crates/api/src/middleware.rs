@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use axum::extract::State;
 use axum::body::Body;
-use axum::http::{header, HeaderMap, Request, StatusCode};
+use axum::extract::State;
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -74,4 +74,3 @@ mod tests {
         assert_eq!(extract_api_key(&headers).as_deref(), Some("k2"));
     }
 }
-

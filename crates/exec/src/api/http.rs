@@ -11,15 +11,24 @@ pub struct ExecApiError {
 
 impl ExecApiError {
     pub fn not_found(msg: impl Into<String>) -> Self {
-        Self { code: 404, message: msg.into() }
+        Self {
+            code: 404,
+            message: msg.into(),
+        }
     }
 
     pub fn bad_request(msg: impl Into<String>) -> Self {
-        Self { code: 400, message: msg.into() }
+        Self {
+            code: 400,
+            message: msg.into(),
+        }
     }
 
     pub fn internal(msg: impl Into<String>) -> Self {
-        Self { code: 500, message: msg.into() }
+        Self {
+            code: 500,
+            message: msg.into(),
+        }
     }
 }
 
@@ -53,22 +62,14 @@ impl ExecHttpHandler {
         serde_json::json!({ "orders": orders }).to_string()
     }
 
-    pub fn handle_cancel(
-        &self,
-        order_id: &str,
-        ts_ms: i64,
-    ) -> Result<String, ExecApiError> {
+    pub fn handle_cancel(&self, order_id: &str, ts_ms: i64) -> Result<String, ExecApiError> {
         let mut mgr = self.manager.lock().unwrap();
         mgr.cancel(order_id, ts_ms)
             .map(|_| serde_json::json!({ "cancelled": order_id }).to_string())
             .map_err(|e| ExecApiError::not_found(e.to_string()))
     }
 
-    pub fn handle_submit(
-        &self,
-        body: &str,
-        ts_ms: i64,
-    ) -> Result<String, ExecApiError> {
+    pub fn handle_submit(&self, body: &str, ts_ms: i64) -> Result<String, ExecApiError> {
         let req: OrderRequest = serde_json::from_str(body)
             .map_err(|e| ExecApiError::bad_request(format!("invalid JSON: {}", e)))?;
         let mut mgr = self.manager.lock().unwrap();
@@ -80,9 +81,12 @@ impl ExecHttpHandler {
     /// GET /positions — returns current position summary grouped by instrument.
     pub fn handle_positions(&self) -> String {
         let mgr = self.manager.lock().unwrap();
-        let mut positions: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        let mut positions: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
         for o in mgr.open_orders() {
-            *positions.entry(o.request.instrument.to_string()).or_insert(0.0) += o.request.quantity;
+            *positions
+                .entry(o.request.instrument.to_string())
+                .or_insert(0.0) += o.request.quantity;
         }
         serde_json::json!({ "positions": positions }).to_string()
     }
@@ -91,7 +95,9 @@ impl ExecHttpHandler {
     pub fn handle_register_webhook(&self, body: &str) -> Result<String, ExecApiError> {
         let val: serde_json::Value = serde_json::from_str(body)
             .map_err(|e| ExecApiError::bad_request(format!("invalid JSON: {}", e)))?;
-        let url = val.get("url").and_then(|u| u.as_str())
+        let url = val
+            .get("url")
+            .and_then(|u| u.as_str())
             .ok_or_else(|| ExecApiError::bad_request("missing 'url' field"))?;
         // In production: persist URL to webhook registry and deliver events.
         Ok(serde_json::json!({ "registered": url, "status": "ok" }).to_string())

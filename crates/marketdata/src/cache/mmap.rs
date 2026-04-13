@@ -41,7 +41,9 @@ impl MmapCache {
         if end > self.data.len() {
             return Err(format!(
                 "read out of bounds: offset={} len={} capacity={}",
-                offset, len, self.data.len()
+                offset,
+                len,
+                self.data.len()
             ));
         }
         Ok(&self.data[offset..end])

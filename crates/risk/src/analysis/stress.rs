@@ -1,8 +1,8 @@
 // Stress test engine: historical crises, liquidity stress, black swans
 
-use std::collections::HashMap;
-use domain::Side;
 use crate::analysis::stress_mc::{RiskMonteCarloConfig, RiskMonteCarloSimulator, StressScenario};
+use domain::Side;
+use std::collections::HashMap;
 
 // ── HistoricalCrisis ──────────────────────────────────────────────────────────
 
@@ -107,7 +107,9 @@ impl StressTestEngine {
         base_mean: f64,
     ) -> StressTestResult {
         let scenario = crisis.to_scenario();
-        let path_result = self.mc_simulator.run_scenario(&scenario, base_vol, base_mean);
+        let path_result = self
+            .mc_simulator
+            .run_scenario(&scenario, base_vol, base_mean);
 
         // portfolio_loss_pct is the magnitude of loss (positive number)
         let portfolio_loss_pct = (-path_result.final_pnl).max(0.0);
@@ -147,12 +149,7 @@ impl StressTestEngine {
             .collect()
     }
 
-    pub fn black_swan(
-        &self,
-        vol_mult: f64,
-        base_vol: f64,
-        base_mean: f64,
-    ) -> StressTestResult {
+    pub fn black_swan(&self, vol_mult: f64, base_vol: f64, base_mean: f64) -> StressTestResult {
         let scenario = StressScenario {
             name: "Black Swan".into(),
             description: format!("{:.0}x vol black swan event", vol_mult),
@@ -160,7 +157,9 @@ impl StressTestEngine {
             correlation_shift: 0.9,
             mean_return_shift: -0.10,
         };
-        let path_result = self.mc_simulator.run_scenario(&scenario, base_vol, base_mean);
+        let path_result = self
+            .mc_simulator
+            .run_scenario(&scenario, base_vol, base_mean);
         let portfolio_loss_pct = (-path_result.final_pnl).max(0.0);
         let normal_var = base_vol * (1.0_f64 / 252.0).sqrt() * 1.645;
 
@@ -171,22 +170,21 @@ impl StressTestEngine {
             liquidity_cost: portfolio_loss_pct * 0.05,
             recovery_steps: {
                 let dv = base_vol * vol_mult;
-                if dv > 0.0 { (portfolio_loss_pct / dv).ceil() as usize } else { 0 }
+                if dv > 0.0 {
+                    (portfolio_loss_pct / dv).ceil() as usize
+                } else {
+                    0
+                }
             },
         }
     }
 
-    pub fn run_all_historical(
-        &self,
-        base_vol: f64,
-        base_mean: f64,
-    ) -> Vec<StressTestResult> {
+    pub fn run_all_historical(&self, base_vol: f64, base_mean: f64) -> Vec<StressTestResult> {
         HistoricalCrisis::all_historical()
             .into_iter()
             .map(|c| self.run_crisis(c, base_vol, base_mean))
             .collect()
     }
-
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

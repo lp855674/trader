@@ -1,4 +1,6 @@
-pub mod grid;
 pub mod bayesian;
-pub use grid::{GridSearch, ParameterRange, ParameterSpace, GridSearchResult, ResultCache, CachedGridSearch};
-pub use bayesian::{BayesianOptimizer, AcquisitionFunction, BayesianResult};
+pub mod grid;
+pub use bayesian::{AcquisitionFunction, BayesianOptimizer, BayesianResult};
+pub use grid::{
+    CachedGridSearch, GridSearch, GridSearchResult, ParameterRange, ParameterSpace, ResultCache,
+};

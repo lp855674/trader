@@ -73,7 +73,10 @@ impl HealthCheckService {
 
     pub fn all_serving(&self) -> bool {
         !self.services.is_empty()
-            && self.services.values().all(|i| i.status == HealthStatus::Serving)
+            && self
+                .services
+                .values()
+                .all(|i| i.status == HealthStatus::Serving)
     }
 
     pub fn summary(&self) -> Vec<(&str, &str)> {

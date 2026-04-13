@@ -1,2 +1,2 @@
 pub mod quality;
-pub use quality::{DataQualityChecker, QualityIssue, QualityReport, AnomalyDetector};
+pub use quality::{AnomalyDetector, DataQualityChecker, QualityIssue, QualityReport};

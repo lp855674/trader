@@ -24,7 +24,9 @@ pub struct WsEventBus {
 
 impl WsEventBus {
     pub fn new() -> Self {
-        Self { subscribers: Vec::new() }
+        Self {
+            subscribers: Vec::new(),
+        }
     }
 
     pub fn subscribe(&mut self) -> mpsc::Receiver<WsEvent> {
@@ -48,7 +50,13 @@ impl Default for WsEventBus {
 
 impl WsEventBus {
     /// Publish a position streaming update.
-    pub fn publish_position_update(&self, instrument: &str, qty: f64, unrealised_pnl: f64, ts_ms: i64) {
+    pub fn publish_position_update(
+        &self,
+        instrument: &str,
+        qty: f64,
+        unrealised_pnl: f64,
+        ts_ms: i64,
+    ) {
         self.publish(WsEvent {
             kind: WsEventKind::PositionUpdated,
             payload: serde_json::json!({
@@ -82,7 +90,9 @@ impl WsEventBus {
                 kind: WsEventKind::AlertFired,
                 payload: serde_json::json!({"type":"ping"}),
                 ts_ms: 0,
-            }).is_ok() || true  // retain even if full (Disconnected = Err)
+            })
+            .is_ok()
+                || true // retain even if full (Disconnected = Err)
         });
     }
 

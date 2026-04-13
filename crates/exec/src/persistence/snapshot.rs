@@ -17,15 +17,13 @@ pub struct SnapshotManager {
 
 impl SnapshotManager {
     pub fn new(max_snapshots: usize) -> Self {
-        Self { snapshots: Vec::new(), max_snapshots }
+        Self {
+            snapshots: Vec::new(),
+            max_snapshots,
+        }
     }
 
-    pub fn take(
-        &mut self,
-        manager: &OrderManager,
-        positions: &ExecPositionManager,
-        ts_ms: i64,
-    ) {
+    pub fn take(&mut self, manager: &OrderManager, positions: &ExecPositionManager, ts_ms: i64) {
         if self.snapshots.len() >= self.max_snapshots {
             self.snapshots.remove(0);
         }
@@ -35,7 +33,11 @@ impl SnapshotManager {
             .iter()
             .map(|(id, p)| (id.to_string(), p.clone()))
             .collect();
-        self.snapshots.push(Snapshot { ts_ms, orders, positions: pos_vec });
+        self.snapshots.push(Snapshot {
+            ts_ms,
+            orders,
+            positions: pos_vec,
+        });
     }
 
     pub fn latest(&self) -> Option<&Snapshot> {
@@ -61,20 +63,25 @@ impl SnapshotManager {
     /// Incremental backup: returns only the entries that changed since `since_ts_ms`.
     /// In this in-process implementation, returns snapshots newer than the given timestamp.
     pub fn incremental_since(&self, since_ts_ms: i64) -> Vec<&Snapshot> {
-        self.snapshots.iter().filter(|s| s.ts_ms > since_ts_ms).collect()
+        self.snapshots
+            .iter()
+            .filter(|s| s.ts_ms > since_ts_ms)
+            .collect()
     }
 
     /// Disaster recovery test: verify every snapshot can be serialized and restored.
     pub fn verify_all(&self) -> Vec<String> {
-        self.snapshots.iter().enumerate().filter_map(|(i, snap)| {
-            match Self::to_json(snap) {
+        self.snapshots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, snap)| match Self::to_json(snap) {
                 Ok(json) => match Self::from_json(&json) {
                     Ok(_) => None,
                     Err(e) => Some(format!("snapshot[{}] restore failed: {}", i, e)),
                 },
                 Err(e) => Some(format!("snapshot[{}] serialize failed: {}", i, e)),
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 

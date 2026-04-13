@@ -34,7 +34,11 @@ pub struct MakerTakerFee {
 impl CommissionModel for MakerTakerFee {
     fn calculate(&self, price: f64, qty: f64, is_maker: bool) -> f64 {
         let notional = price * qty;
-        let rate = if is_maker { self.maker_rate } else { self.taker_rate };
+        let rate = if is_maker {
+            self.maker_rate
+        } else {
+            self.taker_rate
+        };
         let fee = notional * rate;
         // Apply min fee only for positive fees; rebates pass through
         if rate >= 0.0 {
@@ -76,7 +80,11 @@ mod tests {
 
     #[test]
     fn maker_rebate() {
-        let model = MakerTakerFee { maker_rate: -0.0002, taker_rate: 0.0004, min_fee: 0.10 };
+        let model = MakerTakerFee {
+            maker_rate: -0.0002,
+            taker_rate: 0.0004,
+            min_fee: 0.10,
+        };
         // Maker rebate: 1000 * -0.0002 = -0.20
         let rebate = model.calculate(1000.0, 1.0, true);
         assert!((rebate - (-0.20)).abs() < 1e-9);

@@ -172,8 +172,10 @@ impl PositionManager {
             if self.positions.len() >= self.global_max_positions {
                 return Err(PositionError::MaxPositionsReached);
             }
-            self.positions
-                .insert(instrument.clone(), PositionEntry::new(instrument, side, qty, price, ts_ms));
+            self.positions.insert(
+                instrument.clone(),
+                PositionEntry::new(instrument, side, qty, price, ts_ms),
+            );
         }
         Ok(())
     }

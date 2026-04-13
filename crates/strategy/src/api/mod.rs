@@ -1,8 +1,10 @@
 pub mod optimizer;
-pub use optimizer::{OptimizationRequest, OptimizationResponse, OptimizationService, OptimizationStatus};
+pub use optimizer::{
+    OptimizationRequest, OptimizationResponse, OptimizationService, OptimizationStatus,
+};
 
 pub mod grpc;
-pub use grpc::{StrategyManagementService, PaperTradingService, MetricsService};
+pub use grpc::{MetricsService, PaperTradingService, StrategyManagementService};
 
 pub mod http;
-pub use http::{HttpRouter, HealthResponse, ApiError};
+pub use http::{ApiError, HealthResponse, HttpRouter};

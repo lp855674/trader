@@ -24,7 +24,11 @@ impl PriorityQueue {
     }
 
     pub fn push(&mut self, req: OrderRequest, priority: OrderPriority, ts_ms: i64) {
-        let item = PrioritizedOrder { request: req, priority, enqueued_ts_ms: ts_ms };
+        let item = PrioritizedOrder {
+            request: req,
+            priority,
+            enqueued_ts_ms: ts_ms,
+        };
         // Insert maintaining sort order: Urgent first, FIFO within priority
         let pos = self.items.partition_point(|existing| {
             existing.priority < item.priority
@@ -57,7 +61,9 @@ impl PriorityQueue {
         if count > 0 {
             // Re-sort after upgrades
             self.items.sort_by(|a, b| {
-                a.priority.cmp(&b.priority).then(a.enqueued_ts_ms.cmp(&b.enqueued_ts_ms))
+                a.priority
+                    .cmp(&b.priority)
+                    .then(a.enqueued_ts_ms.cmp(&b.enqueued_ts_ms))
             });
         }
         count

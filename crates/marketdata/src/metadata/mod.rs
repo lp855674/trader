@@ -126,8 +126,8 @@ mod tests {
 
     fn default_hours() -> TradingHours {
         TradingHours {
-            open_ms: 9 * 3_600_000,    // 09:00 UTC
-            close_ms: 17 * 3_600_000,  // 17:00 UTC
+            open_ms: 9 * 3_600_000,   // 09:00 UTC
+            close_ms: 17 * 3_600_000, // 17:00 UTC
             timezone: "UTC".to_string(),
         }
     }
@@ -171,8 +171,14 @@ mod tests {
     fn active_instruments_filter() {
         let mut mgr = MetadataManager::new();
         mgr.register("ACTIVE".to_string(), make_meta("ACTIVE", Some(0), None));
-        mgr.register("FUTURE".to_string(), make_meta("FUTURE", Some(9_999_999_999), None));
-        mgr.register("DELISTED".to_string(), make_meta("DELISTED", Some(0), Some(1000)));
+        mgr.register(
+            "FUTURE".to_string(),
+            make_meta("FUTURE", Some(9_999_999_999), None),
+        );
+        mgr.register(
+            "DELISTED".to_string(),
+            make_meta("DELISTED", Some(0), Some(1000)),
+        );
 
         let active = mgr.active_instruments(5000);
         let symbols: Vec<&str> = active.iter().map(|m| m.symbol.as_str()).collect();

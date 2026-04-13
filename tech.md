@@ -4,6 +4,8 @@
 
 - 独立量化后端 **`quantd`**：ingest → 策略 → 风控（MVP 全放行）→ paper 执行 → SQLite 台账。
 - 对外 **HTTP**（`/health`, `/v1/instruments`）与 **WebSocket**（`/v1/stream`）。
+- 半自动控制面新增：`/v1/runtime/mode` 与 `/v1/runtime/allowlist`。
+- 半自动单轮调度接口：`POST /v1/runtime/cycle` 与 `GET /v1/runtime/cycle/latest`。
 
 ## 流水线参数
 
@@ -49,7 +51,24 @@
 
 - 凭证：`LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`（见 [官方快速开始](https://open.longbridge.com/zh-CN/docs/getting-started)）。
 - `quantd` 在三个变量均非空时 `LongbridgeClients::connect()`；成功则 `ensure_longbridge_live_account`，注册 `acc_lb_live` → `LongbridgeTradeAdapter`，并对 US/HK venue 使用 `LongbridgeCandleIngest`（否则回退 mock）。
+- 若已配置 Longbridge 凭证但连接失败，`quantd` 会强制写回运行模式 `observe_only`，并记录一条 `reconciliation_snapshots.status = broker_connect_failed` 的失败快照。
 - Paper 账户路径不变；Longbridge 错误在 API 层可表现为 `PipelineError::Exec(ExecError::Longbridge(..))` → HTTP 502、`error_code: broker_error`。
+
+## 运行控制面
+
+- 默认运行模式：`observe_only`（首次启动且 DB 中尚未写入 `runtime_controls.mode` 时自动补齐）。
+- 允许模式：`enabled`、`observe_only`、`paper_only`、`degraded`。
+- `GET /v1/runtime/mode`：读取当前模式；缺省值按 `observe_only` 返回。
+- `PUT /v1/runtime/mode`：写入运行模式，非法值返回 HTTP 400。
+- `GET /v1/runtime/allowlist`：返回标的 allowlist 与 `enabled` 标志。
+- `PUT /v1/runtime/allowlist`：整表替换 allowlist；空 symbol 拒绝写入。
+- `POST /v1/runtime/cycle`：按 allowlist 执行一轮 universe ingest → score → rank；`enabled/paper_only` 才会继续执行下单。
+- execution guard：`enabled/paper_only` 下，accepted symbol 在真正执行前还会检查稳定 `idempotency_key`、本地未完成订单、symbol cooldown 与本地同向持仓；命中时仅记 `skipped.reason`，不再重复下单。
+- `GET /v1/runtime/cycle/latest`：读取最近一轮结果，当前持久化落在 `system_config.key = runtime.last_cycle`。
+- `GET /v1/runtime/cycle/history`：读取最近多轮结构化历史；底层使用 `runtime_cycle_runs` / `runtime_cycle_symbols`。
+- `GET /v1/runtime/execution-state`：按 `account_id` 返回本地持仓、未完成订单，以及最近一轮 cycle 的执行摘要（`accepted` / `placed` / `skipped`）。
+- `quantd` 可选后台 loop：`QUANTD_UNIVERSE_LOOP_ENABLED=1` 时按固定间隔触发 `run_universe_cycle`；默认关闭。
+- `QUANTD_EXEC_SYMBOL_COOLDOWN_SECS`：同账户、同 instrument、同方向的最小重复下单间隔；默认 `300` 秒。
 
 ## 股票数据（研究侧：Polars / Rust）
 

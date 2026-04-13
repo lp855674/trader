@@ -18,7 +18,10 @@ impl MetricsCollector {
     }
 
     pub fn record_counter(&mut self, name: &str, delta: u64) {
-        let entry = self.data.entry(name.to_string()).or_insert(MetricValue::Counter(0));
+        let entry = self
+            .data
+            .entry(name.to_string())
+            .or_insert(MetricValue::Counter(0));
         if let MetricValue::Counter(c) = entry {
             *c += delta;
         } else {
@@ -27,11 +30,15 @@ impl MetricsCollector {
     }
 
     pub fn record_gauge(&mut self, name: &str, value: f64) {
-        self.data.insert(name.to_string(), MetricValue::Gauge(value));
+        self.data
+            .insert(name.to_string(), MetricValue::Gauge(value));
     }
 
     pub fn record_histogram(&mut self, name: &str, value: f64) {
-        let entry = self.data.entry(name.to_string()).or_insert(MetricValue::Histogram(vec![]));
+        let entry = self
+            .data
+            .entry(name.to_string())
+            .or_insert(MetricValue::Histogram(vec![]));
         if let MetricValue::Histogram(v) = entry {
             v.push(value);
         } else {

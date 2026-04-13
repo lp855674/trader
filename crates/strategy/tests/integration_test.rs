@@ -103,7 +103,11 @@ fn system_smoke_test() {
         strategy_type: "always_buy_one".into(),
         config: serde_json::json!({}),
     });
-    assert!(reg_resp.success, "registration failed: {}", reg_resp.message);
+    assert!(
+        reg_resp.success,
+        "registration failed: {}",
+        reg_resp.message
+    );
 
     let eval_resp = mgmt_svc.evaluate(EvaluateRequest {
         strategy_id: "smoke_strategy".into(),
@@ -111,7 +115,11 @@ fn system_smoke_test() {
         ts_ms: 1_000_000,
         last_bar_close: Some(45_000.0),
     });
-    assert!(eval_resp.error.is_none(), "evaluate error: {:?}", eval_resp.error);
+    assert!(
+        eval_resp.error.is_none(),
+        "evaluate error: {:?}",
+        eval_resp.error
+    );
     assert!(eval_resp.signal.is_some(), "expected a signal");
 
     // 6. Submit order via PaperTradingService

@@ -15,23 +15,38 @@ pub struct QueryIndex {
 
 impl QueryIndex {
     pub fn new() -> Self {
-        Self { by_instrument: HashMap::new(), by_strategy: HashMap::new() }
+        Self {
+            by_instrument: HashMap::new(),
+            by_strategy: HashMap::new(),
+        }
     }
 
     pub fn index_order(&mut self, order: &Order) {
         let instrument_key = order.request.instrument.to_string();
-        self.by_instrument.entry(instrument_key).or_default().push(order.id.clone());
+        self.by_instrument
+            .entry(instrument_key)
+            .or_default()
+            .push(order.id.clone());
 
         let strategy_key = order.request.strategy_id.clone();
-        self.by_strategy.entry(strategy_key).or_default().push(order.id.clone());
+        self.by_strategy
+            .entry(strategy_key)
+            .or_default()
+            .push(order.id.clone());
     }
 
     pub fn lookup_by_instrument(&self, instrument: &str) -> &[String] {
-        self.by_instrument.get(instrument).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_instrument
+            .get(instrument)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn lookup_by_strategy(&self, strategy_id: &str) -> &[String] {
-        self.by_strategy.get(strategy_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.by_strategy
+            .get(strategy_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -54,10 +69,16 @@ impl QueryIndex {
     /// Query plan analysis: return a description of which index would be used for a query.
     pub fn explain_query(&self, by: &str, value: &str) -> String {
         match by {
-            "instrument" => format!("INDEX SCAN by_instrument[{}] → {} entries",
-                value, self.by_instrument.get(value).map(|v| v.len()).unwrap_or(0)),
-            "strategy" => format!("INDEX SCAN by_strategy[{}] → {} entries",
-                value, self.by_strategy.get(value).map(|v| v.len()).unwrap_or(0)),
+            "instrument" => format!(
+                "INDEX SCAN by_instrument[{}] → {} entries",
+                value,
+                self.by_instrument.get(value).map(|v| v.len()).unwrap_or(0)
+            ),
+            "strategy" => format!(
+                "INDEX SCAN by_strategy[{}] → {} entries",
+                value,
+                self.by_strategy.get(value).map(|v| v.len()).unwrap_or(0)
+            ),
             _ => "FULL TABLE SCAN (no index)".to_string(),
         }
     }

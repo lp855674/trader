@@ -1,9 +1,9 @@
 // HTTP handler for risk service (no actual HTTP server — in-process handler)
 
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use crate::core::RiskChecker;
 use crate::api::grpc::{RiskCheckService, RiskServiceRequest};
+use crate::core::RiskChecker;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // ── RiskHealthResponse ────────────────────────────────────────────────────────
 
@@ -34,8 +34,8 @@ impl RiskHttpHandler {
     }
 
     pub fn check_order(&self, order_json: &str) -> Result<String, String> {
-        let req: RiskServiceRequest = serde_json::from_str(order_json)
-            .map_err(|e| format!("JSON parse error: {}", e))?;
+        let req: RiskServiceRequest =
+            serde_json::from_str(order_json).map_err(|e| format!("JSON parse error: {}", e))?;
 
         let service = RiskCheckService::new(Arc::clone(&self.checker));
         let resp = service.check_risk(&req);
@@ -59,7 +59,9 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
     }
 
     #[test]

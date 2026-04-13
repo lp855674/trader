@@ -201,7 +201,10 @@ mod tests {
         let csv = ReportExporter::to_csv(&report);
         assert!(csv.contains("date"), "CSV should contain 'date' header");
         assert!(csv.contains("var_95"), "CSV should contain 'var_95' header");
-        assert!(csv.contains("total_pnl"), "CSV should contain 'total_pnl' header");
+        assert!(
+            csv.contains("total_pnl"),
+            "CSV should contain 'total_pnl' header"
+        );
     }
 
     #[test]

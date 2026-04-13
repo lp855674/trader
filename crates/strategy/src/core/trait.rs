@@ -13,31 +13,31 @@ use thiserror::Error;
 pub enum StrategyError {
     #[error("Invalid instrument ID: {0}")]
     InvalidInstrument(String),
-    
+
     #[error("Cache miss for key: {0}")]
     CacheMiss(String),
-    
+
     #[error("Data source error: {0}")]
     DataSource(String),
 }
 
 /// Strategy trait - pure function, deterministic behavior
-/// 
+///
 /// Strategies must be pure functions: given the same context, they always
 /// return the same Signal (or None). No side effects, no randomness.
 pub trait Strategy: Send + Sync {
     /// Evaluate strategy and return signal if any
-    /// 
+    ///
     /// # Arguments
     /// * `context` - StrategyContext containing instrument, timestamp, and data sources
-    /// 
+    ///
     /// # Returns
     /// * `Option<Signal>` - None means no signal, Some means execute this signal
     fn evaluate(&self, context: &StrategyContext) -> Result<Option<Signal>, StrategyError>;
-    
+
     /// Get strategy name
     fn name(&self) -> &str;
-    
+
     /// Get strategy version
     fn version(&self) -> u32 {
         1
@@ -76,7 +76,7 @@ impl Signal {
             params,
         }
     }
-    
+
     pub fn is_market_order(&self) -> bool {
         self.limit_price.is_none()
     }
@@ -113,12 +113,12 @@ impl StrategyContext {
             logger,
         }
     }
-    
+
     pub fn update(&mut self, bar_close: Option<f64>, bar_ts: Option<i64>) {
         self.last_bar_close = bar_close;
         self.last_bar_ts = bar_ts;
     }
-    
+
     pub fn set_db_id(&mut self, db_id: i64) {
         self.instrument_db_id = db_id;
     }
@@ -133,8 +133,12 @@ pub struct CacheKey {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum CacheKeyType {
-    MovingAverage { period: u32 },
-    Rsi { period: u32 },
+    MovingAverage {
+        period: u32,
+    },
+    Rsi {
+        period: u32,
+    },
     /// `std_dev` 的 `f64::to_bits()`，用于 `Hash` / `Eq`
     Bollinger {
         period: u32,
@@ -147,7 +151,7 @@ pub enum CacheKeyType {
 pub struct CacheValue {
     pub value: f64,
     pub timestamp: i64,
-    pub confidence: f64,  // 0.0-1.0
+    pub confidence: f64, // 0.0-1.0
 }
 
 /// 简单 LRU（按访问序驱逐）
@@ -182,7 +186,7 @@ impl<K: Eq + Hash + Clone, V: Clone> LruCache<K, V> {
             next_id: 0,
         }
     }
-    
+
     pub fn get(&mut self, key: &K) -> Option<&V> {
         let valid = self.entries.get(key).is_some_and(|entry| entry.is_valid);
         if !valid {
@@ -192,14 +196,17 @@ impl<K: Eq + Hash + Clone, V: Clone> LruCache<K, V> {
         let value = old_entry.value.clone();
         let order = self.next_id;
         self.next_id += 1;
-        self.entries.insert(key.clone(), Entry {
-            value,
-            access_order: order,
-            is_valid: true,
-        });
+        self.entries.insert(
+            key.clone(),
+            Entry {
+                value,
+                access_order: order,
+                is_valid: true,
+            },
+        );
         self.entries.get(key).map(|entry| &entry.value)
     }
-    
+
     pub fn insert(&mut self, key: K, value: V) {
         if self.entries.len() >= self.capacity && !self.entries.contains_key(&key) {
             if let Some((oldest_key, _)) = self
@@ -211,23 +218,26 @@ impl<K: Eq + Hash + Clone, V: Clone> LruCache<K, V> {
                 self.entries.remove(&oldest_key);
             }
         }
-        
-        self.entries.insert(key, Entry {
-            value: value.clone(),
-            access_order: self.next_id,
-            is_valid: true,
-        });
+
+        self.entries.insert(
+            key,
+            Entry {
+                value: value.clone(),
+                access_order: self.next_id,
+                is_valid: true,
+            },
+        );
         self.next_id += 1;
     }
-    
+
     pub fn remove(&mut self, key: &K) -> Option<V> {
         self.entries.remove(key).map(|e| e.value)
     }
-    
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -253,27 +263,24 @@ impl MemoryBuffer {
             max_size,
         }
     }
-    
+
     pub fn push(&mut self, timestamp: i64, value: f64) {
-        self.data.push(DataPoint {
-            timestamp,
-            value,
-        });
-        
+        self.data.push(DataPoint { timestamp, value });
+
         // Trim if over capacity
         while self.data.len() > self.max_size {
             self.data.remove(0);
         }
     }
-    
+
     pub fn get(&self, index: usize) -> Option<&DataPoint> {
         self.data.get(index)
     }
-    
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -299,7 +306,13 @@ impl Value {
         match self {
             Value::Number(n) => *n,
             Value::String(s) => s.parse().unwrap_or(0.0),
-            Value::Boolean(b) => if *b { 1.0 } else { 0.0 },
+            Value::Boolean(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 }
@@ -315,7 +328,7 @@ pub trait HistoricalData: Send + Sync + 'static {
         end_ts: i64,
         granularity: Granularity,
     ) -> Result<Vec<Kline>, DataSourceError>;
-    
+
     /// Get tick data
     async fn get_ticks(
         &self,
@@ -361,14 +374,12 @@ impl std::fmt::Display for DataSourceError {
 
 impl std::error::Error for DataSourceError {}
 
-
-
 /// Granularity types for time resolution
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Granularity {
     Tick,
-    Minute(u32),   // 1m, 5m, 15m, etc.
-    Hour(u32),     // 1h, 4h, etc.
+    Minute(u32), // 1m, 5m, 15m, etc.
+    Hour(u32),   // 1h, 4h, etc.
     Day,
 }
 
@@ -392,11 +403,11 @@ impl StrategyLogger {
             strategy_id: "unknown".to_string(),
         }
     }
-    
+
     pub fn set_strategy_id(&mut self, id: String) {
         self.strategy_id = id;
     }
-    
+
     pub fn log(&self, event: &str, context: &serde_json::Value) {
         // In production, use tracing::info!
         tracing::info!(
@@ -423,7 +434,7 @@ impl DataSourceBundle {
             tick_source: None,
         }
     }
-    
+
     pub fn with_tick(source: Arc<dyn HistoricalData>) -> Self {
         Self {
             kline_source: None,

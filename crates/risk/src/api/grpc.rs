@@ -1,9 +1,11 @@
 // In-process gRPC-style risk check service (no tonic)
 
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use crate::core::{RiskChecker, RiskDecision, RiskInput, MarketContext, OrderContext, PortfolioContext, OrderType};
+use crate::core::{
+    MarketContext, OrderContext, OrderType, PortfolioContext, RiskChecker, RiskDecision, RiskInput,
+};
 use domain::{InstrumentId, Side, Venue};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 // ── RiskServiceRequest ────────────────────────────────────────────────────────
 
@@ -38,17 +40,15 @@ impl RiskCheckService {
     pub fn check_risk(&self, req: &RiskServiceRequest) -> RiskServiceResponse {
         // Try to deserialize a RiskInput from the JSON fields
         match self.parse_risk_input(req) {
-            Ok(input) => {
-                match self.checker.check(&input) {
-                    Ok(decision) => decision_to_response(decision),
-                    Err(e) => RiskServiceResponse {
-                        decision: "Error".to_string(),
-                        risk_score: 0.0,
-                        reason: Some(e.to_string()),
-                        adjusted_qty: None,
-                    },
-                }
-            }
+            Ok(input) => match self.checker.check(&input) {
+                Ok(decision) => decision_to_response(decision),
+                Err(e) => RiskServiceResponse {
+                    decision: "Error".to_string(),
+                    risk_score: 0.0,
+                    reason: Some(e.to_string()),
+                    adjusted_qty: None,
+                },
+            },
             Err(e) => RiskServiceResponse {
                 decision: "Error".to_string(),
                 risk_score: 0.0,
@@ -71,7 +71,11 @@ impl RiskCheckService {
         let instrument = parse_instrument(&instrument_str);
 
         let side_str = req.order["side"].as_str().unwrap_or("Buy");
-        let side = if side_str == "Sell" { Side::Sell } else { Side::Buy };
+        let side = if side_str == "Sell" {
+            Side::Sell
+        } else {
+            Side::Buy
+        };
 
         let quantity = req.order["quantity"].as_f64().unwrap_or(1.0);
         let limit_price = req.order["limit_price"].as_f64();
@@ -86,11 +90,15 @@ impl RiskCheckService {
 
         // Parse portfolio
         let total_capital = req.portfolio["total_capital"].as_f64().unwrap_or(100_000.0);
-        let available_capital = req.portfolio["available_capital"].as_f64().unwrap_or(80_000.0);
+        let available_capital = req.portfolio["available_capital"]
+            .as_f64()
+            .unwrap_or(80_000.0);
         let total_exposure = req.portfolio["total_exposure"].as_f64().unwrap_or(20_000.0);
         let open_positions = req.portfolio["open_positions"].as_u64().unwrap_or(2) as u32;
         let daily_pnl = req.portfolio["daily_pnl"].as_f64().unwrap_or(0.0);
-        let daily_pnl_limit = req.portfolio["daily_pnl_limit"].as_f64().unwrap_or(-5_000.0);
+        let daily_pnl_limit = req.portfolio["daily_pnl_limit"]
+            .as_f64()
+            .unwrap_or(-5_000.0);
 
         Ok(RiskInput {
             order: OrderContext {
@@ -142,14 +150,16 @@ fn decision_to_response(decision: RiskDecision) -> RiskServiceResponse {
             reason: None,
             adjusted_qty: None,
         },
-        RiskDecision::ApproveWithAdjustment { new_quantity, reason, .. } => {
-            RiskServiceResponse {
-                decision: "ApproveWithAdjustment".to_string(),
-                risk_score: 10.0,
-                reason: Some(reason),
-                adjusted_qty: Some(new_quantity),
-            }
-        }
+        RiskDecision::ApproveWithAdjustment {
+            new_quantity,
+            reason,
+            ..
+        } => RiskServiceResponse {
+            decision: "ApproveWithAdjustment".to_string(),
+            risk_score: 10.0,
+            reason: Some(reason),
+            adjusted_qty: Some(new_quantity),
+        },
         RiskDecision::Reject { reason, risk_score } => RiskServiceResponse {
             decision: "Reject".to_string(),
             risk_score,
@@ -170,7 +180,9 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, crate::core::RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
     }
 
     fn valid_request() -> RiskServiceRequest {

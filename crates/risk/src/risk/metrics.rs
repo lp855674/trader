@@ -1,6 +1,6 @@
 // Risk metrics collection module
-use std::collections::{HashMap, VecDeque};
 use domain::InstrumentId;
+use std::collections::{HashMap, VecDeque};
 
 // ── AlertType ─────────────────────────────────────────────────────────────
 
@@ -186,10 +186,7 @@ impl RiskMetricsCollector {
 
     /// Returns all unacknowledged alerts
     pub fn active_alerts(&self) -> Vec<&RiskAlert> {
-        self.alerts
-            .iter()
-            .filter(|a| !a.acknowledged)
-            .collect()
+        self.alerts.iter().filter(|a| !a.acknowledged).collect()
     }
 }
 

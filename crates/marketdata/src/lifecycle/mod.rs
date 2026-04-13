@@ -1,2 +1,2 @@
 pub mod shutdown;
-pub use shutdown::{ShutdownSignal, GracefulShutdown};
+pub use shutdown::{GracefulShutdown, ShutdownSignal};

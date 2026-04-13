@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-
 use api::AppState;
 use config::AppConfig;
 use domain::Venue;
@@ -9,7 +5,11 @@ use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
 use longbridge_adapters::{LongbridgeCandleIngest, LongbridgeClients, LongbridgeTradeAdapter};
 use pipeline::RiskLimits;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio::time::{self, Duration};
 use tracing_subscriber::EnvFilter;
 
 fn env_symbol(key: &str, default: &str) -> String {
@@ -31,7 +31,10 @@ async fn build_execution_router_from_db(
 
     // 1. Always register local paper adapter
     let paper = Arc::new(PaperAdapter::new(database.clone()));
-    routes.insert("acc_mvp_paper".to_string(), paper as Arc<dyn ExecutionAdapter>);
+    routes.insert(
+        "acc_mvp_paper".to_string(),
+        paper as Arc<dyn ExecutionAdapter>,
+    );
 
     // 2. Load execution profiles from DB
     let profiles = db::load_execution_profiles_by_kind(
@@ -52,7 +55,10 @@ async fn build_execution_router_from_db(
                 // No credentials in DB for this profile — fall back to env for live
                 if profile.kind == "longbridge_live" {
                     if let Some(lb) = env_lb {
-                        for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                        for acc in accounts
+                            .iter()
+                            .filter(|a| a.execution_profile_id == profile.id)
+                        {
                             routes.insert(
                                 acc.id.clone(),
                                 Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
@@ -82,7 +88,10 @@ async fn build_execution_router_from_db(
             // Incomplete credentials — env fallback for live
             if profile.kind == "longbridge_live" {
                 if let Some(lb) = env_lb {
-                    for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                    for acc in accounts
+                        .iter()
+                        .filter(|a| a.execution_profile_id == profile.id)
+                    {
                         routes.insert(
                             acc.id.clone(),
                             Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
@@ -97,7 +106,10 @@ async fn build_execution_router_from_db(
 
         match LongbridgeClients::connect_with_credentials(app_key, app_secret, access_token) {
             Ok(lb) => {
-                for acc in accounts.iter().filter(|a| a.execution_profile_id == profile.id) {
+                for acc in accounts
+                    .iter()
+                    .filter(|a| a.execution_profile_id == profile.id)
+                {
                     routes.insert(
                         acc.id.clone(),
                         Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
@@ -122,9 +134,14 @@ async fn build_execution_router_from_db(
         if let Some(lb) = env_lb {
             routes.insert(
                 "acc_lb_live".to_string(),
-                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone())) as Arc<dyn ExecutionAdapter>,
+                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
+                    as Arc<dyn ExecutionAdapter>,
             );
-            tracing::info!(channel = "quantd", account_id = "acc_lb_live", "registered via env fallback");
+            tracing::info!(
+                channel = "quantd",
+                account_id = "acc_lb_live",
+                "registered via env fallback"
+            );
         }
     }
 
@@ -132,8 +149,8 @@ async fn build_execution_router_from_db(
 }
 
 async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
-    let account_id = std::env::var("QUANTD_ACCOUNT_ID")
-        .unwrap_or_else(|_| "acc_lb_paper".to_string());
+    let account_id =
+        std::env::var("QUANTD_ACCOUNT_ID").unwrap_or_else(|_| "acc_lb_paper".to_string());
 
     // Try loading from system_config DB first
     let cfg_key = format!("strategy.{}", account_id);
@@ -177,7 +194,11 @@ async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
         .as_str()
     {
         "always_long_one" | "mvp" => {
-            tracing::info!(channel = "quantd", strategy = "always_long_one", "live strategy");
+            tracing::info!(
+                channel = "quantd",
+                strategy = "always_long_one",
+                "live strategy"
+            );
             Arc::new(strategy::AlwaysLongOne)
         }
         _ => {
@@ -213,14 +234,120 @@ fn build_ingest_registry(
     registry
 }
 
+fn parse_cycle_venue(value: &str) -> Result<Venue, String> {
+    Venue::parse(value).ok_or_else(|| format!("invalid QUANTD_UNIVERSE_LOOP_VENUE: {value}"))
+}
+
+fn spawn_universe_loop(
+    state: &AppState,
+    app_config: &AppConfig,
+) -> Result<Option<tokio::task::JoinHandle<()>>, String> {
+    if !app_config.universe_loop_enabled {
+        return Ok(None);
+    }
+
+    let venue = parse_cycle_venue(&app_config.universe_loop_venue)?;
+    let database = state.database.clone();
+    let execution_router = state.execution_router.clone();
+    let ingest_registry = state.ingest_registry.clone();
+    let risk_limits = state.risk_limits;
+    let strategy = state.strategy.clone();
+    let account_id = app_config.universe_loop_account_id.clone();
+    let interval_secs = app_config.universe_loop_interval_secs;
+
+    let handle = tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(interval_secs));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let Some(adapter) = ingest_registry.adapter_for_venue(venue) else {
+                tracing::warn!(
+                    channel = "quantd",
+                    venue = venue.as_str(),
+                    error_code = "universe_loop_missing_adapter",
+                    "background universe loop skipped"
+                );
+                continue;
+            };
+            drop(adapter);
+            match quantd::run_background_universe_cycle_once(
+                &database,
+                &ingest_registry,
+                &execution_router,
+                strategy.as_ref(),
+                risk_limits,
+                venue,
+                &account_id,
+            )
+            .await
+            {
+                Ok(Some(report)) => {
+                    tracing::info!(
+                        channel = "quantd",
+                        venue = %report.venue,
+                        account_id = %report.account_id,
+                        mode = %report.mode,
+                        accepted = report.accepted.len(),
+                        placed = report.placed.len(),
+                        "background universe cycle completed"
+                    );
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        channel = "quantd",
+                        venue = venue.as_str(),
+                        error_code = "universe_loop_missing_adapter",
+                        "background universe loop skipped"
+                    );
+                }
+                Err(pipeline::PipelineError::UnsupportedStrategy) => {
+                    tracing::warn!(
+                        channel = "quantd",
+                        venue = venue.as_str(),
+                        error_code = "universe_loop_unsupported_strategy",
+                        "background universe loop disabled by strategy capability"
+                    );
+                    break;
+                }
+                Err(pipeline::PipelineError::EmptyAllowlist) => {
+                    tracing::info!(
+                        channel = "quantd",
+                        venue = venue.as_str(),
+                        "background universe loop skipped (empty allowlist)"
+                    );
+                }
+                Err(error) => {
+                    if let Err(mode_err) = quantd::set_runtime_mode(&database, "observe_only").await
+                    {
+                        tracing::warn!(
+                            channel = "quantd",
+                            error_code = "runtime_mode_fallback_failed",
+                            err = %mode_err,
+                            "failed to switch runtime mode after universe loop error"
+                        );
+                    }
+                    tracing::warn!(
+                        channel = "quantd",
+                        venue = venue.as_str(),
+                        error_code = "universe_loop_failed",
+                        err = %error,
+                        runtime_mode = "observe_only",
+                        "background universe loop failed"
+                    );
+                }
+            }
+        }
+    });
+    Ok(Some(handle))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_config = AppConfig::from_env()?;
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_new(&app_config.log_filter)
-                .unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_new(&app_config.log_filter).unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
@@ -236,6 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !is_prod || app_config.allow_seed {
         db::ensure_mvp_seed(database.pool()).await?;
     }
+    quantd::init_runtime_defaults(&database).await?;
 
     let (event_tx, _event_rx) = broadcast::channel::<api::StreamEvent>(64);
 
@@ -249,9 +377,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(c)
             }
             Err(err) => {
+                quantd::set_runtime_mode(&database, "observe_only").await?;
+                if let Err(snapshot_err) = quantd::record_reconciliation_failure(
+                    &database,
+                    "acc_lb_live",
+                    "broker_connect_failed",
+                )
+                .await
+                {
+                    tracing::warn!(
+                        channel = "quantd",
+                        error_code = "reconciliation_snapshot_write_failed",
+                        err = %snapshot_err,
+                        "failed to persist reconciliation fallback"
+                    );
+                }
                 tracing::warn!(
                     channel = "quantd",
-                    %err,
+                    error_code = "broker_connect_failed",
+                    err = %err,
+                    runtime_mode = "observe_only",
                     "longbridge: connect failed; US/HK ingest uses synthetic paper bars"
                 );
                 None
@@ -279,6 +424,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         strategy,
         api_key: app_config.api_key.clone(),
     };
+    let background_loop = spawn_universe_loop(&state, &app_config)?;
 
     let listener = tokio::net::TcpListener::bind(app_config.http_bind).await?;
     let addr: SocketAddr = app_config.http_bind;
@@ -291,6 +437,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     server.await?;
+    if let Some(handle) = background_loop {
+        handle.abort();
+    }
     Ok(())
 }
 

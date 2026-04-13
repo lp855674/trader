@@ -14,7 +14,11 @@ pub struct LiquidityMetrics {
 pub struct LiquidityRiskCalculator;
 
 impl LiquidityRiskCalculator {
-    pub fn calculate(instrument: &str, bars: &[NormalizedBar], spread_bps: f64) -> LiquidityMetrics {
+    pub fn calculate(
+        instrument: &str,
+        bars: &[NormalizedBar],
+        spread_bps: f64,
+    ) -> LiquidityMetrics {
         if bars.is_empty() {
             return LiquidityMetrics {
                 instrument: instrument.to_string(),
@@ -31,12 +35,20 @@ impl LiquidityRiskCalculator {
         let avg_volume = volumes.iter().sum::<f64>() / volumes.len() as f64;
 
         let vol_variance = if volumes.len() > 1 {
-            volumes.iter().map(|v| (v - avg_volume).powi(2)).sum::<f64>() / volumes.len() as f64
+            volumes
+                .iter()
+                .map(|v| (v - avg_volume).powi(2))
+                .sum::<f64>()
+                / volumes.len() as f64
         } else {
             0.0
         };
         let vol_std = vol_variance.sqrt();
-        let volume_volatility = if avg_volume > 1e-12 { vol_std / avg_volume } else { 0.0 };
+        let volume_volatility = if avg_volume > 1e-12 {
+            vol_std / avg_volume
+        } else {
+            0.0
+        };
 
         // Amihud ratio: mean(|return| / volume) per bar
         let amihud_values: Vec<f64> = bars
@@ -54,7 +66,11 @@ impl LiquidityRiskCalculator {
         };
 
         let last_volume = bars.last().map(|b| b.volume).unwrap_or(0.0);
-        let turnover_ratio = if avg_volume > 1e-12 { last_volume / avg_volume } else { 0.0 };
+        let turnover_ratio = if avg_volume > 1e-12 {
+            last_volume / avg_volume
+        } else {
+            0.0
+        };
 
         // market_impact proxy: proportional to spread and amihud
         let market_impact_bps = spread_bps * 0.5 + amihud_ratio * 1e6;
@@ -95,7 +111,14 @@ mod tests {
     use super::*;
 
     fn bar(ts_ms: i64, close: f64, volume: f64) -> NormalizedBar {
-        NormalizedBar { ts_ms, open: close, high: close, low: close, close, volume }
+        NormalizedBar {
+            ts_ms,
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume,
+        }
     }
 
     #[test]

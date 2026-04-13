@@ -27,11 +27,7 @@ impl MarketImpactModel {
     }
 
     /// Implementation shortfall: (avg_fill - decision_price) * sign(side) / decision_price.
-    pub fn implementation_shortfall(
-        decision_price: f64,
-        fills: &[(f64, f64)],
-        side: Side,
-    ) -> f64 {
+    pub fn implementation_shortfall(decision_price: f64, fills: &[(f64, f64)], side: Side) -> f64 {
         if decision_price == 0.0 || fills.is_empty() {
             return 0.0;
         }

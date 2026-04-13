@@ -1,13 +1,25 @@
 use crate::error::DbError;
 use sqlx::SqlitePool;
 
-pub async fn get_system_config(pool: &SqlitePool, key: &str) -> Result<Option<String>, DbError> {
-    let val = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM system_config WHERE key = ?",
+pub async fn list_system_config_by_prefix(
+    pool: &SqlitePool,
+    prefix: &str,
+) -> Result<Vec<(String, Option<String>)>, DbError> {
+    let pattern = format!("{}%", prefix);
+    let rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT key, value FROM system_config WHERE key LIKE ?",
     )
-    .bind(key)
-    .fetch_optional(pool)
+    .bind(pattern)
+    .fetch_all(pool)
     .await?;
+    Ok(rows)
+}
+
+pub async fn get_system_config(pool: &SqlitePool, key: &str) -> Result<Option<String>, DbError> {
+    let val = sqlx::query_scalar::<_, String>("SELECT value FROM system_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
     Ok(val)
 }
 

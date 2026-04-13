@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import List
 
@@ -11,8 +12,8 @@ import torch.nn as nn
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
 
-MODELS_DIR = Path(os.getenv("LSTM_MODELS_DIR", "models"))
 LOOKBACK = 60  # default
+SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 router = APIRouter()
 
@@ -45,12 +46,6 @@ class PredictResponse(BaseModel):
     score: float
     side: str  # "buy" | "sell" | "hold"
     confidence: float
-
-
-def _model_path(symbol: str, model_type: str) -> Path:
-    safe = symbol.replace(".", "_")
-    return MODELS_DIR / f"{safe}_{model_type}.pt"
-
 
 def _bars_to_features(bars: List[Bar]) -> np.ndarray:
     """
@@ -111,12 +106,40 @@ def _load_model(path: Path, checkpoint: dict) -> nn.Module:
     return model
 
 
+def _get_models_dir() -> Path:
+    path = Path(os.getenv("LSTM_MODELS_DIR", "models"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _validate_name(value: str, field: str) -> str:
+    if not SAFE_NAME_PATTERN.fullmatch(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field}: must match {SAFE_NAME_PATTERN.pattern}",
+        )
+    return value
+
+
+def _model_path(symbol: str, model_type: str) -> Path:
+    validated_symbol = _validate_name(symbol, "symbol")
+    validated_type = _validate_name(model_type, "model_type")
+    safe_symbol = validated_symbol.replace(".", "_")
+    safe_type = validated_type.replace(".", "_")
+    return _get_models_dir() / f"{safe_symbol}_{safe_type}.pt"
+
+
 @router.post("/predict", response_model=PredictResponse)
 async def predict(req: PredictRequest) -> PredictResponse:
     path = _model_path(req.symbol, req.model_type)
     if not path.exists():
-        raise HTTPException(status_code=404,
-                            detail=f"No model found for {req.symbol}/{req.model_type}. Train first.")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "model_not_found",
+                "message": f"No model found for {req.symbol}/{req.model_type}. Train first.",
+            },
+        )
 
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     model = _load_model(path, checkpoint)

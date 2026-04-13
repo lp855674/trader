@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use marketdata::monitor::{DataMetricsCollector, DataAlertManager, DataTracer};
 use marketdata::api::health::DataHealthChecker;
 use marketdata::lifecycle::GracefulShutdown;
+use marketdata::monitor::{DataAlertManager, DataMetricsCollector, DataTracer};
+use std::collections::HashMap;
 
 // 1. MetricsCollector snapshot reflects recorded data
 #[test]
@@ -39,7 +39,10 @@ fn alert_manager_triggers_on_low_cache_hit() {
     let snap = collector.snapshot(1000);
     let alerts = manager.check(&snap, 1000);
     assert!(!alerts.is_empty(), "Should have at least one alert");
-    assert!(alerts.iter().any(|a| matches!(a.alert_type, marketdata::monitor::DataAlertType::LowCacheHitRate)));
+    assert!(alerts.iter().any(|a| matches!(
+        a.alert_type,
+        marketdata::monitor::DataAlertType::LowCacheHitRate
+    )));
     assert!(manager.active_count() > 0);
 }
 
@@ -69,7 +72,10 @@ fn health_checker_degraded_on_low_quality() {
     let snap = collector.snapshot(0);
     let report = DataHealthChecker::check(&snap, 0.8, 0.5);
     assert!(!report.quality_ok);
-    assert!(matches!(report.overall, marketdata::api::health::DataHealthStatus::Degraded(_)));
+    assert!(matches!(
+        report.overall,
+        marketdata::api::health::DataHealthStatus::Degraded(_)
+    ));
 }
 
 // 5. GracefulShutdown registers and signals correctly

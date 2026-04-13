@@ -77,7 +77,10 @@ impl AuditLogger {
     }
 
     pub fn write_count(&self) -> usize {
-        self.entries.iter().filter(|e| matches!(e.action, AuditAction::Write)).count()
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.action, AuditAction::Write))
+            .count()
     }
 }
 

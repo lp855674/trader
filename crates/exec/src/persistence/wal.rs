@@ -18,7 +18,10 @@ pub struct WalLog {
 
 impl WalLog {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), last_checkpoint_idx: 0 }
+        Self {
+            entries: Vec::new(),
+            last_checkpoint_idx: 0,
+        }
     }
 
     pub fn append(&mut self, entry: WalEntry) {
@@ -51,7 +54,10 @@ impl WalLog {
     pub fn durability_status(&self) -> (usize, usize, bool) {
         let total = self.entries.len();
         // Entries strictly after the checkpoint entry
-        let after_checkpoint = if self.entries.is_empty() || self.last_checkpoint_idx == 0 && !matches!(self.entries.first(), Some(WalEntry::Checkpoint { .. })) {
+        let after_checkpoint = if self.entries.is_empty()
+            || self.last_checkpoint_idx == 0
+                && !matches!(self.entries.first(), Some(WalEntry::Checkpoint { .. }))
+        {
             total
         } else {
             total.saturating_sub(self.last_checkpoint_idx + 1)
@@ -78,7 +84,10 @@ impl WalRecovery {
                     // Update order state
                     let _ = order_mgr.apply_event(
                         order_id,
-                        OrderEvent::Fill { qty: fill.qty, price: fill.price },
+                        OrderEvent::Fill {
+                            qty: fill.qty,
+                            price: fill.price,
+                        },
                         fill.ts_ms,
                     );
                 }
@@ -159,7 +168,9 @@ mod tests {
             },
         });
         let (_, pos_mgr) = WalRecovery::replay(&wal.entries);
-        let pos = pos_mgr.get(&InstrumentId::new(Venue::Crypto, "BTC-USD")).unwrap();
+        let pos = pos_mgr
+            .get(&InstrumentId::new(Venue::Crypto, "BTC-USD"))
+            .unwrap();
         assert!((pos.net_qty - 1.0).abs() < 1e-9);
     }
 }

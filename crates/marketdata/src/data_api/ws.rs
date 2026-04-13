@@ -1,8 +1,8 @@
-use std::sync::mpsc::{self, Receiver, Sender};
+use crate::core::data::DataItem;
+use domain::NormalizedBar;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use domain::NormalizedBar;
-use crate::core::data::DataItem;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataWsEvent {
@@ -18,7 +18,9 @@ pub struct DataWsEventBus {
 
 impl DataWsEventBus {
     pub fn new() -> Self {
-        Self { senders: Vec::new() }
+        Self {
+            senders: Vec::new(),
+        }
     }
 
     pub fn subscribe(&mut self) -> Receiver<DataWsEvent> {

@@ -23,7 +23,14 @@ pub struct DataNormalizer;
 impl DataNormalizer {
     pub fn stats(values: &[f64]) -> NormalizationStats {
         if values.is_empty() {
-            return NormalizationStats { min: 0.0, max: 0.0, mean: 0.0, std: 0.0, median: 0.0, iqr: 0.0 };
+            return NormalizationStats {
+                min: 0.0,
+                max: 0.0,
+                mean: 0.0,
+                std: 0.0,
+                median: 0.0,
+                iqr: 0.0,
+            };
         }
         let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
         let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -41,7 +48,14 @@ impl DataNormalizer {
         let q1 = sorted[n / 4];
         let q3 = sorted[3 * n / 4];
         let iqr = q3 - q1;
-        NormalizationStats { min, max, mean, std, median, iqr }
+        NormalizationStats {
+            min,
+            max,
+            mean,
+            std,
+            median,
+            iqr,
+        }
     }
 
     pub fn normalize(values: &[f64], method: NormalizationMethod) -> Vec<f64> {
@@ -66,31 +80,38 @@ impl DataNormalizer {
                 }
                 values.iter().map(|v| (v - s.median) / s.iqr).collect()
             }
-            NormalizationMethod::LogTransform => {
-                values.iter().map(|v| (v + 1e-8).ln()).collect()
-            }
+            NormalizationMethod::LogTransform => values.iter().map(|v| (v + 1e-8).ln()).collect(),
         }
     }
 
-    pub fn denormalize(normalized: &[f64], stats: &NormalizationStats, method: NormalizationMethod) -> Vec<f64> {
+    pub fn denormalize(
+        normalized: &[f64],
+        stats: &NormalizationStats,
+        method: NormalizationMethod,
+    ) -> Vec<f64> {
         match method {
             NormalizationMethod::MinMax => {
                 let range = stats.max - stats.min;
                 normalized.iter().map(|v| v * range + stats.min).collect()
             }
-            NormalizationMethod::ZScore => {
-                normalized.iter().map(|v| v * stats.std + stats.mean).collect()
-            }
-            NormalizationMethod::RobustScaler => {
-                normalized.iter().map(|v| v * stats.iqr + stats.median).collect()
-            }
+            NormalizationMethod::ZScore => normalized
+                .iter()
+                .map(|v| v * stats.std + stats.mean)
+                .collect(),
+            NormalizationMethod::RobustScaler => normalized
+                .iter()
+                .map(|v| v * stats.iqr + stats.median)
+                .collect(),
             NormalizationMethod::LogTransform => {
                 normalized.iter().map(|v| v.exp() - 1e-8).collect()
             }
         }
     }
 
-    pub fn normalize_bars(bars: &[NormalizedBar], method: NormalizationMethod) -> Vec<NormalizedBar> {
+    pub fn normalize_bars(
+        bars: &[NormalizedBar],
+        method: NormalizationMethod,
+    ) -> Vec<NormalizedBar> {
         let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
         let normalized = Self::normalize(&closes, method);
         bars.iter()

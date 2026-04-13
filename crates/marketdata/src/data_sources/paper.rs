@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::core::data::{DataItem, DataQuery, DataSource, DataSourceError, Granularity};
+use domain::NormalizedBar;
 
 pub struct PaperDataSource {
     instrument: String,
@@ -22,13 +22,21 @@ impl PaperDataSource {
             let ts_ms = start_ts_ms + i as i64 * interval_ms as i64;
 
             // LCG random
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r1 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r2 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r3 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r4 = (state >> 11) as f64 / (1u64 << 53) as f64;
 
             let open = price;
@@ -104,6 +112,10 @@ mod tests {
         let source = PaperDataSource::new_random("BTC", 100, 0, 60_000, 42);
         let q = DataQuery::new("BTC", 60_000, 300_000);
         let result = source.query(&q).unwrap();
-        assert!(result.iter().all(|i| i.ts_ms() >= 60_000 && i.ts_ms() <= 300_000));
+        assert!(
+            result
+                .iter()
+                .all(|i| i.ts_ms() >= 60_000 && i.ts_ms() <= 300_000)
+        );
     }
 }

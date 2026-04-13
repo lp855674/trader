@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use domain::{InstrumentId, Side, Venue};
 use risk::core::{
     CompositeRiskChecker, MarketContext, OrderContext, OrderType, PortfolioContext, RiskChecker,
     RiskDecision, RiskInput,
@@ -8,7 +8,7 @@ use risk::risk::{
     PortfolioRiskConfig, PositionRiskChecker, RiskPositionManager, StopLossConfig,
     VolatilityAdjuster,
 };
-use domain::{InstrumentId, Side, Venue};
+use std::sync::Arc;
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -19,7 +19,7 @@ fn make_input() -> RiskInput {
         order: OrderContext {
             instrument: btc(),
             side: Side::Buy,
-            quantity: 0.1,  // 0.1 BTC * 50k = 5k notional, well within limits
+            quantity: 0.1, // 0.1 BTC * 50k = 5k notional, well within limits
             limit_price: Some(50_000.0),
             order_type: OrderType::Limit,
             strategy_id: "test".into(),
@@ -79,10 +79,8 @@ fn circuit_breaker_short_circuits_portfolio_check() {
     });
     let portfolio_checker = PortfolioRiskChecker::new(PortfolioRiskConfig::default());
 
-    let checker = CompositeRiskChecker::new(vec![
-        Box::new(order_checker),
-        Box::new(portfolio_checker),
-    ]);
+    let checker =
+        CompositeRiskChecker::new(vec![Box::new(order_checker), Box::new(portfolio_checker)]);
 
     let mut input = make_input();
     input.market.volatility = 0.10; // triggers circuit breaker
@@ -163,14 +161,35 @@ fn concurrent_access_no_panics() {
 
             thread::spawn(move || {
                 // Each thread calls check() on the shared checkers
-                let r1 = order_checker.check(&input).expect("order checker should not error");
-                let r2 = vol_adjuster.check(&input).expect("vol adjuster should not error");
-                let r3 = position_checker.check(&input).expect("position checker should not error");
+                let r1 = order_checker
+                    .check(&input)
+                    .expect("order checker should not error");
+                let r2 = vol_adjuster
+                    .check(&input)
+                    .expect("vol adjuster should not error");
+                let r3 = position_checker
+                    .check(&input)
+                    .expect("position checker should not error");
 
                 // Basic sanity: these are valid decisions (not panics)
-                matches!(r1, RiskDecision::Approve | RiskDecision::ApproveWithAdjustment { .. } | RiskDecision::Reject { .. });
-                matches!(r2, RiskDecision::Approve | RiskDecision::ApproveWithAdjustment { .. } | RiskDecision::Reject { .. });
-                matches!(r3, RiskDecision::Approve | RiskDecision::ApproveWithAdjustment { .. } | RiskDecision::Reject { .. });
+                matches!(
+                    r1,
+                    RiskDecision::Approve
+                        | RiskDecision::ApproveWithAdjustment { .. }
+                        | RiskDecision::Reject { .. }
+                );
+                matches!(
+                    r2,
+                    RiskDecision::Approve
+                        | RiskDecision::ApproveWithAdjustment { .. }
+                        | RiskDecision::Reject { .. }
+                );
+                matches!(
+                    r3,
+                    RiskDecision::Approve
+                        | RiskDecision::ApproveWithAdjustment { .. }
+                        | RiskDecision::Reject { .. }
+                );
             })
         })
         .collect();
@@ -205,7 +224,10 @@ fn position_manager_stop_prevents_new_orders() {
 
     // Check stops
     let triggered = mgr.check_stops();
-    assert!(!triggered.is_empty(), "Stop should be triggered at 12% loss");
+    assert!(
+        !triggered.is_empty(),
+        "Stop should be triggered at 12% loss"
+    );
 
     // PositionRiskChecker rejects when daily loss limit exceeded
     let checker = PositionRiskChecker::new(10, -3_000.0);

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
+use super::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
 
 // ─── EvaluationTimer ─────────────────────────────────────────────────────────
 
@@ -21,7 +21,9 @@ pub struct EvaluationTimer {
 impl EvaluationTimer {
     /// Start the timer.
     pub fn start() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
 
     /// Stop the timer and return the elapsed duration.
@@ -71,12 +73,7 @@ impl StrategyMetrics {
     }
 
     /// Record a single evaluation.
-    pub fn record_evaluation(
-        &mut self,
-        duration: Duration,
-        signal_produced: bool,
-        error: bool,
-    ) {
+    pub fn record_evaluation(&mut self, duration: Duration, signal_produced: bool, error: bool) {
         self.evaluations += 1;
         self.total_eval_ns += duration.as_nanos() as u64;
         if error {
@@ -183,7 +180,8 @@ impl Strategy for MeteredStrategy {
             Err(_) => (false, true),
         };
 
-        self.registry.record_evaluation(self.inner.name(), duration, signal_produced, error);
+        self.registry
+            .record_evaluation(self.inner.name(), duration, signal_produced, error);
 
         result
     }
@@ -207,7 +205,7 @@ mod tests {
     use domain::{InstrumentId, Side, Venue};
 
     use super::*;
-    use crate::core::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
+    use crate::core::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
 
     fn ctx() -> StrategyContext {
         StrategyContext::new(InstrumentId::new(Venue::Crypto, "BTC"), 0)
@@ -228,7 +226,9 @@ mod tests {
                 HashMap::new(),
             )))
         }
-        fn name(&self) -> &str { "always_buy" }
+        fn name(&self) -> &str {
+            "always_buy"
+        }
     }
 
     struct AlwaysSilent;
@@ -236,7 +236,9 @@ mod tests {
         fn evaluate(&self, _ctx: &StrategyContext) -> Result<Option<Signal>, StrategyError> {
             Ok(None)
         }
-        fn name(&self) -> &str { "silent" }
+        fn name(&self) -> &str {
+            "silent"
+        }
     }
 
     struct AlwaysError;
@@ -244,7 +246,9 @@ mod tests {
         fn evaluate(&self, _ctx: &StrategyContext) -> Result<Option<Signal>, StrategyError> {
             Err(StrategyError::DataSource("oops".into()))
         }
-        fn name(&self) -> &str { "erroring" }
+        fn name(&self) -> &str {
+            "erroring"
+        }
     }
 
     // ── EvaluationTimer ──────────────────────────────────────────────────────

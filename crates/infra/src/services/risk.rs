@@ -90,7 +90,12 @@ mod tests {
     #[test]
     fn approved_within_limits() {
         let mut svc = RiskServiceStub::new(100_000.0, 1000.0);
-        let req = RiskCheck { instrument: "AAPL".to_string(), quantity: 100.0, notional: 15_000.0, account_id: "acc1".to_string() };
+        let req = RiskCheck {
+            instrument: "AAPL".to_string(),
+            quantity: 100.0,
+            notional: 15_000.0,
+            account_id: "acc1".to_string(),
+        };
         assert_eq!(svc.check(&req), RiskDecision::Approved);
         assert_eq!(svc.position("AAPL"), 100.0);
     }
@@ -98,7 +103,12 @@ mod tests {
     #[test]
     fn rejected_on_notional_breach() {
         let mut svc = RiskServiceStub::new(10_000.0, 1000.0);
-        let req = RiskCheck { instrument: "AAPL".to_string(), quantity: 100.0, notional: 15_000.0, account_id: "acc1".to_string() };
+        let req = RiskCheck {
+            instrument: "AAPL".to_string(),
+            quantity: 100.0,
+            notional: 15_000.0,
+            account_id: "acc1".to_string(),
+        };
         assert!(matches!(svc.check(&req), RiskDecision::Rejected(_)));
         assert_eq!(svc.alert_count(), 1);
     }
@@ -106,7 +116,12 @@ mod tests {
     #[test]
     fn risk_report_includes_positions() {
         let mut svc = RiskServiceStub::new(100_000.0, 1000.0);
-        let req = RiskCheck { instrument: "TSLA".to_string(), quantity: 50.0, notional: 10_000.0, account_id: "acc1".to_string() };
+        let req = RiskCheck {
+            instrument: "TSLA".to_string(),
+            quantity: 50.0,
+            notional: 10_000.0,
+            account_id: "acc1".to_string(),
+        };
         svc.check(&req);
         let report = svc.risk_report();
         assert!(report["positions"]["TSLA"].as_f64().is_some());

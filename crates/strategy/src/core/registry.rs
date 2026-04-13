@@ -63,12 +63,7 @@ impl StrategyRegistry {
 
     /// Register a new strategy under `id`. If an entry already exists it is
     /// overwritten.
-    pub fn register(
-        &self,
-        id: String,
-        strategy: Arc<dyn Strategy>,
-        config: serde_json::Value,
-    ) {
+    pub fn register(&self, id: String, strategy: Arc<dyn Strategy>, config: serde_json::Value) {
         let mut map = self.entries.lock().unwrap();
         map.insert(
             id,
@@ -144,15 +139,15 @@ impl StrategyRegistry {
             Some(_) => {
                 return Err(RegistryError::InvalidConfig(
                     "schema `required` field must be an array".into(),
-                ))
+                ));
             }
             None => return Ok(()), // no required fields
         };
 
         for field in required {
-            let key = field
-                .as_str()
-                .ok_or_else(|| RegistryError::InvalidConfig("required entry must be a string".into()))?;
+            let key = field.as_str().ok_or_else(|| {
+                RegistryError::InvalidConfig("required entry must be a string".into())
+            })?;
             if config.get(key).is_none() {
                 return Err(RegistryError::InvalidConfig(format!(
                     "missing required field: {key}"
@@ -205,9 +200,9 @@ impl StrategyFactory {
         &mut self,
         type_name: String,
         builder: impl Fn(serde_json::Value) -> Result<Arc<dyn Strategy>, RegistryError>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) {
         self.builders.insert(type_name, Box::new(builder));
     }
@@ -287,11 +282,7 @@ mod tests {
     #[test]
     fn register_and_get() {
         let reg = StrategyRegistry::new();
-        reg.register(
-            "s1".into(),
-            Stub::new("s1", 1),
-            serde_json::json!({}),
-        );
+        reg.register("s1".into(), Stub::new("s1", 1), serde_json::json!({}));
         let s = reg.get("s1").unwrap();
         assert_eq!(s.name(), "s1");
     }
@@ -308,7 +299,8 @@ mod tests {
     fn hot_swap_replaces_strategy() {
         let reg = StrategyRegistry::new();
         reg.register("s1".into(), Stub::new("s1-v1", 1), serde_json::json!({}));
-        reg.hot_swap("s1", Stub::new("s1-v2", 2), serde_json::json!({"v": 2})).unwrap();
+        reg.hot_swap("s1", Stub::new("s1-v2", 2), serde_json::json!({"v": 2}))
+            .unwrap();
         let s = reg.get("s1").unwrap();
         assert_eq!(s.name(), "s1-v2");
     }
@@ -326,7 +318,8 @@ mod tests {
     fn rollback_restores_previous_version() {
         let reg = StrategyRegistry::new();
         reg.register("s1".into(), Stub::new("s1-v1", 1), serde_json::json!({}));
-        reg.hot_swap("s1", Stub::new("s1-v2", 2), serde_json::json!({})).unwrap();
+        reg.hot_swap("s1", Stub::new("s1-v2", 2), serde_json::json!({}))
+            .unwrap();
         // current is v2; version history has v1
         reg.rollback("s1", 1).unwrap();
         let s = reg.get("s1").unwrap();

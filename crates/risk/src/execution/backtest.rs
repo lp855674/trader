@@ -1,7 +1,7 @@
 // Backtest execution mode: historical risk simulation with slippage model
 
-use std::sync::Arc;
 use crate::core::{RiskChecker, RiskDecision, RiskError, RiskInput};
+use std::sync::Arc;
 
 // ── BacktestSlippage ──────────────────────────────────────────────────────────
 
@@ -51,9 +51,7 @@ impl BacktestExecutionMode {
         volume: f64,
     ) -> Result<(RiskDecision, f64), RiskError> {
         // Optional high-vol rejection before passing to checker
-        if self.config.reject_on_high_vol
-            && input.market.volatility > self.config.vol_threshold
-        {
+        if self.config.reject_on_high_vol && input.market.volatility > self.config.vol_threshold {
             return Ok((
                 RiskDecision::Reject {
                     reason: format!(
@@ -98,7 +96,9 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
     }
 
     fn make_input(vol: f64) -> RiskInput {

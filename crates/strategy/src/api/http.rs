@@ -26,15 +26,24 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn not_found(msg: &str) -> Self {
-        Self { code: 404, message: msg.to_owned() }
+        Self {
+            code: 404,
+            message: msg.to_owned(),
+        }
     }
 
     pub fn bad_request(msg: &str) -> Self {
-        Self { code: 400, message: msg.to_owned() }
+        Self {
+            code: 400,
+            message: msg.to_owned(),
+        }
     }
 
     pub fn internal(msg: &str) -> Self {
-        Self { code: 500, message: msg.to_owned() }
+        Self {
+            code: 500,
+            message: msg.to_owned(),
+        }
     }
 }
 
@@ -64,9 +73,7 @@ pub fn handle_get_strategy_config(
         .ok_or_else(|| ApiError::not_found(&format!("strategy '{id}' not found")))
 }
 
-pub fn handle_run_backtest(
-    config_json: serde_json::Value,
-) -> Result<serde_json::Value, ApiError> {
+pub fn handle_run_backtest(config_json: serde_json::Value) -> Result<serde_json::Value, ApiError> {
     // Parse and validate the backtest config
     let schema: BacktestConfigSchema = serde_json::from_value(config_json.clone())
         .map_err(|e| ApiError::bad_request(&e.to_string()))?;
@@ -257,16 +264,14 @@ mod tests {
 
     #[test]
     fn router_dispatch_get() {
-        let router = HttpRouter::new()
-            .get("/health", |_| r#"{"status":"ok"}"#.into());
+        let router = HttpRouter::new().get("/health", |_| r#"{"status":"ok"}"#.into());
         let resp = router.dispatch("GET", "/health", "");
         assert_eq!(resp.unwrap(), r#"{"status":"ok"}"#);
     }
 
     #[test]
     fn router_dispatch_post() {
-        let router = HttpRouter::new()
-            .post("/echo", |body| body.to_owned());
+        let router = HttpRouter::new().post("/echo", |body| body.to_owned());
         let resp = router.dispatch("POST", "/echo", "hello");
         assert_eq!(resp.unwrap(), "hello");
     }

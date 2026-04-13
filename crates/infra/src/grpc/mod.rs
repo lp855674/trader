@@ -21,7 +21,8 @@ impl GrpcServer {
     }
 
     pub fn register_handler(&mut self, method: &str, description: &str) {
-        self.handlers.insert(method.to_string(), description.to_string());
+        self.handlers
+            .insert(method.to_string(), description.to_string());
     }
 
     pub fn start(&mut self) -> Result<(), String> {

@@ -62,7 +62,10 @@ impl WalkForwardAnalyzer {
     }
 
     /// Returns list of (in_start, in_end, oos_start, oos_end) index tuples.
-    pub fn windows(&self, total_bars: usize) -> Result<Vec<(usize, usize, usize, usize)>, WalkForwardError> {
+    pub fn windows(
+        &self,
+        total_bars: usize,
+    ) -> Result<Vec<(usize, usize, usize, usize)>, WalkForwardError> {
         let cfg = &self.config;
         let min_required = cfg.in_sample_size + cfg.out_of_sample_size;
         if total_bars < min_required {
@@ -80,7 +83,9 @@ impl WalkForwardAnalyzer {
             let in_end = in_start + cfg.in_sample_size;
             let oos_start = in_end;
             let oos_end = oos_start + cfg.out_of_sample_size;
-            if oos_end > total_bars { break; }
+            if oos_end > total_bars {
+                break;
+            }
             windows.push((in_start, in_end, oos_start, oos_end));
             in_start += step;
         }
@@ -132,12 +137,20 @@ impl WalkForwardAnalyzer {
         windows.sort_by_key(|w| w.window_id);
 
         let n = windows.len();
-        let avg_efficiency = if n == 0 { 0.0 } else {
+        let avg_efficiency = if n == 0 {
+            0.0
+        } else {
             windows.iter().map(|w| w.efficiency).sum::<f64>() / n as f64
         };
 
-        let consistency = if n == 0 { 0.0 } else {
-            windows.iter().filter(|w| w.out_of_sample_score > 0.0).count() as f64 / n as f64
+        let consistency = if n == 0 {
+            0.0
+        } else {
+            windows
+                .iter()
+                .filter(|w| w.out_of_sample_score > 0.0)
+                .count() as f64
+                / n as f64
         };
 
         let total_out_of_sample_score = windows.iter().map(|w| w.out_of_sample_score).sum();
@@ -163,9 +176,15 @@ fn compute_efficiency(in_sample_score: f64, out_of_sample_score: f64) -> f64 {
 }
 
 fn detect_drift(windows: &[WalkForwardWindow]) -> bool {
-    if windows.len() < 6 { return false; }
+    if windows.len() < 6 {
+        return false;
+    }
     let first3_avg = windows[..3].iter().map(|w| w.efficiency).sum::<f64>() / 3.0;
-    let last3_avg = windows[windows.len() - 3..].iter().map(|w| w.efficiency).sum::<f64>() / 3.0;
+    let last3_avg = windows[windows.len() - 3..]
+        .iter()
+        .map(|w| w.efficiency)
+        .sum::<f64>()
+        / 3.0;
     last3_avg < first3_avg * 0.5
 }
 
@@ -199,7 +218,10 @@ mod tests {
         let config = make_config(100, 20, 20);
         let analyzer = WalkForwardAnalyzer::new(config);
         let result = analyzer.windows(50);
-        assert!(matches!(result, Err(WalkForwardError::InsufficientData { .. })));
+        assert!(matches!(
+            result,
+            Err(WalkForwardError::InsufficientData { .. })
+        ));
     }
 
     #[test]
@@ -213,7 +235,10 @@ mod tests {
         let analyzer = WalkForwardAnalyzer::new(config);
         // Only 2 windows fit in 200 bars
         let result = analyzer.windows(140);
-        assert!(matches!(result, Err(WalkForwardError::TooFewWindows { .. })));
+        assert!(matches!(
+            result,
+            Err(WalkForwardError::TooFewWindows { .. })
+        ));
     }
 
     #[test]
@@ -228,15 +253,17 @@ mod tests {
     fn run_produces_correct_results() {
         let config = make_config(50, 10, 10);
         let analyzer = WalkForwardAnalyzer::new(config);
-        let result = analyzer.run(
-            100,
-            |_start, _end| {
-                let mut params = HashMap::new();
-                params.insert("x".to_string(), 1.0);
-                (params, 1.0)
-            },
-            |_start, _end, _params| 0.5,
-        ).unwrap();
+        let result = analyzer
+            .run(
+                100,
+                |_start, _end| {
+                    let mut params = HashMap::new();
+                    params.insert("x".to_string(), 1.0);
+                    (params, 1.0)
+                },
+                |_start, _end, _params| 0.5,
+            )
+            .unwrap();
         assert!(!result.windows.is_empty());
         // Each efficiency = 0.5/1.0 = 0.5
         for w in &result.windows {
@@ -293,14 +320,16 @@ mod tests {
         let config = make_config(50, 10, 10);
         let analyzer = WalkForwardAnalyzer::new(config);
         let mut call_n = 0usize;
-        let result = analyzer.run(
-            100,
-            |_, _| (HashMap::new(), 1.0),
-            |_, _, _| {
-                call_n += 1;
-                if call_n % 2 == 0 { 1.0 } else { -1.0 }
-            },
-        ).unwrap();
+        let result = analyzer
+            .run(
+                100,
+                |_, _| (HashMap::new(), 1.0),
+                |_, _, _| {
+                    call_n += 1;
+                    if call_n % 2 == 0 { 1.0 } else { -1.0 }
+                },
+            )
+            .unwrap();
         // Half positive, half negative
         assert!(result.consistency > 0.0 && result.consistency < 1.0);
     }

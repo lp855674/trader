@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -26,6 +26,14 @@ impl ApiError {
         }
     }
 
+    pub fn internal_message(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal",
+            message: message.into(),
+        }
+    }
+
     pub fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -39,7 +47,8 @@ impl ApiError {
             pipeline::PipelineError::Exec(exec::ExecError::NotConfigured) => Self {
                 status: StatusCode::BAD_REQUEST,
                 code: exec::ExecError::ERROR_CODE_NOT_CONFIGURED,
-                message: "execution adapter not configured (paper/live profile missing)".to_string(),
+                message: "execution adapter not configured (paper/live profile missing)"
+                    .to_string(),
             },
             pipeline::PipelineError::Exec(exec::ExecError::Longbridge(msg)) => Self {
                 status: StatusCode::BAD_GATEWAY,

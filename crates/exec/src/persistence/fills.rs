@@ -11,7 +11,10 @@ pub struct FillRepository {
 
 impl FillRepository {
     pub fn new() -> Self {
-        Self { fills: Vec::new(), seen_ids: HashSet::new() }
+        Self {
+            fills: Vec::new(),
+            seen_ids: HashSet::new(),
+        }
     }
 
     fn dedup_key(fill: &FillRecord) -> String {
@@ -29,11 +32,17 @@ impl FillRepository {
     }
 
     pub fn find_by_order(&self, order_id: &str) -> Vec<&FillRecord> {
-        self.fills.iter().filter(|f| f.order_id == order_id).collect()
+        self.fills
+            .iter()
+            .filter(|f| f.order_id == order_id)
+            .collect()
     }
 
     pub fn find_by_instrument(&self, instrument: &InstrumentId) -> Vec<&FillRecord> {
-        self.fills.iter().filter(|f| &f.instrument == instrument).collect()
+        self.fills
+            .iter()
+            .filter(|f| &f.instrument == instrument)
+            .collect()
     }
 
     pub fn total_qty(&self, instrument: &InstrumentId, side: Side) -> f64 {
@@ -63,9 +72,15 @@ impl FillRepository {
 
     /// Data quality check: flag fills with zero or negative price/qty.
     pub fn quality_check(&self) -> Vec<String> {
-        self.fills.iter()
+        self.fills
+            .iter()
             .filter(|f| f.price <= 0.0 || f.qty <= 0.0)
-            .map(|f| format!("fill {} has invalid price={} qty={}", f.order_id, f.price, f.qty))
+            .map(|f| {
+                format!(
+                    "fill {} has invalid price={} qty={}",
+                    f.order_id, f.price, f.qty
+                )
+            })
             .collect()
     }
 }

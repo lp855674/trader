@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::Router;
 use db::Db;
 use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
@@ -17,9 +17,7 @@ use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 async fn test_app() -> Router {
-    let database = Db::connect("sqlite::memory:")
-        .await
-        .expect("db connect");
+    let database = Db::connect("sqlite::memory:").await.expect("db connect");
     db::ensure_mvp_seed(database.pool()).await.expect("seed");
 
     let paper = Arc::new(PaperAdapter::new(database.clone()));

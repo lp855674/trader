@@ -1,15 +1,15 @@
 // Advanced integration tests for risk analysis and alert pipeline
 
-use risk::analysis::{
-    HistoricalCrisis, LiquidityStress, RiskMonteCarloConfig, StressTestEngine,
-    RiskSensitivityAnalyzer,
-};
+use domain::{InstrumentId, Venue};
 use risk::alert::{AlertChannel, AlertManager, AlertMessage};
+use risk::analysis::{
+    HistoricalCrisis, LiquidityStress, RiskMonteCarloConfig, RiskSensitivityAnalyzer,
+    StressTestEngine,
+};
 use risk::data::DataQualityChecker;
-use risk::report::{RiskReportBuilder, ReportExporter};
+use risk::report::{ReportExporter, RiskReportBuilder};
 use risk::risk::metrics::AlertSeverity;
 use risk::risk::portfolio::VarCalculator;
-use domain::{InstrumentId, Venue};
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -36,7 +36,10 @@ fn gfc_stress_produces_significant_loss() {
         result.portfolio_loss_pct
     );
     // Also verify the crisis name is set
-    assert!(result.crisis_name.contains("GFC"), "Crisis name should contain 'GFC'");
+    assert!(
+        result.crisis_name.contains("GFC"),
+        "Crisis name should contain 'GFC'"
+    );
 }
 
 // Test 2: Alert pipeline — VaR breach generates alert, manager sends it
@@ -59,7 +62,11 @@ fn alert_pipeline_var_breach() {
 
     mgr.send(alert, 1_000);
 
-    assert_eq!(mgr.sent_log.len(), 1, "Alert should be sent via InMemory channel");
+    assert_eq!(
+        mgr.sent_log.len(),
+        1,
+        "Alert should be sent via InMemory channel"
+    );
     assert_eq!(mgr.sent_log[0].title, "VaR Breach Detected");
     assert_eq!(mgr.sent_log[0].severity, AlertSeverity::Critical);
 }
@@ -83,9 +90,9 @@ fn data_quality_flags_anomalous_price() {
         !issues.is_empty(),
         "Anomalous price should generate quality issues"
     );
-    let has_anomaly = issues.iter().any(|i| {
-        matches!(i, risk::data::QualityIssue::AnomalousPrice { .. })
-    });
+    let has_anomaly = issues
+        .iter()
+        .any(|i| matches!(i, risk::data::QualityIssue::AnomalousPrice { .. }));
     assert!(has_anomaly, "Should detect AnomalousPrice issue");
 }
 
@@ -107,9 +114,21 @@ fn sensitivity_delta_correct_sign_long() {
     let greeks = analyzer.compute_greeks(&btc, 50_000.0, 0.02, 1.0);
 
     // Verify greeks are finite numbers (not NaN or inf)
-    assert!(greeks.delta.is_finite(), "delta should be finite, got {}", greeks.delta);
-    assert!(greeks.vega.is_finite(), "vega should be finite, got {}", greeks.vega);
-    assert!(greeks.gamma.is_finite(), "gamma should be finite, got {}", greeks.gamma);
+    assert!(
+        greeks.delta.is_finite(),
+        "delta should be finite, got {}",
+        greeks.delta
+    );
+    assert!(
+        greeks.vega.is_finite(),
+        "vega should be finite, got {}",
+        greeks.vega
+    );
+    assert!(
+        greeks.gamma.is_finite(),
+        "gamma should be finite, got {}",
+        greeks.gamma
+    );
 }
 
 // Test 5: Report generation produces valid JSON
@@ -123,8 +142,7 @@ fn report_generates_valid_json() {
         .build("2026-04-05", 1_000_000_000);
 
     let json = ReportExporter::to_json(&report).expect("Should serialize to JSON");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&json).expect("Should be valid JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("Should be valid JSON");
 
     assert_eq!(parsed["date"], "2026-04-05");
     assert!((parsed["total_pnl"].as_f64().unwrap() - 5_000.0).abs() < 0.01);
@@ -156,6 +174,12 @@ fn liquidity_stress_widens_prices() {
     };
 
     let adjusted = engine.run_liquidity_stress(&prices, liquidity);
-    assert!(adjusted["BTC-USD"] > 50_000.0, "Buy price should be higher under liquidity stress");
-    assert!(adjusted["ETH-USD"] > 3_000.0, "Buy price should be higher under liquidity stress");
+    assert!(
+        adjusted["BTC-USD"] > 50_000.0,
+        "Buy price should be higher under liquidity stress"
+    );
+    assert!(
+        adjusted["ETH-USD"] > 3_000.0,
+        "Buy price should be higher under liquidity stress"
+    );
 }

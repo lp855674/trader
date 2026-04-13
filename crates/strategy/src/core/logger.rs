@@ -11,7 +11,7 @@ use domain::Side;
 
 use super::{
     combinators::StrategyStats,
-    r#trait::{Signal, StrategyContext, StrategyError, Strategy},
+    r#trait::{Signal, Strategy, StrategyContext, StrategyError},
 };
 
 // ─── LogEvent ─────────────────────────────────────────────────────────────────
@@ -143,7 +143,8 @@ impl Strategy for LoggingStrategy {
                 Ok(Some(signal))
             }
             Ok(None) => {
-                self.logger.log_suppressed(self.inner.name(), "no signal", ctx.ts_ms);
+                self.logger
+                    .log_suppressed(self.inner.name(), "no signal", ctx.ts_ms);
                 Ok(None)
             }
             Err(err) => {
@@ -172,7 +173,7 @@ mod tests {
     use domain::{InstrumentId, Side, Venue};
 
     use super::*;
-    use crate::core::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
+    use crate::core::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
 
     fn ctx() -> StrategyContext {
         StrategyContext::new(InstrumentId::new(Venue::Crypto, "BTC"), 1_000)
@@ -193,7 +194,9 @@ mod tests {
                 HashMap::new(),
             )))
         }
-        fn name(&self) -> &str { "always_buy" }
+        fn name(&self) -> &str {
+            "always_buy"
+        }
     }
 
     struct AlwaysSilent;
@@ -201,7 +204,9 @@ mod tests {
         fn evaluate(&self, _ctx: &StrategyContext) -> Result<Option<Signal>, StrategyError> {
             Ok(None)
         }
-        fn name(&self) -> &str { "silent" }
+        fn name(&self) -> &str {
+            "silent"
+        }
     }
 
     struct AlwaysError;
@@ -209,7 +214,9 @@ mod tests {
         fn evaluate(&self, _ctx: &StrategyContext) -> Result<Option<Signal>, StrategyError> {
             Err(StrategyError::DataSource("boom".into()))
         }
-        fn name(&self) -> &str { "erroring" }
+        fn name(&self) -> &str {
+            "erroring"
+        }
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::core::DataItem;
+use domain::NormalizedBar;
 
 // ── QualityRule ───────────────────────────────────────────────────────────────
 
@@ -73,10 +73,7 @@ impl QualityChecker {
                                 violations.push(QualityViolation {
                                     rule: "TimestampAscending".to_string(),
                                     ts_ms: bar.ts_ms,
-                                    detail: format!(
-                                        "ts_ms {} <= previous {}",
-                                        bar.ts_ms, prev
-                                    ),
+                                    detail: format!("ts_ms {} <= previous {}", bar.ts_ms, prev),
                                 });
                             }
                         }
@@ -101,7 +98,9 @@ impl QualityChecker {
                     let bar_violations = self.check_bars(std::slice::from_ref(bar));
                     violations.extend(bar_violations);
                 }
-                DataItem::Tick { ts_ms, bid, ask, .. } => {
+                DataItem::Tick {
+                    ts_ms, bid, ask, ..
+                } => {
                     for rule in &self.rules {
                         match rule {
                             QualityRule::NoBidAskCrossing => {
@@ -109,10 +108,7 @@ impl QualityChecker {
                                     violations.push(QualityViolation {
                                         rule: "NoBidAskCrossing".to_string(),
                                         ts_ms: *ts_ms,
-                                        detail: format!(
-                                            "bid {} >= ask {}",
-                                            bid, ask
-                                        ),
+                                        detail: format!("bid {} >= ask {}", bid, ask),
                                     });
                                 }
                             }
@@ -137,10 +133,7 @@ impl QualityChecker {
                                         violations.push(QualityViolation {
                                             rule: "TimestampAscending".to_string(),
                                             ts_ms: *ts_ms,
-                                            detail: format!(
-                                                "ts_ms {} <= previous {}",
-                                                ts_ms, prev
-                                            ),
+                                            detail: format!("ts_ms {} <= previous {}", ts_ms, prev),
                                         });
                                     }
                                 }
@@ -174,7 +167,10 @@ mod tests {
 
     #[test]
     fn price_out_of_range_detected() {
-        let checker = QualityChecker::new(vec![QualityRule::PriceInRange { min: 10.0, max: 100.0 }]);
+        let checker = QualityChecker::new(vec![QualityRule::PriceInRange {
+            min: 10.0,
+            max: 100.0,
+        }]);
         let bars = vec![bar(1000, 5.0, 1.0), bar(2000, 50.0, 1.0)];
         let violations = checker.check_bars(&bars);
         assert!(!violations.is_empty());

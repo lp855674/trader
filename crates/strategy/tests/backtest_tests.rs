@@ -1,9 +1,9 @@
+use domain::{InstrumentId, Side, Venue};
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategy::backtest::{BacktestConfig, BacktestEngine};
-use strategy::core::r#trait::{Kline, Signal, StrategyContext, StrategyError};
 use strategy::core::r#trait::Strategy as CoreStrategy;
-use domain::{InstrumentId, Side, Venue};
+use strategy::core::r#trait::{Kline, Signal, StrategyContext, StrategyError};
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,9 @@ impl CoreStrategy for CloseAboveOpenStrategy {
             Ok(None)
         }
     }
-    fn name(&self) -> &str { "close_above_open" }
+    fn name(&self) -> &str {
+        "close_above_open"
+    }
 }
 
 // ─── 1. Reproducibility test ─────────────────────────────────────────────────
@@ -72,7 +74,14 @@ fn test_determinism_same_result_two_runs() {
     let config2 = make_config(instrument.clone(), 10_000.0);
 
     let bars: Vec<Kline> = (1..=10)
-        .map(|i| make_kline(instrument.clone(), 100.0 * i as f64, 110.0 * i as f64, i * 60_000))
+        .map(|i| {
+            make_kline(
+                instrument.clone(),
+                100.0 * i as f64,
+                110.0 * i as f64,
+                i * 60_000,
+            )
+        })
         .collect();
 
     let mut engine1 = BacktestEngine::new(config1, Arc::new(CloseAboveOpenStrategy));
@@ -81,16 +90,27 @@ fn test_determinism_same_result_two_runs() {
     let mut engine2 = BacktestEngine::new(config2, Arc::new(CloseAboveOpenStrategy));
     let state2 = engine2.run(bars).unwrap();
 
-    assert_eq!(state1.equity_curve.len(), state2.equity_curve.len(),
-        "equity curve lengths must match");
-    assert_eq!(state1.trade_count, state2.trade_count,
-        "trade counts must match");
+    assert_eq!(
+        state1.equity_curve.len(),
+        state2.equity_curve.len(),
+        "equity curve lengths must match"
+    );
+    assert_eq!(
+        state1.trade_count, state2.trade_count,
+        "trade counts must match"
+    );
 
-    for (i, ((ts1, eq1), (ts2, eq2))) in
-        state1.equity_curve.iter().zip(state2.equity_curve.iter()).enumerate()
+    for (i, ((ts1, eq1), (ts2, eq2))) in state1
+        .equity_curve
+        .iter()
+        .zip(state2.equity_curve.iter())
+        .enumerate()
     {
         assert_eq!(ts1, ts2, "timestamp mismatch at index {i}");
-        assert!((eq1 - eq2).abs() < 1e-9, "equity mismatch at index {i}: {eq1} vs {eq2}");
+        assert!(
+            (eq1 - eq2).abs() < 1e-9,
+            "equity mismatch at index {i}: {eq1} vs {eq2}"
+        );
     }
 }
 
@@ -105,10 +125,17 @@ fn test_empty_bars_preserves_capital() {
 
     let state = engine.run(vec![]).unwrap();
 
-    assert_eq!(state.equity_curve.len(), 0, "equity curve should be empty with no bars");
+    assert_eq!(
+        state.equity_curve.len(),
+        0,
+        "equity curve should be empty with no bars"
+    );
     assert!(state.positions.is_empty(), "no positions should exist");
-    assert!((state.capital - initial_capital).abs() < 1e-9,
-        "capital should be unchanged: expected {initial_capital}, got {}", state.capital);
+    assert!(
+        (state.capital - initial_capital).abs() < 1e-9,
+        "capital should be unchanged: expected {initial_capital}, got {}",
+        state.capital
+    );
 }
 
 // ─── 3. Edge case: single bar ────────────────────────────────────────────────
@@ -137,14 +164,16 @@ impl CoreStrategy for LargeOrderStrategy {
         Ok(Some(Signal::new(
             ctx.instrument.clone(),
             Side::Buy,
-            1000.0,   // quantity of 1000 units
+            1000.0, // quantity of 1000 units
             None,
             ctx.ts_ms,
             "large_order".to_string(),
             HashMap::new(),
         )))
     }
-    fn name(&self) -> &str { "large_order" }
+    fn name(&self) -> &str {
+        "large_order"
+    }
 }
 
 #[test]

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use super::engine::{BacktestConfig, BacktestState};
 use super::performance::PerformanceReport;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacktestResult {
@@ -57,7 +57,9 @@ pub struct ResultStore {
 
 impl ResultStore {
     pub fn new() -> Self {
-        Self { results: HashMap::new() }
+        Self {
+            results: HashMap::new(),
+        }
     }
 
     pub fn save(&mut self, result: BacktestResult) {

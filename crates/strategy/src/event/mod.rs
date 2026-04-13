@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::SendError;
 use tokio::sync::broadcast::Sender;
-use tokio::time::{interval, sleep, Instant};
+use tokio::sync::broadcast::error::SendError;
+use tokio::time::{Instant, interval, sleep};
 use tracing::{debug, info, warn};
 
 /// Event types that flow through the event bus
@@ -30,14 +30,9 @@ pub enum EventBusEvent {
         timestamp_ms: i64,
     },
     /// Error event
-    Error {
-        source: String,
-        error: String,
-    },
+    Error { source: String, error: String },
     /// System event
-    System {
-        kind: SystemEvent,
-    },
+    System { kind: SystemEvent },
 }
 
 #[derive(Debug, Clone)]
@@ -186,11 +181,14 @@ impl EventBus {
         let subscriber = Subscriber::new(tx.clone(), None);
         drop(rx);
 
-        (Self {
-            channel: tx,
-            sequence: AtomicU64::new(0),
-            active: false,
-        }, subscriber)
+        (
+            Self {
+                channel: tx,
+                sequence: AtomicU64::new(0),
+                active: false,
+            },
+            subscriber,
+        )
     }
 
     pub fn new_with_filter(capacity: usize, filter: EventFilter) -> (Self, Subscriber) {
@@ -198,11 +196,14 @@ impl EventBus {
         let subscriber = Subscriber::new(tx.clone(), Some(filter));
         drop(rx);
 
-        (Self {
-            channel: tx,
-            sequence: AtomicU64::new(0),
-            active: false,
-        }, subscriber)
+        (
+            Self {
+                channel: tx,
+                sequence: AtomicU64::new(0),
+                active: false,
+            },
+            subscriber,
+        )
     }
 
     pub async fn start(&mut self) {
@@ -412,11 +413,13 @@ mod tests {
         let (_bus, subscriber) = EventBus::new(100);
 
         let seq1 = subscriber.get_sequence();
-        subscriber.send(EventBusEvent::DataUpdate {
-            instrument_id: "BTC/USDT".to_string(),
-            granularity: "1m".to_string(),
-            timestamp_ms: 1712345678000,
-        }).unwrap();
+        subscriber
+            .send(EventBusEvent::DataUpdate {
+                instrument_id: "BTC/USDT".to_string(),
+                granularity: "1m".to_string(),
+                timestamp_ms: 1712345678000,
+            })
+            .unwrap();
         let seq2 = subscriber.get_sequence();
 
         assert!(seq2 > seq1, "Sequence should increment");

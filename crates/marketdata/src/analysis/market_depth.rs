@@ -25,9 +25,7 @@ impl DepthSnapshot {
 
     pub fn spread_bps(&self) -> Option<f64> {
         match (self.best_bid(), self.best_ask(), self.mid_price()) {
-            (Some(bid), Some(ask), Some(mid)) if mid > 1e-12 => {
-                Some((ask - bid) / mid * 10000.0)
-            }
+            (Some(bid), Some(ask), Some(mid)) if mid > 1e-12 => Some((ask - bid) / mid * 10000.0),
             _ => None,
         }
     }
@@ -73,20 +71,14 @@ impl MarketDepthAnalyzer {
             };
         }
 
-        let spreads: Vec<f64> = snapshots
-            .iter()
-            .filter_map(|s| s.spread_bps())
-            .collect();
+        let spreads: Vec<f64> = snapshots.iter().filter_map(|s| s.spread_bps()).collect();
         let avg_spread_bps = if spreads.is_empty() {
             0.0
         } else {
             spreads.iter().sum::<f64>() / spreads.len() as f64
         };
 
-        let imbalances: Vec<f64> = snapshots
-            .iter()
-            .map(|s| s.imbalance(5))
-            .collect();
+        let imbalances: Vec<f64> = snapshots.iter().map(|s| s.imbalance(5)).collect();
         let avg_imbalance = imbalances.iter().sum::<f64>() / imbalances.len() as f64;
 
         // depth_stability = std of imbalance (lower = more stable)
@@ -112,7 +104,9 @@ impl MarketDepthAnalyzer {
             return false;
         }
         // Stress if any snapshot has empty bids or asks
-        let any_empty = snapshots.iter().any(|s| s.bids.is_empty() || s.asks.is_empty());
+        let any_empty = snapshots
+            .iter()
+            .any(|s| s.bids.is_empty() || s.asks.is_empty());
         if any_empty {
             return true;
         }

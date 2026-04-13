@@ -19,7 +19,7 @@ use domain::Side;
 
 use super::{
     combinator::SignalFilter,
-    r#trait::{Signal, StrategyContext, StrategyError, Strategy},
+    r#trait::{Signal, Strategy, StrategyContext, StrategyError},
 };
 
 // ─── StrategyStats ───────────────────────────────────────────────────────────
@@ -574,9 +574,19 @@ impl Strategy for Ensemble {
                 }
 
                 let (side, qty, price_sum, price_count) = if buy_count as f64 > total as f64 / 2.0 {
-                    (Side::Buy, buy_qty / buy_count as f64, buy_price_sum, buy_price_count)
+                    (
+                        Side::Buy,
+                        buy_qty / buy_count as f64,
+                        buy_price_sum,
+                        buy_price_count,
+                    )
                 } else if sell_count as f64 > total as f64 / 2.0 {
-                    (Side::Sell, sell_qty / sell_count as f64, sell_price_sum, sell_price_count)
+                    (
+                        Side::Sell,
+                        sell_qty / sell_count as f64,
+                        sell_price_sum,
+                        sell_price_count,
+                    )
                 } else {
                     return Ok(None); // tied — no majority
                 };
@@ -682,12 +692,11 @@ impl SignalFilter for PositionSizingFilter {
         signal: Option<Signal>,
         ctx: &StrategyContext,
     ) -> Result<Option<Signal>, StrategyError> {
-        let Some(mut sig) = signal else { return Ok(None) };
+        let Some(mut sig) = signal else {
+            return Ok(None);
+        };
 
-        let price = sig
-            .limit_price
-            .or(ctx.last_bar_close)
-            .unwrap_or(1.0);
+        let price = sig.limit_price.or(ctx.last_bar_close).unwrap_or(1.0);
 
         if price <= 0.0 {
             return Ok(None);
@@ -715,7 +724,7 @@ mod tests {
     use domain::{InstrumentId, Side, Venue};
 
     use super::*;
-    use crate::core::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
+    use crate::core::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -740,11 +749,21 @@ mod tests {
 
     impl Fixed {
         fn buy(qty: f64, id: &str) -> Box<Self> {
-            Box::new(Self { side: Side::Buy, qty, price: None, id: id.into() })
+            Box::new(Self {
+                side: Side::Buy,
+                qty,
+                price: None,
+                id: id.into(),
+            })
         }
 
         fn sell(qty: f64, id: &str) -> Box<Self> {
-            Box::new(Self { side: Side::Sell, qty, price: None, id: id.into() })
+            Box::new(Self {
+                side: Side::Sell,
+                qty,
+                price: None,
+                id: id.into(),
+            })
         }
     }
 
@@ -932,14 +951,21 @@ mod tests {
     #[test]
     fn normalizer_clamp_caps_large_qty() {
         let norm = SignalNormalizer::clamp(0.1, 5.0, "n");
-        let out = norm.filter(Some(make_signal(10.0)), &ctx()).unwrap().unwrap();
+        let out = norm
+            .filter(Some(make_signal(10.0)), &ctx())
+            .unwrap()
+            .unwrap();
         assert!((out.quantity - 5.0).abs() < 1e-9);
     }
 
     #[test]
     fn normalizer_clamp_suppresses_below_min() {
         let norm = SignalNormalizer::clamp(1.0, 5.0, "n");
-        assert!(norm.filter(Some(make_signal(0.0)), &ctx()).unwrap().is_none());
+        assert!(
+            norm.filter(Some(make_signal(0.0)), &ctx())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

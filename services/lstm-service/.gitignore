@@ -4,3 +4,4 @@ __pycache__/
 *.pyd
 models/*.pt
 .env
+**/.tmp*

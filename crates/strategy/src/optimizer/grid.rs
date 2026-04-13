@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::backtest::performance::PerformanceReport;
+use std::collections::HashMap;
 
 /// Defines a range of parameter values.
 #[derive(Debug, Clone)]
@@ -53,7 +53,9 @@ pub struct ParameterSpace {
 
 impl ParameterSpace {
     pub fn new() -> Self {
-        Self { params: HashMap::new() }
+        Self {
+            params: HashMap::new(),
+        }
     }
 
     pub fn add(mut self, name: &str, range: ParameterRange) -> Self {
@@ -119,12 +121,19 @@ impl GridSearch {
             .into_iter()
             .map(|params| {
                 let report = evaluator(&params);
-                GridSearchResult { params, report, rank: 0 }
+                GridSearchResult {
+                    params,
+                    report,
+                    rank: 0,
+                }
             })
             .collect();
 
         results.sort_by(|a, b| {
-            b.report.sharpe_ratio.partial_cmp(&a.report.sharpe_ratio).unwrap_or(std::cmp::Ordering::Equal)
+            b.report
+                .sharpe_ratio
+                .partial_cmp(&a.report.sharpe_ratio)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         for (i, result) in results.iter_mut().enumerate() {
@@ -151,13 +160,18 @@ pub struct ResultCache {
 
 impl ResultCache {
     pub fn new() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     fn key(params: &HashMap<String, f64>) -> String {
         let mut keys: Vec<&String> = params.keys().collect();
         keys.sort();
-        let pairs: Vec<String> = keys.iter().map(|k| format!("{}:{}", k, params[*k])).collect();
+        let pairs: Vec<String> = keys
+            .iter()
+            .map(|k| format!("{}:{}", k, params[*k]))
+            .collect();
         format!("{{{}}}", pairs.join(","))
     }
 
@@ -207,12 +221,19 @@ impl CachedGridSearch {
                     self.cache.insert(&params, r.clone());
                     r
                 };
-                GridSearchResult { params, report, rank: 0 }
+                GridSearchResult {
+                    params,
+                    report,
+                    rank: 0,
+                }
             })
             .collect();
 
         results.sort_by(|a, b| {
-            b.report.sharpe_ratio.partial_cmp(&a.report.sharpe_ratio).unwrap_or(std::cmp::Ordering::Equal)
+            b.report
+                .sharpe_ratio
+                .partial_cmp(&a.report.sharpe_ratio)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         for (i, result) in results.iter_mut().enumerate() {
@@ -244,7 +265,11 @@ mod tests {
 
     #[test]
     fn parameter_range_continuous() {
-        let range = ParameterRange::Continuous { min: 0.0, max: 1.0, steps: 3 };
+        let range = ParameterRange::Continuous {
+            min: 0.0,
+            max: 1.0,
+            steps: 3,
+        };
         let vals = range.values();
         assert_eq!(vals.len(), 3);
         assert!((vals[0] - 0.0).abs() < 1e-10);
@@ -283,16 +308,21 @@ mod tests {
 
     #[test]
     fn parameter_space_single_param() {
-        let space = ParameterSpace::new()
-            .add("x", ParameterRange::Continuous { min: 0.0, max: 2.0, steps: 3 });
+        let space = ParameterSpace::new().add(
+            "x",
+            ParameterRange::Continuous {
+                min: 0.0,
+                max: 2.0,
+                steps: 3,
+            },
+        );
         let combos = space.combinations();
         assert_eq!(combos.len(), 3);
     }
 
     #[test]
     fn grid_search_sorts_by_sharpe() {
-        let space = ParameterSpace::new()
-            .add("x", ParameterRange::Discrete(vec![1.0, 2.0, 3.0]));
+        let space = ParameterSpace::new().add("x", ParameterRange::Discrete(vec![1.0, 2.0, 3.0]));
         let gs = GridSearch::new(space);
         let results = gs.run(|params| {
             let sharpe = params["x"]; // x=3 → highest sharpe
@@ -307,8 +337,8 @@ mod tests {
 
     #[test]
     fn grid_search_best_and_top_n() {
-        let space = ParameterSpace::new()
-            .add("x", ParameterRange::Discrete(vec![1.0, 2.0, 3.0, 4.0, 5.0]));
+        let space =
+            ParameterSpace::new().add("x", ParameterRange::Discrete(vec![1.0, 2.0, 3.0, 4.0, 5.0]));
         let gs = GridSearch::new(space);
         let results = gs.run(|p| make_report(p["x"]));
         let best = gs.best(&results);
@@ -320,8 +350,7 @@ mod tests {
 
     #[test]
     fn result_cache_avoids_duplicate_calls() {
-        let space = ParameterSpace::new()
-            .add("x", ParameterRange::Discrete(vec![1.0, 2.0]));
+        let space = ParameterSpace::new().add("x", ParameterRange::Discrete(vec![1.0, 2.0]));
         let mut cgs = CachedGridSearch::new(space);
         let mut call_count = 0usize;
         let results = cgs.run(|p| {

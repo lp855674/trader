@@ -86,11 +86,14 @@ mod tests {
     fn cost_decomposition() {
         let slip = FixedSlippage { bps: 10.0 };
         let comm = FlatCommission { per_trade: 5.0 };
-        let breakdown = ExecutionCostCalculator::calculate(
-            1000.0, 1.0, Side::Buy, &slip, &comm, &ctx(), false,
-        );
+        let breakdown =
+            ExecutionCostCalculator::calculate(1000.0, 1.0, Side::Buy, &slip, &comm, &ctx(), false);
         // slippage: 1000 * 0.001 = 1.0
-        assert!((breakdown.slippage - 1.0).abs() < 0.01, "slip={}", breakdown.slippage);
+        assert!(
+            (breakdown.slippage - 1.0).abs() < 0.01,
+            "slip={}",
+            breakdown.slippage
+        );
         // commission: 5.0
         assert!((breakdown.commission - 5.0).abs() < 0.01);
         // total: 6.0

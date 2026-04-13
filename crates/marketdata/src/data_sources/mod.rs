@@ -1,7 +1,7 @@
-pub mod paper;
 pub mod orderbook;
+pub mod paper;
 pub mod tick;
 
+pub use orderbook::{OrderBookConfig, OrderBookSource};
 pub use paper::PaperDataSource;
-pub use orderbook::{OrderBookSource, OrderBookConfig};
-pub use tick::{TickSource, TickAggregator};
+pub use tick::{TickAggregator, TickSource};

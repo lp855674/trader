@@ -71,6 +71,9 @@ mod tests {
 
         assert!(svc.submit_order("ord2"));
         assert!(svc.reject_order("ord2", "insufficient funds"));
-        assert_eq!(svc.order_status("ord2"), Some(&OrderStatus::Rejected("insufficient funds".to_string())));
+        assert_eq!(
+            svc.order_status("ord2"),
+            Some(&OrderStatus::Rejected("insufficient funds".to_string()))
+        );
     }
 }

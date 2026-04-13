@@ -94,7 +94,13 @@ mod tests {
     #[test]
     fn required_field_missing() {
         let mut sv = SchemaValidator::new();
-        sv.add_field(FieldSchema { name: "venue".to_string(), field_type: FieldType::String, required: true, min_value: None, max_value: None });
+        sv.add_field(FieldSchema {
+            name: "venue".to_string(),
+            field_type: FieldType::String,
+            required: true,
+            min_value: None,
+            max_value: None,
+        });
         let errs = sv.validate(&serde_json::json!({}));
         assert_eq!(errs.len(), 1);
     }
@@ -102,7 +108,13 @@ mod tests {
     #[test]
     fn range_validation() {
         let mut sv = SchemaValidator::new();
-        sv.add_field(FieldSchema { name: "timeout".to_string(), field_type: FieldType::Number, required: true, min_value: Some(100.0), max_value: Some(10000.0) });
+        sv.add_field(FieldSchema {
+            name: "timeout".to_string(),
+            field_type: FieldType::Number,
+            required: true,
+            min_value: Some(100.0),
+            max_value: Some(10000.0),
+        });
         let errs = sv.validate(&serde_json::json!({"timeout": 50}));
         assert!(!errs.is_empty());
         let ok = sv.validate(&serde_json::json!({"timeout": 5000}));

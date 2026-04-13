@@ -34,7 +34,9 @@ impl HealthReport {
     }
 
     pub fn is_live(&self) -> bool {
-        self.components.iter().any(|c| matches!(c.status, HealthStatus::Ok))
+        self.components
+            .iter()
+            .any(|c| matches!(c.status, HealthStatus::Ok))
     }
 }
 
@@ -54,9 +56,15 @@ impl HealthChecker {
     pub fn check_all(&self, ts_ms: i64) -> HealthReport {
         let components: Vec<ComponentHealth> = self.checks.iter().map(|f| f()).collect();
 
-        let overall = if components.iter().any(|c| matches!(c.status, HealthStatus::Down(_))) {
+        let overall = if components
+            .iter()
+            .any(|c| matches!(c.status, HealthStatus::Down(_)))
+        {
             HealthStatus::Down("one or more components are down".to_string())
-        } else if components.iter().any(|c| matches!(c.status, HealthStatus::Degraded(_))) {
+        } else if components
+            .iter()
+            .any(|c| matches!(c.status, HealthStatus::Degraded(_)))
+        {
             HealthStatus::Degraded("one or more components are degraded".to_string())
         } else {
             HealthStatus::Ok

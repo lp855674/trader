@@ -1,12 +1,12 @@
-use std::sync::{Arc, Mutex};
 use domain::NormalizedBar;
-use marketdata::core::{DataItem, InMemoryDataSource, Granularity};
-use marketdata::replay::{
-    ReplayController, ReplayConfig, GranularityReplayer,
-    ReplayCallback, CallbackEvent, CallbackManager,
-};
-use marketdata::quality::{QualityChecker, QualityRule, DataGapDetector};
 use marketdata::align::GapSpec;
+use marketdata::core::{DataItem, Granularity, InMemoryDataSource};
+use marketdata::quality::{DataGapDetector, QualityChecker, QualityRule};
+use marketdata::replay::{
+    CallbackEvent, CallbackManager, GranularityReplayer, ReplayCallback, ReplayConfig,
+    ReplayController,
+};
+use std::sync::{Arc, Mutex};
 
 fn make_bars(count: usize, interval_ms: i64) -> Vec<DataItem> {
     (0..count)
@@ -91,7 +91,10 @@ fn quality_checker_detects_price_out_of_range() {
         bar(3000, 200.0), // Out of range (> 100)
     ];
 
-    let checker = QualityChecker::new(vec![QualityRule::PriceInRange { min: 10.0, max: 100.0 }]);
+    let checker = QualityChecker::new(vec![QualityRule::PriceInRange {
+        min: 10.0,
+        max: 100.0,
+    }]);
     let violations = checker.check_bars(&bars);
     assert!(!violations.is_empty());
     // Should have violations for ts=2000 and ts=3000

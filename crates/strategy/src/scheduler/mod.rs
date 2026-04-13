@@ -3,12 +3,12 @@
 //! Provides periodic timer-based and event-driven execution with backpressure handling.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::broadcast;
-use tokio::time::{interval, sleep, Instant};
+use tokio::time::{Instant, interval, sleep};
 use tracing::{debug, error, info, warn};
 
 /// Event types that can trigger scheduler actions
@@ -28,16 +28,11 @@ pub enum SchedulerEvent {
         timestamp_ms: i64,
     },
     /// Error occurred in data source
-    Error {
-        source: String,
-        error: String,
-    },
+    Error { source: String, error: String },
     /// Shutdown request
     Shutdown,
     /// Sequence number advance
-    SequenceAdvance {
-        sequence: u64,
-    },
+    SequenceAdvance { sequence: u64 },
 }
 
 impl SchedulerEvent {
@@ -236,7 +231,10 @@ impl HybridScheduler {
 
     pub async fn run(&mut self) {
         self.active = true;
-        info!("Hybrid scheduler starting with interval {}ms", self.config.default_interval_ms);
+        info!(
+            "Hybrid scheduler starting with interval {}ms",
+            self.config.default_interval_ms
+        );
 
         let mut ticker = interval(Duration::from_millis(self.config.default_interval_ms));
         let mut rx = self.event_bus.subscribe();
@@ -295,11 +293,16 @@ impl HybridScheduler {
                 SchedulerEvent::TimerTick => {
                     // Timer ticks are handled by the ticker itself
                 }
-                SchedulerEvent::DataUpdate { instrument_id, timestamp_ms } => {
+                SchedulerEvent::DataUpdate {
+                    instrument_id,
+                    timestamp_ms,
+                } => {
                     // In real implementation, this would trigger data processing
-                    debug!("Processing data update: {} @ {:?}", 
-                           instrument_id, 
-                           Duration::from_millis(*timestamp_ms as u64));
+                    debug!(
+                        "Processing data update: {} @ {:?}",
+                        instrument_id,
+                        Duration::from_millis(*timestamp_ms as u64)
+                    );
                 }
                 SchedulerEvent::Signal { strategy_id, .. } => {
                     // In real implementation, this would trigger strategy evaluation

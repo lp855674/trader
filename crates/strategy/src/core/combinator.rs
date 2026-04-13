@@ -298,7 +298,7 @@ mod tests {
     use domain::{InstrumentId, Side, Venue};
 
     use super::*;
-    use crate::core::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
+    use crate::core::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -316,11 +316,21 @@ mod tests {
 
     impl Fixed {
         fn buy(qty: f64, price: Option<f64>) -> Box<Self> {
-            Box::new(Self { side: Side::Buy, qty, price, id: "buy".into() })
+            Box::new(Self {
+                side: Side::Buy,
+                qty,
+                price,
+                id: "buy".into(),
+            })
         }
 
         fn sell(qty: f64, price: Option<f64>) -> Box<Self> {
-            Box::new(Self { side: Side::Sell, qty, price, id: "sell".into() })
+            Box::new(Self {
+                side: Side::Sell,
+                qty,
+                price,
+                id: "sell".into(),
+            })
         }
     }
 
@@ -377,10 +387,7 @@ mod tests {
     #[test]
     fn weighted_average_no_signal_when_balanced() {
         let wa = WeightedAverage::new(
-            vec![
-                (Fixed::buy(1.0, None), 1.0),
-                (Fixed::sell(1.0, None), 1.0),
-            ],
+            vec![(Fixed::buy(1.0, None), 1.0), (Fixed::sell(1.0, None), 1.0)],
             "wa",
         );
         assert!(wa.evaluate(&ctx()).unwrap().is_none());
@@ -388,10 +395,7 @@ mod tests {
 
     #[test]
     fn weighted_average_silent_strategies_produce_none() {
-        let wa = WeightedAverage::new(
-            vec![(Box::new(Silent) as Box<dyn Strategy>, 1.0)],
-            "wa",
-        );
+        let wa = WeightedAverage::new(vec![(Box::new(Silent) as Box<dyn Strategy>, 1.0)], "wa");
         assert!(wa.evaluate(&ctx()).unwrap().is_none());
     }
 
@@ -400,10 +404,7 @@ mod tests {
     #[test]
     fn round_robin_rotates() {
         let rr = RoundRobin::new(
-            vec![
-                Fixed::buy(1.0, None) as Box<dyn Strategy>,
-                Box::new(Silent),
-            ],
+            vec![Fixed::buy(1.0, None) as Box<dyn Strategy>, Box::new(Silent)],
             "rr",
         );
         // first call → Fixed (index 0 → Buy signal)

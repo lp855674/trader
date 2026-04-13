@@ -36,10 +36,21 @@ impl IngestAdapter for MockBarsAdapter {
     }
 
     async fn ingest_once(&self, db: &Db, instrument_db_id: i64) -> Result<(), IngestError> {
+        let next_ts_ms =
+            match db::get_recent_bars(db.pool(), instrument_db_id, self.data_source_id, 1)
+                .await?
+                .last()
+            {
+                Some(last_bar) => last_bar.ts_ms + 60_000,
+                None => std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as i64)
+                    .unwrap_or(1),
+            };
         let bar = db::NewBar {
             instrument_id: instrument_db_id,
             data_source_id: self.data_source_id,
-            ts_ms: 1,
+            ts_ms: next_ts_ms,
             open: 100.0,
             high: 100.0,
             low: 100.0,

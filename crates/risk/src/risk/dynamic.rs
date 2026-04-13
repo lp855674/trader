@@ -13,7 +13,10 @@ pub struct EwmaVolatility {
 impl EwmaVolatility {
     pub fn new(alpha: f64, initial_variance: f64) -> Self {
         assert!(alpha > 0.0 && alpha < 1.0, "alpha must be in (0,1)");
-        Self { alpha, variance: initial_variance }
+        Self {
+            alpha,
+            variance: initial_variance,
+        }
     }
 
     /// Update with a new return observation
@@ -85,7 +88,11 @@ impl RiskChecker for VolatilityAdjuster {
         );
 
         Ok(RiskDecision::ApproveWithAdjustment {
-            new_quantity: if scale < 1.0 { adjusted_quantity } else { input.order.quantity },
+            new_quantity: if scale < 1.0 {
+                adjusted_quantity
+            } else {
+                input.order.quantity
+            },
             new_limit_price: input.order.limit_price,
             reason,
         })

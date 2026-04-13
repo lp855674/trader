@@ -1,8 +1,8 @@
-use marketdata::core::{DataItem, DataQuery, DataSource, Granularity, InMemoryDataSource};
-use marketdata::parser::{FileParser, CsvConfig, ApiParser};
-use marketdata::clean::{DataCleaner, CleaningRule};
-use marketdata::align::{TimeAligner, FillStrategy};
 use domain::NormalizedBar;
+use marketdata::align::{FillStrategy, TimeAligner};
+use marketdata::clean::{CleaningRule, DataCleaner};
+use marketdata::core::{DataItem, DataQuery, DataSource, Granularity, InMemoryDataSource};
+use marketdata::parser::{ApiParser, CsvConfig, FileParser};
 
 fn bar(ts_ms: i64, close: f64) -> NormalizedBar {
     NormalizedBar {

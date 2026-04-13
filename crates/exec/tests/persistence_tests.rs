@@ -5,11 +5,11 @@ use exec::core::order::{Order, OrderEvent, OrderManager};
 use exec::core::position::{ExecPositionManager, FillRecord, TaxLotMethod};
 use exec::core::types::{OrderKind, OrderRequest, TimeInForce};
 use exec::persistence::fills::FillRepository;
+use exec::persistence::index::QueryIndex;
 use exec::persistence::orders::OrderRepository;
 use exec::persistence::positions::PositionRepository;
 use exec::persistence::snapshot::SnapshotManager;
 use exec::persistence::wal::{WalEntry, WalLog, WalRecovery};
-use exec::persistence::index::QueryIndex;
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -86,7 +86,10 @@ fn snapshot_json_restore_identical() {
     let restored_snap = SnapshotManager::from_json(&json).unwrap();
     let restored_mgr = SnapshotManager::restore_orders(&restored_snap);
 
-    assert!(restored_mgr.get(&oid).is_some(), "order should exist after restore");
+    assert!(
+        restored_mgr.get(&oid).is_some(),
+        "order should exist after restore"
+    );
     assert_eq!(restored_mgr.orders.len(), order_mgr.orders.len());
 }
 
@@ -177,7 +180,11 @@ fn snapshot_verify_all_passes_for_valid_snapshots() {
     sm.take(&mgr, &pos_mgr, 1000);
     sm.take(&mgr, &pos_mgr, 2000);
     let errors = sm.verify_all();
-    assert!(errors.is_empty(), "all valid snapshots should pass verification: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "all valid snapshots should pass verification: {:?}",
+        errors
+    );
 }
 
 #[test]

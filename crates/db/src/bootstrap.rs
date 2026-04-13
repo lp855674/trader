@@ -7,13 +7,11 @@ use sqlx::SqlitePool;
 pub const PAPER_BARS_DATA_SOURCE_ID: &str = "paper_bars";
 
 pub async fn ensure_mvp_seed(pool: &SqlitePool) -> Result<(), DbError> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO data_sources (id, kind, config_json) VALUES (?, ?, NULL)",
-    )
-    .bind(PAPER_BARS_DATA_SOURCE_ID)
-    .bind("synthetic_bars")
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO data_sources (id, kind, config_json) VALUES (?, ?, NULL)")
+        .bind(PAPER_BARS_DATA_SOURCE_ID)
+        .bind("synthetic_bars")
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         "INSERT OR IGNORE INTO execution_profiles (id, kind, config_json) VALUES ('paper', 'paper_sim', NULL)",

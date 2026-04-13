@@ -77,7 +77,11 @@ impl RiskCalculator {
 
         let (max_drawdown, avg_drawdown, ulcer_index) = drawdown_metrics(returns);
         let turnover = std * 2.0;
-        let pain_ratio = if ulcer_index < 1e-10 { 0.0 } else { mean / ulcer_index };
+        let pain_ratio = if ulcer_index < 1e-10 {
+            0.0
+        } else {
+            mean / ulcer_index
+        };
 
         RiskMetrics {
             var_95,
@@ -95,7 +99,9 @@ impl RiskCalculator {
     /// Returns (mean, std, skewness, excess_kurtosis).
     pub fn stats(returns: &[f64]) -> (f64, f64, f64, f64) {
         let n = returns.len() as f64;
-        if returns.is_empty() { return (0.0, 0.0, 0.0, 0.0); }
+        if returns.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
 
         let mean = returns.iter().sum::<f64>() / n;
         let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
@@ -105,15 +111,26 @@ impl RiskCalculator {
             return (mean, std, 0.0, 0.0);
         }
 
-        let skewness = returns.iter().map(|r| ((r - mean) / std).powi(3)).sum::<f64>() / n;
-        let kurtosis = returns.iter().map(|r| ((r - mean) / std).powi(4)).sum::<f64>() / n - 3.0;
+        let skewness = returns
+            .iter()
+            .map(|r| ((r - mean) / std).powi(3))
+            .sum::<f64>()
+            / n;
+        let kurtosis = returns
+            .iter()
+            .map(|r| ((r - mean) / std).powi(4))
+            .sum::<f64>()
+            / n
+            - 3.0;
 
         (mean, std, skewness, kurtosis)
     }
 }
 
 fn percentile_sorted(sorted: &[f64], pct: f64) -> f64 {
-    if sorted.is_empty() { return 0.0; }
+    if sorted.is_empty() {
+        return 0.0;
+    }
     let idx_f = pct / 100.0 * (sorted.len() - 1) as f64;
     let lo = idx_f.floor() as usize;
     let hi = (lo + 1).min(sorted.len() - 1);
@@ -122,14 +139,19 @@ fn percentile_sorted(sorted: &[f64], pct: f64) -> f64 {
 }
 
 fn cvar(returns: &[f64], var_threshold: f64) -> f64 {
-    let tail: Vec<f64> = returns.iter().filter(|&&r| r <= var_threshold).copied().collect();
-    if tail.is_empty() { return var_threshold; }
+    let tail: Vec<f64> = returns
+        .iter()
+        .filter(|&&r| r <= var_threshold)
+        .copied()
+        .collect();
+    if tail.is_empty() {
+        return var_threshold;
+    }
     tail.iter().sum::<f64>() / tail.len() as f64
 }
 
 fn cornish_fisher(z: f64, skew: f64, kurt: f64) -> f64 {
-    z + (z * z - 1.0) * skew / 6.0
-        + (z * z * z - 3.0 * z) * kurt / 24.0
+    z + (z * z - 1.0) * skew / 6.0 + (z * z * z - 3.0 * z) * kurt / 24.0
         - (2.0 * z * z * z - 5.0 * z) * skew * skew / 36.0
 }
 
@@ -142,10 +164,18 @@ fn drawdown_metrics(returns: &[f64]) -> (f64, f64, f64) {
 
     for &r in returns {
         equity *= 1.0 + r;
-        if equity > peak { peak = equity; }
-        let dd = if peak > 0.0 { (peak - equity) / peak } else { 0.0 };
+        if equity > peak {
+            peak = equity;
+        }
+        let dd = if peak > 0.0 {
+            (peak - equity) / peak
+        } else {
+            0.0
+        };
         drawdowns.push(dd);
-        if dd > max_dd { max_dd = dd; }
+        if dd > max_dd {
+            max_dd = dd;
+        }
     }
 
     let avg_dd = if drawdowns.is_empty() {

@@ -98,7 +98,9 @@ impl ReplayController {
         let next_ts = current + self.step_ms;
 
         let items_processed = match &self.state {
-            ReplayState::Running { items_processed, .. } => *items_processed + items_count,
+            ReplayState::Running {
+                items_processed, ..
+            } => *items_processed + items_count,
             _ => items_count,
         };
 

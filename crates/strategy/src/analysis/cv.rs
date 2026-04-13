@@ -87,7 +87,11 @@ impl CrossValidator {
         let mut splits = Vec::new();
         for fold in 0..n {
             let test_start = fold * chunk;
-            let test_end = if fold == n - 1 { total_bars } else { (fold + 1) * chunk };
+            let test_end = if fold == n - 1 {
+                total_bars
+            } else {
+                (fold + 1) * chunk
+            };
 
             // Training is everything except the test fold (concatenated)
             // For time series: use all bars before test fold as training
@@ -108,7 +112,10 @@ impl CrossValidator {
         Ok(splits)
     }
 
-    fn purged_kfold_split(&self, total_bars: usize) -> Result<Vec<(usize, usize, usize, usize)>, CvError> {
+    fn purged_kfold_split(
+        &self,
+        total_bars: usize,
+    ) -> Result<Vec<(usize, usize, usize, usize)>, CvError> {
         let n = self.config.n_folds;
         let gap = self.config.purge_gap;
         let chunk = total_bars / n;
@@ -119,7 +126,11 @@ impl CrossValidator {
         let mut splits = Vec::new();
         for fold in 0..n {
             let test_start = fold * chunk;
-            let test_end = if fold == n - 1 { total_bars } else { (fold + 1) * chunk };
+            let test_end = if fold == n - 1 {
+                total_bars
+            } else {
+                (fold + 1) * chunk
+            };
 
             // Training: bars before (test_start - gap)
             let train_end = test_start.saturating_sub(gap);
@@ -138,7 +149,10 @@ impl CrossValidator {
         Ok(splits)
     }
 
-    fn walk_forward_kfold_split(&self, total_bars: usize) -> Result<Vec<(usize, usize, usize, usize)>, CvError> {
+    fn walk_forward_kfold_split(
+        &self,
+        total_bars: usize,
+    ) -> Result<Vec<(usize, usize, usize, usize)>, CvError> {
         let n = self.config.n_folds;
         let chunk = total_bars / (n + 1);
         if chunk == 0 {
@@ -175,7 +189,8 @@ impl CrossValidator {
             .into_iter()
             .enumerate()
             .map(|(id, (train_start, train_end, test_start, test_end))| {
-                let (train_score, test_score) = evaluator(train_start, train_end, test_start, test_end);
+                let (train_score, test_score) =
+                    evaluator(train_start, train_end, test_start, test_end);
                 let overfit_ratio = if test_score.abs() < 1e-10 {
                     f64::INFINITY
                 } else {
@@ -197,7 +212,11 @@ impl CrossValidator {
         let n = folds.len() as f64;
         let mean_test_score = folds.iter().map(|f| f.test_score).sum::<f64>() / n;
         let std_test_score = {
-            let variance = folds.iter().map(|f| (f.test_score - mean_test_score).powi(2)).sum::<f64>() / n;
+            let variance = folds
+                .iter()
+                .map(|f| (f.test_score - mean_test_score).powi(2))
+                .sum::<f64>()
+                / n;
             variance.sqrt()
         };
         let mean_train_score = folds.iter().map(|f| f.train_score).sum::<f64>() / n;
@@ -226,7 +245,11 @@ mod tests {
     use super::*;
 
     fn make_config(n: usize, method: CvMethod) -> CvConfig {
-        CvConfig { n_folds: n, method, purge_gap: 0 }
+        CvConfig {
+            n_folds: n,
+            method,
+            purge_gap: 0,
+        }
     }
 
     #[test]
@@ -250,7 +273,11 @@ mod tests {
 
     #[test]
     fn purged_kfold_has_gap() {
-        let cfg = CvConfig { n_folds: 4, method: CvMethod::PurgedKFold, purge_gap: 5 };
+        let cfg = CvConfig {
+            n_folds: 4,
+            method: CvMethod::PurgedKFold,
+            purge_gap: 5,
+        };
         let cv = CrossValidator::new(cfg);
         let splits = cv.split(100).unwrap();
         for (train_start, train_end, test_start, _test_end) in &splits {

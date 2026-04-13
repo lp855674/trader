@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use domain::{Side, Signal};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json;
 
-use crate::strategy::{Strategy, StrategyContext};
+use crate::strategy::{ScoredCandidate, Strategy, StrategyContext};
 
 pub struct LstmStrategy {
     pub client: Client,
@@ -64,15 +65,34 @@ struct PredictResponse {
     score: f64,
     #[allow(dead_code)]
     side: String,
-    #[allow(dead_code)]
     confidence: f64,
 }
 
-#[async_trait]
-impl Strategy for LstmStrategy {
-    async fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
-        let bars: Vec<BarPayload> = if let Some(ref db) = self.db {
-            match db::get_recent_bars(db.pool(), context.instrument_db_id, &self.data_source_id, self.lookback).await {
+#[derive(Deserialize)]
+struct ServiceError {
+    detail: ServiceErrorDetail,
+}
+
+#[derive(Deserialize)]
+struct ServiceErrorDetail {
+    error_code: String,
+    message: String,
+}
+
+impl LstmStrategy {
+    async fn load_bars(
+        &self,
+        context: &StrategyContext,
+    ) -> Result<Option<(Vec<BarPayload>, f64)>, String> {
+        let bars = if let Some(ref db) = self.db {
+            match db::get_recent_bars(
+                db.pool(),
+                context.instrument_db_id,
+                &self.data_source_id,
+                self.lookback,
+            )
+            .await
+            {
                 Ok(rows) if rows.len() >= self.lookback as usize => rows
                     .into_iter()
                     .map(|r| BarPayload {
@@ -83,24 +103,26 @@ impl Strategy for LstmStrategy {
                         close: r.close,
                         volume: r.volume,
                     })
-                    .collect(),
+                    .collect::<Vec<_>>(),
                 Ok(_) => {
                     tracing::warn!(
                         channel = "lstm_strategy",
                         instrument = %context.instrument,
                         "insufficient bars for LSTM lookback; skipping"
                     );
-                    return None;
+                    return Ok(None);
                 }
                 Err(e) => {
                     tracing::error!(channel = "lstm_strategy", err = %e, "db error reading bars");
-                    return None;
+                    return Ok(None);
                 }
             }
         } else {
-            // Fallback: fill lookback synthetic bars from last_bar_close (for tests without DB)
-            let close = context.last_bar_close?;
-            (0..self.lookback)
+            let close = match context.last_bar_close {
+                Some(value) => value,
+                None => return Ok(None),
+            };
+            let bars = (0..self.lookback)
                 .map(|i| BarPayload {
                     ts_ms: context.ts_ms - (self.lookback - i) * 86_400_000,
                     open: close,
@@ -109,7 +131,23 @@ impl Strategy for LstmStrategy {
                     close,
                     volume: 0.0,
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            return Ok(Some((bars, close)));
+        };
+
+        let limit_price = match context.last_bar_close {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        Ok(Some((bars, limit_price)))
+    }
+
+    async fn request_prediction(
+        &self,
+        context: &StrategyContext,
+    ) -> Result<Option<(PredictResponse, f64)>, String> {
+        let Some((bars, limit_price)) = self.load_bars(context).await? else {
+            return Ok(None);
         };
 
         let symbol = context.instrument.symbol.as_str();
@@ -120,35 +158,43 @@ impl Strategy for LstmStrategy {
         };
 
         let url = format!("{}/predict", self.service_url);
-        let resp = match self.client.post(&url).json(&req).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(channel = "lstm_strategy", err = %e, "lstm-service unreachable");
-                return None;
-            }
-        };
+        let resp = self
+            .client
+            .post(&url)
+            .json(&req)
+            .send()
+            .await
+            .map_err(|e| format!("service unreachable: {}", e))?;
 
         if !resp.status().is_success() {
-            tracing::warn!(
-                channel = "lstm_strategy",
-                status = %resp.status(),
-                "lstm-service returned error"
-            );
-            return None;
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if let Ok(parsed) = serde_json::from_str::<ServiceError>(&body) {
+                return Err(format!(
+                    "{} error_code={} message={}",
+                    status, parsed.detail.error_code, parsed.detail.message
+                ));
+            }
+            return Err(format!("{} body={}", status, body));
         }
 
-        let pred: PredictResponse = match resp.json().await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!(channel = "lstm_strategy", err = %e, "failed to parse predict response");
-                return None;
-            }
+        let pred: PredictResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("response parse failed: {}", e))?;
+        Ok(Some((pred, limit_price)))
+    }
+
+    async fn evaluate_with_signal(
+        &self,
+        context: &StrategyContext,
+    ) -> Result<Option<Signal>, String> {
+        let Some((pred, limit_price)) = self.request_prediction(context).await? else {
+            return Ok(None);
         };
 
-        let limit_price = context.last_bar_close?;
-
         if pred.score > self.buy_threshold {
-            Some(Signal {
+            Ok(Some(Signal {
                 strategy_id: format!("lstm_{}", self.model_type),
                 instrument: context.instrument.clone(),
                 instrument_db_id: context.instrument_db_id,
@@ -156,9 +202,9 @@ impl Strategy for LstmStrategy {
                 qty: 1.0,
                 limit_price,
                 ts_ms: context.ts_ms,
-            })
+            }))
         } else if pred.score < self.sell_threshold {
-            Some(Signal {
+            Ok(Some(Signal {
                 strategy_id: format!("lstm_{}", self.model_type),
                 instrument: context.instrument.clone(),
                 instrument_db_id: context.instrument_db_id,
@@ -166,10 +212,44 @@ impl Strategy for LstmStrategy {
                 qty: 1.0,
                 limit_price,
                 ts_ms: context.ts_ms,
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
+    }
+
+    pub async fn evaluate_candidate(
+        &self,
+        context: &StrategyContext,
+    ) -> Result<Option<ScoredCandidate>, String> {
+        let Some((prediction, _limit_price)) = self.request_prediction(context).await? else {
+            return Ok(None);
+        };
+        Ok(Some(ScoredCandidate {
+            symbol: context.instrument.symbol.clone(),
+            score: prediction.score,
+            confidence: prediction.confidence,
+        }))
+    }
+}
+
+#[async_trait]
+impl Strategy for LstmStrategy {
+    async fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
+        match self.evaluate_with_signal(context).await {
+            Ok(signal) => signal,
+            Err(error) => {
+                tracing::warn!(channel = "lstm_strategy", error = %error, "lstm-service failure");
+                None
+            }
+        }
+    }
+
+    async fn evaluate_candidate(
+        &self,
+        context: &StrategyContext,
+    ) -> Result<Option<ScoredCandidate>, String> {
+        LstmStrategy::evaluate_candidate(self, context).await
     }
 }
 
@@ -256,5 +336,30 @@ mod tests {
         let strategy = make_strategy("http://127.0.0.1:19999");
         // Service unreachable → None (no crash, no panic)
         assert!(strategy.evaluate(&make_context()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn structured_service_failure_reports_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/predict"))
+            .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
+                "detail": {
+                    "error_code": "model_not_found",
+                    "message": "please train first"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let strategy = make_strategy(&server.uri());
+        let result = strategy.evaluate_with_signal(&make_context()).await;
+        assert!(
+            result.is_err(),
+            "expected structured failure to be reported"
+        );
+        let err = result.unwrap_err();
+        assert!(err.contains("model_not_found"));
+        assert!(err.contains("please train first"));
     }
 }

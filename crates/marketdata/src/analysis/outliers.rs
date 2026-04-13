@@ -87,7 +87,9 @@ impl OutlierDetector {
             OutlierMethod::IQR { multiplier } => Self::detect_iqr(values, multiplier),
             OutlierMethod::Isolation { contamination } => {
                 // Simple stub: flag top contamination% as outliers by distance from mean
-                if values.is_empty() { return Vec::new(); }
+                if values.is_empty() {
+                    return Vec::new();
+                }
                 let mean = values.iter().sum::<f64>() / values.len() as f64;
                 let mut indexed: Vec<(usize, f64, f64)> = values
                     .iter()
@@ -110,7 +112,10 @@ impl OutlierDetector {
         }
     }
 
-    pub fn detect_bar_outliers(bars: &[NormalizedBar], method: OutlierMethod) -> Vec<OutlierResult> {
+    pub fn detect_bar_outliers(
+        bars: &[NormalizedBar],
+        method: OutlierMethod,
+    ) -> Vec<OutlierResult> {
         let closes: Vec<f64> = bars.iter().map(|b| b.close).collect();
         let mut results = Self::detect(&closes, method);
         // Patch ts_ms from actual bars

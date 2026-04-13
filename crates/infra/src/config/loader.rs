@@ -43,7 +43,10 @@ fn inject_nested(val: &mut serde_json::Value, path: &str, new_val: &str) {
     let parts: Vec<&str> = path.splitn(2, '.').collect();
     if parts.len() == 1 {
         if let serde_json::Value::Object(map) = val {
-            map.insert(parts[0].to_string(), serde_json::Value::String(new_val.to_string()));
+            map.insert(
+                parts[0].to_string(),
+                serde_json::Value::String(new_val.to_string()),
+            );
         }
     } else if let serde_json::Value::Object(map) = val {
         if let Some(child) = map.get_mut(parts[0]) {
@@ -59,7 +62,9 @@ mod tests {
     #[test]
     fn load_json_basic() {
         let loader = ConfigLoader::new("APP_");
-        let v = loader.load_json(r#"{"venue":"paper","timeout":5000}"#).unwrap();
+        let v = loader
+            .load_json(r#"{"venue":"paper","timeout":5000}"#)
+            .unwrap();
         assert_eq!(v["venue"], "paper");
     }
 

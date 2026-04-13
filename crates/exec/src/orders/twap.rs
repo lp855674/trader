@@ -20,7 +20,11 @@ pub struct TwapOrder {
 
 impl TwapOrder {
     pub fn new(total_qty: f64, duration_ms: u64, n_slices: u32, start_ts_ms: i64) -> Self {
-        let slice_qty = if n_slices > 0 { total_qty / n_slices as f64 } else { total_qty };
+        let slice_qty = if n_slices > 0 {
+            total_qty / n_slices as f64
+        } else {
+            total_qty
+        };
         Self {
             total_qty,
             duration_ms,
@@ -95,7 +99,12 @@ pub struct VwapOrder {
 }
 
 impl VwapOrder {
-    pub fn new(total_qty: f64, duration_ms: u64, participation_rate: f64, start_ts_ms: i64) -> Self {
+    pub fn new(
+        total_qty: f64,
+        duration_ms: u64,
+        participation_rate: f64,
+        start_ts_ms: i64,
+    ) -> Self {
         Self {
             total_qty,
             duration_ms,

@@ -1,9 +1,9 @@
 // Risk system configuration schema
 
-use serde::{Deserialize, Serialize};
 use crate::risk::order::OrderRiskConfig;
 use crate::risk::portfolio::PortfolioRiskConfig;
 use crate::risk::position::PnLLimits;
+use serde::{Deserialize, Serialize};
 
 // ── DataQualityConfig ─────────────────────────────────────────────────────────
 
@@ -67,10 +67,7 @@ impl RiskConfigLoader {
         // var_confidence must be in (0.9, 1.0)
         let vc = config.portfolio.var_confidence;
         if vc <= 0.9 || vc >= 1.0 {
-            return Err(format!(
-                "var_confidence {:.4} must be in (0.9, 1.0)",
-                vc
-            ));
+            return Err(format!("var_confidence {:.4} must be in (0.9, 1.0)", vc));
         }
 
         // All thresholds > 0
@@ -87,10 +84,7 @@ impl RiskConfigLoader {
         // max_drawdown_pct in (0, 1]
         let md = config.pnl_limits.max_drawdown_pct;
         if md <= 0.0 || md > 1.0 {
-            return Err(format!(
-                "max_drawdown_pct {:.4} must be in (0, 1]",
-                md
-            ));
+            return Err(format!("max_drawdown_pct {:.4} must be in (0, 1]", md));
         }
 
         // data quality thresholds
@@ -133,7 +127,10 @@ mod tests {
         let mut config = RiskSystemConfig::default();
         config.portfolio.var_confidence = 0.50; // too low
         let result = RiskConfigLoader::validate(&config);
-        assert!(result.is_err(), "Should reject var_confidence outside (0.9, 1.0)");
+        assert!(
+            result.is_err(),
+            "Should reject var_confidence outside (0.9, 1.0)"
+        );
     }
 
     #[test]

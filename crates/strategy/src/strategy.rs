@@ -10,10 +10,24 @@ pub struct StrategyContext {
     pub ts_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoredCandidate {
+    pub symbol: String,
+    pub score: f64,
+    pub confidence: f64,
+}
+
 /// `Send + Sync` so pipeline callers can hold `Arc<dyn Strategy>` across `await`.
 #[async_trait]
 pub trait Strategy: Send + Sync {
     async fn evaluate(&self, context: &StrategyContext) -> Option<Signal>;
+
+    async fn evaluate_candidate(
+        &self,
+        _context: &StrategyContext,
+    ) -> Result<Option<ScoredCandidate>, String> {
+        Err("strategy does not support universe scoring".to_string())
+    }
 }
 
 pub struct NoOpStrategy;

@@ -48,11 +48,9 @@ pub struct RiskScore {
 
 impl RiskScore {
     fn compute_total(&mut self) {
-        self.total = (self.price_score
-            + self.quantity_score
-            + self.notional_score
-            + self.volatility_score)
-            / 4.0;
+        self.total =
+            (self.price_score + self.quantity_score + self.notional_score + self.volatility_score)
+                / 4.0;
         self.total = self.total.clamp(0.0, 100.0);
     }
 }
@@ -99,7 +97,8 @@ impl RiskChecker for OrderRiskChecker {
         }
 
         // 2. Circuit breaker – check volatility first
-        score.volatility_score = (market.volatility / cfg.circuit_breaker_volatility * 100.0).min(100.0);
+        score.volatility_score =
+            (market.volatility / cfg.circuit_breaker_volatility * 100.0).min(100.0);
         if market.volatility > cfg.circuit_breaker_volatility {
             score.rejection_reasons.push(format!(
                 "Circuit breaker: market volatility {:.4} exceeds threshold {:.4}",
@@ -163,7 +162,9 @@ impl RiskChecker for OrderRiskChecker {
                     cfg.max_price_deviation_pct * 100.0,
                     clamped
                 ));
-                score.adjustment_suggestions.push(price_adjustment_reason.clone().unwrap());
+                score
+                    .adjustment_suggestions
+                    .push(price_adjustment_reason.clone().unwrap());
                 adjusted_limit = Some(clamped);
             }
         }
@@ -275,7 +276,9 @@ mod tests {
         input.order.limit_price = Some(55_000.0);
         let result = checker.check(&input).unwrap();
         match result {
-            RiskDecision::ApproveWithAdjustment { new_limit_price, .. } => {
+            RiskDecision::ApproveWithAdjustment {
+                new_limit_price, ..
+            } => {
                 let expected = 50_000.0 * 1.05;
                 assert!((new_limit_price.unwrap() - expected).abs() < 0.01);
             }

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+async-trait.workspace = true
 config.workspace = true
 db.workspace = true
 domain.workspace = true

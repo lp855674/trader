@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use domain::{InstrumentId, Side};
 use crate::core::{RiskChecker, RiskDecision, RiskError, RiskInput};
+use domain::{InstrumentId, Side};
+use std::collections::HashMap;
 
 // ── PositionEntry ─────────────────────────────────────────────────────────
 
@@ -18,7 +18,13 @@ pub struct PositionEntry {
 }
 
 impl PositionEntry {
-    pub fn new(instrument: InstrumentId, side: Side, quantity: f64, price: f64, ts_ms: i64) -> Self {
+    pub fn new(
+        instrument: InstrumentId,
+        side: Side,
+        quantity: f64,
+        price: f64,
+        ts_ms: i64,
+    ) -> Self {
         let notional = quantity * price;
         Self {
             instrument,
@@ -94,7 +100,8 @@ impl StopLossConfig {
 
         // Only apply trailing stop if we are in profit first (peak > entry)
         let _ = entry_notional; // suppress warning
-        if entry.peak_value > entry.notional_value() && drawdown_from_peak >= self.trailing_stop_pct {
+        if entry.peak_value > entry.notional_value() && drawdown_from_peak >= self.trailing_stop_pct
+        {
             return true;
         }
 
@@ -149,7 +156,8 @@ impl RiskPositionManager {
                     self.daily_pnl += realised;
                     let remaining = qty - existing.quantity;
                     if remaining > 0.0 {
-                        *existing = PositionEntry::new(instrument.clone(), side, remaining, price, ts_ms);
+                        *existing =
+                            PositionEntry::new(instrument.clone(), side, remaining, price, ts_ms);
                     } else {
                         self.positions.remove(instrument);
                         return;
@@ -237,7 +245,10 @@ pub struct PositionRiskChecker {
 
 impl PositionRiskChecker {
     pub fn new(max_open_positions: u32, daily_loss_limit: f64) -> Self {
-        Self { max_open_positions, daily_loss_limit }
+        Self {
+            max_open_positions,
+            daily_loss_limit,
+        }
     }
 }
 
@@ -295,7 +306,7 @@ mod tests {
 
     fn make_stop_config() -> StopLossConfig {
         StopLossConfig {
-            hard_stop_pct: 0.05,    // 5% loss
+            hard_stop_pct: 0.05,     // 5% loss
             trailing_stop_pct: 0.03, // 3% from peak
         }
     }

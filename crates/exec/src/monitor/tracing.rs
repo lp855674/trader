@@ -25,7 +25,8 @@ impl TraceSpan {
     }
 
     pub fn duration_us(&self) -> Option<u64> {
-        self.end_ts_us.map(|end| end.saturating_sub(self.start_ts_us))
+        self.end_ts_us
+            .map(|end| end.saturating_sub(self.start_ts_us))
     }
 
     pub fn tag(&mut self, key: &str, value: &str) {
@@ -41,15 +42,14 @@ pub struct ExecutionTracer {
 
 impl ExecutionTracer {
     pub fn new(max_spans: usize) -> Self {
-        Self { spans: Vec::new(), max_spans, next_id: 1 }
+        Self {
+            spans: Vec::new(),
+            max_spans,
+            next_id: 1,
+        }
     }
 
-    pub fn start_span(
-        &mut self,
-        kind: SpanKind,
-        parent_id: Option<String>,
-        ts_us: u64,
-    ) -> String {
+    pub fn start_span(&mut self, kind: SpanKind, parent_id: Option<String>, ts_us: u64) -> String {
         let span_id = format!("span-{}", self.next_id);
         self.next_id += 1;
         let span = TraceSpan {
@@ -114,11 +114,15 @@ impl ExecutionTracer {
 
     /// Average span duration in microseconds for a given kind.
     pub fn avg_duration_us(&self, kind: &SpanKind) -> Option<f64> {
-        let finished: Vec<u64> = self.spans.iter()
+        let finished: Vec<u64> = self
+            .spans
+            .iter()
             .filter(|s| &s.kind == kind)
             .filter_map(|s| s.duration_us())
             .collect();
-        if finished.is_empty() { return None; }
+        if finished.is_empty() {
+            return None;
+        }
         Some(finished.iter().sum::<u64>() as f64 / finished.len() as f64)
     }
 }

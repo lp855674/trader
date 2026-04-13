@@ -1,8 +1,8 @@
 pub mod paper;
-pub use paper::{PaperAdapter, PaperConfig, PaperState, MarketDataSnapshot};
+pub use paper::{MarketDataSnapshot, PaperAdapter, PaperConfig, PaperState};
 
 pub mod intent;
-pub use intent::{IntentProcessor, StrategyOrderIntent, IntentConfig, IntentError};
+pub use intent::{IntentConfig, IntentError, IntentProcessor, StrategyOrderIntent};
 
 pub mod position;
-pub use position::{PositionManager, PositionEntry, ExposureLimit, PositionError};
+pub use position::{ExposureLimit, PositionEntry, PositionError, PositionManager};

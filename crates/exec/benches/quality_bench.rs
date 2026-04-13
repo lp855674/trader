@@ -31,8 +31,11 @@ fn bench_fixed_slippage(n: usize) -> f64 {
         total += black_box(fixed_slippage(100.0 + i as f64 * 0.01, 5.0));
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("fixed_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "fixed_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
     total
 }
 
@@ -44,8 +47,11 @@ fn bench_volume_slippage(n: usize) -> f64 {
         total += black_box(volume_slippage(150.0, qty, 50_000.0, 0.1));
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("volume_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "volume_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
     total
 }
 
@@ -57,8 +63,11 @@ fn bench_depth_slippage(n: usize) -> f64 {
         total += black_box(depth_slippage(200.0, qty, 10_000.0, 0.02));
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("depth_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "depth_slippage: {n} iters in {:.2}ms, avg {:.1}ns/iter, total={total:.4}",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
     total
 }
 
@@ -67,7 +76,10 @@ fn bench_model_accuracy() {
     let expected = 150.0 * 5.0 / 10_000.0; // $0.075 per share
     let actual = fixed_slippage(150.0, 5.0);
     let error = (actual - expected).abs();
-    assert!(error < 1e-10, "model accuracy failed: expected {expected}, got {actual}");
+    assert!(
+        error < 1e-10,
+        "model accuracy failed: expected {expected}, got {actual}"
+    );
     println!("model_accuracy: fixed slippage error={error:.2e} ✓");
 
     // Volume slippage: 200 shares vs 10k ADV, impact 10bps per sqrt(participation)

@@ -3,9 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use domain::{OrderIntent, Side};
 use exec::{ExecError, ExecutionAdapter, OrderAck};
-use longbridge::trade::{
-    OrderSide, OrderType, SubmitOrderOptions, TimeInForceType, TradeContext,
-};
+use longbridge::trade::{OrderSide, OrderType, SubmitOrderOptions, TimeInForceType, TradeContext};
 use rust_decimal::Decimal;
 
 /// 通过 Longbridge **实盘**限价单（`LO`）。  
@@ -38,12 +36,16 @@ impl ExecutionAdapter for LongbridgeTradeAdapter {
         let qty = Decimal::from_f64_retain(intent.qty)
             .ok_or_else(|| ExecError::Longbridge("invalid quantity".to_string()))?;
         if qty <= Decimal::ZERO {
-            return Err(ExecError::Longbridge("quantity must be positive".to_string()));
+            return Err(ExecError::Longbridge(
+                "quantity must be positive".to_string(),
+            ));
         }
         let price = Decimal::from_f64_retain(intent.limit_price)
             .ok_or_else(|| ExecError::Longbridge("invalid limit price".to_string()))?;
         if price <= Decimal::ZERO {
-            return Err(ExecError::Longbridge("limit price must be positive".to_string()));
+            return Err(ExecError::Longbridge(
+                "limit price must be positive".to_string(),
+            ));
         }
 
         let symbol = intent.instrument.symbol.as_str();

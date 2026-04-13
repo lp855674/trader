@@ -9,7 +9,11 @@ pub struct BatchConfig {
 
 impl Default for BatchConfig {
     fn default() -> Self {
-        Self { max_batch_size: 100, flush_interval_ms: 100, rate_limit_per_sec: 10 }
+        Self {
+            max_batch_size: 100,
+            flush_interval_ms: 100,
+            rate_limit_per_sec: 10,
+        }
     }
 }
 
@@ -24,7 +28,12 @@ pub struct BatchExecutionQueue {
 impl BatchExecutionQueue {
     pub fn new(config: BatchConfig) -> Self {
         let initial_tokens = config.rate_limit_per_sec as f64;
-        Self { pending: Vec::new(), config, last_flush_ts: 0, tokens: initial_tokens }
+        Self {
+            pending: Vec::new(),
+            config,
+            last_flush_ts: 0,
+            tokens: initial_tokens,
+        }
     }
 
     pub fn push(&mut self, req: OrderRequest, ts_ms: i64) {
@@ -35,14 +44,14 @@ impl BatchExecutionQueue {
     pub fn flush(&mut self, ts_ms: i64) -> Vec<OrderRequest> {
         // Replenish tokens based on elapsed time
         let elapsed_secs = (ts_ms - self.last_flush_ts).max(0) as f64 / 1000.0;
-        self.tokens =
-            (self.tokens + elapsed_secs * self.config.rate_limit_per_sec as f64).min(
-                self.config.rate_limit_per_sec as f64,
-            );
+        self.tokens = (self.tokens + elapsed_secs * self.config.rate_limit_per_sec as f64)
+            .min(self.config.rate_limit_per_sec as f64);
         self.last_flush_ts = ts_ms;
 
         let available = self.tokens.floor() as usize;
-        let take = available.min(self.config.max_batch_size).min(self.pending.len());
+        let take = available
+            .min(self.config.max_batch_size)
+            .min(self.pending.len());
         if take == 0 {
             return Vec::new();
         }
@@ -85,7 +94,11 @@ mod tests {
 
     #[test]
     fn batch_queue_respects_rate_limit() {
-        let config = BatchConfig { max_batch_size: 100, flush_interval_ms: 100, rate_limit_per_sec: 5 };
+        let config = BatchConfig {
+            max_batch_size: 100,
+            flush_interval_ms: 100,
+            rate_limit_per_sec: 5,
+        };
         let mut queue = BatchExecutionQueue::new(config);
         // Push 10 orders
         for i in 0..10 {

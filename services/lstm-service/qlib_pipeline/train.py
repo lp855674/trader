@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +12,12 @@ import torch.nn as nn
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
 
-MODELS_DIR = Path(os.getenv("LSTM_MODELS_DIR", "models"))
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+def get_models_dir() -> Path:
+    path = Path(os.getenv("LSTM_MODELS_DIR", "models"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 SUPPORTED_MODELS = {"lstm", "alstm"}
 
@@ -49,9 +54,21 @@ class TrainResponse(BaseModel):
     metrics: TrainMetrics
 
 
+def _validate_name(value: str, field: str) -> str:
+    if not SAFE_NAME_PATTERN.fullmatch(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field}: must match {SAFE_NAME_PATTERN.pattern}",
+        )
+    return value
+
+
 def _model_path(symbol: str, model_type: str) -> Path:
-    safe = symbol.replace(".", "_")
-    return MODELS_DIR / f"{safe}_{model_type}.pt"
+    validated_symbol = _validate_name(symbol, "symbol")
+    validated_type = _validate_name(model_type, "model_type")
+    safe_symbol = validated_symbol.replace(".", "_")
+    safe_type = validated_type.replace(".", "_")
+    return get_models_dir() / f"{safe_symbol}_{safe_type}.pt"
 
 
 class _SimpleLSTM(nn.Module):
@@ -93,6 +110,8 @@ def _fetch_and_train(symbol: str, model_type: str, start: str, end: str):
     Fetch data via Qlib Yahoo provider, compute Alpha158 features, train model.
     Returns (model, metrics_dict).
     """
+    validated_symbol = _validate_name(symbol, "symbol")
+    validated_model_type = _validate_name(model_type, "model_type")
     try:
         import qlib
         from qlib.constant import REG_US
@@ -100,30 +119,42 @@ def _fetch_and_train(symbol: str, model_type: str, start: str, end: str):
     except ImportError:
         raise HTTPException(status_code=500, detail="qlib not installed")
 
-    # Initialize Qlib with Yahoo provider (US market)
+    # Initialize Qlib
     qlib_dir = Path(os.getenv("QLIB_DATA_DIR", "~/.qlib/qlib_data/us_data")).expanduser()
     qlib.init(provider_uri=str(qlib_dir), region=REG_US)
 
-    # Qlib symbol format: strip ".US" suffix → "AAPL"
-    qlib_symbol = symbol.split(".")[0]
-
-    # Build Alpha158 handler
+    # Build Alpha158 handler - use all US symbols to get enough data
+    # Use data range that exists in Qlib US data (up to 2020-11-10)
     handler = Alpha158(
-        instruments=[qlib_symbol],
+        instruments="all",
         start_time=start,
         end_time=end,
         fit_start_time=start,
         fit_end_time=end,
         infer_processors=[],
-        learn_processors=[{"class": "RobustZScoreNorm", "kwargs": {"fields_group": "feature"}}],
+        learn_processors=[],
     )
-    df = handler.fetch()  # MultiIndex (datetime, instrument) → 158 feature cols + label
+    df = handler.fetch()
+    
+    # Filter for our specific symbol
+    qlib_symbol = validated_symbol.split(".")[0]
+    try:
+        df = df.xs(qlib_symbol, level="instrument")
+    except KeyError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No data returned for {symbol} in {start}~{end}",
+        )
 
     if df.empty:
         raise HTTPException(status_code=422, detail=f"No data returned for {symbol} in {start}~{end}")
 
     features = df.drop(columns=["label"], errors="ignore").values.astype(np.float32)
     labels = df["label"].values.astype(np.float32) if "label" in df.columns else np.zeros(len(df), dtype=np.float32)
+    
+    # Alpha158 returns 158 features + 1 label; drop label from features
+    if features.shape[1] > 158:
+        features = features[:, :158]
 
     # Build rolling windows (lookback=60)
     lookback = 60
@@ -178,11 +209,11 @@ async def train(req: TrainRequest) -> TrainResponse:
         "num_layers": 2,
         "lookback": 60,
         "symbol": req.symbol,
-        "trained_at": datetime.utcnow().isoformat(),
+        "trained_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
     }, path)
 
-    date_str = datetime.utcnow().strftime("%Y%m%d")
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     model_id = f"lstm_{req.symbol.replace('.', '_')}_{req.model_type}_{date_str}"
     return TrainResponse(model_id=model_id, metrics=TrainMetrics(**metrics))
 
@@ -200,7 +231,7 @@ class ModelInfo(BaseModel):
 @router.get("/models", response_model=list[ModelInfo])
 async def list_models() -> list[ModelInfo]:
     results = []
-    for pt in MODELS_DIR.glob("*.pt"):
+    for pt in get_models_dir().glob("*.pt"):
         try:
             ckpt = torch.load(pt, map_location="cpu", weights_only=False)
             m = ckpt.get("metrics", {})

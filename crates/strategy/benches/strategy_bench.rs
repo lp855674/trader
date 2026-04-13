@@ -4,7 +4,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use domain::{InstrumentId, Side, Venue};
 
@@ -12,7 +12,7 @@ use strategy::core::{
     combinator::{Pipeline, QuantityScaler, SideFilter, WeightedAverage},
     combinators::DynamicWeightedAverage,
     metrics::{MeteredStrategy, MetricsRegistry},
-    r#trait::{Signal, StrategyContext, StrategyError, Strategy},
+    r#trait::{Signal, Strategy, StrategyContext, StrategyError},
 };
 
 // ─── Helper strategies ────────────────────────────────────────────────────────
@@ -109,7 +109,8 @@ fn bench_pipeline_3_filters(c: &mut Criterion) {
     let pipeline = Pipeline::new(
         Box::new(AlwaysBuy),
         vec![
-            Box::new(QuantityScaler::new(1.0, "scale1")) as Box<dyn strategy::core::combinator::SignalFilter>,
+            Box::new(QuantityScaler::new(1.0, "scale1"))
+                as Box<dyn strategy::core::combinator::SignalFilter>,
             Box::new(QuantityScaler::new(1.0, "scale2")),
             Box::new(SideFilter::new(Side::Buy, "buy_only")),
         ],

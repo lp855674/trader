@@ -1,5 +1,5 @@
-use crate::core::data::{DataItem, DataQuery, DataSource, DataSourceError, Granularity};
 use crate::analysis::market_depth::DepthSnapshot;
+use crate::core::data::{DataItem, DataQuery, DataSource, DataSourceError, Granularity};
 
 #[derive(Debug, Clone)]
 pub struct OrderBookConfig {

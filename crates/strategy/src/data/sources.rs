@@ -598,12 +598,7 @@ mod tests {
         let end_ts = start_ts + step_ms * (100 - 1);
 
         let klines = generator
-            .generate_klines(
-                &instrument,
-                start_ts,
-                end_ts,
-                Granularity::Minute(1),
-            )
+            .generate_klines(&instrument, start_ts, end_ts, Granularity::Minute(1))
             .unwrap();
 
         assert_eq!(klines.len(), 100);

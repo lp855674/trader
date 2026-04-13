@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::core::DataItem;
+use domain::NormalizedBar;
 
 // ── CleaningRule ──────────────────────────────────────────────────────────────
 
@@ -202,7 +202,10 @@ mod tests {
     #[test]
     fn clamp_prices() {
         let bars = vec![bar(1, 5.0, 1.0), bar(2, 150.0, 1.0), bar(3, 50.0, 1.0)];
-        let cleaner = DataCleaner::new(vec![CleaningRule::ClampPrices { min: 10.0, max: 100.0 }]);
+        let cleaner = DataCleaner::new(vec![CleaningRule::ClampPrices {
+            min: 10.0,
+            max: 100.0,
+        }]);
         let (result, report) = cleaner.clean(bars);
         assert_eq!(report.prices_clamped, 2);
         assert!((result[0].close - 10.0).abs() < 1e-9);
@@ -212,11 +215,7 @@ mod tests {
 
     #[test]
     fn require_positive_volume() {
-        let bars = vec![
-            bar(1, 10.0, 0.0),
-            bar(2, 10.0, -1.0),
-            bar(3, 10.0, 100.0),
-        ];
+        let bars = vec![bar(1, 10.0, 0.0), bar(2, 10.0, -1.0), bar(3, 10.0, 100.0)];
         let cleaner = DataCleaner::new(vec![CleaningRule::RequirePositiveVolume]);
         let (result, report) = cleaner.clean(bars);
         assert_eq!(result.len(), 1);

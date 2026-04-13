@@ -65,7 +65,9 @@ impl ExecutionOptimizer {
     ) -> OptimizationResult {
         let scored = self.score_venues(venues);
         let best = scored.iter().max_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         let recommended_venue = best.map(|v| v.venue.clone()).unwrap_or_default();
         let expected_cost_bps = best.map(|v| v.expected_slippage_bps).unwrap_or(0.0);

@@ -33,10 +33,9 @@ pub struct AccountRow {
 }
 
 pub async fn load_accounts(pool: &SqlitePool) -> Result<Vec<AccountRow>, DbError> {
-    let rows = sqlx::query_as::<_, AccountRow>(
-        "SELECT id, mode, execution_profile_id FROM accounts",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows =
+        sqlx::query_as::<_, AccountRow>("SELECT id, mode, execution_profile_id FROM accounts")
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }

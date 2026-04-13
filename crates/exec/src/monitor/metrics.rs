@@ -11,7 +11,12 @@ pub struct LatencyBucket {
 impl LatencyBucket {
     pub fn from_samples(samples: &[u64]) -> Self {
         if samples.is_empty() {
-            return Self { p50_us: 0.0, p95_us: 0.0, p99_us: 0.0, max_us: 0.0 };
+            return Self {
+                p50_us: 0.0,
+                p95_us: 0.0,
+                p99_us: 0.0,
+                max_us: 0.0,
+            };
         }
         let mut sorted = samples.to_vec();
         sorted.sort_unstable();
@@ -20,11 +25,21 @@ impl LatencyBucket {
         let p95 = sorted[(len * 95 / 100).min(len - 1)] as f64;
         let p99 = sorted[(len * 99 / 100).min(len - 1)] as f64;
         let max = *sorted.last().unwrap() as f64;
-        Self { p50_us: p50, p95_us: p95, p99_us: p99, max_us: max }
+        Self {
+            p50_us: p50,
+            p95_us: p95,
+            p99_us: p99,
+            max_us: max,
+        }
     }
 
     pub fn zero() -> Self {
-        Self { p50_us: 0.0, p95_us: 0.0, p99_us: 0.0, max_us: 0.0 }
+        Self {
+            p50_us: 0.0,
+            p95_us: 0.0,
+            p99_us: 0.0,
+            max_us: 0.0,
+        }
     }
 }
 

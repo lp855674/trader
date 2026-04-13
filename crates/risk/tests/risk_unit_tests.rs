@@ -1,12 +1,12 @@
+use domain::{InstrumentId, Side, Venue};
 use risk::core::{
     CompositeRiskChecker, MarketContext, OrderContext, OrderType, PortfolioContext, RiskChecker,
     RiskDecision, RiskInput,
 };
 use risk::risk::{
-    EwmaVolatility, OrderRiskChecker, OrderRiskConfig, RuleAction, RuleCondition, RuleEngine,
-    RiskRule, VolatilityAdjuster,
+    EwmaVolatility, OrderRiskChecker, OrderRiskConfig, RiskRule, RuleAction, RuleCondition,
+    RuleEngine, VolatilityAdjuster,
 };
-use domain::{InstrumentId, Side, Venue};
 
 fn make_input() -> RiskInput {
     RiskInput {
@@ -46,10 +46,7 @@ fn composite_approves_clean_order() {
     let order_checker = OrderRiskChecker::new(OrderRiskConfig::default());
     let vol_adjuster = VolatilityAdjuster::new(0.94, 100.0, 10_000_000.0);
 
-    let checker = CompositeRiskChecker::new(vec![
-        Box::new(order_checker),
-        Box::new(vol_adjuster),
-    ]);
+    let checker = CompositeRiskChecker::new(vec![Box::new(order_checker), Box::new(vol_adjuster)]);
 
     let result = checker.check(&make_input()).unwrap();
     // Clean order with normal volatility should approve (or approve-with-adjustment for vol adjuster)
@@ -66,10 +63,7 @@ fn composite_rejects_when_any_checker_rejects() {
     let order_checker = OrderRiskChecker::new(OrderRiskConfig::default());
     let vol_adjuster = VolatilityAdjuster::new(0.94, 100.0, 10_000_000.0);
 
-    let checker = CompositeRiskChecker::new(vec![
-        Box::new(order_checker),
-        Box::new(vol_adjuster),
-    ]);
+    let checker = CompositeRiskChecker::new(vec![Box::new(order_checker), Box::new(vol_adjuster)]);
 
     let mut input = make_input();
     // Trigger circuit breaker
@@ -125,9 +119,7 @@ fn circuit_breaker_and_ewma_under_volatile_market() {
         ..OrderRiskConfig::default()
     });
 
-    let checker = CompositeRiskChecker::new(vec![
-        Box::new(order_checker),
-    ]);
+    let checker = CompositeRiskChecker::new(vec![Box::new(order_checker)]);
 
     let mut input = make_input();
     input.market.volatility = 0.10; // above 5% circuit breaker threshold
@@ -146,5 +138,9 @@ fn circuit_breaker_and_ewma_under_volatile_market() {
         }
         ewma.volatility()
     };
-    assert!(ewma_vol > 0.02, "EWMA should show elevated vol: {}", ewma_vol);
+    assert!(
+        ewma_vol > 0.02,
+        "EWMA should show elevated vol: {}",
+        ewma_vol
+    );
 }

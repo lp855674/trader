@@ -48,9 +48,21 @@ mod tests {
     #[test]
     fn index_and_lookup() {
         let mut idx = StorageIndex::new();
-        idx.index(IndexEntry { ts_ms: 1000, instrument: "BTC".to_string(), partition_id: 0 });
-        idx.index(IndexEntry { ts_ms: 2000, instrument: "BTC".to_string(), partition_id: 0 });
-        idx.index(IndexEntry { ts_ms: 5000, instrument: "BTC".to_string(), partition_id: 1 });
+        idx.index(IndexEntry {
+            ts_ms: 1000,
+            instrument: "BTC".to_string(),
+            partition_id: 0,
+        });
+        idx.index(IndexEntry {
+            ts_ms: 2000,
+            instrument: "BTC".to_string(),
+            partition_id: 0,
+        });
+        idx.index(IndexEntry {
+            ts_ms: 5000,
+            instrument: "BTC".to_string(),
+            partition_id: 1,
+        });
 
         let result = idx.lookup("BTC", 1000, 3000);
         assert_eq!(result.len(), 2);

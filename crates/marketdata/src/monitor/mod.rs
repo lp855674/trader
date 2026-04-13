@@ -1,7 +1,7 @@
-pub mod metrics;
 pub mod alert;
+pub mod metrics;
 pub mod tracing;
 
+pub use alert::{DataAlert, DataAlertManager, DataAlertType};
 pub use metrics::{DataMetricsCollector, DataMetricsSnapshot};
-pub use alert::{DataAlertManager, DataAlert, DataAlertType};
-pub use tracing::{DataTracer, DataTraceSpan};
+pub use tracing::{DataTraceSpan, DataTracer};

@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use domain::{InstrumentId, Side};
 
-use crate::core::r#trait::{Kline, Strategy, StrategyContext};
 use crate::core::r#trait::Signal;
+use crate::core::r#trait::{Kline, Strategy, StrategyContext};
 
 #[derive(Debug, Error)]
 pub enum BacktestError {
@@ -129,7 +129,11 @@ pub struct BacktestEngine {
 impl BacktestEngine {
     pub fn new(config: BacktestConfig, strategy: Arc<dyn Strategy>) -> Self {
         let state = BacktestState::new(config.initial_capital, config.start_ts_ms);
-        Self { config, state, strategy }
+        Self {
+            config,
+            state,
+            strategy,
+        }
     }
 
     pub fn step(&mut self, kline: &Kline) -> Result<Option<Signal>, BacktestError> {
@@ -168,7 +172,8 @@ impl BacktestEngine {
                 Side::Sell => existing.side == Side::Buy,
             };
             if opposite {
-                self.state.close_position(instrument, fill_price, self.config.commission_rate);
+                self.state
+                    .close_position(instrument, fill_price, self.config.commission_rate);
             }
         }
 
@@ -212,8 +217,8 @@ impl BacktestEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{InstrumentId, Side, Venue};
     use crate::core::r#trait::{Signal, StrategyError};
+    use domain::{InstrumentId, Side, Venue};
     use std::collections::HashMap;
 
     struct AlwaysBuy;
@@ -230,7 +235,9 @@ mod tests {
                 HashMap::new(),
             )))
         }
-        fn name(&self) -> &str { "always_buy" }
+        fn name(&self) -> &str {
+            "always_buy"
+        }
     }
 
     fn make_kline(instrument: InstrumentId, close: f64, ts: i64) -> Kline {

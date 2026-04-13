@@ -1,18 +1,20 @@
 // Full system integration test (4.8)
 
-use std::sync::Arc;
+use domain::{InstrumentId, Side, Venue};
 use risk::alert::{AlertChannel, AlertManager, AlertMessage};
 use risk::analysis::{HistoricalCrisis, RiskMonteCarloConfig, StressTestEngine};
 use risk::config::{RiskConfigLoader, RiskSystemConfig};
-use risk::core::{CompositeRiskChecker, RiskDecision, RiskInput,
-    MarketContext, OrderContext, OrderType, PortfolioContext};
+use risk::core::{
+    CompositeRiskChecker, MarketContext, OrderContext, OrderType, PortfolioContext, RiskDecision,
+    RiskInput,
+};
 use risk::execution::{LiveConfig, LiveExecutionMode};
-use risk::report::{RiskReportBuilder, ReportExporter};
+use risk::report::{ReportExporter, RiskReportBuilder};
 use risk::risk::metrics::AlertSeverity;
 use risk::risk::order::{OrderRiskChecker, OrderRiskConfig};
 use risk::risk::portfolio::{PortfolioRiskChecker, PortfolioRiskConfig};
 use risk::risk::position::PositionRiskChecker;
-use domain::{InstrumentId, Side, Venue};
+use std::sync::Arc;
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -203,7 +205,10 @@ fn full_pipeline_integration() {
     let valid = make_valid_input();
     let result = live.check_and_submit(&valid, 0).unwrap();
     assert!(
-        matches!(result, RiskDecision::Approve | RiskDecision::ApproveWithAdjustment { .. }),
+        matches!(
+            result,
+            RiskDecision::Approve | RiskDecision::ApproveWithAdjustment { .. }
+        ),
         "Valid input should be approved: {:?}",
         result
     );

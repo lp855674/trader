@@ -3,3 +3,5 @@
 *.db
 .env
 .DS_Store
+target*
+**/.tmp*

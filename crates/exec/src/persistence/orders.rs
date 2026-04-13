@@ -10,7 +10,9 @@ pub struct OrderRepository {
 
 impl OrderRepository {
     pub fn new() -> Self {
-        Self { orders: HashMap::new() }
+        Self {
+            orders: HashMap::new(),
+        }
     }
 
     pub fn save(&mut self, order: &Order) {
@@ -22,11 +24,17 @@ impl OrderRepository {
     }
 
     pub fn find_by_instrument(&self, instrument: &InstrumentId) -> Vec<&Order> {
-        self.orders.values().filter(|o| &o.request.instrument == instrument).collect()
+        self.orders
+            .values()
+            .filter(|o| &o.request.instrument == instrument)
+            .collect()
     }
 
     pub fn find_open(&self) -> Vec<&Order> {
-        self.orders.values().filter(|o| !o.state.is_terminal()).collect()
+        self.orders
+            .values()
+            .filter(|o| !o.state.is_terminal())
+            .collect()
     }
 
     pub fn count(&self) -> usize {
@@ -47,9 +55,12 @@ impl Default for OrderRepository {
 impl OrderRepository {
     /// Partitioning strategy: return orders grouped by instrument (simulate partition key).
     pub fn partition_by_instrument(&self) -> std::collections::HashMap<String, Vec<&Order>> {
-        let mut map: std::collections::HashMap<String, Vec<&Order>> = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<String, Vec<&Order>> =
+            std::collections::HashMap::new();
         for order in self.orders.values() {
-            map.entry(order.request.instrument.to_string()).or_default().push(order);
+            map.entry(order.request.instrument.to_string())
+                .or_default()
+                .push(order);
         }
         map
     }

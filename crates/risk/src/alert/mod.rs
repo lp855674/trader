@@ -1,7 +1,7 @@
 // Alert manager: deduplication, escalation, multi-channel dispatch
 
-use std::collections::HashMap;
 use crate::risk::metrics::AlertSeverity;
+use std::collections::HashMap;
 
 // ── AlertChannel ──────────────────────────────────────────────────────────────
 
@@ -109,11 +109,7 @@ pub struct AlertManager {
 }
 
 impl AlertManager {
-    pub fn new(
-        channels: Vec<AlertChannel>,
-        dedup_window_ms: u64,
-        escalate_after_ms: u64,
-    ) -> Self {
+    pub fn new(channels: Vec<AlertChannel>, dedup_window_ms: u64, escalate_after_ms: u64) -> Self {
         Self {
             channels,
             dedup: AlertDeduplication::new(dedup_window_ms),
@@ -154,7 +150,11 @@ impl AlertManager {
 
     pub fn acknowledge(&mut self, alert_id: &str, ts_ms: i64) -> bool {
         if self.sent_log.iter().any(|m| m.id == alert_id)
-            || self.escalation.unack_alerts.iter().any(|(m, _)| m.id == alert_id)
+            || self
+                .escalation
+                .unack_alerts
+                .iter()
+                .any(|(m, _)| m.id == alert_id)
         {
             self.acknowledged.insert(alert_id.to_string(), ts_ms);
             self.escalation.acknowledge(alert_id);
@@ -189,7 +189,9 @@ impl AlertManager {
         // Remove escalated from unack list to prevent infinite escalation
         if !escalated.is_empty() {
             let ids: Vec<String> = escalated.iter().map(|m| m.id.clone()).collect();
-            self.escalation.unack_alerts.retain(|(a, _)| !ids.contains(&a.id));
+            self.escalation
+                .unack_alerts
+                .retain(|(a, _)| !ids.contains(&a.id));
         }
         escalated
     }
@@ -234,11 +236,7 @@ mod tests {
 
     #[test]
     fn second_alert_sent_after_window_expires() {
-        let mut mgr = AlertManager::new(
-            vec![AlertChannel::InMemory],
-            5_000,
-            60_000,
-        );
+        let mut mgr = AlertManager::new(vec![AlertChannel::InMemory], 5_000, 60_000);
         let msg1 = make_msg("a1", "VaR breach");
         let msg2 = make_msg("a2", "VaR breach");
 
@@ -252,7 +250,7 @@ mod tests {
     fn escalation_triggers_after_timeout() {
         let mut mgr = AlertManager::new(
             vec![AlertChannel::InMemory],
-            0, // no dedup
+            0,     // no dedup
             1_000, // escalate after 1s
         );
         let msg = make_msg("e1", "High VaR");
@@ -273,11 +271,7 @@ mod tests {
 
     #[test]
     fn acknowledge_stops_escalation() {
-        let mut mgr = AlertManager::new(
-            vec![AlertChannel::InMemory],
-            0,
-            1_000,
-        );
+        let mut mgr = AlertManager::new(vec![AlertChannel::InMemory], 0, 1_000);
         let msg = make_msg("e2", "Risk alert");
         mgr.send(msg, 0);
 

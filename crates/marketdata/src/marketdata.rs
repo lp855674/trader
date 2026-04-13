@@ -2,22 +2,22 @@ use domain::NormalizedBar;
 use polars::prelude::*;
 use thiserror::Error;
 
-pub mod core;
-pub mod parser;
-pub mod clean;
 pub mod align;
-pub mod metadata;
-pub mod cache;
-pub mod storage;
-pub mod replay;
-pub mod quality;
 pub mod analysis;
-pub mod data_sources;
+pub mod api;
+pub mod cache;
+pub mod clean;
+pub mod core;
 pub mod data_api;
 pub mod data_config;
-pub mod monitor;
+pub mod data_sources;
 pub mod lifecycle;
-pub mod api;
+pub mod metadata;
+pub mod monitor;
+pub mod parser;
+pub mod quality;
+pub mod replay;
+pub mod storage;
 
 pub const BAR_COLUMNS: [&str; 6] = ["ts_ms", "open", "high", "low", "close", "volume"];
 

@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use domain::InstrumentId;
 
-use crate::core::r#trait::{Kline, Signal, Strategy, StrategyContext};
 use super::engine::Position;
+use crate::core::r#trait::{Kline, Signal, Strategy, StrategyContext};
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -199,14 +199,14 @@ fn pearson_correlation(a: &[f64], b: &[f64]) -> f64 {
     let mean_a = a.iter().sum::<f64>() / n;
     let mean_b = b.iter().sum::<f64>() / n;
 
-    let (cov, var_a, var_b) = a.iter().zip(b.iter()).fold(
-        (0.0_f64, 0.0_f64, 0.0_f64),
-        |(cov, va, vb), (&xa, &xb)| {
-            let da = xa - mean_a;
-            let db = xb - mean_b;
-            (cov + da * db, va + da * da, vb + db * db)
-        },
-    );
+    let (cov, var_a, var_b) =
+        a.iter()
+            .zip(b.iter())
+            .fold((0.0_f64, 0.0_f64, 0.0_f64), |(cov, va, vb), (&xa, &xb)| {
+                let da = xa - mean_a;
+                let db = xb - mean_b;
+                (cov + da * db, va + da * da, vb + db * db)
+            });
 
     let denom = (var_a * var_b).sqrt();
     if denom < f64::EPSILON {
@@ -266,7 +266,8 @@ impl PortfolioBacktest {
 
         // 1. Update correlation tracker.
         for (id, bar) in bars {
-            self.correlation_tracker.push(id, bar.close_ts_ms, bar.close);
+            self.correlation_tracker
+                .push(id, bar.close_ts_ms, bar.close);
         }
 
         // 2. Update unrealised PnL for all open positions using latest bar close.
@@ -382,7 +383,8 @@ impl PortfolioBacktest {
             .values()
             .map(|p| (p.entry_price * p.quantity + p.unrealised_pnl).abs())
             .sum();
-        if equity > 0.0 && (current_exposure_value + cost) / equity > self.config.max_total_exposure {
+        if equity > 0.0 && (current_exposure_value + cost) / equity > self.config.max_total_exposure
+        {
             return Err(PortfolioError::ExposureLimitExceeded {
                 instrument: id.clone(),
             });
@@ -454,7 +456,8 @@ impl PortfolioBacktest {
         // Close over-weight positions (the engine will re-enter on the next signal).
         for id in overweight {
             if let Some(pos) = self.state.positions.get(&id) {
-                let close_price = pos.entry_price + pos.unrealised_pnl / pos.quantity.max(f64::EPSILON);
+                let close_price =
+                    pos.entry_price + pos.unrealised_pnl / pos.quantity.max(f64::EPSILON);
                 let close_price = close_price.max(0.0);
                 self.close_position(&id, close_price);
             }
@@ -467,7 +470,11 @@ impl PortfolioBacktest {
                 None => (0.0, 0.0),
                 Some(p) => {
                     let val = (p.entry_price * p.quantity + p.unrealised_pnl).abs();
-                    let w = if equity_after > 0.0 { val / equity_after } else { 0.0 };
+                    let w = if equity_after > 0.0 {
+                        val / equity_after
+                    } else {
+                        0.0
+                    };
                     (w, val)
                 }
             };
@@ -539,7 +546,9 @@ mod tests {
                 HashMap::new(),
             )))
         }
-        fn name(&self) -> &str { "always_buy" }
+        fn name(&self) -> &str {
+            "always_buy"
+        }
     }
 
     fn base_config(instruments: Vec<InstrumentId>) -> PortfolioConfig {
@@ -691,12 +700,19 @@ mod tests {
         let bar_series: Vec<HashMap<InstrumentId, Kline>> = (1..=5)
             .map(|i| {
                 let mut bars = HashMap::new();
-                bars.insert(btc.clone(), make_kline(btc.clone(), 100.0 + i as f64, i * 60_000));
+                bars.insert(
+                    btc.clone(),
+                    make_kline(btc.clone(), 100.0 + i as f64, i * 60_000),
+                );
                 bars
             })
             .collect();
 
         let state = pb.run(bar_series).unwrap();
-        assert_eq!(state.equity_curve.len(), 5, "should have 5 equity snapshots");
+        assert_eq!(
+            state.equity_curve.len(),
+            5,
+            "should have 5 equity snapshots"
+        );
     }
 }

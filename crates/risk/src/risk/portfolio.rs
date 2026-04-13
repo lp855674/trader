@@ -1,7 +1,7 @@
 // Portfolio risk module
-use std::collections::{HashMap, VecDeque};
-use domain::InstrumentId;
 use crate::core::{RiskChecker, RiskDecision, RiskError, RiskInput};
+use domain::InstrumentId;
+use std::collections::{HashMap, VecDeque};
 
 // ── PortfolioRiskConfig ───────────────────────────────────────────────────
 
@@ -220,7 +220,9 @@ impl VarCalculator {
         // LCG RNG — deterministic seed for reproducibility
         let mut state: u64 = 0xDEAD_BEEF_1234_5678;
         let lcg_next = |s: &mut u64| -> f64 {
-            *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let bits = (*s >> 11) as f64;
             bits / (1u64 << 53) as f64
         };
@@ -254,9 +256,15 @@ impl VarCalculator {
 
 /// Power-iteration eigenvalue decomposition for symmetric matrices.
 /// Returns (eigenvalues, eigenvectors) sorted descending by eigenvalue.
-pub fn eigen_decompose(matrix: &[Vec<f64>], max_iter: usize, tol: f64) -> (Vec<f64>, Vec<Vec<f64>>) {
+pub fn eigen_decompose(
+    matrix: &[Vec<f64>],
+    max_iter: usize,
+    tol: f64,
+) -> (Vec<f64>, Vec<Vec<f64>>) {
     let n = matrix.len();
-    if n == 0 { return (vec![], vec![]); }
+    if n == 0 {
+        return (vec![], vec![]);
+    }
 
     let mut eigenvalues = Vec::with_capacity(n);
     let mut eigenvectors = Vec::with_capacity(n);
@@ -281,9 +289,15 @@ pub fn eigen_decompose(matrix: &[Vec<f64>], max_iter: usize, tol: f64) -> (Vec<f
             let new_lambda: f64 = v.iter().zip(av.iter()).map(|(vi, avi)| vi * avi).sum();
             // Normalize
             let norm = av.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if norm < 1e-14 { break; }
+            if norm < 1e-14 {
+                break;
+            }
             let new_v: Vec<f64> = av.iter().map(|x| x / norm).collect();
-            if (new_lambda - lambda).abs() < tol { v = new_v; lambda = new_lambda; break; }
+            if (new_lambda - lambda).abs() < tol {
+                v = new_v;
+                lambda = new_lambda;
+                break;
+            }
             v = new_v;
             lambda = new_lambda;
         }
@@ -316,7 +330,9 @@ impl PortfolioOptimizer {
 
     /// Equal-weight portfolio (N assets).
     pub fn equal_weight(&self, n: usize) -> Vec<f64> {
-        if n == 0 { return vec![]; }
+        if n == 0 {
+            return vec![];
+        }
         vec![1.0 / n as f64; n]
     }
 
@@ -324,8 +340,12 @@ impl PortfolioOptimizer {
     /// Returns weights that sum to 1.0 and minimize portfolio variance.
     pub fn min_variance(&self, cov: &[Vec<f64>]) -> Vec<f64> {
         let n = cov.len();
-        if n == 0 { return vec![]; }
-        if n == 1 { return vec![1.0]; }
+        if n == 0 {
+            return vec![];
+        }
+        if n == 1 {
+            return vec![1.0];
+        }
 
         // Projected gradient descent with simplex constraint (w ≥ 0, sum = 1)
         let mut w = self.equal_weight(n);
@@ -340,11 +360,17 @@ impl PortfolioOptimizer {
                 }
             }
             // Gradient step
-            let mut new_w: Vec<f64> = w.iter().zip(grad.iter()).map(|(wi, gi)| wi - lr * gi).collect();
+            let mut new_w: Vec<f64> = w
+                .iter()
+                .zip(grad.iter())
+                .map(|(wi, gi)| wi - lr * gi)
+                .collect();
             // Project onto simplex (clip negatives, renormalize)
             new_w.iter_mut().for_each(|x| *x = x.max(0.0));
             let s: f64 = new_w.iter().sum();
-            if s > 1e-12 { new_w.iter_mut().for_each(|x| *x /= s); }
+            if s > 1e-12 {
+                new_w.iter_mut().for_each(|x| *x /= s);
+            }
             w = new_w;
         }
         w
@@ -353,7 +379,9 @@ impl PortfolioOptimizer {
     /// Sharpe-maximizing weights (simplified: uses mean returns and covariance).
     pub fn max_sharpe(&self, means: &[f64], cov: &[Vec<f64>]) -> Vec<f64> {
         let n = means.len();
-        if n == 0 { return vec![]; }
+        if n == 0 {
+            return vec![];
+        }
 
         // Excess returns
         let excess: Vec<f64> = means.iter().map(|m| m - self.risk_free_rate).collect();
@@ -377,14 +405,23 @@ impl PortfolioOptimizer {
             for i in 0..n {
                 let d_ret = excess[i];
                 let mut d_var = 0.0;
-                for j in 0..n { d_var += 2.0 * cov[i][j] * w[j]; }
-                grad[i] = (d_ret * port_std - port_ret * d_var / (2.0 * port_std)) / (port_var + 1e-12);
+                for j in 0..n {
+                    d_var += 2.0 * cov[i][j] * w[j];
+                }
+                grad[i] =
+                    (d_ret * port_std - port_ret * d_var / (2.0 * port_std)) / (port_var + 1e-12);
             }
 
-            let mut new_w: Vec<f64> = w.iter().zip(grad.iter()).map(|(wi, gi)| wi + lr * gi).collect();
+            let mut new_w: Vec<f64> = w
+                .iter()
+                .zip(grad.iter())
+                .map(|(wi, gi)| wi + lr * gi)
+                .collect();
             new_w.iter_mut().for_each(|x| *x = x.max(0.0));
             let s: f64 = new_w.iter().sum();
-            if s > 1e-12 { new_w.iter_mut().for_each(|x| *x /= s); }
+            if s > 1e-12 {
+                new_w.iter_mut().for_each(|x| *x /= s);
+            }
             w = new_w;
         }
         w
@@ -401,7 +438,10 @@ pub struct PortfolioRiskChecker {
 impl PortfolioRiskChecker {
     pub fn new(config: PortfolioRiskConfig) -> Self {
         let var_calculator = VarCalculator::new(config.var_lookback);
-        Self { config, var_calculator }
+        Self {
+            config,
+            var_calculator,
+        }
     }
 
     pub fn push_return(&mut self, instrument: &InstrumentId, return_: f64) {
@@ -445,7 +485,9 @@ impl RiskChecker for PortfolioRiskChecker {
         }
 
         // 3. VaR budget check
-        let instrument_var = self.var_calculator.historical_var(&order.instrument, cfg.var_confidence);
+        let instrument_var = self
+            .var_calculator
+            .historical_var(&order.instrument, cfg.var_confidence);
         let position_var = instrument_var * order_notional;
         let max_var = portfolio.total_capital * cfg.max_var_pct;
         if position_var > max_var {
@@ -603,7 +645,11 @@ mod tests {
         // sorted ascending: [-0.10, -0.10, -0.10, -0.10, -0.10, 0.01, ...]
         // floor(0.05 * 100) = 5, idx = 4, sorted[4] = -0.10, VaR = 0.10
         assert!(var > 0.0, "VaR should be positive but got: {}", var);
-        assert!(var >= 0.09 && var <= 0.11, "VaR should be ~0.10, got: {}", var);
+        assert!(
+            var >= 0.09 && var <= 0.11,
+            "VaR should be ~0.10, got: {}",
+            var
+        );
     }
 
     #[test]
@@ -611,13 +657,19 @@ mod tests {
         let mut matrix = CorrelationMatrix::new(50);
         let a = btc();
         let b = InstrumentId::new(Venue::Crypto, "BTC-USD-COPY");
-        let returns = vec![0.01, -0.02, 0.03, -0.01, 0.02, 0.00, -0.03, 0.01, 0.02, -0.01];
+        let returns = vec![
+            0.01, -0.02, 0.03, -0.01, 0.02, 0.00, -0.03, 0.01, 0.02, -0.01,
+        ];
         for &r in &returns {
             matrix.push(&a, r);
             matrix.push(&b, r);
         }
         let corr = matrix.correlation(&a, &b);
-        assert!((corr - 1.0).abs() < 1e-9, "Identical series should have corr=1.0, got {}", corr);
+        assert!(
+            (corr - 1.0).abs() < 1e-9,
+            "Identical series should have corr=1.0, got {}",
+            corr
+        );
     }
 
     #[test]

@@ -36,7 +36,11 @@ pub struct ExecAlertManager {
 
 impl ExecAlertManager {
     pub fn new(thresholds: Vec<ExecAlertThreshold>) -> Self {
-        Self { thresholds, fired: Vec::new(), next_id: 1 }
+        Self {
+            thresholds,
+            fired: Vec::new(),
+            next_id: 1,
+        }
     }
 
     pub fn check(&mut self, snapshot: &MetricsSnapshot, ts_ms: i64) -> Vec<ExecAlert> {
@@ -92,17 +96,22 @@ impl ExecAlertManager {
     /// Returns true if the value is anomalous (|z| > threshold).
     pub fn detect_anomaly(history: &[f64], new_value: f64, z_threshold: f64) -> bool {
         let n = history.len();
-        if n < 2 { return false; }
+        if n < 2 {
+            return false;
+        }
         let mean = history.iter().sum::<f64>() / n as f64;
         let variance = history.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
         let std = variance.sqrt();
-        if std < 1e-12 { return false; }
+        if std < 1e-12 {
+            return false;
+        }
         ((new_value - mean) / std).abs() > z_threshold
     }
 
     /// Group fired alerts by type — returns map of alert type to list of alerts.
     pub fn grouped_alerts(&self) -> std::collections::HashMap<String, Vec<&ExecAlert>> {
-        let mut groups: std::collections::HashMap<String, Vec<&ExecAlert>> = std::collections::HashMap::new();
+        let mut groups: std::collections::HashMap<String, Vec<&ExecAlert>> =
+            std::collections::HashMap::new();
         for alert in &self.fired {
             let key = format!("{:?}", alert.alert_type);
             groups.entry(key).or_default().push(alert);

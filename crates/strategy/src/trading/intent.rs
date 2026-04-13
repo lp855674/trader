@@ -177,11 +177,27 @@ mod tests {
     }
 
     fn buy_signal(instrument: InstrumentId, qty: f64, ts: i64) -> Signal {
-        Signal::new(instrument, Side::Buy, qty, None, ts, "s1".into(), HashMap::new())
+        Signal::new(
+            instrument,
+            Side::Buy,
+            qty,
+            None,
+            ts,
+            "s1".into(),
+            HashMap::new(),
+        )
     }
 
     fn sell_signal(instrument: InstrumentId, qty: f64, ts: i64) -> Signal {
-        Signal::new(instrument, Side::Sell, qty, None, ts, "s1".into(), HashMap::new())
+        Signal::new(
+            instrument,
+            Side::Sell,
+            qty,
+            None,
+            ts,
+            "s1".into(),
+            HashMap::new(),
+        )
     }
 
     #[test]

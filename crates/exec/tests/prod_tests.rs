@@ -13,10 +13,19 @@ fn config_json_roundtrip() {
     let cfg = ExecConfig::default();
     let json = cfg.to_json();
     let parsed = ExecConfig::from_json(&json).expect("json parse");
-    assert_eq!(parsed.execution.max_order_size, cfg.execution.max_order_size);
+    assert_eq!(
+        parsed.execution.max_order_size,
+        cfg.execution.max_order_size
+    );
     assert_eq!(parsed.broker.venue, cfg.broker.venue);
-    assert_eq!(parsed.risk_limits.max_drawdown_pct, cfg.risk_limits.max_drawdown_pct);
-    assert_eq!(parsed.monitoring.metrics_interval_secs, cfg.monitoring.metrics_interval_secs);
+    assert_eq!(
+        parsed.risk_limits.max_drawdown_pct,
+        cfg.risk_limits.max_drawdown_pct
+    );
+    assert_eq!(
+        parsed.monitoring.metrics_interval_secs,
+        cfg.monitoring.metrics_interval_secs
+    );
 }
 
 #[test]

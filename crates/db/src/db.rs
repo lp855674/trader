@@ -6,25 +6,42 @@ mod error;
 mod execution_profiles;
 mod instruments;
 mod orders;
+mod reconciliation;
+mod runtime_controls;
+mod runtime_cycle_history;
 mod signals;
 mod system_config;
 
-pub use bars::{count_bars_for_source, get_recent_bars, insert_bar, last_bar_close, BarRow, NewBar};
+pub use bars::{
+    BarRow, NewBar, count_bars_for_source, get_recent_bars, insert_bar, last_bar_close,
+};
 pub use bootstrap::{
-    ensure_account, ensure_longbridge_live_account, ensure_longbridge_paper_account,
-    ensure_mvp_seed, PAPER_BARS_DATA_SOURCE_ID,
+    PAPER_BARS_DATA_SOURCE_ID, ensure_account, ensure_longbridge_live_account,
+    ensure_longbridge_paper_account, ensure_mvp_seed,
 };
-pub use execution_profiles::{
-    load_accounts, load_execution_profiles_by_kind, AccountRow, ExecutionProfileRow,
-};
-pub use system_config::{get_system_config, set_system_config};
 pub use error::DbError;
-pub use instruments::{list_instruments, upsert_instrument, InstrumentRow};
+pub use execution_profiles::{
+    AccountRow, ExecutionProfileRow, load_accounts, load_execution_profiles_by_kind,
+};
+pub use instruments::{InstrumentRow, list_instruments, upsert_instrument};
 pub use orders::{
-    count_orders_for_account, insert_fill, insert_order, list_orders_for_account, NewFill,
-    NewOrder, OrderListRow,
+    LocalPositionSummary, LocalPositionViewRow, NewFill, NewOrder, OpenOrderViewRow, OrderListRow,
+    count_orders_for_account, has_open_order_for_instrument, insert_fill, insert_order,
+    latest_order_ts_for_instrument_side, list_local_positions_for_account,
+    list_open_orders_for_account, list_orders_for_account, local_position_summary_for_instrument,
+    order_exists_by_idempotency_key,
+};
+pub use reconciliation::{ReconciliationSnapshot, insert_reconciliation_snapshot};
+pub use runtime_controls::{
+    get_runtime_control, list_symbol_allowlist, replace_symbol_allowlist, set_runtime_control,
+};
+pub use runtime_cycle_history::{
+    NewRuntimeCycleRun, NewRuntimeCycleSymbol, RuntimeCycleRunRow, RuntimeCycleSymbolRow,
+    insert_runtime_cycle_run, insert_runtime_cycle_symbols, list_runtime_cycle_runs,
+    list_runtime_cycle_symbols_for_run,
 };
 pub use signals::{insert_risk_decision, insert_signal};
+pub use system_config::{get_system_config, list_system_config_by_prefix, set_system_config};
 
 use std::path::{Path, PathBuf};
 

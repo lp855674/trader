@@ -1,5 +1,5 @@
-use domain::InstrumentId;
 use crate::core::r#trait::Kline;
+use domain::InstrumentId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TimeGranularity {
@@ -32,7 +32,11 @@ pub struct KlineResampler {
 
 impl KlineResampler {
     pub fn new(target: TimeGranularity) -> Self {
-        Self { target, buffer: None, period_end_ms: 0 }
+        Self {
+            target,
+            buffer: None,
+            period_end_ms: 0,
+        }
     }
 
     pub fn push(&mut self, kline: Kline) -> Option<Kline> {
@@ -91,7 +95,10 @@ pub struct TickToKline {
 
 impl TickToKline {
     pub fn new(granularity_ms: u64) -> Self {
-        Self { granularity_ms, current_bar: None }
+        Self {
+            granularity_ms,
+            current_bar: None,
+        }
     }
 
     pub fn push_tick(
@@ -300,8 +307,16 @@ mod tests {
         let instr = instrument();
 
         assert!(builder.push_tick(instr.clone(), 0, 100.0, 10.0).is_none());
-        assert!(builder.push_tick(instr.clone(), 10_000, 105.0, 5.0).is_none());
-        assert!(builder.push_tick(instr.clone(), 59_999, 102.0, 8.0).is_none());
+        assert!(
+            builder
+                .push_tick(instr.clone(), 10_000, 105.0, 5.0)
+                .is_none()
+        );
+        assert!(
+            builder
+                .push_tick(instr.clone(), 59_999, 102.0, 8.0)
+                .is_none()
+        );
 
         // Tick at ts=60000 starts new bar — emits bar 0
         let bar = builder.push_tick(instr.clone(), 60_000, 103.0, 2.0);

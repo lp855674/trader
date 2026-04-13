@@ -120,9 +120,15 @@ impl StrategyManagementService {
                 match s.evaluate(&ctx) {
                     Ok(Some(sig)) => {
                         let val = serde_json::to_value(&sig).unwrap_or(serde_json::Value::Null);
-                        EvaluateResponse { signal: Some(val), error: None }
+                        EvaluateResponse {
+                            signal: Some(val),
+                            error: None,
+                        }
                     }
-                    Ok(None) => EvaluateResponse { signal: None, error: None },
+                    Ok(None) => EvaluateResponse {
+                        signal: None,
+                        error: None,
+                    },
                     Err(e) => EvaluateResponse {
                         signal: None,
                         error: Some(e.to_string()),
@@ -192,7 +198,10 @@ impl MetricsService {
 
     pub fn get_metrics(&self, req: GetMetricsRequest) -> GetMetricsResponse {
         match self.registry.snapshot(&req.strategy_id) {
-            None => GetMetricsResponse { metrics: None, found: false },
+            None => GetMetricsResponse {
+                metrics: None,
+                found: false,
+            },
             Some(m) => {
                 let val = serde_json::json!({
                     "evaluations": m.evaluations,
@@ -203,7 +212,10 @@ impl MetricsService {
                     "signal_rate": m.signal_rate(),
                     "cache_hit_rate": m.cache_hit_rate(),
                 });
-                GetMetricsResponse { metrics: Some(val), found: true }
+                GetMetricsResponse {
+                    metrics: Some(val),
+                    found: true,
+                }
             }
         }
     }
@@ -217,8 +229,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::core::r#trait::{Signal, StrategyContext, StrategyError, Strategy};
     use crate::core::registry::{StrategyFactory, StrategyRegistry};
+    use crate::core::r#trait::{Signal, Strategy, StrategyContext, StrategyError};
     use crate::trading::paper::{PaperAdapter, PaperConfig};
     use domain::{InstrumentId, Side, Venue};
 
@@ -236,14 +248,18 @@ mod tests {
                 HashMap::new(),
             )))
         }
-        fn name(&self) -> &str { "always_buy_fixed" }
+        fn name(&self) -> &str {
+            "always_buy_fixed"
+        }
     }
 
-    fn make_services() -> (StrategyManagementService, Arc<Mutex<StrategyRegistry>>, Arc<StrategyFactory>) {
+    fn make_services() -> (
+        StrategyManagementService,
+        Arc<Mutex<StrategyRegistry>>,
+        Arc<StrategyFactory>,
+    ) {
         let mut factory = StrategyFactory::new();
-        factory.register_builder("always_buy_fixed".into(), |_| {
-            Ok(Arc::new(AlwaysBuyFixed))
-        });
+        factory.register_builder("always_buy_fixed".into(), |_| Ok(Arc::new(AlwaysBuyFixed)));
         let factory = Arc::new(factory);
         let registry = Arc::new(Mutex::new(StrategyRegistry::new()));
         let svc = StrategyManagementService::new(Arc::clone(&registry), Arc::clone(&factory));
@@ -327,7 +343,9 @@ mod tests {
     fn metrics_service_not_found() {
         let registry = Arc::new(MetricsRegistry::new());
         let svc = MetricsService::new(registry);
-        let resp = svc.get_metrics(GetMetricsRequest { strategy_id: "ghost".into() });
+        let resp = svc.get_metrics(GetMetricsRequest {
+            strategy_id: "ghost".into(),
+        });
         assert!(!resp.found);
         assert!(resp.metrics.is_none());
     }
@@ -338,7 +356,9 @@ mod tests {
         let registry = Arc::new(MetricsRegistry::new());
         registry.record_evaluation("s1", Duration::from_nanos(100), true, false);
         let svc = MetricsService::new(Arc::clone(&registry));
-        let resp = svc.get_metrics(GetMetricsRequest { strategy_id: "s1".into() });
+        let resp = svc.get_metrics(GetMetricsRequest {
+            strategy_id: "s1".into(),
+        });
         assert!(resp.found);
         let m = resp.metrics.unwrap();
         assert_eq!(m["evaluations"], 1);

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde::Serialize;
 use crate::monitor::metrics::DataMetricsSnapshot;
+use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum DataAlertType {
@@ -112,6 +112,9 @@ mod tests {
 
         let alerts = manager.check(&snap, 1000);
         assert!(!alerts.is_empty());
-        assert!(matches!(alerts[0].alert_type, DataAlertType::LowCacheHitRate));
+        assert!(matches!(
+            alerts[0].alert_type,
+            DataAlertType::LowCacheHitRate
+        ));
     }
 }

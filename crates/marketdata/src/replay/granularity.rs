@@ -1,7 +1,7 @@
-use domain::NormalizedBar;
-use crate::core::{DataItem, Granularity};
-use crate::align::ResampleAggregator;
 use super::controller::ReplayController;
+use crate::align::ResampleAggregator;
+use crate::core::{DataItem, Granularity};
+use domain::NormalizedBar;
 
 // ── GranularityReplayer ───────────────────────────────────────────────────────
 

@@ -22,7 +22,10 @@ pub struct StateSaver {
 
 impl StateSaver {
     pub fn new() -> Self {
-        Self { checkpoints: Vec::new(), next_version: 1 }
+        Self {
+            checkpoints: Vec::new(),
+            next_version: 1,
+        }
     }
 
     /// Save state, returning the version number assigned.

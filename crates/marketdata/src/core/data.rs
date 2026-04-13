@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use domain::NormalizedBar;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
 
 // ── DataItem ─────────────────────────────────────────────────────────────────
 
@@ -207,7 +207,12 @@ mod tests {
 
     #[test]
     fn in_memory_filter_by_range() {
-        let items = vec![make_bar(500), make_bar(1000), make_bar(1500), make_bar(2500)];
+        let items = vec![
+            make_bar(500),
+            make_bar(1000),
+            make_bar(1500),
+            make_bar(2500),
+        ];
         let source = InMemoryDataSource::new("test", items);
         let q = DataQuery::new("BTC", 900, 2000);
         let result = source.query(&q).unwrap();
@@ -218,7 +223,12 @@ mod tests {
 
     #[test]
     fn in_memory_respects_limit() {
-        let items = vec![make_bar(1000), make_bar(1001), make_bar(1002), make_bar(1003)];
+        let items = vec![
+            make_bar(1000),
+            make_bar(1001),
+            make_bar(1002),
+            make_bar(1003),
+        ];
         let source = InMemoryDataSource::new("test", items);
         let q = DataQuery::new("BTC", 0, 9999).with_limit(2);
         let result = source.query(&q).unwrap();

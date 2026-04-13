@@ -13,8 +13,11 @@ fn bench_metrics_throughput(n: usize) {
         mc.record_gauge(black_box("cpu"), black_box(i as f64 / n as f64));
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("metrics_throughput: {n} ops in {:.2}ms, avg {:.1}ns/op",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "metrics_throughput: {n} ops in {:.2}ms, avg {:.1}ns/op",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
 }
 
 fn bench_circuit_breaker(n: usize) {
@@ -30,8 +33,11 @@ fn bench_circuit_breaker(n: usize) {
         black_box(cb.is_open());
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("circuit_breaker: {n} ops in {:.2}ms, avg {:.1}ns/op",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "circuit_breaker: {n} ops in {:.2}ms, avg {:.1}ns/op",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
 }
 
 fn bench_watchdog_tick(n: usize) {
@@ -46,12 +52,15 @@ fn bench_watchdog_tick(n: usize) {
         black_box(wd.unhealthy());
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("watchdog_tick (100 services): {n} ticks in {:.2}ms, avg {:.1}ns/tick",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "watchdog_tick (100 services): {n} ticks in {:.2}ms, avg {:.1}ns/tick",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
 }
 
 fn bench_load_balancer(n: usize) {
-    use infra::services::balance::{LoadBalancer, BalanceStrategy};
+    use infra::services::balance::{BalanceStrategy, LoadBalancer};
     let mut lb = LoadBalancer::new(BalanceStrategy::RoundRobin);
     for i in 0..10 {
         lb.add_node(&format!("n{}", i), &format!("10.0.0.{}:9090", i), 1);
@@ -61,8 +70,11 @@ fn bench_load_balancer(n: usize) {
         black_box(lb.select(None));
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("load_balancer_rr (10 nodes): {n} selects in {:.2}ms, avg {:.1}ns/select",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "load_balancer_rr (10 nodes): {n} selects in {:.2}ms, avg {:.1}ns/select",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
 }
 
 fn bench_shutdown_latency() {
@@ -78,8 +90,11 @@ fn bench_shutdown_latency() {
         black_box(sd.is_complete());
     }
     let elapsed = start.elapsed().as_nanos() as f64;
-    println!("shutdown_latency: {n} full cycles in {:.2}ms, avg {:.1}ns/cycle",
-        elapsed / 1_000_000.0, elapsed / n as f64);
+    println!(
+        "shutdown_latency: {n} full cycles in {:.2}ms, avg {:.1}ns/cycle",
+        elapsed / 1_000_000.0,
+        elapsed / n as f64
+    );
 }
 
 fn main() {

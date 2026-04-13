@@ -1,6 +1,6 @@
-use domain::NormalizedBar;
-use crate::core::DataItem;
 use crate::align::GapSpec;
+use crate::core::DataItem;
+use domain::NormalizedBar;
 
 // ── CallbackEvent ─────────────────────────────────────────────────────────────
 
@@ -69,8 +69,12 @@ mod tests {
         let count2 = Arc::new(Mutex::new(0u32));
 
         let mut mgr = CallbackManager::new();
-        mgr.add(Box::new(CountingCallback { count: count1.clone() }));
-        mgr.add(Box::new(CountingCallback { count: count2.clone() }));
+        mgr.add(Box::new(CountingCallback {
+            count: count1.clone(),
+        }));
+        mgr.add(Box::new(CountingCallback {
+            count: count2.clone(),
+        }));
 
         let bar = NormalizedBar {
             ts_ms: 1000,

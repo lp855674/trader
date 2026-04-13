@@ -32,7 +32,10 @@ pub struct PnlCalculator {
 
 impl PnlCalculator {
     pub fn new(commission_rate: f64) -> Self {
-        Self { fills: Vec::new(), commission_rate }
+        Self {
+            fills: Vec::new(),
+            commission_rate,
+        }
     }
 
     pub fn record_fill(&mut self, fill: FillRecord) {
@@ -75,7 +78,10 @@ impl PnlCalculator {
     pub fn attribution_by_strategy(&self) -> Vec<Attribution> {
         let mut by_strategy: HashMap<String, Vec<&FillRecord>> = HashMap::new();
         for fill in &self.fills {
-            by_strategy.entry(fill.order_id.clone()).or_default().push(fill);
+            by_strategy
+                .entry(fill.order_id.clone())
+                .or_default()
+                .push(fill);
         }
         // Group by strategy_id — FillRecord doesn't have strategy_id directly,
         // so we use order_id prefix or just produce one group per unique order_id.
@@ -88,7 +94,12 @@ impl PnlCalculator {
         // We group fills by a synthetic "strategy_id" based on order_id prefix before '_'.
         for fill in &self.fills {
             // Use order_id as strategy_id proxy (can be overridden by callers if needed)
-            let strat = fill.order_id.split('_').next().unwrap_or(&fill.order_id).to_string();
+            let strat = fill
+                .order_id
+                .split('_')
+                .next()
+                .unwrap_or(&fill.order_id)
+                .to_string();
             let entry = strat_map.entry(strat).or_insert((0.0, 0.0));
             entry.1 += fill.commission;
         }
@@ -123,9 +134,17 @@ impl PnlCalculator {
             .map(|(p, b)| p - b)
             .collect();
         let alpha = active_returns.iter().sum::<f64>() / n as f64;
-        let variance = active_returns.iter().map(|r| (r - alpha).powi(2)).sum::<f64>() / (n - 1) as f64;
+        let variance = active_returns
+            .iter()
+            .map(|r| (r - alpha).powi(2))
+            .sum::<f64>()
+            / (n - 1) as f64;
         let tracking_error = variance.sqrt();
-        let information_ratio = if tracking_error < 1e-12 { 0.0 } else { alpha / tracking_error };
+        let information_ratio = if tracking_error < 1e-12 {
+            0.0
+        } else {
+            alpha / tracking_error
+        };
         (alpha, tracking_error, information_ratio)
     }
 }
@@ -170,7 +189,11 @@ mod tests {
         let snap = calc.snapshot(&pos_mgr, &prices, 2000);
 
         // realised = 10*(110-100) - 1.0 - 1.0 = 98
-        assert!((snap.realised_pnl - 98.0).abs() < 1e-6, "realised={}", snap.realised_pnl);
+        assert!(
+            (snap.realised_pnl - 98.0).abs() < 1e-6,
+            "realised={}",
+            snap.realised_pnl
+        );
         assert!((snap.commission_total - 2.0).abs() < 1e-6);
     }
 

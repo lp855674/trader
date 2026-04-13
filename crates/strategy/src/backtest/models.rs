@@ -109,17 +109,14 @@ impl CostModel {
         slippage: Box<dyn SlippageModel + Send + Sync>,
         commission: Box<dyn CommissionModel + Send + Sync>,
     ) -> Self {
-        Self { slippage, commission }
+        Self {
+            slippage,
+            commission,
+        }
     }
 
     /// Returns (adjusted_price, commission_amount)
-    pub fn apply_costs(
-        &self,
-        price: f64,
-        qty: f64,
-        side: Side,
-        bar_volume: f64,
-    ) -> (f64, f64) {
+    pub fn apply_costs(&self, price: f64, qty: f64, side: Side, bar_volume: f64) -> (f64, f64) {
         let adjusted = self.slippage.apply(price, qty, side, bar_volume);
         let commission = self.commission.calculate(adjusted, qty);
         (adjusted, commission)
@@ -140,7 +137,10 @@ mod tests {
 
     #[test]
     fn fixed_slippage_adds_ticks() {
-        let m = FixedSlippage { ticks: 2.0, tick_size: 0.5 };
+        let m = FixedSlippage {
+            ticks: 2.0,
+            tick_size: 0.5,
+        };
         assert!((m.apply(100.0, 1.0, Side::Buy, 1000.0) - 101.0).abs() < 1e-9);
         assert!((m.apply(100.0, 1.0, Side::Sell, 1000.0) - 99.0).abs() < 1e-9);
     }
@@ -186,7 +186,10 @@ mod tests {
     #[test]
     fn cost_model_combines_both() {
         let model = CostModel::new(
-            Box::new(FixedSlippage { ticks: 1.0, tick_size: 1.0 }),
+            Box::new(FixedSlippage {
+                ticks: 1.0,
+                tick_size: 1.0,
+            }),
             Box::new(PercentCommission { rate: 0.001 }),
         );
         let (adj_price, commission) = model.apply_costs(100.0, 1.0, Side::Buy, 1000.0);

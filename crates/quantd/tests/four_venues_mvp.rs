@@ -4,7 +4,7 @@ use std::sync::Arc;
 use domain::Venue;
 use exec::{ExecutionAdapter, ExecutionRouter, PaperAdapter};
 use ingest::{IngestRegistry, MockBarsAdapter};
-use quantd::{run_one_tick_for_venue, RiskLimits, VenueTickParams};
+use quantd::{RiskLimits, VenueTickParams, run_one_tick_for_venue};
 use strategy::AlwaysLongOne;
 
 #[tokio::test]
@@ -14,7 +14,10 @@ async fn four_venues_minimal_closed_loop() {
 
     let paper = Arc::new(PaperAdapter::new(database.clone()));
     let mut routes = HashMap::new();
-    routes.insert("acc_mvp_paper".to_string(), paper as Arc<dyn ExecutionAdapter>);
+    routes.insert(
+        "acc_mvp_paper".to_string(),
+        paper as Arc<dyn ExecutionAdapter>,
+    );
     let router = ExecutionRouter::new(routes);
 
     let mut registry = IngestRegistry::default();
@@ -33,10 +36,7 @@ async fn four_venues_minimal_closed_loop() {
         Venue::Crypto,
         Venue::Polymarket,
     ] {
-        let adapter = registry
-            .for_venue(venue)
-            .next()
-            .expect("adapter for venue");
+        let adapter = registry.for_venue(venue).next().expect("adapter for venue");
         let tick = VenueTickParams {
             account_id: "acc_mvp_paper".to_string(),
             venue,
@@ -50,6 +50,7 @@ async fn four_venues_minimal_closed_loop() {
             &strategy,
             risk_limits,
             &tick,
+            None,
         )
         .await
         .expect("pipeline tick");

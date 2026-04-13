@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use super::types::OrderRequest;
 use domain::InstrumentId;
 use thiserror::Error;
-use super::types::OrderRequest;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum OrderState {
@@ -16,7 +16,10 @@ pub enum OrderState {
 
 impl OrderState {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, OrderState::Filled | OrderState::Cancelled | OrderState::Rejected { .. })
+        matches!(
+            self,
+            OrderState::Filled | OrderState::Cancelled | OrderState::Rejected { .. }
+        )
     }
 
     fn name(&self) -> &'static str {
@@ -85,9 +88,9 @@ impl Order {
         let new_state = match (&self.state, &event) {
             (OrderState::Pending, OrderEvent::Submit) => OrderState::Submitted,
             (OrderState::Pending, OrderEvent::Cancel) => OrderState::Cancelled,
-            (OrderState::Pending, OrderEvent::Reject { reason }) => {
-                OrderState::Rejected { reason: reason.clone() }
-            }
+            (OrderState::Pending, OrderEvent::Reject { reason }) => OrderState::Rejected {
+                reason: reason.clone(),
+            },
             (OrderState::Submitted, OrderEvent::Accept) => OrderState::Submitted,
             (OrderState::Submitted, OrderEvent::PartialFill { qty, price }) => {
                 let new_filled = self.filled_qty + qty;
@@ -95,33 +98,37 @@ impl Order {
                 if self.filled_qty == 0.0 {
                     self.avg_fill_price = *price;
                 } else {
-                    self.avg_fill_price = (self.avg_fill_price * self.filled_qty + price * qty)
-                        / new_filled;
+                    self.avg_fill_price =
+                        (self.avg_fill_price * self.filled_qty + price * qty) / new_filled;
                 }
                 self.filled_qty = new_filled;
-                OrderState::PartiallyFilled { filled_qty: new_filled }
+                OrderState::PartiallyFilled {
+                    filled_qty: new_filled,
+                }
             }
             (OrderState::Submitted, OrderEvent::Fill { qty, price }) => {
                 let new_filled = self.filled_qty + qty;
                 if self.filled_qty == 0.0 {
                     self.avg_fill_price = *price;
                 } else {
-                    self.avg_fill_price = (self.avg_fill_price * self.filled_qty + price * qty)
-                        / new_filled;
+                    self.avg_fill_price =
+                        (self.avg_fill_price * self.filled_qty + price * qty) / new_filled;
                 }
                 self.filled_qty = new_filled;
                 OrderState::Filled
             }
             (OrderState::Submitted, OrderEvent::Cancel) => OrderState::Cancelled,
-            (OrderState::Submitted, OrderEvent::Reject { reason }) => {
-                OrderState::Rejected { reason: reason.clone() }
-            }
+            (OrderState::Submitted, OrderEvent::Reject { reason }) => OrderState::Rejected {
+                reason: reason.clone(),
+            },
             (OrderState::PartiallyFilled { .. }, OrderEvent::PartialFill { qty, price }) => {
                 let new_filled = self.filled_qty + qty;
                 self.avg_fill_price =
                     (self.avg_fill_price * self.filled_qty + price * qty) / new_filled;
                 self.filled_qty = new_filled;
-                OrderState::PartiallyFilled { filled_qty: new_filled }
+                OrderState::PartiallyFilled {
+                    filled_qty: new_filled,
+                }
             }
             (OrderState::PartiallyFilled { .. }, OrderEvent::Fill { qty, price }) => {
                 let new_filled = self.filled_qty + qty;
@@ -135,7 +142,7 @@ impl Order {
                 return Err(OrderError::InvalidTransition {
                     from: self.state.name().to_string(),
                     event: event.name().to_string(),
-                })
+                });
             }
         };
         self.state = new_state;
@@ -166,7 +173,9 @@ pub struct OrderManager {
 
 impl OrderManager {
     pub fn new() -> Self {
-        Self { orders: HashMap::new() }
+        Self {
+            orders: HashMap::new(),
+        }
     }
 
     pub fn submit(&mut self, request: OrderRequest, ts_ms: i64) -> Result<String, OrderError> {
@@ -241,7 +250,10 @@ impl OrderManager {
     }
 
     pub fn open_orders(&self) -> Vec<&Order> {
-        self.orders.values().filter(|o| !o.state.is_terminal()).collect()
+        self.orders
+            .values()
+            .filter(|o| !o.state.is_terminal())
+            .collect()
     }
 
     pub fn orders_for_instrument(&self, instrument: &InstrumentId) -> Vec<&Order> {
@@ -284,7 +296,13 @@ mod tests {
         let req = make_request("c1", 1.0);
         let mut order = Order::new(req, 1000);
         // Can't fill directly from Pending
-        let result = order.transition(OrderEvent::Fill { qty: 1.0, price: 100.0 }, 1001);
+        let result = order.transition(
+            OrderEvent::Fill {
+                qty: 1.0,
+                price: 100.0,
+            },
+            1001,
+        );
         assert!(result.is_err());
         matches!(result.unwrap_err(), OrderError::InvalidTransition { .. });
     }
@@ -295,10 +313,26 @@ mod tests {
         let mut order = Order::new(req, 1000);
         order.transition(OrderEvent::Submit, 1001).unwrap();
         assert_eq!(order.state, OrderState::Submitted);
-        order.transition(OrderEvent::PartialFill { qty: 1.0, price: 100.0 }, 1002).unwrap();
+        order
+            .transition(
+                OrderEvent::PartialFill {
+                    qty: 1.0,
+                    price: 100.0,
+                },
+                1002,
+            )
+            .unwrap();
         assert_eq!(order.state, OrderState::PartiallyFilled { filled_qty: 1.0 });
         assert!((order.avg_fill_price - 100.0).abs() < 1e-9);
-        order.transition(OrderEvent::Fill { qty: 1.0, price: 102.0 }, 1003).unwrap();
+        order
+            .transition(
+                OrderEvent::Fill {
+                    qty: 1.0,
+                    price: 102.0,
+                },
+                1003,
+            )
+            .unwrap();
         assert_eq!(order.state, OrderState::Filled);
         assert!((order.avg_fill_price - 101.0).abs() < 1e-9);
     }
@@ -329,8 +363,24 @@ mod tests {
         let req = make_request("c4", 3.0);
         let mut order = Order::new(req, 1000);
         order.transition(OrderEvent::Submit, 1001).unwrap();
-        order.transition(OrderEvent::PartialFill { qty: 1.0, price: 100.0 }, 1002).unwrap();
-        order.transition(OrderEvent::PartialFill { qty: 2.0, price: 106.0 }, 1003).unwrap();
+        order
+            .transition(
+                OrderEvent::PartialFill {
+                    qty: 1.0,
+                    price: 100.0,
+                },
+                1002,
+            )
+            .unwrap();
+        order
+            .transition(
+                OrderEvent::PartialFill {
+                    qty: 2.0,
+                    price: 106.0,
+                },
+                1003,
+            )
+            .unwrap();
         // avg = (100*1 + 106*2) / 3 = 312/3 = 104
         assert!((order.avg_fill_price - 104.0).abs() < 1e-6);
     }

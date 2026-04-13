@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use longbridge::Config;
 use longbridge::quote::QuoteContext;
 use longbridge::trade::TradeContext;
-use longbridge::Config;
 
 /// Shared Longbridge SDK clients (quote + trade).  
 /// 创建后会后台 drain push channel，避免内部缓冲无限增长。
@@ -22,12 +22,8 @@ impl LongbridgeClients {
         let config = Arc::new(Config::from_apikey(app_key, app_secret, access_token));
         let (quote, mut q_rx) = QuoteContext::new(config.clone());
         let (trade, mut t_rx) = TradeContext::new(config);
-        tokio::spawn(async move {
-            while q_rx.recv().await.is_some() {}
-        });
-        tokio::spawn(async move {
-            while t_rx.recv().await.is_some() {}
-        });
+        tokio::spawn(async move { while q_rx.recv().await.is_some() {} });
+        tokio::spawn(async move { while t_rx.recv().await.is_some() {} });
         Ok(Self {
             quote: Arc::new(quote),
             trade: Arc::new(trade),
@@ -39,12 +35,8 @@ impl LongbridgeClients {
         let config = Arc::new(Config::from_apikey_env().map_err(|e| e.to_string())?);
         let (quote, mut q_rx) = QuoteContext::new(config.clone());
         let (trade, mut t_rx) = TradeContext::new(config);
-        tokio::spawn(async move {
-            while q_rx.recv().await.is_some() {}
-        });
-        tokio::spawn(async move {
-            while t_rx.recv().await.is_some() {}
-        });
+        tokio::spawn(async move { while q_rx.recv().await.is_some() {} });
+        tokio::spawn(async move { while t_rx.recv().await.is_some() {} });
         Ok(Self {
             quote: Arc::new(quote),
             trade: Arc::new(trade),

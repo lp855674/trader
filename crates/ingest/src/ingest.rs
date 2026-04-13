@@ -25,10 +25,7 @@ mod tests {
             .await
             .expect("instrument");
         let adapter = Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity));
-        adapter
-            .ingest_once(&database, iid)
-            .await
-            .expect("ingest");
+        adapter.ingest_once(&database, iid).await.expect("ingest");
         let n = db::count_bars_for_source(database.pool(), iid, db::PAPER_BARS_DATA_SOURCE_ID)
             .await
             .expect("count");
@@ -37,6 +34,31 @@ mod tests {
             .await
             .expect("last");
         assert_eq!(close, Some(100.0));
+    }
+
+    #[tokio::test]
+    async fn repeated_mock_ingest_accumulates_bars() {
+        let database = Db::connect("sqlite::memory:").await.expect("db");
+        db::ensure_mvp_seed(database.pool()).await.expect("seed");
+        let iid = db::upsert_instrument(database.pool(), Venue::UsEquity.as_str(), "TEST")
+            .await
+            .expect("instrument");
+        let adapter = Arc::new(MockBarsAdapter::paper_bars(Venue::UsEquity));
+
+        adapter
+            .ingest_once(&database, iid)
+            .await
+            .expect("first ingest");
+        adapter
+            .ingest_once(&database, iid)
+            .await
+            .expect("second ingest");
+
+        let rows = db::get_recent_bars(database.pool(), iid, db::PAPER_BARS_DATA_SOURCE_ID, 10)
+            .await
+            .expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert!(rows[1].ts_ms > rows[0].ts_ms);
     }
 
     #[test]

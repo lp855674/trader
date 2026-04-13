@@ -180,35 +180,42 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
-        fn priority(&self) -> u32 { 50 }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
+        fn priority(&self) -> u32 {
+            50
+        }
     }
 
     struct AlwaysReject;
     impl RiskChecker for AlwaysReject {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
-            Ok(RiskDecision::Reject { reason: "always".into(), risk_score: 100.0 })
+            Ok(RiskDecision::Reject {
+                reason: "always".into(),
+                risk_score: 100.0,
+            })
         }
-        fn name(&self) -> &str { "AlwaysReject" }
-        fn priority(&self) -> u32 { 200 }
+        fn name(&self) -> &str {
+            "AlwaysReject"
+        }
+        fn priority(&self) -> u32 {
+            200
+        }
     }
 
     #[test]
     fn composite_all_approve() {
-        let checker = CompositeRiskChecker::new(vec![
-            Box::new(AlwaysApprove),
-            Box::new(AlwaysApprove),
-        ]);
+        let checker =
+            CompositeRiskChecker::new(vec![Box::new(AlwaysApprove), Box::new(AlwaysApprove)]);
         let result = checker.check(&make_input()).unwrap();
         assert!(matches!(result, RiskDecision::Approve));
     }
 
     #[test]
     fn composite_stops_at_reject() {
-        let checker = CompositeRiskChecker::new(vec![
-            Box::new(AlwaysApprove),
-            Box::new(AlwaysReject),
-        ]);
+        let checker =
+            CompositeRiskChecker::new(vec![Box::new(AlwaysApprove), Box::new(AlwaysReject)]);
         let result = checker.check(&make_input()).unwrap();
         assert!(matches!(result, RiskDecision::Reject { .. }));
     }
@@ -218,10 +225,8 @@ mod tests {
         // Lower priority number = higher priority = checked first
         // Reject has priority 200 (low priority), Approve has 50 (high priority)
         // So Approve runs first, then Reject
-        let checker = CompositeRiskChecker::new(vec![
-            Box::new(AlwaysReject),
-            Box::new(AlwaysApprove),
-        ]);
+        let checker =
+            CompositeRiskChecker::new(vec![Box::new(AlwaysReject), Box::new(AlwaysApprove)]);
         let result = checker.check(&make_input()).unwrap();
         // ApproveFirst (priority 50) runs, then Reject (priority 200) — first non-approve wins
         assert!(matches!(result, RiskDecision::Reject { .. }));

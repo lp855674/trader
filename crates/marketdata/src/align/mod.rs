@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use domain::NormalizedBar;
+use std::collections::HashMap;
 
 // ── FillStrategy ──────────────────────────────────────────────────────────────
 
@@ -40,8 +40,7 @@ impl TimeAligner {
         let end = bars[bars.len() - 1].ts_ms;
 
         // Build index of existing bars by ts_ms
-        let existing: HashMap<i64, &NormalizedBar> =
-            bars.iter().map(|b| (b.ts_ms, b)).collect();
+        let existing: HashMap<i64, &NormalizedBar> = bars.iter().map(|b| (b.ts_ms, b)).collect();
 
         let mut result = Vec::new();
         let mut ts = start;
@@ -55,7 +54,11 @@ impl TimeAligner {
                         // Find previous bar
                         let prev = result.last().cloned();
                         if let Some(prev_bar) = prev {
-                            NormalizedBar { ts_ms: ts, volume: 0.0, ..prev_bar }
+                            NormalizedBar {
+                                ts_ms: ts,
+                                volume: 0.0,
+                                ..prev_bar
+                            }
                         } else {
                             make_zero_bar(ts)
                         }
@@ -64,7 +67,11 @@ impl TimeAligner {
                         // Find next bar
                         let next = bars.iter().find(|b| b.ts_ms > ts).cloned();
                         if let Some(next_bar) = next {
-                            NormalizedBar { ts_ms: ts, volume: 0.0, ..next_bar }
+                            NormalizedBar {
+                                ts_ms: ts,
+                                volume: 0.0,
+                                ..next_bar
+                            }
                         } else {
                             make_zero_bar(ts)
                         }

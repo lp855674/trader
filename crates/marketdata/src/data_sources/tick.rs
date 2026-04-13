@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::core::data::{DataItem, DataQuery, DataSource, DataSourceError, Granularity};
+use domain::NormalizedBar;
 
 pub struct TickSource {
     instrument: String,
@@ -21,13 +21,21 @@ impl TickSource {
         for i in 0..n_ticks {
             let ts_ms = start_ms + i as i64 * interval_ms as i64;
 
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r1 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r2 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r3 = (state >> 11) as f64 / (1u64 << 53) as f64;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let r4 = (state >> 11) as f64 / (1u64 << 53) as f64;
 
             let spread = last * 0.0005;
@@ -115,7 +123,9 @@ impl TickAggregator {
 
         for item in &ready {
             let price = match item {
-                DataItem::Tick { last, volume: v, .. } => {
+                DataItem::Tick {
+                    last, volume: v, ..
+                } => {
                     volume += v;
                     *last
                 }
@@ -128,13 +138,19 @@ impl TickAggregator {
             if open.is_none() {
                 open = Some(price);
             }
-            if price > high { high = price; }
-            if price < low { low = price; }
+            if price > high {
+                high = price;
+            }
+            if price < low {
+                low = price;
+            }
             close = price;
         }
 
         let open = open?;
-        if high == f64::NEG_INFINITY { return None; }
+        if high == f64::NEG_INFINITY {
+            return None;
+        }
 
         Some(NormalizedBar {
             ts_ms: bucket_ts,
@@ -152,7 +168,8 @@ impl TickAggregator {
         }
         // Group by interval bucket
         let all: Vec<DataItem> = self.pending.drain(..).collect();
-        let mut buckets: std::collections::HashMap<i64, Vec<DataItem>> = std::collections::HashMap::new();
+        let mut buckets: std::collections::HashMap<i64, Vec<DataItem>> =
+            std::collections::HashMap::new();
         for item in all {
             let bucket = (item.ts_ms() / self.interval_ms as i64) * self.interval_ms as i64;
             buckets.entry(bucket).or_default().push(item);
@@ -172,7 +189,9 @@ impl TickAggregator {
 
             for item in items {
                 let price = match item {
-                    DataItem::Tick { last, volume: v, .. } => {
+                    DataItem::Tick {
+                        last, volume: v, ..
+                    } => {
                         volume += v;
                         *last
                     }
@@ -185,8 +204,12 @@ impl TickAggregator {
                 if open.is_none() {
                     open = Some(price);
                 }
-                if price > high { high = price; }
-                if price < low { low = price; }
+                if price > high {
+                    high = price;
+                }
+                if price < low {
+                    low = price;
+                }
                 close = price;
             }
 

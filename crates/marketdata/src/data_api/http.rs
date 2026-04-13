@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use crate::core::data::{DataQuery, DataSource, Granularity};
 use serde::{Deserialize, Serialize};
-use crate::core::data::{DataSource, DataQuery, Granularity};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DataApiError {

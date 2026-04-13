@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::engine::{BacktestConfig, BacktestState};
+use serde::{Deserialize, Serialize};
 
 pub struct EquityCurve(pub Vec<(i64, f64)>);
 
@@ -17,7 +17,11 @@ impl EquityCurve {
             .map(|w| {
                 let prev = w[0].1;
                 let curr = w[1].1;
-                if prev == 0.0 { 0.0 } else { (curr - prev) / prev }
+                if prev == 0.0 {
+                    0.0
+                } else {
+                    (curr - prev) / prev
+                }
             })
             .collect()
     }
@@ -28,7 +32,11 @@ impl EquityCurve {
         }
         let first = self.0.first().unwrap().1;
         let last = self.0.last().unwrap().1;
-        if first == 0.0 { 0.0 } else { (last - first) / first }
+        if first == 0.0 {
+            0.0
+        } else {
+            (last - first) / first
+        }
     }
 
     pub fn max_drawdown(&self) -> f64 {
@@ -52,7 +60,10 @@ impl EquityCurve {
     }
 
     pub fn peak_equity(&self) -> f64 {
-        self.0.iter().map(|&(_, e)| e).fold(f64::NEG_INFINITY, f64::max)
+        self.0
+            .iter()
+            .map(|&(_, e)| e)
+            .fold(f64::NEG_INFINITY, f64::max)
     }
 }
 
@@ -149,8 +160,8 @@ impl PerformanceCalculator {
             return 0.0;
         }
         let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-        let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
-            / (returns.len() - 1) as f64;
+        let variance =
+            returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
         let std_dev = variance.sqrt();
         if std_dev < 1e-10 {
             return 0.0;
@@ -168,8 +179,8 @@ impl PerformanceCalculator {
             return f64::INFINITY;
         }
         let neg_mean = negative.iter().sum::<f64>() / negative.len() as f64;
-        let downside_var = negative.iter().map(|r| (r - neg_mean).powi(2)).sum::<f64>()
-            / negative.len() as f64;
+        let downside_var =
+            negative.iter().map(|r| (r - neg_mean).powi(2)).sum::<f64>() / negative.len() as f64;
         let downside_std = downside_var.sqrt();
         if downside_std < 1e-10 {
             return 0.0;
@@ -236,7 +247,12 @@ mod tests {
     #[test]
     fn performance_report_via_calculator() {
         let mut state = BacktestState::new(10_000.0, 0);
-        state.equity_curve = vec![(0, 10_000.0), (60_000, 10_100.0), (120_000, 10_050.0), (180_000, 10_200.0)];
+        state.equity_curve = vec![
+            (0, 10_000.0),
+            (60_000, 10_100.0),
+            (120_000, 10_050.0),
+            (180_000, 10_200.0),
+        ];
         state.trade_count = 3;
 
         let config = BacktestConfig {

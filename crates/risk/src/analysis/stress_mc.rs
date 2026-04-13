@@ -12,7 +12,8 @@ impl Lcg {
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.state = self.state
+        self.state = self
+            .state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.state
@@ -234,7 +235,10 @@ mod tests {
         let results = sim.run_all(0.02, 0.0001);
         assert_eq!(results.len(), 2);
         let worst = sim.worst_case(&results).unwrap();
-        let min_pnl = results.iter().map(|r| r.final_pnl).fold(f64::INFINITY, f64::min);
+        let min_pnl = results
+            .iter()
+            .map(|r| r.final_pnl)
+            .fold(f64::INFINITY, f64::min);
         assert!((worst.final_pnl - min_pnl).abs() < 1e-9);
     }
 

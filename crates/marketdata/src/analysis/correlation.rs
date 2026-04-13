@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use domain::NormalizedBar;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct CorrelationResult {
@@ -33,14 +33,26 @@ impl CorrelationMatrix {
     }
 
     pub fn pearson(&self, a: &str, b: &str) -> f64 {
-        let va = match self.returns.get(a) { Some(v) => v, None => return 0.0 };
-        let vb = match self.returns.get(b) { Some(v) => v, None => return 0.0 };
+        let va = match self.returns.get(a) {
+            Some(v) => v,
+            None => return 0.0,
+        };
+        let vb = match self.returns.get(b) {
+            Some(v) => v,
+            None => return 0.0,
+        };
         pearson_corr(va, vb)
     }
 
     pub fn spearman(&self, a: &str, b: &str) -> f64 {
-        let va = match self.returns.get(a) { Some(v) => v, None => return 0.0 };
-        let vb = match self.returns.get(b) { Some(v) => v, None => return 0.0 };
+        let va = match self.returns.get(a) {
+            Some(v) => v,
+            None => return 0.0,
+        };
+        let vb = match self.returns.get(b) {
+            Some(v) => v,
+            None => return 0.0,
+        };
         let ra = rank_vec(va);
         let rb = rank_vec(vb);
         pearson_corr(&ra, &rb)
@@ -91,7 +103,11 @@ impl CorrelationMatrix {
         if results.is_empty() {
             return 1.0;
         }
-        let avg_abs_corr = results.iter().map(|r| r.pearson.abs().min(1.0)).sum::<f64>() / results.len() as f64;
+        let avg_abs_corr = results
+            .iter()
+            .map(|r| r.pearson.abs().min(1.0))
+            .sum::<f64>()
+            / results.len() as f64;
         (1.0 - avg_abs_corr).max(0.0)
     }
 }
@@ -103,25 +119,39 @@ impl Default for CorrelationMatrix {
 }
 
 fn mean(v: &[f64]) -> f64 {
-    if v.is_empty() { return 0.0; }
+    if v.is_empty() {
+        return 0.0;
+    }
     v.iter().sum::<f64>() / v.len() as f64
 }
 
 fn pearson_corr(a: &[f64], b: &[f64]) -> f64 {
     let n = a.len().min(b.len());
-    if n < 2 { return 0.0; }
+    if n < 2 {
+        return 0.0;
+    }
     let a = &a[..n];
     let b = &b[..n];
     let ma = mean(a);
     let mb = mean(b);
-    let num: f64 = a.iter().zip(b.iter()).map(|(x, y)| (x - ma) * (y - mb)).sum();
+    let num: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - ma) * (y - mb))
+        .sum();
     let da: f64 = a.iter().map(|x| (x - ma).powi(2)).sum::<f64>().sqrt();
     let db: f64 = b.iter().map(|y| (y - mb).powi(2)).sum::<f64>().sqrt();
     // Both series constant: perfectly correlated if same mean, uncorrelated otherwise.
     if da < 1e-12 && db < 1e-12 {
-        return if (ma - mb).abs() < 1e-12 || (ma * mb > 0.0) { 1.0 } else { 0.0 };
+        return if (ma - mb).abs() < 1e-12 || (ma * mb > 0.0) {
+            1.0
+        } else {
+            0.0
+        };
     }
-    if da < 1e-12 || db < 1e-12 { return 0.0; }
+    if da < 1e-12 || db < 1e-12 {
+        return 0.0;
+    }
     num / (da * db)
 }
 
@@ -150,7 +180,14 @@ mod tests {
     use super::*;
 
     fn bar(ts_ms: i64, close: f64) -> NormalizedBar {
-        NormalizedBar { ts_ms, open: close, high: close, low: close, close, volume: 1.0 }
+        NormalizedBar {
+            ts_ms,
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1.0,
+        }
     }
 
     #[test]
@@ -165,8 +202,16 @@ mod tests {
             a.push(*a.last().unwrap() * 1.1);
             b.push(*b.last().unwrap() * 1.1);
         }
-        let bars_a: Vec<NormalizedBar> = a.iter().enumerate().map(|(i, &v)| bar(i as i64, v)).collect();
-        let bars_b: Vec<NormalizedBar> = b.iter().enumerate().map(|(i, &v)| bar(i as i64, v)).collect();
+        let bars_a: Vec<NormalizedBar> = a
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| bar(i as i64, v))
+            .collect();
+        let bars_b: Vec<NormalizedBar> = b
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| bar(i as i64, v))
+            .collect();
         cm.add_bars("A", &bars_a);
         cm.add_bars("B", &bars_b);
         let p = cm.pearson("A", "B");
@@ -182,8 +227,16 @@ mod tests {
         // B: 30,20,10,3,2,1 → returns roughly decreasing
         let a_prices = vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0];
         let b_prices = vec![30.0, 20.0, 10.0, 3.0, 2.0, 1.0];
-        let bars_a: Vec<NormalizedBar> = a_prices.iter().enumerate().map(|(i, &v)| bar(i as i64, v)).collect();
-        let bars_b: Vec<NormalizedBar> = b_prices.iter().enumerate().map(|(i, &v)| bar(i as i64, v)).collect();
+        let bars_a: Vec<NormalizedBar> = a_prices
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| bar(i as i64, v))
+            .collect();
+        let bars_b: Vec<NormalizedBar> = b_prices
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| bar(i as i64, v))
+            .collect();
         cm.add_bars("A", &bars_a);
         cm.add_bars("B", &bars_b);
         // Just verify spearman works and returns a value in [-1, 1]

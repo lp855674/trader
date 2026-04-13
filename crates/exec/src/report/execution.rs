@@ -28,9 +28,7 @@ pub struct DailyExecutionReport {
 impl DailyExecutionReport {
     pub fn to_csv(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(
-            "order_id,instrument,side,quantity,avg_price,commission,pnl,ts_ms".to_string(),
-        );
+        lines.push("order_id,instrument,side,quantity,avg_price,commission,pnl,ts_ms".to_string());
         for t in &self.trades {
             lines.push(format!(
                 "{},{},{},{},{},{},{},{}",
@@ -64,15 +62,35 @@ pub struct PositionReport {
 }
 
 impl PositionReport {
-    pub fn new(instrument: &str, quantity: f64, avg_cost: f64, market_price: f64, ts_ms: i64) -> Self {
+    pub fn new(
+        instrument: &str,
+        quantity: f64,
+        avg_cost: f64,
+        market_price: f64,
+        ts_ms: i64,
+    ) -> Self {
         let market_value = quantity * market_price;
         let unrealised_pnl = (market_price - avg_cost) * quantity;
-        Self { instrument: instrument.to_string(), quantity, avg_cost, market_value, unrealised_pnl, ts_ms }
+        Self {
+            instrument: instrument.to_string(),
+            quantity,
+            avg_cost,
+            market_value,
+            unrealised_pnl,
+            ts_ms,
+        }
     }
 
     pub fn to_csv_row(&self) -> String {
-        format!("{},{},{},{},{},{}", self.instrument, self.quantity, self.avg_cost,
-            self.market_value, self.unrealised_pnl, self.ts_ms)
+        format!(
+            "{},{},{},{},{},{}",
+            self.instrument,
+            self.quantity,
+            self.avg_cost,
+            self.market_value,
+            self.unrealised_pnl,
+            self.ts_ms
+        )
     }
 }
 
@@ -112,8 +130,15 @@ impl RegulatoryTradeReport {
             "<Trade><Id>{}</Id><Date>{}</Date><Instrument>{}</Instrument><Side>{}</Side>\
             <Qty>{}</Qty><Price>{}</Price><Notional>{}</Notional><Venue>{}</Venue>\
             <Commission>{}</Commission></Trade>",
-            self.report_id, self.trade_date, self.instrument_isin, self.side,
-            self.quantity, self.price, self.notional, self.venue, self.commission
+            self.report_id,
+            self.trade_date,
+            self.instrument_isin,
+            self.side,
+            self.quantity,
+            self.price,
+            self.notional,
+            self.venue,
+            self.commission
         )
     }
 }
@@ -175,7 +200,10 @@ mod tests {
 
     #[test]
     fn report_built_from_fills() {
-        let fills = vec![fill("o1", Side::Buy, 1.0, 100.0), fill("o2", Side::Sell, 1.0, 110.0)];
+        let fills = vec![
+            fill("o1", Side::Buy, 1.0, 100.0),
+            fill("o2", Side::Sell, 1.0, 110.0),
+        ];
         let mut m = ExecutionMetrics::new();
         m.record_submit(100);
         m.record_submit(100);
@@ -197,7 +225,10 @@ mod tests {
         let report = ExecutionReportBuilder::from_fills(&fills, &snap, "2026-04-05");
         let csv = report.to_csv();
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[0], "order_id,instrument,side,quantity,avg_price,commission,pnl,ts_ms");
+        assert_eq!(
+            lines[0],
+            "order_id,instrument,side,quantity,avg_price,commission,pnl,ts_ms"
+        );
         assert!(lines[1].starts_with("o1,"));
         assert!(lines[1].contains("2"));
     }

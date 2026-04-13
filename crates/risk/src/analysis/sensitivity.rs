@@ -1,7 +1,7 @@
 // Sensitivity analyzer: finite-difference Greeks and scenario analysis
 
-use domain::InstrumentId;
 use crate::risk::portfolio::VarCalculator;
+use domain::InstrumentId;
 
 // ── GreeksApprox ──────────────────────────────────────────────────────────────
 
@@ -53,7 +53,8 @@ impl RiskSensitivityAnalyzer {
 
         // Price bumped VaR: scale existing returns by price ratio as approximation
         let var_plus_price = self.bumped_var_price(instrument, base_price, base_price + bump_price);
-        let var_minus_price = self.bumped_var_price(instrument, base_price, base_price - bump_price);
+        let var_minus_price =
+            self.bumped_var_price(instrument, base_price, base_price - bump_price);
 
         // Vol bumped VaR
         let var_plus_vol = self.bumped_var_vol(instrument, base_vol, base_vol + bump_vol);
@@ -77,16 +78,18 @@ impl RiskSensitivityAnalyzer {
     }
 
     /// Each scenario is (name, price_change_pct, vol_change_pct).
-    pub fn scenario_analysis(
-        &self,
-        scenarios: Vec<(&str, f64, f64)>,
-    ) -> Vec<ScenarioResult> {
+    pub fn scenario_analysis(&self, scenarios: Vec<(&str, f64, f64)>) -> Vec<ScenarioResult> {
         // Compute aggregate base VaR across all instruments in the calculator
         // Use direct percentile_var on the stored returns (avoids key round-trip issues)
-        let base_var: f64 = self.var_calculator.returns.values().map(|deque| {
-            let v: Vec<f64> = deque.iter().cloned().collect();
-            percentile_var(&v, 0.95)
-        }).fold(0.0_f64, f64::max);
+        let base_var: f64 = self
+            .var_calculator
+            .returns
+            .values()
+            .map(|deque| {
+                let v: Vec<f64> = deque.iter().cloned().collect();
+                percentile_var(&v, 0.95)
+            })
+            .fold(0.0_f64, f64::max);
 
         let mut results: Vec<ScenarioResult> = scenarios
             .into_iter()
@@ -105,18 +108,17 @@ impl RiskSensitivityAnalyzer {
             .collect();
 
         // Sort by VaR descending (worst first)
-        results.sort_by(|a, b| b.var_95.partial_cmp(&a.var_95).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.var_95
+                .partial_cmp(&a.var_95)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
     // ── private helpers ─────────────────────────────────────────────────────
 
-    fn bumped_var_price(
-        &self,
-        instrument: &InstrumentId,
-        base_price: f64,
-        new_price: f64,
-    ) -> f64 {
+    fn bumped_var_price(&self, instrument: &InstrumentId, base_price: f64, new_price: f64) -> f64 {
         // Scale returns by price ratio to simulate price move
         let ratio = new_price / base_price;
         let key = instrument.to_string();
@@ -128,12 +130,7 @@ impl RiskSensitivityAnalyzer {
         0.0
     }
 
-    fn bumped_var_vol(
-        &self,
-        instrument: &InstrumentId,
-        base_vol: f64,
-        new_vol: f64,
-    ) -> f64 {
+    fn bumped_var_vol(&self, instrument: &InstrumentId, base_vol: f64, new_vol: f64) -> f64 {
         let ratio = new_vol / base_vol.max(1e-12);
         let key = instrument.to_string();
         if let Some(returns) = self.var_calculator.returns.get(&key) {
@@ -196,7 +193,9 @@ mod tests {
     fn what_if_returns_nonzero_for_loss_series() {
         let analyzer = make_analyzer_long();
         let btc = btc();
-        let bad_returns: Vec<f64> = (0..100).map(|i| if i < 10 { -0.20 } else { 0.01 }).collect();
+        let bad_returns: Vec<f64> = (0..100)
+            .map(|i| if i < 10 { -0.20 } else { 0.01 })
+            .collect();
         let var = analyzer.what_if(&btc, &bad_returns);
         assert!(var > 0.0, "VaR for loss series should be > 0");
     }

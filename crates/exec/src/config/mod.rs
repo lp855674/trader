@@ -108,8 +108,14 @@ mod tests {
         let cfg = ExecConfig::default();
         let json = cfg.to_json();
         let parsed: ExecConfig = ExecConfig::from_json(&json).expect("parse");
-        assert_eq!(parsed.execution.max_order_size, cfg.execution.max_order_size);
+        assert_eq!(
+            parsed.execution.max_order_size,
+            cfg.execution.max_order_size
+        );
         assert_eq!(parsed.broker.venue, cfg.broker.venue);
-        assert_eq!(parsed.risk_limits.max_leverage, cfg.risk_limits.max_leverage);
+        assert_eq!(
+            parsed.risk_limits.max_leverage,
+            cfg.risk_limits.max_leverage
+        );
     }
 }

@@ -1,5 +1,5 @@
-use domain::{InstrumentId, Side};
 use crate::core::r#trait::Kline;
+use domain::{InstrumentId, Side};
 
 #[derive(Debug, Clone)]
 pub enum OrderType {
@@ -170,7 +170,13 @@ mod tests {
     fn limit_buy_fills_when_price_crossed() {
         let mut exec = SimulatedExecutor::new(0.001);
         // Limit buy at 95, bar low is 90 — should fill
-        exec.submit(instrument(), Side::Buy, OrderType::Limit { price: 95.0 }, 1.0, 0);
+        exec.submit(
+            instrument(),
+            Side::Buy,
+            OrderType::Limit { price: 95.0 },
+            1.0,
+            0,
+        );
         let fills = exec.process_bar(&kline(100.0, 110.0, 90.0, 105.0));
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].fill_price, 95.0);
@@ -180,7 +186,13 @@ mod tests {
     fn limit_buy_no_fill_when_not_crossed() {
         let mut exec = SimulatedExecutor::new(0.001);
         // Limit buy at 85, bar low is 90 — should NOT fill
-        exec.submit(instrument(), Side::Buy, OrderType::Limit { price: 85.0 }, 1.0, 0);
+        exec.submit(
+            instrument(),
+            Side::Buy,
+            OrderType::Limit { price: 85.0 },
+            1.0,
+            0,
+        );
         let fills = exec.process_bar(&kline(100.0, 110.0, 90.0, 105.0));
         assert_eq!(fills.len(), 0);
         assert_eq!(exec.pending().len(), 1);
@@ -193,7 +205,10 @@ mod tests {
         exec.submit(
             instrument(),
             Side::Buy,
-            OrderType::StopLimit { stop: 105.0, limit: 106.0 },
+            OrderType::StopLimit {
+                stop: 105.0,
+                limit: 106.0,
+            },
             1.0,
             0,
         );

@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use crate::core::data::{DataQuery, DataSource, Granularity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::core::data::{DataSource, DataQuery, Granularity};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataServiceRequest {
@@ -28,16 +28,24 @@ impl DataGrpcService {
         match req.action.as_str() {
             "query" => {
                 // Parse DataQuery from payload
-                let instrument = req.payload.get("instrument")
+                let instrument = req
+                    .payload
+                    .get("instrument")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let start = req.payload.get("start_ts_ms")
+                let start = req
+                    .payload
+                    .get("start_ts_ms")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
-                let end = req.payload.get("end_ts_ms")
+                let end = req
+                    .payload
+                    .get("end_ts_ms")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(i64::MAX);
-                let limit = req.payload.get("limit")
+                let limit = req
+                    .payload
+                    .get("limit")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as usize);
 
@@ -52,7 +60,10 @@ impl DataGrpcService {
                 match self.source.query(&query) {
                     Ok(items) => {
                         let data = serde_json::to_value(&items).unwrap_or(Value::Array(vec![]));
-                        DataServiceResponse { success: true, data }
+                        DataServiceResponse {
+                            success: true,
+                            data,
+                        }
                     }
                     Err(e) => DataServiceResponse {
                         success: false,

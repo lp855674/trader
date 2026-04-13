@@ -20,7 +20,10 @@ pub struct SmartOrderRouter {
 
 impl SmartOrderRouter {
     pub fn new(default_venue: &str) -> Self {
-        Self { rules: Vec::new(), default_venue: default_venue.to_string() }
+        Self {
+            rules: Vec::new(),
+            default_venue: default_venue.to_string(),
+        }
     }
 
     pub fn add_rule(&mut self, rule: RoutingRule) {
@@ -45,11 +48,7 @@ impl SmartOrderRouter {
     }
 
     /// Split order proportionally by liquidity weights across venues.
-    pub fn split_order(
-        &self,
-        request: &OrderRequest,
-        venues: &[(&str, f64)],
-    ) -> RoutingDecision {
+    pub fn split_order(&self, request: &OrderRequest, venues: &[(&str, f64)]) -> RoutingDecision {
         let total_weight: f64 = venues.iter().map(|(_, w)| w).sum();
         if total_weight == 0.0 || venues.is_empty() {
             return self.route(request);
@@ -62,7 +61,10 @@ impl SmartOrderRouter {
             })
             .collect();
         let primary_venue = venues[0].0.to_string();
-        RoutingDecision { venue: primary_venue, split_orders: splits }
+        RoutingDecision {
+            venue: primary_venue,
+            split_orders: splits,
+        }
     }
 }
 

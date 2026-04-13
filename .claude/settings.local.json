@@ -5,7 +5,21 @@
       "Bash(cargo build:*)",
       "Bash(python -c \"import sys,json; lines=[l for l in sys.stdin if l.strip\\(\\)]; d=json.loads\\(lines[-1]\\) if lines else {}; print\\(d.get\\('message',{}\\).get\\('content',''\\)[:200] if isinstance\\(d.get\\('message',{}\\).get\\('content',''\\),str\\) else str\\(d.get\\('message',{}\\).get\\('content',''\\)\\)[:200]\\)\")",
       "Bash(python -c \"import sys,json; lines=[l for l in sys.stdin if l.strip\\(\\)]; d=json.loads\\(lines[-1]\\) if lines else {}; c=d.get\\('message',{}\\).get\\('content',''\\); print\\(\\(c if isinstance\\(c,str\\) else str\\(c\\)\\)[:300]\\)\")",
-      "Bash(xargs echo:*)"
+      "Bash(xargs echo:*)",
+      "Bash(cat E:/code/trader/docs/specs/*.md)",
+      "Bash(grep -n \"system_config\\\\|get_config\\\\|set_config\" E:/code/trader/crates/db/src/db.rs E:/code/trader/crates/db/src/*.rs)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/test_health.py -v)",
+      "Bash(pytest tests/test_health.py -v)",
+      "Bash(python -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(pytest tests/test_predict.py -v)",
+      "Bash(pytest tests/ -v)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(pytest tests/test_train.py::test_train_unknown_model_type_returns_422 -v)",
+      "Bash(git commit:*)",
+      "Bash(python -m pytest tests/test_models_features.py -v)",
+      "Bash(python:*)"
     ]
   }
 }

@@ -45,18 +45,22 @@ impl PolarsDataFrameExt {
         let stds = compute_rolling_std(&values, window);
 
         let bb_mid: Vec<Option<f64>> = means.clone();
-        let bb_upper: Vec<Option<f64>> = means.iter().zip(stds.iter()).map(|(m, s)| {
-            match (m, s) {
+        let bb_upper: Vec<Option<f64>> = means
+            .iter()
+            .zip(stds.iter())
+            .map(|(m, s)| match (m, s) {
                 (Some(m), Some(s)) => Some(m + n_std * s),
                 _ => None,
-            }
-        }).collect();
-        let bb_lower: Vec<Option<f64>> = means.iter().zip(stds.iter()).map(|(m, s)| {
-            match (m, s) {
+            })
+            .collect();
+        let bb_lower: Vec<Option<f64>> = means
+            .iter()
+            .zip(stds.iter())
+            .map(|(m, s)| match (m, s) {
                 (Some(m), Some(s)) => Some(m - n_std * s),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
 
         let mut out = df.clone();
         out.with_column(Series::new("bb_mid".into(), bb_mid).into())?;
@@ -142,7 +146,8 @@ fn compute_rolling_std(values: &[f64], window: usize) -> Vec<Option<f64>> {
                 return Some(0.0);
             }
             let mean = slice.iter().sum::<f64>() / slice.len() as f64;
-            let variance = slice.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / slice.len() as f64;
+            let variance =
+                slice.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / slice.len() as f64;
             Some(variance.sqrt())
         })
         .collect()
@@ -151,8 +156,8 @@ fn compute_rolling_std(values: &[f64], window: usize) -> Vec<Option<f64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::NormalizedBar;
     use crate::BarsFrame;
+    use domain::NormalizedBar;
 
     fn make_bars(n: usize) -> Vec<NormalizedBar> {
         (0..n)

@@ -55,7 +55,9 @@ impl ConfigVersioning {
     }
 
     pub fn current(&self) -> &ConfigSnapshot {
-        self.history.last().expect("always has at least one snapshot")
+        self.history
+            .last()
+            .expect("always has at least one snapshot")
     }
 
     pub fn version_count(&self) -> usize {

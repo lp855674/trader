@@ -61,8 +61,8 @@ impl ExecPosition {
                 if self.net_qty >= 0.0 {
                     // Increasing long position or opening new long
                     if new_total_qty != 0.0 {
-                        self.avg_cost = (self.avg_cost * self.net_qty + fill.price * fill.qty)
-                            / new_total_qty;
+                        self.avg_cost =
+                            (self.avg_cost * self.net_qty + fill.price * fill.qty) / new_total_qty;
                     }
                     self.net_qty = new_total_qty;
                     self.lots.push(TaxLot {
@@ -137,15 +137,19 @@ impl ExecPosition {
         // Sort lots based on method
         match method {
             TaxLotMethod::Fifo => {
-                self.lots.sort_by(|a, b| a.opened_ts_ms.cmp(&b.opened_ts_ms));
+                self.lots
+                    .sort_by(|a, b| a.opened_ts_ms.cmp(&b.opened_ts_ms));
             }
             TaxLotMethod::Lifo => {
-                self.lots.sort_by(|a, b| b.opened_ts_ms.cmp(&a.opened_ts_ms));
+                self.lots
+                    .sort_by(|a, b| b.opened_ts_ms.cmp(&a.opened_ts_ms));
             }
             TaxLotMethod::Hifo => {
                 // Highest cost first
                 self.lots.sort_by(|a, b| {
-                    b.cost_basis.partial_cmp(&a.cost_basis).unwrap_or(std::cmp::Ordering::Equal)
+                    b.cost_basis
+                        .partial_cmp(&a.cost_basis)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
         }
@@ -163,7 +167,10 @@ impl ExecPosition {
             qty_to_close -= closed;
             let remaining = lot.qty - closed;
             if remaining > 1e-12 {
-                new_lots.push(TaxLot { qty: remaining, ..lot });
+                new_lots.push(TaxLot {
+                    qty: remaining,
+                    ..lot
+                });
             }
         }
 
@@ -172,8 +179,7 @@ impl ExecPosition {
         // Recalculate avg_cost from remaining lots
         let total_qty: f64 = self.lots.iter().map(|l| l.qty).sum();
         if total_qty > 0.0 {
-            self.avg_cost =
-                self.lots.iter().map(|l| l.qty * l.cost_basis).sum::<f64>() / total_qty;
+            self.avg_cost = self.lots.iter().map(|l| l.qty * l.cost_basis).sum::<f64>() / total_qty;
         } else {
             self.avg_cost = 0.0;
         }
@@ -205,7 +211,10 @@ pub struct ExecPositionManager {
 
 impl ExecPositionManager {
     pub fn new(method: TaxLotMethod) -> Self {
-        Self { positions: HashMap::new(), tax_lot_method: method }
+        Self {
+            positions: HashMap::new(),
+            tax_lot_method: method,
+        }
     }
 
     pub fn apply_fill(&mut self, fill: &FillRecord) {
@@ -261,11 +270,23 @@ mod tests {
         let mut pos = ExecPosition::new(btc());
         // Buy 2 lots
         pos.apply_fill(
-            &FillRecord { ts_ms: 1000, qty: 1.0, price: 100.0, side: Side::Buy, ..fill(Side::Buy, 1.0, 100.0) },
+            &FillRecord {
+                ts_ms: 1000,
+                qty: 1.0,
+                price: 100.0,
+                side: Side::Buy,
+                ..fill(Side::Buy, 1.0, 100.0)
+            },
             TaxLotMethod::Fifo,
         );
         pos.apply_fill(
-            &FillRecord { ts_ms: 2000, qty: 1.0, price: 120.0, side: Side::Buy, ..fill(Side::Buy, 1.0, 120.0) },
+            &FillRecord {
+                ts_ms: 2000,
+                qty: 1.0,
+                price: 120.0,
+                side: Side::Buy,
+                ..fill(Side::Buy, 1.0, 120.0)
+            },
             TaxLotMethod::Fifo,
         );
         // Sell 1 — should close oldest (100.0) first with FIFO
@@ -300,11 +321,23 @@ mod tests {
         let mut pos_lifo = ExecPosition::new(btc());
         for p in [&mut pos_fifo, &mut pos_lifo] {
             p.apply_fill(
-                &FillRecord { ts_ms: 1000, qty: 1.0, price: 90.0, side: Side::Buy, ..fill(Side::Buy, 1.0, 90.0) },
+                &FillRecord {
+                    ts_ms: 1000,
+                    qty: 1.0,
+                    price: 90.0,
+                    side: Side::Buy,
+                    ..fill(Side::Buy, 1.0, 90.0)
+                },
                 TaxLotMethod::Fifo,
             );
             p.apply_fill(
-                &FillRecord { ts_ms: 2000, qty: 1.0, price: 110.0, side: Side::Buy, ..fill(Side::Buy, 1.0, 110.0) },
+                &FillRecord {
+                    ts_ms: 2000,
+                    qty: 1.0,
+                    price: 110.0,
+                    side: Side::Buy,
+                    ..fill(Side::Buy, 1.0, 110.0)
+                },
                 TaxLotMethod::Fifo,
             );
         }

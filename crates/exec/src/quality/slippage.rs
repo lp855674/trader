@@ -120,7 +120,10 @@ mod tests {
 
     #[test]
     fn adaptive_slippage_scales_with_vol() {
-        let model = AdaptiveSlippage { base_bps: 10.0, vol_scale: 1.0 };
+        let model = AdaptiveSlippage {
+            base_bps: 10.0,
+            vol_scale: 1.0,
+        };
         // bps = 10 * (1 + 1.0 * 0.2) = 12 bps
         let price = model.apply(1000.0, 1.0, Side::Buy, &ctx());
         assert!((price - 1001.2).abs() < 0.001);

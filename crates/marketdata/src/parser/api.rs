@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::core::{DataItem, DataSourceError};
+use domain::NormalizedBar;
 
 // ── RateLimiter ───────────────────────────────────────────────────────────────
 
@@ -82,8 +82,8 @@ impl ApiParser {
     }
 
     pub fn parse_bar_json(json: &str) -> Result<NormalizedBar, DataSourceError> {
-        let v: serde_json::Value = serde_json::from_str(json)
-            .map_err(|e| DataSourceError::Parse(e.to_string()))?;
+        let v: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| DataSourceError::Parse(e.to_string()))?;
 
         let get_f64 = |key: &str| -> Result<f64, DataSourceError> {
             v[key]
@@ -107,21 +107,21 @@ impl ApiParser {
     }
 
     pub fn parse_bars_array(json: &str) -> Result<Vec<NormalizedBar>, DataSourceError> {
-        let arr: Vec<serde_json::Value> = serde_json::from_str(json)
-            .map_err(|e| DataSourceError::Parse(e.to_string()))?;
+        let arr: Vec<serde_json::Value> =
+            serde_json::from_str(json).map_err(|e| DataSourceError::Parse(e.to_string()))?;
 
         arr.iter()
             .map(|v| {
-                let s = serde_json::to_string(v)
-                    .map_err(|e| DataSourceError::Parse(e.to_string()))?;
+                let s =
+                    serde_json::to_string(v).map_err(|e| DataSourceError::Parse(e.to_string()))?;
                 Self::parse_bar_json(&s)
             })
             .collect()
     }
 
     pub fn parse_tick_json(json: &str) -> Result<DataItem, DataSourceError> {
-        let v: serde_json::Value = serde_json::from_str(json)
-            .map_err(|e| DataSourceError::Parse(e.to_string()))?;
+        let v: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| DataSourceError::Parse(e.to_string()))?;
 
         let get_f64 = |key: &str| -> Result<f64, DataSourceError> {
             v[key]

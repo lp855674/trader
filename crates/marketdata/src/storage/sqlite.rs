@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::core::{DataItem, DataQuery};
+use std::collections::HashMap;
 
 // ── Partition ─────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,11 @@ mod tests {
 
         let q = DataQuery::new("BTC", 20_000, 50_000);
         let result = storage.query(&q);
-        assert!(result.iter().all(|i| i.ts_ms() >= 20_000 && i.ts_ms() <= 50_000));
+        assert!(
+            result
+                .iter()
+                .all(|i| i.ts_ms() >= 20_000 && i.ts_ms() <= 50_000)
+        );
     }
 
     #[test]

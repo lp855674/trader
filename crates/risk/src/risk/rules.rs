@@ -6,12 +6,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuleCondition {
-    QuantityExceeds { threshold: f64 },
-    NotionalExceeds { threshold: f64 },
-    VolatilityAbove { threshold: f64 },
+    QuantityExceeds {
+        threshold: f64,
+    },
+    NotionalExceeds {
+        threshold: f64,
+    },
+    VolatilityAbove {
+        threshold: f64,
+    },
     /// Triggers when daily_pnl < threshold
-    DailyPnLBelow { threshold: f64 },
-    OpenPositionsAbove { count: u32 },
+    DailyPnLBelow {
+        threshold: f64,
+    },
+    OpenPositionsAbove {
+        count: u32,
+    },
     And(Vec<RuleCondition>),
     Or(Vec<RuleCondition>),
     Not(Box<RuleCondition>),
@@ -22,11 +32,19 @@ pub enum RuleCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuleAction {
-    Reject { reason: String },
-    ScaleQuantity { factor: f64 },
-    SetMaxNotional { value: f64 },
+    Reject {
+        reason: String,
+    },
+    ScaleQuantity {
+        factor: f64,
+    },
+    SetMaxNotional {
+        value: f64,
+    },
     /// Just logs, doesn't block
-    Log { message: String },
+    Log {
+        message: String,
+    },
 }
 
 // ── RiskRule ──────────────────────────────────────────────────────────────
@@ -99,23 +117,21 @@ impl RuleEngine {
                         return Ok(RiskDecision::ApproveWithAdjustment {
                             new_quantity: input.order.quantity * factor,
                             new_limit_price: input.order.limit_price,
-                            reason: format!(
-                                "[Rule:{}] Scale quantity by {}",
-                                rule.id, factor
-                            ),
+                            reason: format!("[Rule:{}] Scale quantity by {}", rule.id, factor),
                         });
                     }
                     RuleAction::SetMaxNotional { value } => {
                         let price = input.order.limit_price.unwrap_or(input.market.mid_price);
-                        let max_qty = if price > 0.0 { value / price } else { input.order.quantity };
+                        let max_qty = if price > 0.0 {
+                            value / price
+                        } else {
+                            input.order.quantity
+                        };
                         let new_qty = input.order.quantity.min(max_qty);
                         return Ok(RiskDecision::ApproveWithAdjustment {
                             new_quantity: new_qty,
                             new_limit_price: input.order.limit_price,
-                            reason: format!(
-                                "[Rule:{}] Set max notional to {}",
-                                rule.id, value
-                            ),
+                            reason: format!("[Rule:{}] Set max notional to {}", rule.id, value),
                         });
                     }
                     RuleAction::Log { message } => {
@@ -226,7 +242,7 @@ mod tests {
     fn or_condition_one_true() {
         let cond = RuleCondition::Or(vec![
             RuleCondition::QuantityExceeds { threshold: 100.0 }, // false
-            RuleCondition::VolatilityAbove { threshold: 0.01 },   // true
+            RuleCondition::VolatilityAbove { threshold: 0.01 },  // true
         ]);
         assert!(RuleEngine::evaluate_condition(&cond, &make_input()));
     }
@@ -246,7 +262,9 @@ mod tests {
                 "low-priority-reject",
                 200,
                 RuleCondition::QuantityExceeds { threshold: 4.0 },
-                RuleAction::Reject { reason: "qty too high".into() },
+                RuleAction::Reject {
+                    reason: "qty too high".into(),
+                },
             ),
             make_rule(
                 "high-priority-scale",
@@ -283,7 +301,9 @@ mod tests {
             "old-rule",
             100,
             RuleCondition::QuantityExceeds { threshold: 4.0 },
-            RuleAction::Reject { reason: "old".into() },
+            RuleAction::Reject {
+                reason: "old".into(),
+            },
         )]);
 
         // Before reload: rejects

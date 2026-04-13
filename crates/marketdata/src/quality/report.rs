@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::checker::QualityViolation;
+use serde::{Deserialize, Serialize};
 
 // ── QualitySummary ────────────────────────────────────────────────────────────
 

@@ -25,11 +25,18 @@ pub struct DataServiceStub {
 
 impl DataServiceStub {
     pub fn new() -> Self {
-        Self { records: HashMap::new(), ingested_count: 0, quality_score: 1.0 }
+        Self {
+            records: HashMap::new(),
+            ingested_count: 0,
+            quality_score: 1.0,
+        }
     }
 
     pub fn ingest(&mut self, record: DataRecord) {
-        self.records.entry(record.instrument.clone()).or_default().push(record);
+        self.records
+            .entry(record.instrument.clone())
+            .or_default()
+            .push(record);
         self.ingested_count += 1;
     }
 
@@ -68,11 +75,31 @@ mod tests {
     #[test]
     fn ingest_and_query() {
         let mut svc = DataServiceStub::new();
-        svc.ingest(DataRecord { instrument: "AAPL".to_string(), timestamp_ms: 1000, close: 150.0, volume: 1000.0 });
-        svc.ingest(DataRecord { instrument: "AAPL".to_string(), timestamp_ms: 2000, close: 152.0, volume: 1200.0 });
-        svc.ingest(DataRecord { instrument: "AAPL".to_string(), timestamp_ms: 3000, close: 148.0, volume: 800.0 });
+        svc.ingest(DataRecord {
+            instrument: "AAPL".to_string(),
+            timestamp_ms: 1000,
+            close: 150.0,
+            volume: 1000.0,
+        });
+        svc.ingest(DataRecord {
+            instrument: "AAPL".to_string(),
+            timestamp_ms: 2000,
+            close: 152.0,
+            volume: 1200.0,
+        });
+        svc.ingest(DataRecord {
+            instrument: "AAPL".to_string(),
+            timestamp_ms: 3000,
+            close: 148.0,
+            volume: 800.0,
+        });
 
-        let q = DataQuery { instrument: "AAPL".to_string(), start_ms: 1500, end_ms: 2500, granularity: "1m".to_string() };
+        let q = DataQuery {
+            instrument: "AAPL".to_string(),
+            start_ms: 1500,
+            end_ms: 2500,
+            granularity: "1m".to_string(),
+        };
         let results = svc.query(&q);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].timestamp_ms, 2000);
@@ -81,8 +108,18 @@ mod tests {
     #[test]
     fn metadata_lists_instruments() {
         let mut svc = DataServiceStub::new();
-        svc.ingest(DataRecord { instrument: "AAPL".to_string(), timestamp_ms: 0, close: 100.0, volume: 1.0 });
-        svc.ingest(DataRecord { instrument: "GOOG".to_string(), timestamp_ms: 0, close: 200.0, volume: 1.0 });
+        svc.ingest(DataRecord {
+            instrument: "AAPL".to_string(),
+            timestamp_ms: 0,
+            close: 100.0,
+            volume: 1.0,
+        });
+        svc.ingest(DataRecord {
+            instrument: "GOOG".to_string(),
+            timestamp_ms: 0,
+            close: 200.0,
+            volume: 1.0,
+        });
         let meta = svc.metadata();
         assert_eq!(meta.len(), 2);
     }

@@ -24,7 +24,11 @@ pub struct LongbridgeAdapter {
 
 impl LongbridgeAdapter {
     pub fn new(config: LongbridgeConfig) -> Self {
-        Self { config, connected: false, submitted_count: 0 }
+        Self {
+            config,
+            connected: false,
+            submitted_count: 0,
+        }
     }
 
     pub fn connect(&mut self) -> Result<(), String> {
@@ -37,7 +41,10 @@ impl LongbridgeAdapter {
             return Err("not connected".to_string());
         }
         self.submitted_count += 1;
-        Ok(format!("lb-order-{}-{}", req.client_order_id, self.submitted_count))
+        Ok(format!(
+            "lb-order-{}-{}",
+            req.client_order_id, self.submitted_count
+        ))
     }
 
     pub fn cancel_order(&mut self, order_id: &str) -> Result<(), String> {

@@ -8,9 +8,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::sync::watch;
 
-use super::{
-    registry::{RegistryError, StrategyFactory, StrategyRegistry},
-};
+use super::registry::{RegistryError, StrategyFactory, StrategyRegistry};
 
 // ─── HotReloadError ───────────────────────────────────────────────────────────
 
@@ -100,7 +98,11 @@ impl ConfigDiff {
                 removed.sort();
                 changed.sort();
 
-                ConfigDiff { added, removed, changed }
+                ConfigDiff {
+                    added,
+                    removed,
+                    changed,
+                }
             }
             _ => {
                 // Non-object values: treat as changed root if different
@@ -144,7 +146,10 @@ impl HotReloadWatcher {
         &mut self,
         factory: &StrategyFactory,
     ) -> Result<(), HotReloadError> {
-        self.rx.changed().await.map_err(|_| HotReloadError::WatcherClosed)?;
+        self.rx
+            .changed()
+            .await
+            .map_err(|_| HotReloadError::WatcherClosed)?;
 
         let reload = {
             let guard = self.rx.borrow();
@@ -248,8 +253,8 @@ mod tests {
         use domain::{InstrumentId, Side, Venue};
 
         use crate::core::{
-            r#trait::{Signal, StrategyContext, StrategyError, Strategy},
             registry::{RegistryError, StrategyFactory, StrategyRegistry},
+            r#trait::{Signal, Strategy, StrategyContext, StrategyError},
         };
 
         // A stub strategy whose name encodes its config value
@@ -313,8 +318,8 @@ mod tests {
         use domain::{InstrumentId, Side, Venue};
 
         use crate::core::{
-            r#trait::{Signal, StrategyContext, StrategyError, Strategy},
             registry::{StrategyFactory, StrategyRegistry},
+            r#trait::{Signal, Strategy, StrategyContext, StrategyError},
         };
 
         struct Stub;
@@ -330,17 +335,15 @@ mod tests {
                     HashMap::new(),
                 )))
             }
-            fn name(&self) -> &str { "stub" }
+            fn name(&self) -> &str {
+                "stub"
+            }
         }
 
         let registry = Arc::new(Mutex::new(StrategyRegistry::new()));
         {
             let reg = registry.lock().unwrap();
-            reg.register(
-                "s".into(),
-                Arc::new(Stub),
-                serde_json::json!({"x": 1}),
-            );
+            reg.register("s".into(), Arc::new(Stub), serde_json::json!({"x": 1}));
         }
 
         let factory = StrategyFactory::new(); // no builders needed — should not be called

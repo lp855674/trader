@@ -20,7 +20,10 @@ pub struct HotReloadWatcher {
 
 impl HotReloadWatcher {
     pub fn new(initial: serde_json::Value) -> Self {
-        Self { current: initial, reload_count: 0 }
+        Self {
+            current: initial,
+            reload_count: 0,
+        }
     }
 
     /// Compare new config against current. Returns diff and applies if non-empty.
@@ -64,7 +67,11 @@ fn diff_configs(old: &serde_json::Value, new: &serde_json::Value) -> ConfigDiff 
         }
     }
 
-    ConfigDiff { changed_keys: changed, added_keys: added, removed_keys: removed }
+    ConfigDiff {
+        changed_keys: changed,
+        added_keys: added,
+        removed_keys: removed,
+    }
 }
 
 #[cfg(test)]

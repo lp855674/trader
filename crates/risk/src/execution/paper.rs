@@ -1,7 +1,7 @@
 // Paper execution mode: simulated fills with slippage
 
-use std::sync::Arc;
 use crate::core::{RiskChecker, RiskDecision, RiskError, RiskInput};
+use std::sync::Arc;
 
 // ── PaperExecConfig ───────────────────────────────────────────────────────────
 
@@ -36,7 +36,8 @@ impl Lcg {
     }
 
     fn next_u64(&mut self) -> u64 {
-        self.state = self.state
+        self.state = self
+            .state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         self.state
@@ -105,7 +106,9 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
     }
 
     fn make_input() -> RiskInput {
@@ -152,7 +155,10 @@ mod tests {
         assert!(matches!(decision, RiskDecision::Approve));
         let fill_price = fill.expect("Should have a fill price");
         let expected = 50_000.0 * (1.0 + 10.0 / 10_000.0);
-        assert!((fill_price - expected).abs() < 0.01, "Fill price should include slippage");
+        assert!(
+            (fill_price - expected).abs() < 0.01,
+            "Fill price should include slippage"
+        );
     }
 
     #[test]
@@ -160,9 +166,14 @@ mod tests {
         struct AlwaysReject;
         impl RiskChecker for AlwaysReject {
             fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
-                Ok(RiskDecision::Reject { reason: "test".into(), risk_score: 100.0 })
+                Ok(RiskDecision::Reject {
+                    reason: "test".into(),
+                    risk_score: 100.0,
+                })
             }
-            fn name(&self) -> &str { "AlwaysReject" }
+            fn name(&self) -> &str {
+                "AlwaysReject"
+            }
         }
 
         let paper = PaperExecutionMode::new(Arc::new(AlwaysReject), PaperExecConfig::default());

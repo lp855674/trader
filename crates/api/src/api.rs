@@ -6,12 +6,17 @@ mod middleware;
 mod ws;
 
 pub use error::ApiError;
-pub use handlers::{OrdersQuery, TickBody, TickResponse};
+pub use handlers::{
+    OrdersQuery, RuntimeExecutionStateBody, RuntimeExecutionStateQuery, RuntimeModeBody,
+    RuntimeModeUpdate, StrategyConfigBody, StrategyConfigUpdate, SymbolAllowlistBody,
+    SymbolAllowlistEntry, SymbolAllowlistUpdate, TickBody, TickResponse, UniverseCycleTrigger,
+    get_strategy_config, put_strategy_config,
+};
 
 use std::sync::Arc;
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post, put};
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
@@ -35,10 +40,7 @@ pub enum StreamEvent {
         symbol: String,
     },
     /// Business or transport-level notice on the stream (`kind: "error"`, includes `error_code`).
-    Error {
-        error_code: String,
-        message: String,
-    },
+    Error { error_code: String, message: String },
 }
 
 pub fn router(state: AppState) -> Router {
@@ -48,6 +50,25 @@ pub fn router(state: AppState) -> Router {
         .route("/orders", get(handlers::list_orders))
         .route("/tick", post(handlers::post_tick))
         .route("/stream", get(ws::ws_handler))
+        .route("/runtime/mode", get(handlers::get_runtime_mode))
+        .route("/runtime/mode", put(handlers::put_runtime_mode))
+        .route("/runtime/allowlist", get(handlers::get_symbol_allowlist))
+        .route("/runtime/allowlist", put(handlers::put_symbol_allowlist))
+        .route("/runtime/cycle", post(handlers::post_runtime_cycle))
+        .route(
+            "/runtime/cycle/latest",
+            get(handlers::get_latest_runtime_cycle),
+        )
+        .route(
+            "/runtime/cycle/history",
+            get(handlers::get_runtime_cycle_history),
+        )
+        .route(
+            "/runtime/execution-state",
+            get(handlers::get_runtime_execution_state),
+        )
+        .route("/strategy/config", get(handlers::get_strategy_config))
+        .route("/strategy/config", put(handlers::put_strategy_config))
         .route_layer(axum::middleware::from_fn_with_state(
             shared.clone(),
             middleware::require_api_key,

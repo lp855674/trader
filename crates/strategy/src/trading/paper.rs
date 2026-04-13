@@ -102,10 +102,7 @@ impl PaperState {
             .positions
             .iter()
             .map(|(inst, (qty, _avg))| {
-                let price = market_data
-                    .get(inst)
-                    .map(|s| s.last)
-                    .unwrap_or(0.0);
+                let price = market_data.get(inst).map(|s| s.last).unwrap_or(0.0);
                 qty * price
             })
             .sum();
@@ -117,10 +114,7 @@ impl PaperState {
         self.positions
             .iter()
             .map(|(inst, (qty, avg_price))| {
-                let price = market_data
-                    .get(inst)
-                    .map(|s| s.last)
-                    .unwrap_or(*avg_price);
+                let price = market_data.get(inst).map(|s| s.last).unwrap_or(*avg_price);
                 (price - avg_price) * qty
             })
             .sum()
@@ -199,7 +193,8 @@ impl PaperAdapter {
                                 .entry(order.instrument.clone())
                                 .or_insert((0.0, 0.0));
                             let new_qty = entry.0 + order.quantity;
-                            let new_avg = (entry.0 * entry.1 + order.quantity * fill_price) / new_qty;
+                            let new_avg =
+                                (entry.0 * entry.1 + order.quantity * fill_price) / new_qty;
                             *entry = (new_qty, new_avg);
                         }
                         Side::Sell => {

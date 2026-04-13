@@ -1,6 +1,6 @@
-use infra::otel::metrics::MetricsCollector;
 use infra::lifecycle::shutdown::GracefulShutdown;
 use infra::lifecycle::watchdog::Watchdog;
+use infra::otel::metrics::MetricsCollector;
 use infra::services::circuit::CircuitBreaker;
 use infra::services::discovery::{ServiceInfo, ServiceRegistry};
 

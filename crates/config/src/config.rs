@@ -15,6 +15,14 @@ pub struct AppConfig {
     pub env: String,
     /// Allow writing MVP seed rows in `prod` (default: false).
     pub allow_seed: bool,
+    /// Enable background universe-cycle loop (default: false).
+    pub universe_loop_enabled: bool,
+    /// Interval seconds for background universe-cycle loop.
+    pub universe_loop_interval_secs: u64,
+    /// Venue for background universe-cycle loop.
+    pub universe_loop_venue: String,
+    /// Account for background universe-cycle loop.
+    pub universe_loop_account_id: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +47,9 @@ impl AppConfig {
         let log_filter = std::env::var("RUST_LOG")
             .or_else(|_| std::env::var("QUANTD_LOG"))
             .unwrap_or_else(|_| "info".to_string());
-        let api_key = std::env::var("QUANTD_API_KEY").ok().filter(|v| !v.is_empty());
+        let api_key = std::env::var("QUANTD_API_KEY")
+            .ok()
+            .filter(|v| !v.is_empty());
         let env = std::env::var("QUANTD_ENV")
             .ok()
             .filter(|v| !v.is_empty())
@@ -48,6 +58,23 @@ impl AppConfig {
             .ok()
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
             .unwrap_or(false);
+        let universe_loop_enabled = std::env::var("QUANTD_UNIVERSE_LOOP_ENABLED")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+        let universe_loop_interval_secs = std::env::var("QUANTD_UNIVERSE_LOOP_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(60);
+        let universe_loop_venue = std::env::var("QUANTD_UNIVERSE_LOOP_VENUE")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "US_EQUITY".to_string());
+        let universe_loop_account_id = std::env::var("QUANTD_UNIVERSE_LOOP_ACCOUNT_ID")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "acc_mvp_paper".to_string());
         Ok(Self {
             database_url,
             http_bind,
@@ -55,6 +82,10 @@ impl AppConfig {
             api_key,
             env,
             allow_seed,
+            universe_loop_enabled,
+            universe_loop_interval_secs,
+            universe_loop_venue,
+            universe_loop_account_id,
         })
     }
 }

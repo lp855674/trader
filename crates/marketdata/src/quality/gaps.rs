@@ -1,5 +1,5 @@
-use domain::NormalizedBar;
 use crate::align::GapSpec;
+use domain::NormalizedBar;
 
 // ── GapReport ─────────────────────────────────────────────────────────────────
 
@@ -50,12 +50,7 @@ impl DataGapDetector {
         }
     }
 
-    pub fn coverage(
-        bars: &[NormalizedBar],
-        start_ms: i64,
-        end_ms: i64,
-        interval_ms: u64,
-    ) -> f64 {
+    pub fn coverage(bars: &[NormalizedBar], start_ms: i64, end_ms: i64, interval_ms: u64) -> f64 {
         if interval_ms == 0 || start_ms >= end_ms {
             return 1.0;
         }

@@ -78,7 +78,10 @@ pub(crate) fn stream_envelope(event: &StreamEvent) -> serde_json::Value {
                 "symbol": symbol,
             },
         }),
-        StreamEvent::Error { error_code, message } => serde_json::json!({
+        StreamEvent::Error {
+            error_code,
+            message,
+        } => serde_json::json!({
             "event_id": event_id,
             "kind": "error",
             "error_code": error_code,

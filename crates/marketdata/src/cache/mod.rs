@@ -4,8 +4,8 @@ pub mod mmap;
 pub use lru::MarketDataLru;
 pub use mmap::{MmapCache, MmapConfig};
 
-use std::collections::HashMap;
 use crate::core::DataItem;
+use std::collections::HashMap;
 
 // ── CacheLevel ────────────────────────────────────────────────────────────────
 

@@ -1,12 +1,12 @@
-use marketdata::data_sources::{PaperDataSource, OrderBookSource, OrderBookConfig, TickAggregator};
-use marketdata::data_sources::orderbook::to_depth_snapshot;
-use marketdata::data_api::{DataGrpcService, DataServiceRequest};
-use marketdata::data_config::DataConfigLoader;
+use marketdata::analysis::market_depth::DepthSnapshot;
 use marketdata::cache::TieredCache;
 use marketdata::core::data::{DataItem, DataQuery, DataSource};
-use marketdata::analysis::market_depth::DepthSnapshot;
-use std::sync::Arc;
+use marketdata::data_api::{DataGrpcService, DataServiceRequest};
+use marketdata::data_config::DataConfigLoader;
+use marketdata::data_sources::orderbook::to_depth_snapshot;
+use marketdata::data_sources::{OrderBookConfig, OrderBookSource, PaperDataSource, TickAggregator};
 use serde_json::Value;
+use std::sync::Arc;
 
 // 1. PaperDataSource → TieredCache pipeline
 #[test]

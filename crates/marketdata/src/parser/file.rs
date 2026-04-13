@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use domain::NormalizedBar;
 use crate::core::DataSourceError;
+use domain::NormalizedBar;
+use std::collections::HashMap;
 
 // ── FileFormat ────────────────────────────────────────────────────────────────
 
@@ -66,30 +66,44 @@ impl FileParser {
             if let (Ok(y), Ok(m), Ok(d)) = (
                 parts[0].parse::<i64>(),
                 parts[1].parse::<i64>(),
-                parts[2].trim_end_matches(|c: char| !c.is_numeric()).parse::<i64>(),
+                parts[2]
+                    .trim_end_matches(|c: char| !c.is_numeric())
+                    .parse::<i64>(),
             ) {
                 // Days since epoch (simplified, ignores leap years precisely but fine for tests)
                 let days = days_since_epoch(y, m, d);
                 return Ok(days * 86_400_000);
             }
         }
-        Err(DataSourceError::Parse(format!("cannot parse timestamp: {}", s)))
+        Err(DataSourceError::Parse(format!(
+            "cannot parse timestamp: {}",
+            s
+        )))
     }
 
     pub fn parse_csv(content: &str, config: &CsvConfig) -> Result<Vec<ParsedRow>, DataSourceError> {
         let mut lines = content.lines();
         let header_line = if config.has_header {
-            lines.next().ok_or_else(|| DataSourceError::Parse("empty CSV".to_string()))?
+            lines
+                .next()
+                .ok_or_else(|| DataSourceError::Parse("empty CSV".to_string()))?
         } else {
-            return Err(DataSourceError::Parse("headerless CSV not supported".to_string()));
+            return Err(DataSourceError::Parse(
+                "headerless CSV not supported".to_string(),
+            ));
         };
 
-        let headers: Vec<&str> = header_line.split(config.delimiter).map(|s| s.trim()).collect();
+        let headers: Vec<&str> = header_line
+            .split(config.delimiter)
+            .map(|s| s.trim())
+            .collect();
 
         let ts_idx = headers
             .iter()
             .position(|h| *h == config.ts_column.as_str())
-            .ok_or_else(|| DataSourceError::Parse(format!("ts column '{}' not found", config.ts_column)))?;
+            .ok_or_else(|| {
+                DataSourceError::Parse(format!("ts column '{}' not found", config.ts_column))
+            })?;
 
         let mut rows = Vec::new();
         for line in lines {
@@ -113,7 +127,10 @@ impl FileParser {
                     }
                     Err(_) => {
                         // skip non-numeric with warning (eprintln in production code is fine here)
-                        eprintln!("warning: skipping non-numeric field '{}' in column '{}'", cells[i], header);
+                        eprintln!(
+                            "warning: skipping non-numeric field '{}' in column '{}'",
+                            cells[i], header
+                        );
                     }
                 }
             }
@@ -122,7 +139,10 @@ impl FileParser {
         Ok(rows)
     }
 
-    pub fn csv_to_bars(content: &str, config: &CsvConfig) -> Result<Vec<NormalizedBar>, DataSourceError> {
+    pub fn csv_to_bars(
+        content: &str,
+        config: &CsvConfig,
+    ) -> Result<Vec<NormalizedBar>, DataSourceError> {
         let rows = Self::parse_csv(content, config)?;
         let required = ["open", "high", "low", "close", "volume"];
         let mut bars = Vec::with_capacity(rows.len());
@@ -162,10 +182,7 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
     let m = if month <= 2 { month + 12 } else { month };
     let a = y / 100;
     let b = 2 - a + a / 4;
-    let jdn = ((365.25 * (y + 4716) as f64) as i64)
-        + ((30.6001 * (m + 1) as f64) as i64)
-        + day
-        + b
+    let jdn = ((365.25 * (y + 4716) as f64) as i64) + ((30.6001 * (m + 1) as f64) as i64) + day + b
         - 1524;
     jdn - 2_440_588 // subtract JDN of 1970-01-01
 }
@@ -208,7 +225,10 @@ mod tests {
     #[test]
     fn detect_format_by_extension() {
         assert_eq!(FileParser::detect_format("data.csv"), FileFormat::Csv);
-        assert_eq!(FileParser::detect_format("data.parquet"), FileFormat::Parquet);
+        assert_eq!(
+            FileParser::detect_format("data.parquet"),
+            FileFormat::Parquet
+        );
         assert_eq!(FileParser::detect_format("data.pq"), FileFormat::Parquet);
         assert_eq!(FileParser::detect_format("data.json"), FileFormat::Json);
         assert_eq!(FileParser::detect_format("data.unknown"), FileFormat::Csv);

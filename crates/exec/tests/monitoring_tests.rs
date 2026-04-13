@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use domain::{InstrumentId, Side, Venue};
+use exec::api::health::{HealthChecker, HealthStatus};
 use exec::core::order::OrderManager;
 use exec::core::position::{ExecPositionManager, FillRecord, TaxLotMethod};
 use exec::monitor::alert::{ExecAlertManager, ExecAlertThreshold, ExecAlertType};
 use exec::monitor::metrics::ExecutionMetrics;
 use exec::monitor::pnl::PnlCalculator;
 use exec::monitor::tracing::{ExecutionTracer, SpanKind};
-use exec::api::health::{HealthChecker, HealthStatus};
 
 fn btc() -> InstrumentId {
     InstrumentId::new(Venue::Crypto, "BTC-USD")
@@ -43,7 +43,10 @@ fn high_rejection_rate_triggers_alert() {
     }
     let snap = metrics.snapshot(1000);
     let alerts = mgr.check(&snap, 1000);
-    assert!(!alerts.is_empty(), "expected alert to fire for 50% rejection rate");
+    assert!(
+        !alerts.is_empty(),
+        "expected alert to fire for 50% rejection rate"
+    );
     assert_eq!(alerts[0].alert_type, ExecAlertType::HighRejectionRate);
 }
 
@@ -94,7 +97,11 @@ fn pnl_calculator_accumulates_correctly() {
     let snap = calc.snapshot(&pos_mgr, &prices, 2000);
 
     // 10*(110-100) = 100, minus 2*1.0 commission = 98
-    assert!((snap.realised_pnl - 98.0).abs() < 1e-6, "realised_pnl={}", snap.realised_pnl);
+    assert!(
+        (snap.realised_pnl - 98.0).abs() < 1e-6,
+        "realised_pnl={}",
+        snap.realised_pnl
+    );
     assert!((snap.commission_total - 2.0).abs() < 1e-6);
     assert_eq!(snap.ts_ms, 2000);
 }

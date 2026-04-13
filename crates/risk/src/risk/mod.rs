@@ -6,7 +6,9 @@ pub mod position;
 pub mod rules;
 
 pub use dynamic::{EwmaVolatility, VolatilityAdjuster};
-pub use metrics::{AlertSeverity, AlertThreshold, AlertType, RiskAlert, RiskMetricsCollector, RiskTimeSeries};
+pub use metrics::{
+    AlertSeverity, AlertThreshold, AlertType, RiskAlert, RiskMetricsCollector, RiskTimeSeries,
+};
 pub use order::{OrderRiskChecker, OrderRiskConfig, RiskScore};
 pub use portfolio::{
     CorrelationMatrix, PortfolioMetrics, PortfolioRiskChecker, PortfolioRiskConfig, VarCalculator,
@@ -14,4 +16,4 @@ pub use portfolio::{
 pub use position::{
     PnLLimits, PositionEntry, PositionRiskChecker, RiskPositionManager, StopLossConfig,
 };
-pub use rules::{RuleAction, RuleCondition, RuleEngine, RuleEngineConfig, RiskRule};
+pub use rules::{RiskRule, RuleAction, RuleCondition, RuleEngine, RuleEngineConfig};

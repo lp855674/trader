@@ -1,7 +1,7 @@
 // Live execution mode with circuit breaker
 
-use std::sync::Arc;
 use crate::core::{RiskChecker, RiskDecision, RiskError, RiskInput};
+use std::sync::Arc;
 
 // ── LiveConfig ────────────────────────────────────────────────────────────────
 
@@ -108,9 +108,14 @@ mod tests {
     struct AlwaysReject;
     impl RiskChecker for AlwaysReject {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
-            Ok(RiskDecision::Reject { reason: "always".into(), risk_score: 100.0 })
+            Ok(RiskDecision::Reject {
+                reason: "always".into(),
+                risk_score: 100.0,
+            })
         }
-        fn name(&self) -> &str { "AlwaysReject" }
+        fn name(&self) -> &str {
+            "AlwaysReject"
+        }
     }
 
     struct AlwaysApprove;
@@ -118,7 +123,9 @@ mod tests {
         fn check(&self, _: &RiskInput) -> Result<RiskDecision, RiskError> {
             Ok(RiskDecision::Approve)
         }
-        fn name(&self) -> &str { "AlwaysApprove" }
+        fn name(&self) -> &str {
+            "AlwaysApprove"
+        }
     }
 
     fn make_input() -> RiskInput {
@@ -166,11 +173,16 @@ mod tests {
             let _ = live.check_and_submit(&input, i * 1000);
         }
 
-        assert!(live.is_circuit_breaker_open(), "Circuit breaker should be open after 3 rejections");
+        assert!(
+            live.is_circuit_breaker_open(),
+            "Circuit breaker should be open after 3 rejections"
+        );
 
         // Next call should return circuit breaker reject
         let result = live.check_and_submit(&input, 5_000).unwrap();
-        assert!(matches!(result, RiskDecision::Reject { reason, .. } if reason.contains("circuit breaker")));
+        assert!(
+            matches!(result, RiskDecision::Reject { reason, .. } if reason.contains("circuit breaker"))
+        );
     }
 
     #[test]
@@ -188,7 +200,10 @@ mod tests {
 
         // After window expires, reset
         live.reset_circuit_breaker(5_000);
-        assert!(!live.is_circuit_breaker_open(), "Circuit breaker should reset after window");
+        assert!(
+            !live.is_circuit_breaker_open(),
+            "Circuit breaker should reset after window"
+        );
         assert_eq!(live.rejection_count, 0);
     }
 }

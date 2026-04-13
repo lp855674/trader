@@ -141,10 +141,7 @@ impl ConfigLoader {
 
     /// Merge an overlay (partial JSON) onto the base config.  Non-null overlay
     /// fields overwrite base fields.
-    pub fn merge(
-        base: AppConfig,
-        overlay: serde_json::Value,
-    ) -> Result<AppConfig, ConfigError> {
+    pub fn merge(base: AppConfig, overlay: serde_json::Value) -> Result<AppConfig, ConfigError> {
         let mut base_val =
             serde_json::to_value(&base).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         Self::merge_json(&mut base_val, overlay);

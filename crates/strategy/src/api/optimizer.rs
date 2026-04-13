@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use crate::optimizer::bayesian::{AcquisitionFunction, BayesianOptimizer};
+use crate::optimizer::grid::{GridSearch, ParameterRange, ParameterSpace};
 use serde::{Deserialize, Serialize};
-use crate::optimizer::grid::{GridSearch, ParameterSpace, ParameterRange};
-use crate::optimizer::bayesian::{BayesianOptimizer, AcquisitionFunction};
+use std::collections::HashMap;
 
 /// Method to use for optimization.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -62,7 +62,10 @@ pub struct OptimizationService {
 
 impl OptimizationService {
     pub fn new() -> Self {
-        Self { jobs: HashMap::new(), requests: HashMap::new() }
+        Self {
+            jobs: HashMap::new(),
+            requests: HashMap::new(),
+        }
     }
 
     /// Submit a new job, returns the job id.
@@ -92,7 +95,11 @@ impl OptimizationService {
     where
         F: FnMut(&HashMap<String, f64>) -> f64,
     {
-        let job = self.requests.get(id).ok_or_else(|| format!("Job '{}' not found", id))?.clone();
+        let job = self
+            .requests
+            .get(id)
+            .ok_or_else(|| format!("Job '{}' not found", id))?
+            .clone();
 
         // Parse parameter space from JSON
         let space = parse_param_space(&job.param_space);
@@ -122,15 +129,19 @@ impl OptimizationService {
                         avg_trade_pnl: 0.0,
                     }
                 });
-                let best = grid_results.first().map(|r| (r.params.clone(), r.report.sharpe_ratio));
+                let best = grid_results
+                    .first()
+                    .map(|r| (r.params.clone(), r.report.sharpe_ratio));
                 let n = grid_results.len();
                 let results_json: Vec<serde_json::Value> = grid_results
                     .into_iter()
-                    .map(|r| serde_json::json!({
-                        "params": r.params,
-                        "score": r.report.sharpe_ratio,
-                        "rank": r.rank,
-                    }))
+                    .map(|r| {
+                        serde_json::json!({
+                            "params": r.params,
+                            "score": r.report.sharpe_ratio,
+                            "rank": r.rank,
+                        })
+                    })
                     .collect();
                 match best {
                     Some((p, s)) => (Some(p), Some(s), n, results_json),
@@ -146,12 +157,15 @@ impl OptimizationService {
                 );
                 let bayesian_result = opt.run(&mut evaluator);
                 let n = bayesian_result.iterations;
-                let results_json: Vec<serde_json::Value> = bayesian_result.observations
+                let results_json: Vec<serde_json::Value> = bayesian_result
+                    .observations
                     .iter()
-                    .map(|o| serde_json::json!({
-                        "params": o.params,
-                        "score": o.score,
-                    }))
+                    .map(|o| {
+                        serde_json::json!({
+                            "params": o.params,
+                            "score": o.score,
+                        })
+                    })
                     .collect();
                 (
                     Some(bayesian_result.best_params),
@@ -228,11 +242,13 @@ fn parse_param_space(json: &serde_json::Value) -> ParameterSpace {
                     "continuous" => {
                         let min = spec.get("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let max = spec.get("max").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                        let steps = spec.get("steps").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+                        let steps =
+                            spec.get("steps").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
                         ParameterRange::Continuous { min, max, steps }
                     }
                     "discrete" => {
-                        let vals: Vec<f64> = spec.get("values")
+                        let vals: Vec<f64> = spec
+                            .get("values")
                             .and_then(|v| v.as_array())
                             .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
                             .unwrap_or_default();
@@ -290,7 +306,8 @@ mod tests {
     fn run_job_updates_to_completed() {
         let mut svc = OptimizationService::new();
         svc.submit(make_request("job2", OptimizationMethod::Grid));
-        svc.run_job("job2", |p| p.get("x").copied().unwrap_or(0.0)).unwrap();
+        svc.run_job("job2", |p| p.get("x").copied().unwrap_or(0.0))
+            .unwrap();
         let resp = svc.get_status("job2").unwrap();
         assert!(matches!(resp.status, OptimizationStatus::Completed));
         assert!(resp.best_params.is_some());
@@ -331,7 +348,8 @@ mod tests {
     fn bayesian_job_completes() {
         let mut svc = OptimizationService::new();
         svc.submit(make_request("bay1", OptimizationMethod::Bayesian));
-        svc.run_job("bay1", |p| p.get("x").copied().unwrap_or(0.0)).unwrap();
+        svc.run_job("bay1", |p| p.get("x").copied().unwrap_or(0.0))
+            .unwrap();
         let resp = svc.get_status("bay1").unwrap();
         assert!(matches!(resp.status, OptimizationStatus::Completed));
         assert!(resp.best_params.is_some());
@@ -341,7 +359,8 @@ mod tests {
     fn random_job_completes() {
         let mut svc = OptimizationService::new();
         svc.submit(make_request("rand1", OptimizationMethod::Random));
-        svc.run_job("rand1", |p| p.get("x").copied().unwrap_or(0.0)).unwrap();
+        svc.run_job("rand1", |p| p.get("x").copied().unwrap_or(0.0))
+            .unwrap();
         let resp = svc.get_status("rand1").unwrap();
         assert!(matches!(resp.status, OptimizationStatus::Completed));
     }
