@@ -49,6 +49,7 @@ The frontend should borrow the base project shape from `E:\code\mark\client`:
 - router-based navigation
 - dashboard shell with sidebar
 - separated API client and page modules
+- `shadcn/ui` as the primary component foundation
 
 It should not copy `mark/client` business concepts such as organizations, users, subscriptions, uploads, or its auth model.
 
@@ -225,6 +226,25 @@ Use a lightweight, page-oriented React architecture.
 - TypeScript
 - React Router
 - `@tanstack/react-query`
+- `shadcn/ui`
+
+### Component System
+
+Use `shadcn/ui` as the default source for foundational UI building blocks, including:
+
+- form controls
+- cards
+- tables
+- dialogs if needed later
+- navigation primitives
+- badges, alerts, and empty-state containers
+
+Guidelines:
+
+- prefer `shadcn/ui` primitives over custom one-off base components
+- keep visual customization focused on the trader console's information density and status semantics
+- avoid importing a second overlapping component system for the first release
+- wrap repeated trader-specific display patterns only when there is clear domain reuse, such as status cards or summary panels
 
 ### Directory Shape
 
