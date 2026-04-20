@@ -19,7 +19,7 @@ pub mod report;
 pub mod system;
 pub mod trading;
 
-pub use adapter::{ExecutionAdapter, OrderAck};
+pub use adapter::{ExecutionAdapter, ManualOrderAck, OrderAck};
 pub use error::ExecError;
 pub use live_stub::LiveStubAdapter;
 pub use paper::PaperAdapter;

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -36,6 +37,34 @@ pub struct TickResponse {
 #[derive(Deserialize)]
 pub struct OrdersQuery {
     pub account_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateOrderBody {
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub qty: f64,
+    pub order_type: String,
+    pub limit_price: Option<f64>,
+}
+
+#[derive(Deserialize)]
+pub struct CancelOrderBody {
+    pub account_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct AmendOrderBody {
+    pub account_id: String,
+    pub qty: f64,
+    pub limit_price: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct OrderActionResponse {
+    pub order_id: String,
+    pub status: String,
 }
 
 #[derive(Serialize)]
@@ -100,6 +129,58 @@ pub struct RuntimeExecutionStateBody {
     pub latest_cycle: Option<RuntimeExecutionCycleSummary>,
 }
 
+#[derive(Deserialize)]
+pub struct RuntimeReconciliationQuery {
+    pub account_id: String,
+}
+
+#[derive(Serialize)]
+pub struct RuntimeReconciliationSnapshotBody {
+    pub id: String,
+    pub status: String,
+    pub mismatch_count: i64,
+    pub broker_cash: f64,
+    pub local_cash: f64,
+    pub broker_positions: serde_json::Value,
+    pub local_positions: serde_json::Value,
+    pub created_at: i64,
+}
+
+#[derive(Serialize)]
+pub struct RuntimeReconciliationLatestBody {
+    pub account_id: String,
+    pub runtime_mode: String,
+    pub local_positions: Vec<db::LocalPositionViewRow>,
+    pub local_open_orders: Vec<db::OpenOrderViewRow>,
+    pub latest_snapshot: Option<RuntimeReconciliationSnapshotBody>,
+}
+
+#[derive(Serialize)]
+pub struct TerminalWatchRow {
+    pub symbol: String,
+    pub venue: String,
+    pub last_price: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct TerminalOverviewBody {
+    pub account_id: String,
+    pub runtime_mode: String,
+    pub watchlist: Vec<TerminalWatchRow>,
+    pub positions: Vec<db::LocalPositionViewRow>,
+    pub open_orders: Vec<db::OpenOrderViewRow>,
+}
+
+#[derive(Serialize)]
+pub struct QuoteBody {
+    pub symbol: String,
+    pub venue: String,
+    pub last_price: Option<f64>,
+    pub day_high: Option<f64>,
+    pub day_low: Option<f64>,
+    pub bars: Vec<db::BarRow>,
+}
+
 pub async fn health() -> impl IntoResponse {
     Json(HealthBody { status: "ok" })
 }
@@ -126,6 +207,112 @@ pub async fn list_orders(
     Ok(Json(rows))
 }
 
+pub async fn post_order(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateOrderBody>,
+) -> Result<(StatusCode, Json<OrderActionResponse>), ApiError> {
+    let account_id = require_non_empty(body.account_id, "account_id")?;
+    let symbol = require_non_empty(body.symbol, "symbol")?;
+    let side = normalize_side(&body.side)?;
+    let order_type = body.order_type.trim().to_ascii_lowercase();
+    if order_type != "limit" {
+        return Err(ApiError::bad_request("order_type must be limit"));
+    }
+    let limit_price = body
+        .limit_price
+        .ok_or_else(|| ApiError::bad_request("limit_price must be provided"))?;
+    if limit_price <= 0.0 {
+        return Err(ApiError::bad_request("limit_price must be positive"));
+    }
+
+    let (instrument, venue) = ensure_instrument_for_symbol(&state.database, &symbol).await?;
+    let ack = state
+        .execution_router
+        .submit_manual_order(
+            &account_id,
+            &domain::OrderIntent {
+                strategy_id: "manual_terminal".to_string(),
+                instrument: domain::InstrumentId::new(venue, &symbol),
+                instrument_db_id: instrument.id,
+                side,
+                qty: body.qty,
+                limit_price,
+            },
+            None,
+        )
+        .await
+        .map_err(ApiError::exec)?;
+    let created_at_ms = now_ms();
+
+    let _ = state.events.send(StreamEvent::OrderCreated {
+        order_id: ack.order_id.clone(),
+        venue,
+        symbol,
+        side: Some(body.side.trim().to_ascii_lowercase()),
+        qty: Some(body.qty),
+        status: Some(ack.status.clone()),
+        order_type: Some(order_type),
+        limit_price: Some(limit_price),
+        exchange_ref: ack.exchange_ref.clone(),
+        created_at_ms: Some(created_at_ms),
+        updated_at_ms: Some(created_at_ms),
+    });
+
+    Ok((
+        StatusCode::CREATED,
+        Json(OrderActionResponse {
+            order_id: ack.order_id,
+            status: ack.status,
+        }),
+    ))
+}
+
+pub async fn post_cancel_order(
+    Path(order_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CancelOrderBody>,
+) -> Result<Json<OrderActionResponse>, ApiError> {
+    let account_id = require_non_empty(body.account_id, "account_id")?;
+    state
+        .execution_router
+        .cancel_order(&account_id, &order_id)
+        .await
+        .map_err(ApiError::exec)?;
+
+    let _ = state.events.send(StreamEvent::OrderCancelled {
+        order_id: order_id.clone(),
+    });
+
+    Ok(Json(OrderActionResponse {
+        order_id,
+        status: "CANCELLED".to_string(),
+    }))
+}
+
+pub async fn post_amend_order(
+    Path(order_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<AmendOrderBody>,
+) -> Result<Json<OrderActionResponse>, ApiError> {
+    let account_id = require_non_empty(body.account_id, "account_id")?;
+    let ack = state
+        .execution_router
+        .amend_order(&account_id, &order_id, body.qty, body.limit_price)
+        .await
+        .map_err(ApiError::exec)?;
+
+    let _ = state.events.send(StreamEvent::OrderReplaced {
+        order_id: order_id.clone(),
+        qty: body.qty,
+        limit_price: body.limit_price,
+    });
+
+    Ok(Json(OrderActionResponse {
+        order_id: ack.order_id,
+        status: ack.status,
+    }))
+}
+
 fn default_allowlist_enabled() -> bool {
     true
 }
@@ -148,6 +335,75 @@ fn normalize_allowlist_entry(entry: SymbolAllowlistEntry) -> Result<(String, boo
         return Err(ApiError::bad_request("symbol must not be empty"));
     }
     Ok((symbol.to_string(), entry.enabled))
+}
+
+fn normalize_side(value: &str) -> Result<domain::Side, ApiError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "buy" => Ok(domain::Side::Buy),
+        "sell" => Ok(domain::Side::Sell),
+        _ => Err(ApiError::bad_request("side must be buy or sell")),
+    }
+}
+
+fn require_non_empty(value: String, field_name: &str) -> Result<String, ApiError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(format!("{field_name} must not be empty")));
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn resolve_instrument_by_symbol(
+    database: &db::Db,
+    symbol: &str,
+) -> Result<db::InstrumentRow, ApiError> {
+    db::list_instruments(database.pool())
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|row| row.symbol == symbol)
+        .ok_or_else(|| ApiError::not_found("instrument not found"))
+}
+
+async fn ensure_instrument_for_symbol(
+    database: &db::Db,
+    symbol: &str,
+) -> Result<(db::InstrumentRow, domain::Venue), ApiError> {
+    match resolve_instrument_by_symbol(database, symbol).await {
+        Ok(instrument) => {
+            let venue = domain::Venue::parse(&instrument.venue)
+                .ok_or_else(|| ApiError::bad_request("instrument venue is invalid"))?;
+            Ok((instrument, venue))
+        }
+        Err(error) if error.status == StatusCode::NOT_FOUND => {
+            let venue = infer_venue_from_symbol(symbol)?;
+            let instrument_id =
+                db::upsert_instrument(database.pool(), venue.as_str(), symbol)
+                    .await
+                    .map_err(ApiError::internal)?;
+            Ok((
+                db::InstrumentRow {
+                    id: instrument_id,
+                    venue: venue.as_str().to_string(),
+                    symbol: symbol.to_string(),
+                },
+                venue,
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn infer_venue_from_symbol(symbol: &str) -> Result<domain::Venue, ApiError> {
+    if symbol.ends_with(".US") {
+        Ok(domain::Venue::UsEquity)
+    } else if symbol.ends_with(".HK") {
+        Ok(domain::Venue::HkEquity)
+    } else {
+        Err(ApiError::bad_request(
+            "instrument not found and venue cannot be inferred from symbol suffix",
+        ))
+    }
 }
 
 pub async fn get_runtime_mode(
@@ -300,6 +556,110 @@ pub async fn get_runtime_execution_state(
     }))
 }
 
+pub async fn get_runtime_reconciliation_latest(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<RuntimeReconciliationQuery>,
+) -> Result<Json<RuntimeReconciliationLatestBody>, ApiError> {
+    if query.account_id.is_empty() {
+        return Err(ApiError::bad_request("account_id must not be empty"));
+    }
+
+    let runtime_mode = db::get_runtime_control(state.database.pool(), RUNTIME_MODE_KEY)
+        .await
+        .map_err(ApiError::internal)?
+        .unwrap_or_else(|| "observe_only".to_string());
+    let local_positions =
+        db::list_local_positions_for_account(state.database.pool(), &query.account_id)
+            .await
+            .map_err(ApiError::internal)?;
+    let local_open_orders =
+        db::list_open_orders_for_account(state.database.pool(), &query.account_id)
+            .await
+            .map_err(ApiError::internal)?;
+    let latest_snapshot =
+        db::load_latest_reconciliation_snapshot(state.database.pool(), &query.account_id)
+            .await
+            .map_err(ApiError::internal)?
+            .map(|snapshot| RuntimeReconciliationSnapshotBody {
+                id: snapshot.id,
+                status: snapshot.status,
+                mismatch_count: snapshot.mismatch_count,
+                broker_cash: snapshot.broker_cash,
+                local_cash: snapshot.local_cash,
+                broker_positions: serde_json::from_str(&snapshot.broker_positions_json)
+                    .unwrap_or_else(|_| serde_json::json!([])),
+                local_positions: serde_json::from_str(&snapshot.local_positions_json)
+                    .unwrap_or_else(|_| serde_json::json!([])),
+                created_at: snapshot.created_at,
+            });
+
+    Ok(Json(RuntimeReconciliationLatestBody {
+        account_id: query.account_id,
+        runtime_mode,
+        local_positions,
+        local_open_orders,
+        latest_snapshot,
+    }))
+}
+
+pub async fn get_terminal_overview(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<RuntimeExecutionStateQuery>,
+) -> Result<Json<TerminalOverviewBody>, ApiError> {
+    if query.account_id.is_empty() {
+        return Err(ApiError::bad_request("account_id must not be empty"));
+    }
+
+    let runtime_mode = db::get_runtime_control(state.database.pool(), RUNTIME_MODE_KEY)
+        .await
+        .map_err(ApiError::internal)?
+        .unwrap_or_else(|| "observe_only".to_string());
+    let watchlist = db::list_symbol_allowlist(state.database.pool())
+        .await
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .filter(|(_, enabled)| *enabled)
+        .map(|(symbol, _)| TerminalWatchRow {
+            last_price: None,
+            venue: resolve_watch_venue(&symbol),
+            symbol,
+        })
+        .collect();
+    let positions = db::list_local_positions_for_account(state.database.pool(), &query.account_id)
+        .await
+        .map_err(ApiError::internal)?;
+    let open_orders = db::list_open_orders_for_account(state.database.pool(), &query.account_id)
+        .await
+        .map_err(ApiError::internal)?;
+
+    Ok(Json(TerminalOverviewBody {
+        account_id: query.account_id,
+        runtime_mode,
+        watchlist,
+        positions,
+        open_orders,
+    }))
+}
+
+pub async fn get_quote(
+    Path(symbol): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<QuoteBody>, ApiError> {
+    let symbol = require_non_empty(symbol, "symbol")?;
+    let quote = load_quote_body(&state.database, &symbol).await?;
+    Ok(Json(quote))
+}
+
+fn resolve_watch_venue(symbol: &str) -> String {
+    if symbol.ends_with(".HK") {
+        "HK_EQUITY".to_string()
+    } else if symbol.ends_with(".US") {
+        "US_EQUITY".to_string()
+    } else {
+        "UNKNOWN".to_string()
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -357,6 +717,25 @@ async fn run_tick_inner(state: Arc<AppState>, body: TickBody) -> Result<TickResp
             order_id: ack.order_id,
             venue,
             symbol: tick.symbol.clone(),
+            side: None,
+            qty: None,
+            status: None,
+            order_type: None,
+            limit_price: None,
+            exchange_ref: Some(ack.exchange_ref),
+            created_at_ms: None,
+            updated_at_ms: None,
+        });
+    }
+
+    if let Ok(quote) = load_quote_body(&state.database, &tick.symbol).await {
+        let _ = state.events.send(StreamEvent::QuoteUpdated {
+            symbol: quote.symbol,
+            venue: quote.venue,
+            last_price: quote.last_price,
+            day_high: quote.day_high,
+            day_low: quote.day_low,
+            bars: quote.bars,
         });
     }
 
@@ -410,4 +789,47 @@ pub async fn put_strategy_config(
         .await
         .map_err(ApiError::internal)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn load_quote_body(database: &db::Db, symbol: &str) -> Result<QuoteBody, ApiError> {
+    let instrument = match resolve_instrument_by_symbol(database, symbol).await {
+        Ok(instrument) => instrument,
+        Err(error) if error.status == StatusCode::NOT_FOUND => {
+            return Ok(QuoteBody {
+                symbol: symbol.to_string(),
+                venue: resolve_watch_venue(symbol),
+                last_price: None,
+                day_high: None,
+                day_low: None,
+                bars: Vec::new(),
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let bars = db::get_recent_bars(
+        database.pool(),
+        instrument.id,
+        db::PAPER_BARS_DATA_SOURCE_ID,
+        20,
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let last_price = bars.last().map(|bar| bar.close);
+    let day_high = bars
+        .iter()
+        .map(|bar| bar.high)
+        .max_by(|left, right| left.total_cmp(right));
+    let day_low = bars
+        .iter()
+        .map(|bar| bar.low)
+        .min_by(|left, right| left.total_cmp(right));
+
+    Ok(QuoteBody {
+        symbol: symbol.to_string(),
+        venue: instrument.venue,
+        last_price,
+        day_high,
+        day_low,
+        bars,
+    })
 }

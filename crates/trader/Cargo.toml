@@ -1,0 +1,20 @@
+[package]
+name = "trader"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/trader.rs"
+
+[[bin]]
+name = "trader"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+comfy-table.workspace = true
+serde_json.workspace = true
+terminal_client.workspace = true
+terminal_core.workspace = true
+terminal_tui = { path = "../terminal_tui" }
+tokio.workspace = true

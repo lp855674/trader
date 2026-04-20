@@ -14,6 +14,10 @@ members = [
     "crates/marketdata",
     "crates/risk",
     "crates/infra",
+    "crates/terminal_core",
+    "crates/terminal_client",
+    "crates/terminal_tui",
+    "crates/trader",
 ]
 
 [workspace.package]
@@ -33,6 +37,8 @@ api = { path = "crates/api" }
 longbridge_adapters = { path = "crates/longbridge_adapters" }
 marketdata = { path = "crates/marketdata" }
 risk = { path = "crates/risk" }
+terminal_core = { path = "crates/terminal_core" }
+terminal_client = { path = "crates/terminal_client" }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 longbridge = "4.0.5"
@@ -47,7 +53,9 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 async-trait = "0.1"
+clap = { version = "4.5", features = ["derive"] }
 polars = { version = "0.53.0", features = ["lazy"] }
+ratatui = "0.29"
 arrow = "53"
 arrow-odbc = "53"
 arrow-schema = "53"
@@ -80,6 +88,7 @@ rand = "0.8"
 rand_distr = "0.4"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["json"] }
+tokio-tungstenite = "0.24"
 ripgrep = "0.3"
 roaring = "0.10"
 schemars = "0.8"

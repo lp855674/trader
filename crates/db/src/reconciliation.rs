@@ -46,3 +46,42 @@ pub async fn insert_reconciliation_snapshot(
     .await?;
     Ok(())
 }
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ReconciliationSnapshotRow {
+    pub id: String,
+    pub account_id: String,
+    pub broker_cash: f64,
+    pub local_cash: f64,
+    pub broker_positions_json: String,
+    pub local_positions_json: String,
+    pub mismatch_count: i64,
+    pub status: String,
+    pub created_at: i64,
+}
+
+pub async fn load_latest_reconciliation_snapshot(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Option<ReconciliationSnapshotRow>, DbError> {
+    sqlx::query_as::<_, ReconciliationSnapshotRow>(
+        "SELECT
+            id,
+            account_id,
+            broker_cash,
+            local_cash,
+            broker_positions_json,
+            local_positions_json,
+            mismatch_count,
+            status,
+            created_at
+         FROM reconciliation_snapshots
+         WHERE account_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
+}

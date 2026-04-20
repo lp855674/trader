@@ -6,6 +6,7 @@
 - 对外 **HTTP**（`/health`, `/v1/instruments`）与 **WebSocket**（`/v1/stream`）。
 - 半自动控制面新增：`/v1/runtime/mode` 与 `/v1/runtime/allowlist`。
 - 半自动单轮调度接口：`POST /v1/runtime/cycle` 与 `GET /v1/runtime/cycle/latest`。
+- 终端交易面新增统一入口 **`trader`**：同时提供 CLI 子命令与全屏 TUI，作为 `quantd` 的 HTTP / WS 客户端工作。
 
 ## 流水线参数
 
@@ -27,6 +28,10 @@
 | `api`      | axum 路由 |
 | `quantd`   | 二进制；集成测试通过 `quantd` lib 重导出 `pipeline` |
 | `marketdata` | 研究/离线数据处理（Polars DataFrame 与 `NormalizedBar` 对齐） |
+| `terminal_core` | 终端共享模型与错误映射 |
+| `terminal_client` | `quantd` HTTP / WebSocket 客户端 |
+| `terminal_tui` | 终端多面板状态机、表单与渲染骨架 |
+| `trader` | 统一 CLI / TUI 二进制入口 |
 
 ## Workspace 依赖
 
@@ -67,6 +72,12 @@
 - `GET /v1/runtime/cycle/latest`：读取最近一轮结果，当前持久化落在 `system_config.key = runtime.last_cycle`。
 - `GET /v1/runtime/cycle/history`：读取最近多轮结构化历史；底层使用 `runtime_cycle_runs` / `runtime_cycle_symbols`。
 - `GET /v1/runtime/execution-state`：按 `account_id` 返回本地持仓、未完成订单，以及最近一轮 cycle 的执行摘要（`accepted` / `placed` / `skipped`）。
+- `GET /v1/runtime/reconciliation/latest`：按 `account_id` 返回当前运行模式、本地持仓、本地未完成订单，以及最近一次 `reconciliation_snapshots` 快照。
+- `POST /v1/orders`：显式提交 terminal 订单；当前仅支持限价单，走 execution router 而不是 `POST /v1/tick`。
+- `POST /v1/orders/:order_id/cancel`：终端撤单；请求体提供 `account_id`。
+- `POST /v1/orders/:order_id/amend`：终端改价改量；请求体提供 `account_id`、`qty` 与可选 `limit_price`。
+- `GET /v1/terminal/overview`：返回 terminal 主屏聚合数据：runtime mode、watchlist、positions、open orders。
+- `GET /v1/quotes/:symbol`：返回单标的 terminal quote 视图与最近 bars。
 - `quantd` 可选后台 loop：`QUANTD_UNIVERSE_LOOP_ENABLED=1` 时按固定间隔触发 `run_universe_cycle`；默认关闭。
 - `QUANTD_EXEC_SYMBOL_COOLDOWN_SECS`：同账户、同 instrument、同方向的最小重复下单间隔；默认 `300` 秒。
 

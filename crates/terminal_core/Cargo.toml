@@ -1,0 +1,12 @@
+[package]
+name = "terminal_core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/terminal_core.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

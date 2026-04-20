@@ -183,8 +183,12 @@ async fn runtime_execution_state_exposes_positions_orders_and_latest_cycle() {
             side: "buy",
             qty: 1.0,
             status: "SUBMITTED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-open-order-1"),
             idempotency_key: Some("open-order-key"),
             created_at_ms: 10,
+            updated_at_ms: 10,
         },
     )
     .await
@@ -199,8 +203,12 @@ async fn runtime_execution_state_exposes_positions_orders_and_latest_cycle() {
             side: "buy",
             qty: 2.0,
             status: "FILLED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-filled-order-1"),
             idempotency_key: Some("filled-order-key"),
             created_at_ms: 20,
+            updated_at_ms: 20,
         },
     )
     .await
@@ -268,5 +276,115 @@ async fn runtime_execution_state_exposes_positions_orders_and_latest_cycle() {
             .expect("skipped")
             .iter()
             .any(|item| item["reason"] == "guard_open_order_exists")
+    );
+}
+
+#[tokio::test]
+async fn runtime_reconciliation_latest_exposes_snapshot_and_local_state() {
+    let (app, database) = test_app().await;
+    db::set_runtime_control(database.pool(), "mode", "observe_only")
+        .await
+        .expect("mode");
+    let instrument_id = db::upsert_instrument(database.pool(), Venue::UsEquity.as_str(), "AAPL.US")
+        .await
+        .expect("instrument");
+
+    db::insert_order(
+        database.pool(),
+        &db::NewOrder {
+            order_id: "recon-open-order",
+            account_id: "acc_mvp_paper",
+            instrument_id,
+            side: "buy",
+            qty: 1.0,
+            status: "SUBMITTED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-recon-open-order"),
+            idempotency_key: Some("recon-open-order-key"),
+            created_at_ms: 10,
+            updated_at_ms: 10,
+        },
+    )
+    .await
+    .expect("open order");
+    db::insert_order(
+        database.pool(),
+        &db::NewOrder {
+            order_id: "recon-filled-order",
+            account_id: "acc_mvp_paper",
+            instrument_id,
+            side: "buy",
+            qty: 2.0,
+            status: "FILLED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-recon-filled-order"),
+            idempotency_key: Some("recon-filled-order-key"),
+            created_at_ms: 20,
+            updated_at_ms: 20,
+        },
+    )
+    .await
+    .expect("filled order");
+    db::insert_fill(
+        database.pool(),
+        &db::NewFill {
+            fill_id: "recon-fill",
+            order_id: "recon-filled-order",
+            qty: 2.0,
+            price: 100.0,
+            created_at_ms: 21,
+        },
+    )
+    .await
+    .expect("fill");
+
+    let snapshot = db::ReconciliationSnapshot {
+        id: "snapshot-1",
+        account_id: "acc_mvp_paper",
+        broker_cash: 0.0,
+        local_cash: 0.0,
+        broker_positions_json: r#"[{"symbol":"AAPL.US","net_qty":1.0}]"#,
+        local_positions_json: r#"[{"symbol":"AAPL.US","net_qty":2.0}]"#,
+        mismatch_count: 1,
+        status: "mismatch",
+    };
+    db::insert_reconciliation_snapshot(database.pool(), &snapshot)
+        .await
+        .expect("snapshot");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/runtime/reconciliation/latest?account_id=acc_mvp_paper")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+    assert_eq!(json["account_id"], "acc_mvp_paper");
+    assert_eq!(json["runtime_mode"], "observe_only");
+    assert_eq!(json["local_positions"][0]["symbol"], "AAPL.US");
+    assert_eq!(json["local_positions"][0]["net_qty"], 2.0);
+    assert_eq!(json["local_open_orders"][0]["order_id"], "recon-open-order");
+    assert_eq!(json["latest_snapshot"]["status"], "mismatch");
+    assert_eq!(json["latest_snapshot"]["mismatch_count"], 1);
+    assert_eq!(
+        json["latest_snapshot"]["broker_positions"][0]["symbol"],
+        "AAPL.US"
+    );
+    assert_eq!(
+        json["latest_snapshot"]["local_positions"][0]["net_qty"],
+        2.0
     );
 }

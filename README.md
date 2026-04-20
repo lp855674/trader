@@ -9,6 +9,16 @@ cargo test
 cargo run -p quantd
 ```
 
+### Terminal
+
+```bash
+cargo run -p trader -- tui
+cargo run -p trader -- quote AAPL.US
+cargo run -p trader -- order submit --account-id acc_mvp_paper --symbol AAPL.US --side buy --qty 10 --limit-price 123.45
+cargo run -p trader -- order cancel --account-id acc_mvp_paper --order-id <order-id>
+cargo run -p trader -- order amend --account-id acc_mvp_paper --order-id <order-id> --qty 12 --limit-price 124
+```
+
 默认在启动时迁移数据库、按环境决定是否写入 MVP seed，并在缺省情况下把运行模式初始化为 `observe_only`，然后监听 HTTP。
 
 环境变量：
@@ -48,6 +58,9 @@ cargo run -p quantd
 - `GET /health`
 - `GET /v1/instruments`
 - `GET /v1/orders?account_id=<id>` — 返回该账户订单列表（MVP paper 账户默认 `acc_mvp_paper`）
+- `POST /v1/orders` — 显式提交终端订单；当前支持限价单
+- `POST /v1/orders/:order_id/cancel` — 撤单；请求体包含 `account_id`
+- `POST /v1/orders/:order_id/amend` — 改单；请求体包含 `account_id`、`qty` 与可选 `limit_price`
 - `GET /v1/runtime/mode`
 - `PUT /v1/runtime/mode` — 允许值：`enabled` / `observe_only` / `paper_only` / `degraded`
 - `GET /v1/runtime/allowlist`
@@ -56,6 +69,9 @@ cargo run -p quantd
 - `GET /v1/runtime/cycle/latest` — 查询最近一轮 universe 结果
 - `GET /v1/runtime/cycle/history?limit=10` — 查询最近多轮 universe 历史
 - `GET /v1/runtime/execution-state?account_id=<id>` — 查询当前本地持仓、未完成订单，以及最近一轮 cycle 的 accepted/placed/skipped 摘要
+- `GET /v1/runtime/reconciliation/latest?account_id=<id>` — 查询当前运行模式、本地持仓、本地未完成订单，以及最近一次 reconciliation 快照
+- `GET /v1/terminal/overview?account_id=<id>` — 查询 terminal 主屏所需的 runtime / watchlist / positions / open orders 聚合数据
+- `GET /v1/quotes/<symbol>` — 查询单标的 terminal quote 视图（最近 bars、last/high/low）
 - `POST /v1/tick` — 对指定 `venue` + `symbol` 跑一轮 ingest → 策略 → 风控 → 模拟成交；若实际下单成功，会向 WebSocket 订阅者广播 `order_created`（含 `order_id` / `venue` / `symbol`）
 
 `POST /v1/tick` 请求体示例：
@@ -92,3 +108,4 @@ cargo run -p quantd
   - `guard_cooldown_active`
   - `guard_same_direction_position_open`
 - `GET /v1/runtime/execution-state` 适合做半自动值守面板的数据源：先看 `open_orders` / `positions`，再看 `latest_cycle.skipped`
+- `GET /v1/runtime/reconciliation/latest` 适合排查“为什么系统被打回 observe_only”，先看 `latest_snapshot.status`，再看快照里的 broker/local positions

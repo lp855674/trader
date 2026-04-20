@@ -5,3 +5,8 @@
 .DS_Store
 target*
 **/.tmp*
+
+
+# client
+client/node_modules/
+client/dist/

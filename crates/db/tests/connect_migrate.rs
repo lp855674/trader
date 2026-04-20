@@ -22,3 +22,10 @@ async fn migrate_runs_clean() {
     );
     drop(db);
 }
+
+#[test]
+fn sqlite_memory_uses_single_connection_pool() {
+    assert_eq!(db::sqlite_max_connections("sqlite::memory:"), 1);
+    assert_eq!(db::sqlite_max_connections("sqlite::memory:?cache=shared"), 1);
+    assert_eq!(db::sqlite_max_connections("sqlite:quantd.db"), 5);
+}

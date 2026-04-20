@@ -21,6 +21,7 @@ exec.workspace = true
 strategy.workspace = true
 pipeline.workspace = true
 api.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

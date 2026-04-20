@@ -26,12 +26,17 @@ pub use execution_profiles::{
 pub use instruments::{InstrumentRow, list_instruments, upsert_instrument};
 pub use orders::{
     LocalPositionSummary, LocalPositionViewRow, NewFill, NewOrder, OpenOrderViewRow, OrderListRow,
-    count_orders_for_account, has_open_order_for_instrument, insert_fill, insert_order,
-    latest_order_ts_for_instrument_side, list_local_positions_for_account,
-    list_open_orders_for_account, list_orders_for_account, local_position_summary_for_instrument,
-    order_exists_by_idempotency_key,
+    RawOrderListRow,
+    amend_order, cancel_order, count_orders_for_account, has_open_order_for_instrument,
+    insert_fill, insert_order, latest_order_ts_for_instrument_side,
+    list_local_positions_for_account, list_open_orders_for_account, list_orders_for_account,
+    list_raw_orders_for_account,
+    local_position_summary_for_instrument, order_exists_by_idempotency_key,
 };
-pub use reconciliation::{ReconciliationSnapshot, insert_reconciliation_snapshot};
+pub use reconciliation::{
+    ReconciliationSnapshot, ReconciliationSnapshotRow, insert_reconciliation_snapshot,
+    load_latest_reconciliation_snapshot,
+};
 pub use runtime_controls::{
     get_runtime_control, list_symbol_allowlist, replace_symbol_allowlist, set_runtime_control,
 };
@@ -95,6 +100,14 @@ fn normalize_sqlite_url(url: &str) -> String {
     }
 }
 
+pub fn sqlite_max_connections(url: &str) -> u32 {
+    if url.trim().starts_with("sqlite:") && url.contains("memory") {
+        1
+    } else {
+        5
+    }
+}
+
 #[derive(Clone)]
 pub struct Db {
     pool: SqlitePool,
@@ -105,7 +118,7 @@ impl Db {
         ensure_sqlite_parent_dir(database_url)?;
         let database_url = normalize_sqlite_url(database_url);
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(sqlite_max_connections(&database_url))
             .connect(&database_url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;

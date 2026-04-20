@@ -1,0 +1,4 @@
+ALTER TABLE orders ADD COLUMN order_type TEXT NOT NULL DEFAULT 'limit';
+ALTER TABLE orders ADD COLUMN limit_price REAL;
+ALTER TABLE orders ADD COLUMN exchange_ref TEXT;
+ALTER TABLE orders ADD COLUMN updated_at_ms INTEGER NOT NULL DEFAULT 0;

@@ -63,7 +63,7 @@ pub async fn last_bar_close(
 }
 
 /// OHLCV bar row returned from DB.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct BarRow {
     pub ts_ms: i64,
     pub open: f64,

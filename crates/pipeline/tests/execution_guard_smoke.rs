@@ -125,8 +125,12 @@ async fn same_direction_existing_position_is_reported_as_skipped() {
             side: "buy",
             qty: 1.0,
             status: "FILLED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-existing-long-order"),
             idempotency_key: Some("existing-long-key"),
             created_at_ms: 1,
+            updated_at_ms: 1,
         },
     )
     .await
@@ -187,8 +191,12 @@ async fn open_order_is_reported_as_skipped() {
             side: "buy",
             qty: 1.0,
             status: "SUBMITTED",
+            order_type: "limit",
+            limit_price: Some(100.0),
+            exchange_ref: Some("paper-submitted-order"),
             idempotency_key: Some("submitted-key"),
             created_at_ms: 1,
+            updated_at_ms: 1,
         },
     )
     .await

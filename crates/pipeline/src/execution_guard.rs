@@ -161,8 +161,12 @@ mod tests {
                 side: "buy",
                 qty: 1.0,
                 status: "FILLED",
+                order_type: "limit",
+                limit_price: Some(100.0),
+                exchange_ref: Some("paper-order-1"),
                 idempotency_key: Some("old-key"),
                 created_at_ms: 299_999,
+                updated_at_ms: 299_999,
             },
         )
         .await
@@ -219,8 +223,12 @@ mod tests {
                 side: "buy",
                 qty: 1.0,
                 status: "FILLED",
+                order_type: "limit",
+                limit_price: Some(100.0),
+                exchange_ref: Some("paper-order-long"),
                 idempotency_key: Some("old-key"),
                 created_at_ms: 1,
+                updated_at_ms: 1,
             },
         )
         .await
@@ -290,8 +298,12 @@ mod tests {
                 side: "buy",
                 qty: 1.0,
                 status: "SUBMITTED",
+                order_type: "limit",
+                limit_price: Some(100.0),
+                exchange_ref: Some("paper-order-open"),
                 idempotency_key: Some("open-key"),
                 created_at_ms: 1,
+                updated_at_ms: 1,
             },
         )
         .await

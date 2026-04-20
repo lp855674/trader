@@ -8,8 +8,12 @@ pub struct NewOrder<'a> {
     pub side: &'a str,
     pub qty: f64,
     pub status: &'a str,
+    pub order_type: &'a str,
+    pub limit_price: Option<f64>,
+    pub exchange_ref: Option<&'a str>,
     pub idempotency_key: Option<&'a str>,
     pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub struct NewFill<'a> {
@@ -22,8 +26,21 @@ pub struct NewFill<'a> {
 
 pub async fn insert_order(pool: &SqlitePool, order: &NewOrder<'_>) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO orders (id, account_id, instrument_id, side, qty, status, idempotency_key, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO orders (
+             id,
+             account_id,
+             instrument_id,
+             side,
+             qty,
+             status,
+             order_type,
+             limit_price,
+             exchange_ref,
+             idempotency_key,
+             created_at_ms,
+             updated_at_ms
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(order.order_id)
     .bind(order.account_id)
@@ -31,8 +48,12 @@ pub async fn insert_order(pool: &SqlitePool, order: &NewOrder<'_>) -> Result<(),
     .bind(order.side)
     .bind(order.qty)
     .bind(order.status)
+    .bind(order.order_type)
+    .bind(order.limit_price)
+    .bind(order.exchange_ref)
     .bind(order.idempotency_key)
     .bind(order.created_at_ms)
+    .bind(order.updated_at_ms)
     .execute(pool)
     .await?;
     Ok(())
@@ -47,6 +68,46 @@ pub async fn insert_fill(pool: &SqlitePool, fill: &NewFill<'_>) -> Result<(), Db
     .bind(fill.qty)
     .bind(fill.price)
     .bind(fill.created_at_ms)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn amend_order(
+    pool: &SqlitePool,
+    order_id: &str,
+    qty: f64,
+    limit_price: Option<f64>,
+    updated_at_ms: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE orders
+         SET qty = ?, limit_price = ?, updated_at_ms = ?
+         WHERE id = ?
+           AND UPPER(status) IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')",
+    )
+    .bind(qty)
+    .bind(limit_price)
+    .bind(updated_at_ms)
+    .bind(order_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn cancel_order(
+    pool: &SqlitePool,
+    order_id: &str,
+    updated_at_ms: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE orders
+         SET status = 'CANCELLED', updated_at_ms = ?
+         WHERE id = ?
+           AND UPPER(status) IN ('PENDING', 'SUBMITTED', 'PARTIALLY_FILLED')",
+    )
+    .bind(updated_at_ms)
+    .bind(order_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -156,7 +217,11 @@ pub struct OpenOrderViewRow {
     pub side: String,
     pub qty: f64,
     pub status: String,
+    pub order_type: String,
+    pub limit_price: Option<f64>,
+    pub exchange_ref: Option<String>,
     pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub async fn list_open_orders_for_account(
@@ -171,7 +236,11 @@ pub async fn list_open_orders_for_account(
              orders.side AS side,
              orders.qty AS qty,
              orders.status AS status,
-             orders.created_at_ms AS created_at_ms
+             orders.order_type AS order_type,
+             orders.limit_price AS limit_price,
+             orders.exchange_ref AS exchange_ref,
+             orders.created_at_ms AS created_at_ms,
+             orders.updated_at_ms AS updated_at_ms
          FROM orders
          INNER JOIN instruments ON instruments.id = orders.instrument_id
          WHERE orders.account_id = ?
@@ -218,13 +287,17 @@ pub async fn list_local_positions_for_account(
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct OrderListRow {
-    pub id: String,
-    pub account_id: String,
-    pub instrument_id: i64,
+    pub order_id: String,
+    pub venue: String,
+    pub symbol: String,
     pub side: String,
     pub qty: f64,
     pub status: String,
+    pub order_type: String,
+    pub limit_price: Option<f64>,
+    pub exchange_ref: Option<String>,
     pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub async fn list_orders_for_account(
@@ -232,7 +305,61 @@ pub async fn list_orders_for_account(
     account_id: &str,
 ) -> Result<Vec<OrderListRow>, DbError> {
     sqlx::query_as::<_, OrderListRow>(
-        "SELECT id, account_id, instrument_id, side, qty, status, created_at_ms
+        "SELECT
+             orders.id AS order_id,
+             instruments.venue AS venue,
+             instruments.symbol AS symbol,
+             orders.side AS side,
+             orders.qty AS qty,
+             orders.status AS status,
+             orders.order_type AS order_type,
+             orders.limit_price AS limit_price,
+             orders.exchange_ref AS exchange_ref,
+             orders.created_at_ms AS created_at_ms,
+             orders.updated_at_ms AS updated_at_ms
+         FROM orders
+         INNER JOIN instruments ON instruments.id = orders.instrument_id
+         WHERE orders.account_id = ?
+         ORDER BY orders.created_at_ms DESC",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct RawOrderListRow {
+    pub id: String,
+    pub account_id: String,
+    pub instrument_id: i64,
+    pub side: String,
+    pub qty: f64,
+    pub status: String,
+    pub order_type: String,
+    pub limit_price: Option<f64>,
+    pub exchange_ref: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+pub async fn list_raw_orders_for_account(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Vec<RawOrderListRow>, DbError> {
+    sqlx::query_as::<_, RawOrderListRow>(
+        "SELECT
+             id,
+             account_id,
+             instrument_id,
+             side,
+             qty,
+             status,
+             order_type,
+             limit_price,
+             exchange_ref,
+             created_at_ms,
+             updated_at_ms
          FROM orders WHERE account_id = ? ORDER BY created_at_ms DESC",
     )
     .bind(account_id)

@@ -50,6 +50,11 @@ impl ApiError {
                 message: "execution adapter not configured (paper/live profile missing)"
                     .to_string(),
             },
+            pipeline::PipelineError::Exec(exec::ExecError::InvalidOrderRequest(message)) => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: exec::ExecError::ERROR_CODE_INVALID_ORDER_REQUEST,
+                message,
+            },
             pipeline::PipelineError::Exec(exec::ExecError::Longbridge(msg)) => Self {
                 status: StatusCode::BAD_GATEWAY,
                 code: "broker_error",
@@ -65,6 +70,28 @@ impl ApiError {
                 code: "pipeline_error",
                 message: other.to_string(),
             },
+        }
+    }
+
+    pub fn exec(err: exec::ExecError) -> Self {
+        match err {
+            exec::ExecError::NotConfigured => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: exec::ExecError::ERROR_CODE_NOT_CONFIGURED,
+                message: "execution adapter not configured (paper/live profile missing)"
+                    .to_string(),
+            },
+            exec::ExecError::InvalidOrderRequest(message) => Self {
+                status: StatusCode::BAD_REQUEST,
+                code: exec::ExecError::ERROR_CODE_INVALID_ORDER_REQUEST,
+                message,
+            },
+            exec::ExecError::Longbridge(message) => Self {
+                status: StatusCode::BAD_GATEWAY,
+                code: "broker_error",
+                message,
+            },
+            exec::ExecError::Db(inner) => Self::internal(inner),
         }
     }
 }
