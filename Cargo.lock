@@ -130,6 +130,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -1001,6 +1002,7 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
 ]
@@ -1234,6 +1236,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2374,8 +2377,10 @@ dependencies = [
  "ingest",
  "longbridge",
  "rust_decimal",
+ "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

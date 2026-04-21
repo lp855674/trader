@@ -26,126 +26,125 @@ fn longbridge_env_configured() -> bool {
 async fn build_execution_router_from_db(
     database: &db::Db,
     env_lb: Option<&LongbridgeClients>,
-) -> ExecutionRouter {
+) -> Result<ExecutionRouter, String> {
     let mut routes: HashMap<String, Arc<dyn ExecutionAdapter>> = HashMap::new();
-
-    // 1. Always register local paper adapter
     let paper = Arc::new(PaperAdapter::new(database.clone()));
-    routes.insert(
-        "acc_mvp_paper".to_string(),
-        paper as Arc<dyn ExecutionAdapter>,
-    );
 
-    // 2. Load execution profiles from DB
-    let profiles = db::load_execution_profiles_by_kind(
-        database.pool(),
-        &["longbridge_live", "longbridge_paper"],
-    )
+    let profiles = db::load_execution_profiles(database.pool())
     .await
-    .unwrap_or_default();
+    .map_err(|error| format!("load execution profiles failed: {error}"))?;
+    let accounts = db::load_accounts(database.pool())
+        .await
+        .map_err(|error| format!("load accounts failed: {error}"))?;
+    let profiles_by_id = profiles
+        .into_iter()
+        .map(|profile| (profile.id.clone(), profile))
+        .collect::<HashMap<_, _>>();
 
-    // 3. Load all accounts from DB
-    let accounts = db::load_accounts(database.pool()).await.unwrap_or_default();
-
-    // 4. For each longbridge profile, try to build adapter from config_json credentials
-    for profile in &profiles {
-        let config_json = match &profile.config_json {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                // No credentials in DB for this profile — fall back to env for live
-                if profile.kind == "longbridge_live" {
-                    if let Some(lb) = env_lb {
-                        for acc in accounts
-                            .iter()
-                            .filter(|a| a.execution_profile_id == profile.id)
-                        {
-                            routes.insert(
-                                acc.id.clone(),
-                                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
-                                    as Arc<dyn ExecutionAdapter>,
-                            );
-                            tracing::info!(channel = "quantd", account_id = %acc.id, "registered via env creds");
-                        }
-                    }
+    for account in accounts {
+        let profile = profiles_by_id.get(&account.execution_profile_id).ok_or_else(|| {
+            format!(
+                "account {} references missing execution profile {}",
+                account.id, account.execution_profile_id
+            )
+        })?;
+        let adapter: Arc<dyn ExecutionAdapter> = match profile.kind.as_str() {
+            "paper_sim" => {
+                if account.mode != "paper" {
+                    return Err(format!(
+                        "account {} has mode {} but uses paper_sim profile {}",
+                        account.id, account.mode, profile.id
+                    ));
                 }
-                continue;
+                paper.clone()
+            }
+            "longbridge_live" => {
+                if account.mode != "live" {
+                    return Err(format!(
+                        "account {} has mode {} but uses longbridge_live profile {}",
+                        account.id, account.mode, profile.id
+                    ));
+                }
+                build_longbridge_adapter(database, profile, env_lb, "longbridge_live")?
+            }
+            "longbridge_paper" => {
+                if account.mode != "paper" {
+                    return Err(format!(
+                        "account {} has mode {} but uses longbridge_paper profile {}",
+                        account.id, account.mode, profile.id
+                    ));
+                }
+                build_longbridge_adapter(database, profile, env_lb, "longbridge_paper")?
+            }
+            other => {
+                return Err(format!(
+                    "account {} uses unsupported execution profile kind {}",
+                    account.id, other
+                ));
             }
         };
-
-        let creds: serde_json::Value = match serde_json::from_str(config_json) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(channel = "quantd", profile_id = %profile.id, err = %e, "invalid config_json");
-                continue;
-            }
-        };
-
-        let app_key = creds["app_key"].as_str().unwrap_or("");
-        let app_secret = creds["app_secret"].as_str().unwrap_or("");
-        let access_token = creds["access_token"].as_str().unwrap_or("");
-
-        if app_key.is_empty() || app_secret.is_empty() || access_token.is_empty() {
-            // Incomplete credentials — env fallback for live
-            if profile.kind == "longbridge_live" {
-                if let Some(lb) = env_lb {
-                    for acc in accounts
-                        .iter()
-                        .filter(|a| a.execution_profile_id == profile.id)
-                    {
-                        routes.insert(
-                            acc.id.clone(),
-                            Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
-                                as Arc<dyn ExecutionAdapter>,
-                        );
-                        tracing::info!(channel = "quantd", account_id = %acc.id, "registered via env creds (incomplete db creds)");
-                    }
-                }
-            }
-            continue;
-        }
-
-        match LongbridgeClients::connect_with_credentials(app_key, app_secret, access_token) {
-            Ok(lb) => {
-                for acc in accounts
-                    .iter()
-                    .filter(|a| a.execution_profile_id == profile.id)
-                {
-                    routes.insert(
-                        acc.id.clone(),
-                        Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
-                            as Arc<dyn ExecutionAdapter>,
-                    );
-                    tracing::info!(
-                        channel = "quantd",
-                        account_id = %acc.id,
-                        profile_id = %profile.id,
-                        "registered via db creds"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(channel = "quantd", profile_id = %profile.id, err = %e, "failed to connect with db creds");
-            }
-        }
+        tracing::info!(
+            channel = "quantd",
+            account_id = %account.id,
+            mode = %account.mode,
+            execution_profile_id = %account.execution_profile_id,
+            profile_kind = %profile.kind,
+            "registered execution route from database"
+        );
+        routes.insert(account.id, adapter);
     }
 
-    // 5. If acc_lb_live was not registered from DB, fall back to env
-    if !routes.contains_key("acc_lb_live") {
-        if let Some(lb) = env_lb {
-            routes.insert(
-                "acc_lb_live".to_string(),
-                Arc::new(LongbridgeTradeAdapter::new(lb.trade.clone()))
-                    as Arc<dyn ExecutionAdapter>,
-            );
-            tracing::info!(
-                channel = "quantd",
-                account_id = "acc_lb_live",
-                "registered via env fallback"
-            );
-        }
-    }
+    Ok(ExecutionRouter::new(routes))
+}
 
-    ExecutionRouter::new(routes)
+fn build_longbridge_adapter(
+    database: &db::Db,
+    profile: &db::ExecutionProfileRow,
+    env_lb: Option<&LongbridgeClients>,
+    source: &str,
+) -> Result<Arc<dyn ExecutionAdapter>, String> {
+    let config_json = profile
+        .config_json
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("execution profile {} ({source}) missing config_json", profile.id))?;
+    let creds: serde_json::Value = serde_json::from_str(config_json)
+        .map_err(|error| format!("execution profile {} invalid config_json: {error}", profile.id))?;
+    let app_key = creds["app_key"].as_str().unwrap_or("");
+    let app_secret = creds["app_secret"].as_str().unwrap_or("");
+    let access_token = creds["access_token"].as_str().unwrap_or("");
+    if app_key.is_empty() || app_secret.is_empty() || access_token.is_empty() {
+        return Err(format!(
+            "execution profile {} ({source}) has incomplete credentials",
+            profile.id
+        ));
+    }
+    if let Some(lb) = env_lb {
+        tracing::info!(
+            channel = "quantd",
+            profile_id = %profile.id,
+            profile_kind = %profile.kind,
+            source,
+            "using connected longbridge trade context"
+        );
+        return Ok(Arc::new(LongbridgeTradeAdapter::new(
+            database.clone(),
+            lb.trade.clone(),
+        )));
+    }
+    let clients = LongbridgeClients::connect_with_credentials(app_key, app_secret, access_token)
+        .map_err(|error| format!("execution profile {} connect failed: {error}", profile.id))?;
+    tracing::info!(
+        channel = "quantd",
+        profile_id = %profile.id,
+        profile_kind = %profile.kind,
+        source,
+        "connected longbridge trade context from database credentials"
+    );
+    Ok(Arc::new(LongbridgeTradeAdapter::new(
+        database.clone(),
+        clients.trade,
+    )))
 }
 
 async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
@@ -410,7 +409,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hk_lb = env_symbol("QUANTD_LB_HK_SYMBOL", "700.HK");
 
     let strategy = build_strategy(&database).await;
-    let execution_router = build_execution_router_from_db(&database, lb_clients.as_ref()).await;
+    let execution_router = build_execution_router_from_db(&database, lb_clients.as_ref())
+        .await
+        .map_err(std::io::Error::other)?;
+    let accounts = db::load_accounts(database.pool()).await.unwrap_or_default();
+    for account in accounts {
+        let route_status = if execution_router.resolve(&account.id).is_ok() {
+            "registered"
+        } else {
+            "missing"
+        };
+        tracing::info!(
+            channel = "quantd",
+            account_id = %account.id,
+            mode = %account.mode,
+            execution_profile_id = %account.execution_profile_id,
+            route_status,
+            "account route summary"
+        );
+    }
 
     let ingest_registry = build_ingest_registry(lb_clients.as_ref(), &us_lb, &hk_lb);
     let risk_limits = RiskLimits::from_env();
@@ -445,7 +462,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn redact_url(url: &str) -> String {
     if url.starts_with("sqlite:") {
-        return "sqlite:***".to_string();
+        return url.to_string();
     }
     "***".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn build_execution_router_loads_paper_account_from_database_profile() {
+        let database = db::Db::connect("sqlite::memory:").await.expect("db");
+        db::ensure_mvp_seed(database.pool()).await.expect("seed");
+
+        let router = super::build_execution_router_from_db(&database, None)
+            .await
+            .expect("router");
+
+        assert!(router.resolve("acc_mvp_paper").is_ok());
+    }
 }

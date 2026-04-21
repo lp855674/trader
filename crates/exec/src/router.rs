@@ -63,4 +63,9 @@ impl ExecutionRouter {
             .amend_order(account_id, order_id, qty, limit_price)
             .await
     }
+
+    pub async fn sync_account_orders(&self, account_id: &str) -> Result<(), ExecError> {
+        let adapter = self.resolve(account_id)?;
+        adapter.sync_account_orders(account_id).await
+    }
 }

@@ -18,5 +18,6 @@ parking_lot.workspace = true
 percent-encoding.workspace = true
 pgvector.workspace = true
 schemars.workspace = true
+tracing.workspace = true
 tracing-appender.workspace = true
 tracing-opentelemetry.workspace = true

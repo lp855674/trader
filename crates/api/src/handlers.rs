@@ -7,6 +7,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{Json, response::IntoResponse};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 
 use crate::error::ApiError;
 use crate::{AppState, StreamEvent};
@@ -201,6 +202,11 @@ pub async fn list_orders(
     if query.account_id.is_empty() {
         return Err(ApiError::bad_request("account_id must not be empty"));
     }
+    state
+        .execution_router
+        .sync_account_orders(&query.account_id)
+        .await
+        .map_err(ApiError::exec)?;
     let rows = db::list_orders_for_account(state.database.pool(), &query.account_id)
         .await
         .map_err(ApiError::internal)?;
@@ -215,6 +221,16 @@ pub async fn post_order(
     let symbol = require_non_empty(body.symbol, "symbol")?;
     let side = normalize_side(&body.side)?;
     let order_type = body.order_type.trim().to_ascii_lowercase();
+    info!(
+        channel = "api_orders",
+        account_id = %account_id,
+        symbol = %symbol,
+        side = %body.side.trim().to_ascii_lowercase(),
+        qty = body.qty,
+        order_type = %order_type,
+        limit_price = ?body.limit_price,
+        "manual order request accepted"
+    );
     if order_type != "limit" {
         return Err(ApiError::bad_request("order_type must be limit"));
     }
@@ -226,6 +242,14 @@ pub async fn post_order(
     }
 
     let (instrument, venue) = ensure_instrument_for_symbol(&state.database, &symbol).await?;
+    debug!(
+        channel = "api_orders",
+        account_id = %account_id,
+        symbol = %symbol,
+        venue = venue.as_str(),
+        instrument_id = instrument.id,
+        "manual order instrument resolved"
+    );
     let ack = state
         .execution_router
         .submit_manual_order(
@@ -242,6 +266,18 @@ pub async fn post_order(
         )
         .await
         .map_err(ApiError::exec)?;
+    let order_count = db::count_orders_for_account(state.database.pool(), &account_id)
+        .await
+        .map_err(ApiError::internal)?;
+    info!(
+        channel = "api_orders",
+        account_id = %account_id,
+        symbol = %symbol,
+        order_id = %ack.order_id,
+        status = %ack.status,
+        order_count,
+        "manual order submitted"
+    );
     let created_at_ms = now_ms();
 
     let _ = state.events.send(StreamEvent::OrderCreated {
@@ -373,6 +409,13 @@ async fn ensure_instrument_for_symbol(
         Ok(instrument) => {
             let venue = domain::Venue::parse(&instrument.venue)
                 .ok_or_else(|| ApiError::bad_request("instrument venue is invalid"))?;
+            debug!(
+                channel = "api_orders",
+                symbol = %symbol,
+                venue = venue.as_str(),
+                instrument_id = instrument.id,
+                "reused existing instrument"
+            );
             Ok((instrument, venue))
         }
         Err(error) if error.status == StatusCode::NOT_FOUND => {
@@ -381,6 +424,13 @@ async fn ensure_instrument_for_symbol(
                 db::upsert_instrument(database.pool(), venue.as_str(), symbol)
                     .await
                     .map_err(ApiError::internal)?;
+            info!(
+                channel = "api_orders",
+                symbol = %symbol,
+                venue = venue.as_str(),
+                instrument_id,
+                "created missing instrument during manual order"
+            );
             Ok((
                 db::InstrumentRow {
                     id: instrument_id,
@@ -390,7 +440,16 @@ async fn ensure_instrument_for_symbol(
                 venue,
             ))
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            warn!(
+                channel = "api_orders",
+                symbol = %symbol,
+                error_code = error.code,
+                status = %error.status,
+                "failed to resolve instrument"
+            );
+            Err(error)
+        }
     }
 }
 
@@ -529,6 +588,11 @@ pub async fn get_runtime_execution_state(
         return Err(ApiError::bad_request("account_id must not be empty"));
     }
 
+    state
+        .execution_router
+        .sync_account_orders(&query.account_id)
+        .await
+        .map_err(ApiError::exec)?;
     let positions = db::list_local_positions_for_account(state.database.pool(), &query.account_id)
         .await
         .map_err(ApiError::internal)?;
@@ -568,6 +632,11 @@ pub async fn get_runtime_reconciliation_latest(
         .await
         .map_err(ApiError::internal)?
         .unwrap_or_else(|| "observe_only".to_string());
+    state
+        .execution_router
+        .sync_account_orders(&query.account_id)
+        .await
+        .map_err(ApiError::exec)?;
     let local_positions =
         db::list_local_positions_for_account(state.database.pool(), &query.account_id)
             .await
@@ -625,6 +694,11 @@ pub async fn get_terminal_overview(
             symbol,
         })
         .collect();
+    state
+        .execution_router
+        .sync_account_orders(&query.account_id)
+        .await
+        .map_err(ApiError::exec)?;
     let positions = db::list_local_positions_for_account(state.database.pool(), &query.account_id)
         .await
         .map_err(ApiError::internal)?;

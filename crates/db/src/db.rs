@@ -21,16 +21,17 @@ pub use bootstrap::{
 };
 pub use error::DbError;
 pub use execution_profiles::{
-    AccountRow, ExecutionProfileRow, load_accounts, load_execution_profiles_by_kind,
+    AccountRow, ExecutionProfileRow, load_accounts, load_execution_profiles,
+    load_execution_profiles_by_kind,
 };
 pub use instruments::{InstrumentRow, list_instruments, upsert_instrument};
 pub use orders::{
     LocalPositionSummary, LocalPositionViewRow, NewFill, NewOrder, OpenOrderViewRow, OrderListRow,
     RawOrderListRow,
-    amend_order, cancel_order, count_orders_for_account, has_open_order_for_instrument,
-    insert_fill, insert_order, latest_order_ts_for_instrument_side,
+    amend_order, cancel_order, count_orders_for_account, filled_qty_for_order,
+    has_open_order_for_instrument, insert_fill, insert_order, latest_order_ts_for_instrument_side,
     list_local_positions_for_account, list_open_orders_for_account, list_orders_for_account,
-    list_raw_orders_for_account,
+    list_raw_orders_for_account, update_order_status,
     local_position_summary_for_instrument, order_exists_by_idempotency_key,
 };
 pub use reconciliation::{
@@ -51,6 +52,7 @@ pub use system_config::{get_system_config, list_system_config_by_prefix, set_sys
 use std::path::{Path, PathBuf};
 
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use tracing::info;
 
 /// Ensure parent directories exist for file-backed SQLite URLs (e.g. `sqlite://./data/quantd.db`).
 fn ensure_sqlite_parent_dir(url: &str) -> Result<(), DbError> {
@@ -117,11 +119,20 @@ impl Db {
     pub async fn connect(database_url: &str) -> Result<Self, DbError> {
         ensure_sqlite_parent_dir(database_url)?;
         let database_url = normalize_sqlite_url(database_url);
+        let max_connections = sqlite_max_connections(&database_url);
+        info!(
+            channel = "db",
+            driver = "sqlite",
+            database_url = %database_url,
+            max_connections,
+            "opening database connection"
+        );
         let pool = SqlitePoolOptions::new()
-            .max_connections(sqlite_max_connections(&database_url))
+            .max_connections(max_connections)
             .connect(&database_url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        info!(channel = "db", driver = "sqlite", "database migrations applied");
         Ok(Self { pool })
     }
 

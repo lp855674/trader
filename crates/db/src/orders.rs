@@ -113,6 +113,35 @@ pub async fn cancel_order(
     Ok(())
 }
 
+pub async fn update_order_status(
+    pool: &SqlitePool,
+    order_id: &str,
+    status: &str,
+    updated_at_ms: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE orders
+         SET status = ?, updated_at_ms = ?
+         WHERE id = ?",
+    )
+    .bind(status)
+    .bind(updated_at_ms)
+    .bind(order_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn filled_qty_for_order(pool: &SqlitePool, order_id: &str) -> Result<f64, DbError> {
+    let qty = sqlx::query_scalar::<_, Option<f64>>(
+        "SELECT SUM(qty) FROM fills WHERE order_id = ?",
+    )
+    .bind(order_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(qty.unwrap_or(0.0))
+}
+
 pub async fn count_orders_for_account(pool: &SqlitePool, account_id: &str) -> Result<i64, DbError> {
     let n = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM orders WHERE account_id = ?")
         .bind(account_id)

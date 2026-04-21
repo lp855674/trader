@@ -25,6 +25,15 @@ pub async fn load_execution_profiles_by_kind(
     Ok(results)
 }
 
+pub async fn load_execution_profiles(pool: &SqlitePool) -> Result<Vec<ExecutionProfileRow>, DbError> {
+    sqlx::query_as::<_, ExecutionProfileRow>(
+        "SELECT id, kind, config_json FROM execution_profiles ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AccountRow {
     pub id: String,

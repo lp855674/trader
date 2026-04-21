@@ -2,6 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use domain::{OrderIntent, Side};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::adapter::{ExecutionAdapter, ManualOrderAck, OrderAck};
@@ -117,6 +118,19 @@ impl ExecutionAdapter for PaperAdapter {
             },
         )
         .await?;
+        let order_count = db::count_orders_for_account(self.db.pool(), account_id).await?;
+        info!(
+            channel = "exec_paper",
+            account_id = %account_id,
+            order_id = %order_id,
+            symbol = %intent.instrument.symbol,
+            instrument_id = intent.instrument_db_id,
+            side = side_str(intent.side),
+            qty = intent.qty,
+            limit_price = intent.limit_price,
+            order_count,
+            "paper manual order persisted"
+        );
         Ok(ManualOrderAck {
             order_id,
             exchange_ref: Some(exchange_ref),

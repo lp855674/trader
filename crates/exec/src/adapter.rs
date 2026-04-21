@@ -41,4 +41,8 @@ pub trait ExecutionAdapter: Send + Sync {
         qty: f64,
         limit_price: Option<f64>,
     ) -> Result<ManualOrderAck, ExecError>;
+
+    async fn sync_account_orders(&self, _account_id: &str) -> Result<(), ExecError> {
+        Ok(())
+    }
 }
