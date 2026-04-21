@@ -79,6 +79,17 @@ struct ServiceErrorDetail {
     message: String,
 }
 
+fn normalize_model_error_code(error_code: Option<&str>, fallback: &str) -> String {
+    match error_code {
+        Some("model_not_found") => "model_not_found".to_string(),
+        Some("insufficient_bars") => "insufficient_bars".to_string(),
+        Some("response_parse_failed") => "response_parse_failed".to_string(),
+        Some("model_service_error") => "model_service_error".to_string(),
+        Some(other) if !other.is_empty() => other.to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
 impl LstmStrategy {
     async fn load_bars(
         &self,
@@ -164,24 +175,23 @@ impl LstmStrategy {
             .json(&req)
             .send()
             .await
-            .map_err(|e| format!("service unreachable: {}", e))?;
+            .map_err(|_| "model_unreachable".to_string())?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             if let Ok(parsed) = serde_json::from_str::<ServiceError>(&body) {
-                return Err(format!(
-                    "{} error_code={} message={}",
-                    status, parsed.detail.error_code, parsed.detail.message
+                return Err(normalize_model_error_code(
+                    Some(parsed.detail.error_code.as_str()),
+                    "model_service_error",
                 ));
             }
-            return Err(format!("{} body={}", status, body));
+            return Err(normalize_model_error_code(None, "model_service_error"));
         }
 
         let pred: PredictResponse = resp
             .json()
             .await
-            .map_err(|e| format!("response parse failed: {}", e))?;
+            .map_err(|_| "response_parse_failed".to_string())?;
         Ok(Some((pred, limit_price)))
     }
 
@@ -339,6 +349,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn evaluate_candidate_maps_structured_model_failure_to_reason_code() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/predict"))
+            .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
+                "detail": {
+                    "error_code": "model_not_found",
+                    "message": "please train first"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let strategy = make_strategy(&server.uri());
+        let result = strategy.evaluate_candidate(&make_context()).await;
+        assert_eq!(result.unwrap_err(), "model_not_found");
+    }
+
+    #[tokio::test]
+    async fn evaluate_candidate_maps_transport_failure_to_model_unreachable() {
+        let strategy = make_strategy("http://127.0.0.1:19999");
+        let result = strategy.evaluate_candidate(&make_context()).await;
+        assert_eq!(result.unwrap_err(), "model_unreachable");
+    }
+
+    #[tokio::test]
     async fn structured_service_failure_reports_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -359,7 +395,6 @@ mod tests {
             "expected structured failure to be reported"
         );
         let err = result.unwrap_err();
-        assert!(err.contains("model_not_found"));
-        assert!(err.contains("please train first"));
+        assert_eq!(err, "model_not_found");
     }
 }
