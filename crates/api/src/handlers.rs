@@ -217,6 +217,7 @@ pub async fn post_order(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateOrderBody>,
 ) -> Result<(StatusCode, Json<OrderActionResponse>), ApiError> {
+    require_manual_write_mode(&state.database, "submit").await?;
     let account_id = require_non_empty(body.account_id, "account_id")?;
     let symbol = require_non_empty(body.symbol, "symbol")?;
     let side = normalize_side(&body.side)?;
@@ -330,6 +331,7 @@ pub async fn post_amend_order(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AmendOrderBody>,
 ) -> Result<Json<OrderActionResponse>, ApiError> {
+    require_manual_write_mode(&state.database, "amend").await?;
     let account_id = require_non_empty(body.account_id, "account_id")?;
     let ack = state
         .execution_router
@@ -387,6 +389,22 @@ fn require_non_empty(value: String, field_name: &str) -> Result<String, ApiError
         return Err(ApiError::bad_request(format!("{field_name} must not be empty")));
     }
     Ok(trimmed.to_string())
+}
+
+async fn require_manual_write_mode(
+    database: &db::Db,
+    action: &'static str,
+) -> Result<(), ApiError> {
+    let mode = db::get_runtime_control(database.pool(), RUNTIME_MODE_KEY)
+        .await
+        .map_err(ApiError::internal)?
+        .unwrap_or_else(|| "observe_only".to_string());
+
+    match mode.as_str() {
+        "paper_only" | "enabled" => Ok(()),
+        "observe_only" | "degraded" => Err(ApiError::runtime_mode_rejected(action, &mode)),
+        _ => Err(ApiError::runtime_mode_rejected(action, &mode)),
+    }
 }
 
 async fn resolve_instrument_by_symbol(

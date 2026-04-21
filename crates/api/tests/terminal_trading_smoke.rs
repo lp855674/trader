@@ -112,9 +112,17 @@ async fn test_app() -> (Router, Db) {
     (api::router(state), database)
 }
 
+async fn test_app_with_mode(mode: &str) -> (Router, Db) {
+    let (app, database) = test_app().await;
+    db::set_runtime_control(database.pool(), "mode", mode)
+        .await
+        .expect("mode");
+    (app, database)
+}
+
 #[tokio::test]
 async fn terminal_order_routes_submit_cancel_and_amend() {
-    let (app, _database) = test_app().await;
+    let (app, _database) = test_app_with_mode("enabled").await;
 
     let submit = app
         .clone()
@@ -167,8 +175,123 @@ async fn terminal_order_routes_submit_cancel_and_amend() {
 }
 
 #[tokio::test]
+async fn manual_submit_rejected_in_observe_only() {
+    let (app, _database) = test_app_with_mode("observe_only").await;
+
+    let submit = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"account_id":"acc_mvp_paper","symbol":"AAPL.US","side":"buy","qty":10.0,"order_type":"limit","limit_price":123.45}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(submit.status(), StatusCode::FORBIDDEN);
+    let body = submit.into_body().collect().await.expect("body").to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["error_code"], "runtime_mode_rejected");
+}
+
+#[tokio::test]
+async fn manual_amend_rejected_in_degraded() {
+    let (app, database) = test_app_with_mode("enabled").await;
+
+    let submit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"account_id":"acc_mvp_paper","symbol":"AAPL.US","side":"buy","qty":10.0,"order_type":"limit","limit_price":123.45}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(submit.status(), StatusCode::CREATED);
+
+    let body = submit.into_body().collect().await.expect("body").to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    let order_id = json["order_id"].as_str().expect("order id").to_string();
+
+    db::set_runtime_control(database.pool(), "mode", "degraded")
+        .await
+        .expect("mode");
+
+    let amend = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/orders/{order_id}/amend"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"account_id":"acc_mvp_paper","qty":12.0,"limit_price":124.0}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(amend.status(), StatusCode::FORBIDDEN);
+    let body = amend.into_body().collect().await.expect("body").to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(json["error_code"], "runtime_mode_rejected");
+}
+
+#[tokio::test]
+async fn manual_cancel_allowed_in_observe_only() {
+    let (app, database) = test_app_with_mode("enabled").await;
+
+    let submit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/orders")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"account_id":"acc_mvp_paper","symbol":"AAPL.US","side":"buy","qty":10.0,"order_type":"limit","limit_price":123.45}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(submit.status(), StatusCode::CREATED);
+
+    let body = submit.into_body().collect().await.expect("body").to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    let order_id = json["order_id"].as_str().expect("order id").to_string();
+
+    db::set_runtime_control(database.pool(), "mode", "observe_only")
+        .await
+        .expect("mode");
+
+    let cancel = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/orders/{order_id}/cancel"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"account_id":"acc_mvp_paper"}"#))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(cancel.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn list_orders_route_returns_operator_facing_rows() {
-    let (app, _database) = test_app().await;
+    let (app, _database) = test_app_with_mode("enabled").await;
 
     let submit = app
         .clone()
@@ -231,6 +354,9 @@ async fn manual_order_submit_upserts_missing_instrument_for_symbol() {
         api_key: None,
     };
     let app = api::router(state);
+    db::set_runtime_control(database.pool(), "mode", "enabled")
+        .await
+        .expect("mode");
 
     let submit = app
         .clone()

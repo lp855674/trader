@@ -42,6 +42,14 @@ impl ApiError {
         }
     }
 
+    pub fn runtime_mode_rejected(action: &'static str, mode: &str) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "runtime_mode_rejected",
+            message: format!("{action} is not allowed while runtime mode is {mode}"),
+        }
+    }
+
     pub fn pipeline(err: pipeline::PipelineError) -> Self {
         match err {
             pipeline::PipelineError::Exec(exec::ExecError::NotConfigured) => Self {
