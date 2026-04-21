@@ -61,7 +61,7 @@
 
 2. 半自动路径
 
-`POST /v1/runtime/cycle -> api::post_runtime_cycle -> pipeline::run_universe_cycle -> strategy.evaluate_candidate -> execution_guard -> execute_signal -> execution_router.place_order -> adapter -> db`
+`POST /v1/runtime/cycle -> api::post_runtime_cycle -> pipeline::run_universe_cycle -> strategy.evaluate_candidate -> accepted -> evaluate_signal_for_tick -> execution_guard -> execute_signal -> execution_router.place_order -> adapter -> db`
 
 此外还存在一个单标的调试入口：
 
@@ -80,6 +80,18 @@
 - `/v1/tick` 是单标的调试入口
 
 这三个入口当前都存在，但缺少明确分层，导致 operator 容易混淆。
+
+另一个关键事实是，半自动路径当前不是“评分一次后直接执行”。
+
+真实实现中会发生两次策略调用：
+
+- 第一次 `evaluate_candidate()` 用于 ranking / accepted
+- 第二次 `evaluate_signal_for_tick()` 用于把 accepted symbol 转成真正的执行信号
+
+因此排障时必须明确区分：
+
+- ranking 阶段为什么进入 `accepted`
+- execute 阶段为什么最终没有下单，或者下单方向/数量与预期不一致
 
 ### 4.2 最小闭环没有被拆成基础闭环与正式闭环
 
@@ -221,17 +233,36 @@ README、`docs/runbook.md`、`docs/execution/2026-04-13-semi-auto-paper-rehearsa
 
 “手工单是否受 `observe_only` 影响？”
 
-本设计选择：
+当前实现现状：
 
-- 手工单也受 runtime mode 约束
-- `observe_only` 下不允许继续显式下单
-- `paper_only` / `enabled` 才允许显式下单
+- `POST /v1/orders` / `amend` / `cancel` 还没有读取 runtime mode
+- 因此当前代码层面并不存在“手工单被 runtime mode 拒绝”的契约
+
+目标设计选择：
+
+- `submit` 与 `amend` 受 runtime mode 约束
+- `observe_only` / `degraded` 下禁止 `submit`
+- `observe_only` / `degraded` 下禁止 `amend`
+- `cancel` 在所有 mode 下都允许，避免 operator 失去撤单能力
+- `paper_only` / `enabled` 允许 `submit` / `amend` / `cancel`
+
+拦截层选择：
+
+- 在 `crates/api` 的手工订单入口层拦截
+- 不把该约束下沉到 `ExecutionRouter`
+
+错误契约要求：
+
+- 新增手工订单被 mode 拒绝的稳定 `error_code`
+- `submit` / `amend` 可使用统一错误码，例如 `runtime_mode_rejected`
+- 返回消息需包含当前 mode 与操作名
+- `cancel` 不走该拒绝分支
 
 理由：
 
 - 系统语义统一
-- operator 不会误以为 `observe_only` 还可以绕过控制面继续下单
-- 与半自动路径的行为保持一致
+- operator 不会误以为 `observe_only` 还可以继续加仓或改价
+- 同时保留撤单/止损能力
 
 ## 9. Model 子系统边界
 
@@ -389,19 +420,49 @@ services/model/models/
 
 ### 12.2 半自动路径
 
-- `strategy.evaluate_candidate()` 或等效评分层调用 `model /predict`
-- 将模型输出转成 ranked / accepted / rejected
+- `strategy.evaluate_candidate()` 或等效评分层调用 `model /predict`，生成 ranked / accepted / rejected
+- 对 accepted symbol 再调用 `evaluate_signal_for_tick()`，把 symbol 级候选转成真正执行信号
+
+这意味着正式设计中必须明确接受“双阶段调用”：
+
+1. candidate 阶段回答“这个 symbol 是否值得进入 accepted”
+2. signal 阶段回答“这个 accepted symbol 是否形成可执行订单”
+
+后续若要减少重复调用，可以作为实现优化，但在当前 spec 中不能假装这一步不存在
 
 ### 12.3 故障语义
 
-当 `model` 服务异常时：
+当前实现现状：
 
-- 当前轮对相关 symbol 标记 `skipped`
-- `reason` 需明确为类似：
+- `strategy::lstm` 返回的是字符串错误
+- `pipeline` 当前会把这些错误进一步包装成：
+  - `strategy_error:...`
+  - `execution_error:...`
+- `runtime cycle history` 当前持久化的是 `reason` 字符串，而不是结构化错误对象
+
+目标设计要求：
+
+- `strategy::lstm` 或其后继 `model` strategy 层必须先把服务错误归一化为稳定错误码
+- `pipeline` 不负责理解底层 HTTP 文本，只负责传播标准化结果
+- `runtime cycle history` 至少继续持久化一个稳定字符串 `reason_code`
+- 如需兼容现有 schema，可先将 `reason` 规范成：
   - `model_unreachable`
   - `model_not_found`
   - `insufficient_bars`
+  - `response_parse_failed`
+  - `model_service_error`
+- 若未来扩表，可再引入 `reason_message`
+
+归一化责任边界：
+
+- `services/model` 定义服务错误返回格式
+- `strategy::lstm` 负责把服务错误映射成统一 `ModelErrorCode`
+- `pipeline` 负责把该 code 写入 `skipped.reason`
+
+强约束：
+
 - 不允许因为模型失败退化到默认策略继续下单
+- cycle history 中必须保留稳定的错误码，而不是仅保留不可比较的自由文本
 
 ## 13. 测试分层设计
 
@@ -466,32 +527,75 @@ LSTM/Model 与交易系统测试必须拆成 4 层。
 
 ## 14. 文档重构建议
 
-当前文档需要从“混合说明”改成“按闭环分层”。
+仓库规则要求 `docs/runbook.md` 保持启动手册真源，因此文档不能再把多个 `docs/runbook-*.md` 作为新的真源。
 
-建议最终保留的真源文档如下：
+本设计调整为：
 
-- `docs/runbook-paper-smoke.md`
-  - submit / amend / cancel / overview / WS / DB
-- `docs/runbook-model.md`
-  - qlib workflow、训练、导出、启动 model 服务
-- `docs/runbook-lstm-cycle-paper.md`
-  - `model` + `quantd` 的正式半自动联调
+- `docs/runbook.md`
+  - 保持为 operator 启动与联调真源
+  - 其中明确拆分三个章节：
+    - paper smoke
+    - model workflow / service
+    - LSTM cycle paper
+- `services/model/readme.md`
+  - 作为 model 子系统自己的模块文档与开发手册
+- 必要时允许新增辅助手册，但它们不是行为真源，真源仍需回写到 `docs/runbook.md` 与对应模块文档
 
 README 只保留总览与文档导航，不再承担完整运行手册角色。
 
-## 15. 分阶段实施路线
+## 15. `services/lstm-service` -> `services/model` 迁移兼容期
+
+重命名与产物结构切换不能一步切断现有 `.pt` 发现逻辑，需要定义兼容期。
+
+### 15.1 现状
+
+当前 serving 逻辑按根目录下的 `<symbol>_<model_type>.pt` 直接发现模型。
+
+### 15.2 目标
+
+目标产物切换为目录化 artifact：
+
+```text
+services/model/models/
+  <model_id>/
+    model.pt
+    metadata.json
+```
+
+### 15.3 兼容期策略
+
+迁移期内 runtime loader 应同时支持：
+
+- 新格式：`<model_id>/model.pt + metadata.json`
+- 旧格式：根目录 `<symbol>_<model_type>.pt`
+
+兼容期行为：
+
+- 优先加载新格式 artifact
+- 若未命中新格式，再回退旧格式
+- `/health` 应暴露新旧格式各自加载数量，便于迁移排障
+
+兼容期结束条件：
+
+- workflow/export 已稳定产出新格式
+- runbook 与测试全部切到新格式
+- 仓库内不再依赖旧 `.pt` 发现逻辑
+
+## 16. 分阶段实施路线
 
 ### Phase 1：交易边界收敛
 
 - 明确 `/v1/orders` 与 `/v1/runtime/cycle` 的角色
 - 将 `/v1/tick` 降级为调试入口
-- 固定 runtime mode 对显式手工下单的约束
+- 固定 runtime mode 对手工 `submit` / `amend` / `cancel` 的约束
+- 为 mode 拒绝补稳定 `error_code`
+- 在 spec 与实现里明确半自动路径的双阶段策略调用
 
 ### Phase 2：paper 基础闭环
 
 - 跑通 submit / amend / cancel
 - 跑通 overview / execution-state / WS / DB 一致性
-- 写 `docs/runbook-paper-smoke.md`
+- 将 paper smoke 真源写回 `docs/runbook.md`
 
 ### Phase 3：Model 子系统重构
 
@@ -499,12 +603,14 @@ README 只保留总览与文档导航，不再承担完整运行手册角色。
 - 拆分 workflow 与 runtime
 - 将训练切换到 qlib workflow/config
 - 导出 serving artifact
+- 增加新旧 artifact 兼容加载期
 
 ### Phase 4：LSTM 正式闭环
 
 - `quantd` 稳定调用 `model /predict`
 - 跑通 `runtime cycle` 的 LSTM/ALSTM paper 闭环
-- 写 `docs/runbook-lstm-cycle-paper.md`
+- 将 LSTM cycle 真源写回 `docs/runbook.md`
+- 统一 `model` 相关错误码与 cycle history 的 `reason`
 
 ### Phase 5：后续再评估向 vn.py 靠拢
 
@@ -516,7 +622,7 @@ README 只保留总览与文档导航，不再承担完整运行手册角色。
 
 而不是在此之前提前大重构。
 
-## 16. 验收标准
+## 17. 验收标准
 
 本设计完成后，系统需要能明确回答以下问题：
 
