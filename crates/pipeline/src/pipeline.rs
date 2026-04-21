@@ -220,7 +220,7 @@ pub async fn run_universe_cycle(
             }
             Err(error) => skipped.push(SymbolDecision {
                 symbol,
-                reason: format!("strategy_error:{error}"),
+                reason: error,
             }),
         }
     }
@@ -308,7 +308,7 @@ pub async fn run_universe_cycle(
                 }),
                 Err(error) => skipped.push(SymbolDecision {
                     symbol: symbol.clone(),
-                    reason: format!("execution_error:{error}"),
+                    reason: error.to_string(),
                 }),
             }
         }
