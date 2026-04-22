@@ -1,4 +1,4 @@
-# services/lstm-service/qlib_pipeline/predict.py
+# Legacy module kept for compatibility. Active implementation lives in services/model/workflow/predict.py.
 from __future__ import annotations
 
 import os

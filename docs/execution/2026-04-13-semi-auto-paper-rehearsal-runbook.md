@@ -4,7 +4,7 @@
 
 这份文档用于手工验证当前半自动交易链路是否满足以下要求：
 
-1. `lstm-service` 可稳定启动并对 `quantd` 提供预测服务。
+1. `model service` 可稳定启动并对 `quantd` 提供预测服务。
 2. `quantd` 在 `paper_only` 下可以完成一轮 `universe cycle`。
 3. 首次满足条件时允许下单。
 4. 后续重复轮次会被 execution guard 正确拦截，而不是继续下单。
@@ -15,7 +15,8 @@
 ## 适用版本
 
 - 当前分支的 `quantd`
-- 当前仓库内的 `services/lstm-service/.venv`
+- 当前仓库内的 `services/model`
+- 若要复用现成 Python 环境，可直接使用 `services/lstm-service/.venv`
 - 当前 API:
   - `POST /v1/runtime/cycle`
   - `GET /v1/runtime/cycle/latest`
@@ -44,14 +45,18 @@
 - 数据库：`quantd_rehearsal.db`
 - `quantd` stdout：`quantd_rehearsal.out.log`
 - `quantd` stderr：`quantd_rehearsal.err.log`
-- `lstm-service` stdout：`quantd_rehearsal_lstm.out.log`
-- `lstm-service` stderr：`quantd_rehearsal_lstm.err.log`
+- `model service` stdout：`quantd_rehearsal_model.out.log`
+- `model service` stderr：`quantd_rehearsal_model.err.log`
 
 ## 前置条件
 
 ### 1. Python 环境
 
-必须使用仓库内已确认可用的虚拟环境：
+优先使用：
+
+- `services/model`
+
+若本地尚未单独建环境，可临时复用：
 
 - `services/lstm-service/.venv`
 
@@ -69,7 +74,7 @@ cargo test -p pipeline -- --nocapture
 
 建议固定为：
 
-- `lstm-service`: `127.0.0.1:8000`
+- `model service`: `127.0.0.1:8000`
 - `quantd`: `127.0.0.1:18081`
 
 ### 4. 测试标的
@@ -105,7 +110,7 @@ $env:RUST_LOG = 'info'
 - `QUANTD_DATA_SOURCE_ID=paper_bars` 是关键前提，必须和 mock/paper bars 的数据源一致。
 - 先把后台 loop 关掉，统一用手工触发 `POST /v1/runtime/cycle`，这样更容易定位问题。
 
-### `lstm-service`
+### `model service`
 
 无额外强制要求，但要确保服务启动后：
 
@@ -124,21 +129,21 @@ Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing
 - `quantd_rehearsal.db`
 - `quantd_rehearsal.out.log`
 - `quantd_rehearsal.err.log`
-- `quantd_rehearsal_lstm.out.log`
-- `quantd_rehearsal_lstm.err.log`
+- `quantd_rehearsal_model.out.log`
+- `quantd_rehearsal_model.err.log`
 
 预期：
 
 - 没有旧 DB 残留。
 - 没有旧日志干扰。
 
-### 步骤 2：启动 `lstm-service`
+### 步骤 2：启动 `model service`
 
 在仓库根目录执行：
 
 ```powershell
-Set-Location services/lstm-service
-.venv\Scripts\python.exe main.py *> ..\..\quantd_rehearsal_lstm.out.log 2> ..\..\quantd_rehearsal_lstm.err.log
+Set-Location services/model
+..\lstm-service\.venv\Scripts\python.exe main.py *> ..\..\quantd_rehearsal_model.out.log 2> ..\..\quantd_rehearsal_model.err.log
 ```
 
 若你希望前台观察日志，也可以直接前台启动。
@@ -471,13 +476,13 @@ WHERE instruments.venue = 'US_EQUITY'
 可能原因：
 
 - allowlist 没设对
-- `lstm-service` 没跑起来
+- `model service` 没跑起来
 - LSTM score/confidence 没过阈值
 
 先看：
 
 - `/v1/runtime/allowlist`
-- `lstm-service /health`
+- `model service /health`
 - `quantd` 日志
 
 ### 2. `accepted` 有值但 `placed` 为空
@@ -489,7 +494,7 @@ WHERE instruments.venue = 'US_EQUITY'
 - `guard_duplicate_idempotency`
 - `guard_cooldown_active`
 
-### 3. `lstm-service` 正常但一直 `no_signal_on_execution`
+### 3. `model service` 正常但一直 `no_signal_on_execution`
 
 可能原因：
 
@@ -519,13 +524,13 @@ WHERE instruments.venue = 'US_EQUITY'
 
 测试完成后：
 
-1. 停止 `lstm-service`
+1. 停止 `model service`
 2. 停止 `quantd`
 3. 删除临时文件：
    - `quantd_rehearsal.db`
    - `quantd_rehearsal.out.log`
    - `quantd_rehearsal.err.log`
-   - `quantd_rehearsal_lstm.out.log`
-   - `quantd_rehearsal_lstm.err.log`
+   - `quantd_rehearsal_model.out.log`
+   - `quantd_rehearsal_model.err.log`
 
 如果你要保留现场供分析，就不要删 DB 和日志。

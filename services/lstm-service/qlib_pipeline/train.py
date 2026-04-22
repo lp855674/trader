@@ -1,4 +1,4 @@
-# services/lstm-service/qlib_pipeline/train.py
+# Legacy module kept for compatibility. Active implementation lives in services/model/workflow/train.py.
 from __future__ import annotations
 
 import os

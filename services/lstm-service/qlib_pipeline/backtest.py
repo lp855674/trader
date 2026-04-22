@@ -1,4 +1,4 @@
-# services/lstm-service/qlib_pipeline/backtest.py
+# Legacy module kept for compatibility. Active implementation lives in services/model/workflow/backtest.py.
 from __future__ import annotations
 
 import os
