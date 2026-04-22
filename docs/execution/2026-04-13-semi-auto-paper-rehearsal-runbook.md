@@ -16,7 +16,6 @@
 
 - 当前分支的 `quantd`
 - 当前仓库内的 `services/model`
-- 若要复用现成 Python 环境，可直接使用 `services/lstm-service/.venv`
 - 当前 API:
   - `POST /v1/runtime/cycle`
   - `GET /v1/runtime/cycle/latest`
@@ -56,9 +55,7 @@
 
 - `services/model`
 
-若本地尚未单独建环境，可临时复用：
-
-- `services/lstm-service/.venv`
+进入该目录后执行 `uv sync`。
 
 不要使用系统 Python 3.13。
 

@@ -45,7 +45,7 @@ cargo check -p trader -p terminal_tui -p terminal_client -p quantd
 当前模型服务目录：
 
 - `services/model`
-- 若要复用现成 Python 环境，可直接使用 `services/lstm-service/.venv`
+- 进入该目录后执行 `uv sync`
 
 ---
 

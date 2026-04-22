@@ -1,5 +1,7 @@
 # LSTM 策略 + 长桥 Paper 账号全链路设计
 
+> 历史说明：本文中的 `services/lstm-service` 与 `lstm.service_url` 描述的是最初设计；当前有效路径为 `services/model`，主配置 key 为 `model.service_url`。
+
 日期：2026-04-07  
 状态：Draft  
 范围：lstm-service（Python）、LstmStrategy（Rust）、长桥 paper 账号接入、策略配置持久化

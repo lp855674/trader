@@ -1,5 +1,7 @@
 # Quantd Paper 闭环与 Model 边界设计
 
+> 历史说明：本文中提到的 `services/lstm-service` 代表迁移前路径；当前有效路径是 `services/model`。
+
 日期：2026-04-21
 状态：Draft
 范围：`quantd` / `trader` 最小 paper 下单闭环、`runtime cycle` 半自动闭环、`services/model` 与 qlib workflow 边界
