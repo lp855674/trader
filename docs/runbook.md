@@ -446,6 +446,180 @@ Invoke-RestMethod "http://127.0.0.1:18081/v1/terminal/overview?account_id=acc_mv
 
 ---
 
+## Semi-Auto Rehearsal
+
+这一节把本地 paper rehearsal 的关键测试场景并入主 runbook，目标是验证：
+
+- 第一轮满足条件时允许下单
+- 后续重复轮次会被 execution guard 正确拦截
+- `latest_cycle`、`execution-state`、`orders/fills` 与日志能互相对上
+
+### 演练建议
+
+- 使用独立数据库，例如 `quantd_rehearsal.db`
+- 保留两份日志：
+  - `quantd_rehearsal.out.log`
+  - `quantd_rehearsal_model.out.log`
+- 固定标的：
+  - `venue = US_EQUITY`
+  - `symbol = AAPL.US`
+  - `account_id = acc_mvp_paper`
+
+### 推荐启动方式
+
+窗口 A：
+
+```powershell
+Set-Location E:\code\trader\services\model
+$env:MODEL_ARTIFACTS_DIR = '.\models'
+uv run uvicorn main:app --host 127.0.0.1 --port 8000 *> ..\..\quantd_rehearsal_model.out.log
+```
+
+窗口 B：
+
+```powershell
+Set-Location E:\code\trader
+$env:QUANTD_DATABASE_URL = 'sqlite:quantd_rehearsal.db'
+$env:QUANTD_HTTP_BIND = '127.0.0.1:18081'
+$env:QUANTD_ACCOUNT_ID = 'acc_mvp_paper'
+$env:QUANTD_DATA_SOURCE_ID = 'paper_bars'
+$env:QUANTD_UNIVERSE_LOOP_ENABLED = '0'
+$env:QUANTD_UNIVERSE_LOOP_VENUE = 'US_EQUITY'
+$env:QUANTD_UNIVERSE_LOOP_ACCOUNT_ID = 'acc_mvp_paper'
+$env:QUANTD_EXEC_SYMBOL_COOLDOWN_SECS = '300'
+$env:RUST_LOG = 'info'
+cargo run -p quantd *> quantd_rehearsal.out.log
+```
+
+### Rehearsal Case 1: First Fill
+
+目的：
+
+- 验证 `paper_only` 下第一轮 cycle 确实会下单
+
+操作：
+
+1. 写入 allowlist，只保留 `AAPL.US`
+2. 切 `runtime mode = paper_only`
+3. 写入 `model.service_url` 与 `strategy.acc_mvp_paper`
+4. 触发：
+
+```powershell
+$cycle = '{"venue":"US_EQUITY","account_id":"acc_mvp_paper"}'
+Invoke-WebRequest -Method Post -Uri http://127.0.0.1:18081/v1/runtime/cycle -ContentType 'application/json' -Body $cycle
+```
+
+核对：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:18081/v1/runtime/cycle/latest
+Invoke-RestMethod "http://127.0.0.1:18081/v1/runtime/execution-state?account_id=acc_mvp_paper"
+Invoke-RestMethod "http://127.0.0.1:18081/v1/orders?account_id=acc_mvp_paper"
+```
+
+预期：
+
+- `latest_cycle.accepted` 包含 `AAPL.US`
+- `latest_cycle.placed` 至少 1 条
+- `execution-state.positions` 中出现 `AAPL.US`
+- `orders` 中最新订单状态为 `FILLED`
+
+### Rehearsal Case 2: Same-Direction Position Guard
+
+目的：
+
+- 验证已有同向仓位后不会继续加仓
+
+操作：
+
+- 在 Case 1 成功后，不做清理，立刻再次触发同一轮 cycle
+
+预期：
+
+- `accepted` 仍可能包含 `AAPL.US`
+- `placed` 为空
+- `skipped.reason = guard_same_direction_position_open`
+- `positions.net_qty` 不增加
+- `orders` 总数不增加
+
+### Rehearsal Case 3: Open Order Guard
+
+目的：
+
+- 验证本地存在未完成订单时，会直接拒绝新的执行尝试
+
+说明：
+
+- `PaperAdapter` 默认直接写 `FILLED`
+- 这里需要手工插一条 `SUBMITTED` 订单
+
+示例 SQL：
+
+```sql
+INSERT INTO orders (
+  id,
+  account_id,
+  instrument_id,
+  side,
+  qty,
+  status,
+  idempotency_key,
+  created_at_ms
+)
+SELECT
+  'manual-submitted-order',
+  'acc_mvp_paper',
+  instruments.id,
+  'buy',
+  1.0,
+  'SUBMITTED',
+  'manual-submitted-key',
+  strftime('%s','now') * 1000
+FROM instruments
+WHERE instruments.venue = 'US_EQUITY'
+  AND instruments.symbol = 'AAPL.US';
+```
+
+然后再次触发 cycle。
+
+预期：
+
+- `placed` 为空
+- `skipped.reason = guard_open_order_exists`
+- `execution-state.open_orders` 中能看到 `AAPL.US`
+- 不会新增新的下单记录
+
+### Rehearsal Case 4: Cooldown / Duplicate Guard
+
+目的：
+
+- 验证短时间重复执行不会连续下同方向单
+
+操作：
+
+1. 删除 Case 3 中手工插入的 `SUBMITTED` 订单
+2. 删除已有持仓，或者重建干净 DB
+3. 在 `paper_only` 下快速连续触发两轮相同 cycle
+
+预期：
+
+- 第一轮允许下单
+- 第二轮不会新增订单
+- `latest_cycle.skipped` 出现以下之一：
+  - `guard_duplicate_idempotency`
+  - `guard_cooldown_active`
+
+### 每轮固定检查顺序
+
+1. `GET /v1/runtime/cycle/latest`
+2. `GET /v1/runtime/execution-state?account_id=acc_mvp_paper`
+3. `GET /v1/orders?account_id=acc_mvp_paper`
+4. 看 `quantd_rehearsal.out.log`
+
+建议按“决策 -> 状态 -> 台账 -> 日志”四层对账。
+
+---
+
 ## 完整通过标准
 
 以下项目都成立，才算当前本地联调通过：
@@ -457,6 +631,10 @@ Invoke-RestMethod "http://127.0.0.1:18081/v1/terminal/overview?account_id=acc_mv
 5. `trader order amend` / `cancel` 后，TUI 能看到对应订单事件和状态变化
 6. `terminal overview`、`execution-state`、CLI 输出、TUI 面板四者一致
 7. 若模型服务已配置且有模型，`runtime cycle` 能把结果体现在 `latest cycle`、history 与终端视图中
+8. Rehearsal Case 1 首轮允许下单
+9. Rehearsal Case 2 同向持仓被拦截
+10. Rehearsal Case 3 open order 被拦截
+11. Rehearsal Case 4 短时间重复执行不会重复下单
 
 ## 结束清理
 
@@ -465,5 +643,9 @@ Invoke-RestMethod "http://127.0.0.1:18081/v1/terminal/overview?account_id=acc_mv
 - 停止模型服务
 - 停止 `quantd`
 - 删除 `quantd_tui_manual.db`
+- 若做了 rehearsal，额外删除：
+  - `quantd_rehearsal.db`
+  - `quantd_rehearsal.out.log`
+  - `quantd_rehearsal_model.out.log`
 
 如果你需要复盘现场，就保留 DB 和终端日志。

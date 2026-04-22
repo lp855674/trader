@@ -106,7 +106,7 @@
 
 ### 4.3 文档没有单一真源
 
-README、`docs/runbook.md`、`docs/execution/2026-04-13-semi-auto-paper-rehearsal-runbook.md` 分别覆盖不同视角，但没有围绕“显式手工下单”和“半自动 cycle”拆成清晰分层文档。
+此前 README、`docs/runbook.md`、execution rehearsal runbook 分别覆盖不同视角；当前已收敛到 `docs/runbook.md` 作为 operator 真源，但仍需围绕“显式手工下单”和“半自动 cycle”保持清晰分层。
 
 ### 4.4 当前 LSTM 训练方式不是 qlib-native workflow
 
