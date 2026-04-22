@@ -480,6 +480,8 @@ fn redact_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use db::set_system_config;
+
     #[tokio::test]
     async fn build_execution_router_loads_paper_account_from_database_profile() {
         let database = db::Db::connect("sqlite::memory:").await.expect("db");
@@ -490,5 +492,30 @@ mod tests {
             .expect("router");
 
         assert!(router.resolve("acc_mvp_paper").is_ok());
+    }
+
+    #[tokio::test]
+    async fn load_model_service_url_prefers_model_key() {
+        let database = db::Db::connect("sqlite::memory:").await.expect("db");
+        set_system_config(database.pool(), "lstm.service_url", "http://127.0.0.1:8001")
+            .await
+            .expect("set legacy key");
+        set_system_config(database.pool(), "model.service_url", "http://127.0.0.1:8000")
+            .await
+            .expect("set model key");
+
+        let service_url = super::load_model_service_url(&database).await;
+        assert_eq!(service_url.as_deref(), Some("http://127.0.0.1:8000"));
+    }
+
+    #[tokio::test]
+    async fn load_model_service_url_falls_back_to_legacy_key() {
+        let database = db::Db::connect("sqlite::memory:").await.expect("db");
+        set_system_config(database.pool(), "lstm.service_url", "http://127.0.0.1:8001")
+            .await
+            .expect("set legacy key");
+
+        let service_url = super::load_model_service_url(&database).await;
+        assert_eq!(service_url.as_deref(), Some("http://127.0.0.1:8001"));
     }
 }

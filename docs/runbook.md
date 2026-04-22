@@ -330,6 +330,11 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 - `model.service_url`
 - `strategy.acc_mvp_paper`
 
+兼容说明：
+
+- 运行时仍兼容旧 key `lstm.service_url`
+- 新配置不要再写 `lstm.service_url` 或 `{"type":"lstm",...}`
+
 可用任意 SQLite 工具执行以下 SQL：
 
 ```sql
