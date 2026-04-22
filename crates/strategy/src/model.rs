@@ -6,7 +6,7 @@ use serde_json;
 
 use crate::strategy::{ScoredCandidate, Strategy, StrategyContext};
 
-pub struct LstmStrategy {
+pub struct ModelStrategy {
     pub client: Client,
     pub service_url: String,
     pub model_type: String,
@@ -17,7 +17,7 @@ pub struct LstmStrategy {
     pub data_source_id: String,
 }
 
-impl LstmStrategy {
+impl ModelStrategy {
     pub fn new(
         service_url: String,
         model_type: String,
@@ -90,7 +90,7 @@ fn normalize_model_error_code(error_code: Option<&str>, fallback: &str) -> Strin
     }
 }
 
-impl LstmStrategy {
+impl ModelStrategy {
     async fn load_bars(
         &self,
         context: &StrategyContext,
@@ -244,7 +244,7 @@ impl LstmStrategy {
 }
 
 #[async_trait]
-impl Strategy for LstmStrategy {
+impl Strategy for ModelStrategy {
     async fn evaluate(&self, context: &StrategyContext) -> Option<Signal> {
         match self.evaluate_with_signal(context).await {
             Ok(signal) => signal,
@@ -259,11 +259,11 @@ impl Strategy for LstmStrategy {
         &self,
         context: &StrategyContext,
     ) -> Result<Option<ScoredCandidate>, String> {
-        LstmStrategy::evaluate_candidate(self, context).await
+        ModelStrategy::evaluate_candidate(self, context).await
     }
 }
 
-pub type ModelStrategy = LstmStrategy;
+pub type LstmStrategy = ModelStrategy;
 
 #[cfg(test)]
 mod tests {
@@ -272,8 +272,8 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn make_strategy(url: &str) -> LstmStrategy {
-        LstmStrategy {
+    fn make_strategy(url: &str) -> ModelStrategy {
+        ModelStrategy {
             client: reqwest::Client::new(),
             service_url: url.to_string(),
             model_type: "alstm".to_string(),

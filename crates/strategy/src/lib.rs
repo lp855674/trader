@@ -39,6 +39,7 @@ pub mod trading;
 
 pub use strategy::{AlwaysLongOne, NoOpStrategy, ScoredCandidate, Strategy, StrategyContext};
 
-pub mod lstm;
-pub use lstm::LstmStrategy;
-pub use lstm::ModelStrategy;
+pub mod model;
+pub use model::LstmStrategy;
+pub use model::ModelStrategy;
+pub use model as lstm;
