@@ -73,6 +73,10 @@
 - `GET /v1/runtime/cycle/history`：读取最近多轮结构化历史；底层使用 `runtime_cycle_runs` / `runtime_cycle_symbols`。
 - `GET /v1/runtime/execution-state`：按 `account_id` 返回本地持仓、未完成订单，以及最近一轮 cycle 的执行摘要（`accepted` / `placed` / `skipped`）。
 - `GET /v1/runtime/reconciliation/latest`：按 `account_id` 返回当前运行模式、本地持仓、本地未完成订单，以及最近一次 `reconciliation_snapshots` 快照。
+- 模型策略配置当前优先读取 `system_config`：
+  - `strategy.<account_id>` 使用 `{"type":"model","model_type":"alstm",...}` 作为主格式
+  - `model.service_url` 作为模型服务地址真源
+  - 兼容旧格式 `{"type":"lstm",...}` 与旧 key `lstm.service_url`
 - `POST /v1/orders`：显式提交 terminal 订单；当前仅支持限价单，走 execution router 而不是 `POST /v1/tick`。
 - `POST /v1/orders/:order_id/cancel`：终端撤单；请求体提供 `account_id`。
 - `POST /v1/orders/:order_id/amend`：终端改价改量；请求体提供 `account_id`、`qty` 与可选 `limit_price`。

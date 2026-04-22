@@ -1,7 +1,3 @@
-This directory is legacy.
-
-Use `services/model` as the active model service:
-
 1. `cd services/model`
 2. `uv sync`
 3. Optional: set a custom artifact directory

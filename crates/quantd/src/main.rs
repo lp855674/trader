@@ -155,10 +155,10 @@ async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
     let cfg_key = format!("strategy.{}", account_id);
     if let Ok(Some(cfg_json)) = db::get_system_config(database.pool(), &cfg_key).await {
         if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_json) {
-            if cfg["type"].as_str() == Some("lstm") {
-                let service_url = db::get_system_config(database.pool(), "lstm.service_url")
+            let strategy_type = cfg["type"].as_str().unwrap_or_default();
+            if matches!(strategy_type, "model" | "lstm") {
+                let service_url = load_model_service_url(database)
                     .await
-                    .unwrap_or_default()
                     .unwrap_or_else(|| "http://127.0.0.1:8000".to_string());
                 let model_type = cfg["model_type"].as_str().unwrap_or("alstm").to_string();
                 let lookback = cfg["lookback"].as_i64().unwrap_or(60);
@@ -168,12 +168,13 @@ async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
                     .unwrap_or_else(|_| "longbridge".to_string());
                 tracing::info!(
                     channel = "quantd",
-                    strategy = "lstm",
+                    strategy = "model",
+                    strategy_config_type = strategy_type,
                     model_type = %model_type,
                     service_url = %service_url,
-                    "loaded lstm strategy from system_config"
+                    "loaded model strategy from system_config"
                 );
-                return Arc::new(strategy::LstmStrategy::new(
+                return Arc::new(strategy::ModelStrategy::new(
                     service_url,
                     model_type,
                     lookback,
@@ -205,6 +206,16 @@ async fn build_strategy(database: &db::Db) -> Arc<dyn strategy::Strategy> {
             Arc::new(strategy::NoOpStrategy)
         }
     }
+}
+
+async fn load_model_service_url(database: &db::Db) -> Option<String> {
+    if let Ok(Some(url)) = db::get_system_config(database.pool(), "model.service_url").await {
+        return Some(url);
+    }
+    if let Ok(Some(url)) = db::get_system_config(database.pool(), "lstm.service_url").await {
+        return Some(url);
+    }
+    None
 }
 
 fn build_ingest_registry(

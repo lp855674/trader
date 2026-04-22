@@ -41,3 +41,4 @@ pub use strategy::{AlwaysLongOne, NoOpStrategy, ScoredCandidate, Strategy, Strat
 
 pub mod lstm;
 pub use lstm::LstmStrategy;
+pub use lstm::ModelStrategy;

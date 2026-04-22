@@ -10,7 +10,7 @@
 2. `Model Workflow / Service`
    - 验证模型服务进程是否可启动、健康、可预测
    - 不验证交易执行
-3. `LSTM Cycle Paper`
+3. `Model Cycle Paper`
    - 验证 `runtime cycle` 如何通过模型评分、accepted、signal、execution guard 生成 paper 订单
 
 ## 终端窗口规划
@@ -42,11 +42,10 @@ cargo check -p trader -p terminal_tui -p terminal_client -p quantd
 
 ### Python
 
-当前模型服务仍位于：
+当前模型服务目录：
 
-- `services/lstm-service/.venv`
-
-后续若目录重命名为 `services/model`，本 runbook 也应同步更新；在那之前，这里仍按当前仓库路径执行。
+- `services/model`
+- 若要复用现成 Python 环境，可直接使用 `services/lstm-service/.venv`
 
 ---
 
@@ -282,8 +281,8 @@ cargo run -p trader -- `
 在窗口 A：
 
 ```powershell
-Set-Location E:\code\trader\services\lstm-service
-$env:LSTM_MODELS_DIR = '.\models'
+Set-Location E:\code\trader\services\model
+$env:MODEL_ARTIFACTS_DIR = '.\models'
 uv run uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -302,11 +301,11 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 - 说明服务进程活着，但没有可供 `/predict` 使用的模型
 - 可以继续做 `Paper Smoke`
-- 不要继续做后面的 `LSTM Cycle Paper`
+- 不要继续做后面的 `Model Cycle Paper`
 
 ---
 
-## LSTM Cycle Paper
+## Model Cycle Paper
 
 这一节回答的是：
 
@@ -322,13 +321,13 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 因此 `accepted` 不等于一定 `placed`。
 
-### 步骤 1：写入 LSTM 策略配置
+### 步骤 1：写入 model 策略配置
 
 `quantd` 当前优先从 SQLite `system_config` 读取策略配置。
 
-需要写两条 key：
+建议写两条 key：
 
-- `lstm.service_url`
+- `model.service_url`
 - `strategy.acc_mvp_paper`
 
 可用任意 SQLite 工具执行以下 SQL：
@@ -336,8 +335,8 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 ```sql
 INSERT OR REPLACE INTO system_config (id, key, value, updated_at, created_at)
 VALUES (
-  'lstm.service_url',
-  'lstm.service_url',
+  'model.service_url',
+  'model.service_url',
   'http://127.0.0.1:8000',
   strftime('%s','now'),
   strftime('%s','now')
@@ -347,7 +346,7 @@ INSERT OR REPLACE INTO system_config (id, key, value, updated_at, created_at)
 VALUES (
   'strategy.acc_mvp_paper',
   'strategy.acc_mvp_paper',
-  '{"type":"lstm","model_type":"alstm","lookback":60,"buy_threshold":0.6,"sell_threshold":-0.6}',
+  '{"type":"model","model_type":"alstm","lookback":60,"buy_threshold":0.6,"sell_threshold":-0.6}',
   strftime('%s','now'),
   strftime('%s','now')
 );
@@ -357,7 +356,7 @@ VALUES (
 
 预期日志里出现：
 
-- `loaded lstm strategy from system_config`
+- `loaded model strategy from system_config`
 
 ### 步骤 2：切到 `paper_only`
 
@@ -435,7 +434,7 @@ Invoke-RestMethod "http://127.0.0.1:18081/v1/terminal/overview?account_id=acc_mv
 - `insufficient_bars`
   - 本地 bars 数量不足 lookback
 - `model_unreachable`
-  - model 服务没启动，或 `lstm.service_url` 写错
+  - model 服务没启动，或 `model.service_url` 写错
 - `accepted` 有值但 `placed` 为空
   - 优先看 `latest_cycle.skipped`
   - 再看 `execution-state.open_orders` / `positions`

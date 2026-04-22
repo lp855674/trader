@@ -117,14 +117,14 @@ impl LstmStrategy {
                     .collect::<Vec<_>>(),
                 Ok(_) => {
                     tracing::warn!(
-                        channel = "lstm_strategy",
+                        channel = "model_strategy",
                         instrument = %context.instrument,
-                        "insufficient bars for LSTM lookback; skipping"
+                        "insufficient bars for model lookback; skipping"
                     );
                     return Ok(None);
                 }
                 Err(e) => {
-                    tracing::error!(channel = "lstm_strategy", err = %e, "db error reading bars");
+                    tracing::error!(channel = "model_strategy", err = %e, "db error reading bars");
                     return Ok(None);
                 }
             }
@@ -205,7 +205,7 @@ impl LstmStrategy {
 
         if pred.score > self.buy_threshold {
             Ok(Some(Signal {
-                strategy_id: format!("lstm_{}", self.model_type),
+                strategy_id: format!("model_{}", self.model_type),
                 instrument: context.instrument.clone(),
                 instrument_db_id: context.instrument_db_id,
                 side: Side::Buy,
@@ -215,7 +215,7 @@ impl LstmStrategy {
             }))
         } else if pred.score < self.sell_threshold {
             Ok(Some(Signal {
-                strategy_id: format!("lstm_{}", self.model_type),
+                strategy_id: format!("model_{}", self.model_type),
                 instrument: context.instrument.clone(),
                 instrument_db_id: context.instrument_db_id,
                 side: Side::Sell,
@@ -249,7 +249,7 @@ impl Strategy for LstmStrategy {
         match self.evaluate_with_signal(context).await {
             Ok(signal) => signal,
             Err(error) => {
-                tracing::warn!(channel = "lstm_strategy", error = %error, "lstm-service failure");
+                tracing::warn!(channel = "model_strategy", error = %error, "model-service failure");
                 None
             }
         }
@@ -262,6 +262,8 @@ impl Strategy for LstmStrategy {
         LstmStrategy::evaluate_candidate(self, context).await
     }
 }
+
+pub type ModelStrategy = LstmStrategy;
 
 #[cfg(test)]
 mod tests {
