@@ -1,0 +1,1 @@
+{"model_id": "model_AAPL_US_alstm_20260424", "model_type": "alstm", "symbol_universe": ["AAPL.US"], "feature_set": "Alpha158", "lookback": 60, "prediction_semantics": "score in [-1,1]", "trained_at": "2026-04-24T01:42:29.901713+00:00"}

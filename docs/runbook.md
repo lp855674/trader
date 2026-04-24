@@ -47,6 +47,66 @@ cargo check -p trader -p terminal_tui -p terminal_client -p quantd
 - `services/model`
 - 进入该目录后执行 `uv sync`
 
+## 自动化测试入口
+
+`runbook` 负责 operator 手工联调，但当前仓库已经有一组可直接回归的自动化测试。建议先跑自动化测试，再做后面的手工联调。
+
+### Rust: terminal / runtime / execution guard
+
+仓库根目录执行：
+
+```powershell
+cargo test -p api --test terminal_trading_smoke
+cargo test -p api --test runtime_cycle_smoke
+cargo test -p pipeline --test execution_guard_smoke
+```
+
+这些测试分别覆盖：
+
+- `terminal_trading_smoke`
+  - submit / amend / cancel 主链
+  - `observe_only` 下 submit 拒绝
+  - `degraded` 下 amend 拒绝
+  - `observe_only` 下 cancel 允许
+  - `terminal overview` / `quote` / `orders list`
+- `runtime_cycle_smoke`
+  - cycle round trip
+  - `latest cycle` / `history`
+  - `execution-state`
+  - `reconciliation/latest`
+- `execution_guard_smoke`
+  - duplicate idempotency
+  - same-direction position
+  - open order
+
+### Python: model service
+
+在 `services/model` 目录执行：
+
+```powershell
+uv run pytest tests
+```
+
+当前测试覆盖：
+
+- `test_health.py`
+  - 服务健康检查与模型发现
+- `test_data_update.py`
+  - `/data/update` 路由与返回结构
+- `test_predict.py`
+  - artifact 加载后的 `/predict`
+- `test_predict_live.py`
+  - 预测主链与请求校验
+- `test_models_features.py`
+  - 支持模型列表与 feature 端点
+- `test_train.py`
+  - 训练产物写出与训练路由
+
+备注：
+
+- `test_train.py` 中有 1 个 integration case 依赖 Qlib Yahoo provider，默认可能 `skip`
+- 这是预期行为，不影响本地 paper / service 主链验证
+
 ---
 
 ## Paper Smoke
@@ -263,6 +323,63 @@ cargo run -p trader -- `
 
 这也是本节建议先切到 `paper_only` 再做 submit / amend 的原因。
 
+### 场景 E：runtime mode 拒绝矩阵
+
+这一组是最小权限回归，用来确认手工单路由和 runtime mode 契约一致。
+
+Case 1: `observe_only` 下 submit 被拒绝
+
+```powershell
+$mode = @{ mode = 'observe_only' } | ConvertTo-Json
+Invoke-WebRequest -Method Put -Uri http://127.0.0.1:18081/v1/runtime/mode -ContentType 'application/json' -Body $mode
+
+$body = @{
+  account_id = 'acc_mvp_paper'
+  symbol = 'AAPL.US'
+  side = 'buy'
+  qty = 10
+  order_type = 'limit'
+  limit_price = 123.45
+} | ConvertTo-Json
+
+try {
+  Invoke-WebRequest -Method Post -Uri http://127.0.0.1:18081/v1/orders -ContentType 'application/json' -Body $body
+} catch {
+  $_.Exception.Response.StatusCode.value__
+}
+```
+
+预期：
+
+- HTTP `403`
+- `error_code = runtime_mode_rejected`
+
+Case 2: `degraded` 下 amend 被拒绝
+
+操作：
+
+1. 先在 `enabled` 或 `paper_only` 下创建一笔订单
+2. 再切到 `degraded`
+3. 对该订单执行 amend
+
+预期：
+
+- HTTP `403`
+- `error_code = runtime_mode_rejected`
+
+Case 3: `observe_only` 下 cancel 仍允许
+
+操作：
+
+1. 先在 `enabled` 或 `paper_only` 下创建一笔订单
+2. 切回 `observe_only`
+3. 调用 cancel
+
+预期：
+
+- HTTP `200`
+- 订单状态变为 `CANCELLED`
+
 ---
 
 ## Model Workflow / Service
@@ -286,6 +403,12 @@ $env:MODEL_ARTIFACTS_DIR = '.\models'
 uv run uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
+如果需要显式指定本地 Qlib 数据目录，可同时设置：
+
+```powershell
+$env:QLIB_DATA_DIR = 'C:\Users\Hi\.qlib\qlib_data\us_data'
+```
+
 健康检查：
 
 ```powershell
@@ -302,6 +425,201 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 - 说明服务进程活着，但没有可供 `/predict` 使用的模型
 - 可以继续做 `Paper Smoke`
 - 不要继续做后面的 `Model Cycle Paper`
+
+可选：检查当前 torch 是否已启用 CUDA。
+
+```powershell
+services\model\.venv\Scripts\python.exe -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
+```
+
+预期：
+
+- 若希望训练走 GPU，则输出类似：
+  - `2.10.0+cu128`
+  - `12.8`
+  - `True`
+  - `NVIDIA GeForce ...`
+- 若输出 `+cpu` 或 `False`，则当前训练仍会回退 CPU
+
+### 步骤 2：训练一个最小可预测 artifact
+
+如果本地没有现成模型，建议优先走服务暴露的 `/train` workflow，而不是依赖未承诺稳定的脚本入口。
+
+先在窗口 A 另开一个终端进入 `services/model`：
+
+```powershell
+Set-Location E:\code\trader\services\model
+$env:MODEL_ARTIFACTS_DIR = '.\models'
+```
+
+最小训练请求：
+
+```powershell
+$train = @{
+  symbol = 'AAPL.US'
+  model_type = 'alstm'
+  start = '2020-01-01'
+  end = '2025-12-31'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/train `
+  -ContentType 'application/json' `
+  -Body $train
+```
+
+当前 operator 视角下，训练环节的最低要求不是“必须是 LSTM”，而是：
+
+- 能产出标准 artifact 目录
+- `/health` 能发现
+- `/predict` 能加载并返回分数
+
+如果只是要先跑通开源 paper 主链，可以使用当前支持的任意模型类型先打通训练与预测；后续再把 LSTM/ALSTM 作为正式模型接回同一 workflow 边界。
+
+训练成功后，响应体除了 `model_id` 和 `metrics`，还应包含：
+
+- `requested_start`
+- `requested_end`
+- `effective_start`
+- `effective_end`
+- `sample_count`
+
+关键校验点：
+
+- `requested_*` 应与请求一致
+- `effective_*` 是本地 Qlib 数据实际生效区间
+- 若本地数据没有更新到请求结束日期，`effective_end` 会早于 `requested_end`
+- 这是预期行为，说明本地 provider 过期，不是 `/train` 忽略了你的参数
+
+可直接查看落盘 metadata：
+
+```powershell
+Get-Content .\models\AAPL_US_alstm\metadata.json
+```
+
+预期 metadata 至少包含：
+
+- `requested_start`
+- `requested_end`
+- `effective_start`
+- `effective_end`
+- `training_window`
+- `metrics`
+
+如果 `metrics` 中某些字段之前显示为空白，当前实现会把 `NaN/inf` 清洗为 `0.0`，不再返回空值。
+
+### 步骤 2.1：更新本地 Qlib 数据
+
+当前 model service 新增了 `POST /data/update`，用于把 Yahoo 日线写回本地 Qlib provider。
+
+示例：
+
+```powershell
+$update = @{
+  symbols = @('AAPL.US')
+  start = '2020-01-01'
+  end = '2025-12-31'
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/data/update `
+  -ContentType 'application/json' `
+  -Body $update
+```
+
+预期：
+
+- 返回 `provider_uri`
+- 返回 `calendar_start` / `calendar_end`
+- `updated[0]` 中包含：
+  - `symbol`
+  - `requested_start`
+  - `requested_end`
+  - `effective_start`
+  - `effective_end`
+  - `rows_written`
+
+推荐操作顺序：
+
+1. 先调用 `/data/update`
+2. 观察 `calendar_end` 是否已经推进到期望日期
+3. 再调用 `/train`
+4. 核对训练响应中的 `effective_end` 是否与更新后的数据范围一致
+
+说明：
+
+- `/data/update` 当前是同步接口，调用期间会阻塞请求
+- 它当前按请求的 `symbols` 更新，不是全市场重建
+- 若 Yahoo 没有返回数据，应返回 `404`
+
+### 步骤 3：直接验证预测端点
+
+当 `models_loaded > 0` 后，可直接做一次 `/predict` 烟测。
+
+示例：
+
+```powershell
+$bars = 0..59 | ForEach-Object {
+  @{
+    ts_ms = 1700000000000 + $_ * 86400000
+    open = 180.0 + $_ * 0.1
+    high = 182.0
+    low = 179.0
+    close = 181.0 + $_ * 0.05
+    volume = 50000000.0
+  }
+}
+
+$predict = @{
+  symbol = 'AAPL.US'
+  model_type = 'alstm'
+  bars = $bars
+} | ConvertTo-Json -Depth 4
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/predict `
+  -ContentType 'application/json' `
+  -Body $predict
+```
+
+预期：
+
+- 返回预测结果，而不是 5xx
+- 若模型不存在，应返回 `404`，且 `detail.error_code = model_not_found`
+- 若 bars 少于 `60`，请求会返回 `422`
+
+### 步骤 4：训练/预测相关最小回归
+
+建议在 `services/model` 跑下面这一条：
+
+```powershell
+uv run pytest tests/test_health.py tests/test_data_update.py tests/test_predict.py tests/test_train.py
+```
+
+这些测试足够覆盖：
+
+- artifact 发现
+- 数据更新路由
+- 预测主链
+- 训练输出格式
+
+如果要做一组更贴近当前联调问题的手工测试，建议按下面 4 个 case：
+
+- Case 1: `/data/update` 更新单标的
+  - 目标：确认本地 Qlib provider 的 `calendar_end` 会推进
+  - 通过标准：响应 `updated[0].rows_written > 0`
+- Case 2: `/train` 返回实际生效日期
+  - 目标：确认请求区间与实际训练区间都可见
+  - 通过标准：响应里同时出现 `requested_end` 和 `effective_end`
+- Case 3: metadata 落盘日期校验
+  - 目标：确认 artifact 自描述完整
+  - 通过标准：`metadata.json` 顶层包含 `effective_start/effective_end`
+- Case 4: GPU 训练链路校验
+  - 目标：确认 torch 已识别 CUDA
+  - 通过标准：`torch.cuda.is_available() == True`
 
 ---
 

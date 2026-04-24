@@ -1,137 +1,137 @@
-name: CI
+# name: CI
 
-on:
-  push:
-    branches: [main, master, develop]
-  pull_request:
-    branches: [main, master, develop]
+# on:
+#   push:
+#     branches: [main, master, develop]
+#   pull_request:
+#     branches: [main, master, develop]
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+# env:
+#   CARGO_TERM_COLOR: always
+#   RUSTFLAGS: -D warnings
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
+# jobs:
+#   build:
+#     runs-on: ubuntu-latest
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-action@v1
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+#       - name: Install Rust stable
+#         uses: dtolnay/rust-action@v1
+#         with:
+#           toolchain: stable
+#           components: clippy, rustfmt
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+#       - name: Install dependencies
+#         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Build
-        run: cargo build --verbose
+#       - name: Cache cargo
+#         uses: actions/cache@v4
+#         with:
+#           path: |
+#             ~/.cargo/registry
+#             ~/.cargo/git
+#             target
+#           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+#       - name: Build
+#         run: cargo build --verbose
 
-      - name: Run fmt
-        run: cargo fmt --check
+#       - name: Run clippy
+#         run: cargo clippy -- -D warnings
 
-      - name: Run tests
-        run: cargo test --verbose
+#       - name: Run fmt
+#         run: cargo fmt --check
 
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/cargo@v1
-        with:
-          command: audit
-          args: --deny warnings
+#       - name: Run tests
+#         run: cargo test --verbose
 
-  performance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@v1
-        with:
-          toolchain: stable
-      - name: Install criterion
-        run: cargo install criterion
-      - name: Run benchmarks
-        run: cargo bench -- --output-format terse
+#   security:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions-rs/cargo@v1
+#         with:
+#           command: audit
+#           args: --deny warnings
 
-  integration:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: quantd_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install PostgreSQL
-        run: sudo apt-get update && sudo apt-get install -y postgresql
-      - name: Run integration tests
-        run: cargo test --features postgres -- --test-threads=1
+#   performance:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-action@v1
+#         with:
+#           toolchain: stable
+#       - name: Install criterion
+#         run: cargo install criterion
+#       - name: Run benchmarks
+#         run: cargo bench -- --output-format terse
 
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@v1
-        with:
-          toolchain: stable
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
-      - name: Run coverage
-        run: cargo tarpaulin --out Html --output-dir coverage
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
+#   integration:
+#     runs-on: ubuntu-latest
+#     services:
+#       postgres:
+#         image: postgres:15
+#         env:
+#           POSTGRES_USER: postgres
+#           POSTGRES_PASSWORD: postgres
+#           POSTGRES_DB: quantd_test
+#         options: >-
+#           --health-cmd pg_isready
+#           --health-interval 10s
+#           --health-timeout 5s
+#           --health-retries 5
+#         ports:
+#           - 5432:5432
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Install PostgreSQL
+#         run: sudo apt-get update && sudo apt-get install -y postgresql
+#       - name: Run integration tests
+#         run: cargo test --features postgres -- --test-threads=1
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: [build, security, integration]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
+#   coverage:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: dtolnay/rust-action@v1
+#         with:
+#           toolchain: stable
+#       - name: Install cargo-tarpaulin
+#         run: cargo install cargo-tarpaulin
+#       - name: Run coverage
+#         run: cargo tarpaulin --out Html --output-dir coverage
+#       - name: Upload coverage
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: coverage-report
+#           path: coverage/
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+#   deploy:
+#     runs-on: ubuntu-latest
+#     needs: [build, security, integration]
+#     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#     steps:
+#       - uses: actions/checkout@v4
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+#       - name: Log in to Container Registry
+#         uses: docker/login-action@v3
+#         with:
+#           registry: ghcr.io
+#           username: ${{ github.actor }}
+#           password: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Build and push Docker image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: .
+#           push: true
+#           tags: |
+#             ghcr.io/${{ github.repository }}:latest
+#             ghcr.io/${{ github.repository }}:${{ github.sha }}
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max

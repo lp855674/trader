@@ -11,6 +11,12 @@ from fastapi.testclient import TestClient
 from main import app
 from tests.support import cleanup_case_dir, make_case_dir
 
+
+class FakeIndex(list):
+    def get_level_values(self, _name):
+        return self
+
+
 class FakeDataFrame:
     fail_symbol: str | None = None
 
@@ -19,6 +25,7 @@ class FakeDataFrame:
         self._values = np.ones((70, 158), dtype=np.float32)
         self._label = np.ones(70, dtype=np.float32)
         self.empty = False
+        self.index = FakeIndex(["2023-02-01", "2023-03-01"])
 
     def xs(self, symbol, level):
         if self.fail_symbol and symbol == self.fail_symbol:
@@ -59,6 +66,7 @@ class FakeAlpha158:
         learn_processors,
     ):
         FakeAlpha158.last_args = {
+            "instruments": instruments,
             "start_time": start_time,
             "end_time": end_time,
             "fit_start_time": fit_start_time,
@@ -151,15 +159,27 @@ def test_train_uses_requested_date_range_and_writes_artifact(monkeypatch):
             )
             assert resp.status_code == 200
             assert FakeAlpha158.last_args
+            assert FakeAlpha158.last_args["instruments"] == ["AAPL"]
             assert FakeAlpha158.last_args["start_time"] == "2023-02-01"
             assert FakeAlpha158.last_args["end_time"] == "2023-03-01"
-            model_id = resp.json()["model_id"]
+            body = resp.json()
+            assert body["requested_start"] == "2023-02-01"
+            assert body["requested_end"] == "2023-03-01"
+            assert body["effective_start"] == "2023-02-01"
+            assert body["effective_end"] == "2023-03-01"
+            assert body["sample_count"] == 10
+            model_id = body["model_id"]
             artifact_dir = models_dir / "AAPL_US_lstm"
             assert artifact_dir.exists()
             assert (artifact_dir / "model.pt").exists()
             metadata = json.loads((artifact_dir / "metadata.json").read_text(encoding="utf-8"))
             assert metadata["model_id"] == model_id
             assert metadata["symbol_universe"] == ["AAPL.US"]
+            assert metadata["requested_start"] == "2023-02-01"
+            assert metadata["requested_end"] == "2023-03-01"
+            assert metadata["effective_start"] == "2023-02-01"
+            assert metadata["training_window"]["effective_end"] == "2023-03-01"
+            assert metadata["metrics"]["icir"] == 0.0
     finally:
         uninstall_fake_qlib()
         cleanup_case_dir(models_dir)

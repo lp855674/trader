@@ -5,5 +5,5 @@ $env:QUANTD_ACCOUNT_ID = 'acc_mvp_paper'
 $env:QUANTD_DATA_SOURCE_ID = 'paper_bars'
 $env:QUANTD_UNIVERSE_LOOP_ENABLED = '0'
 $env:QUANTD_EXEC_SYMBOL_COOLDOWN_SECS = '300'
-$env:RUST_LOG = 'debug'
+$env:RUST_LOG = 'info'
 cargo run -p quantd

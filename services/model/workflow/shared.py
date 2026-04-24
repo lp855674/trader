@@ -49,6 +49,7 @@ def write_artifact(
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     torch.save(checkpoint, artifact_dir / "model.pt")
+    training_window = checkpoint.get("training_window") or {}
     (artifact_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -59,6 +60,12 @@ def write_artifact(
                 "lookback": checkpoint.get("lookback", 60),
                 "prediction_semantics": prediction_semantics,
                 "trained_at": trained_at.isoformat(),
+                "requested_start": training_window.get("requested_start"),
+                "requested_end": training_window.get("requested_end"),
+                "effective_start": training_window.get("effective_start"),
+                "effective_end": training_window.get("effective_end"),
+                "training_window": training_window,
+                "metrics": checkpoint.get("metrics"),
             }
         ),
         encoding="utf-8",

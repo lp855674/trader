@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from runtime.loader import load_models
 from workflow.backtest import router as backtest_router
+from workflow.data_update import router as data_update_router
 from workflow.features import router as features_router
 from workflow.predict import router as predict_router
 from workflow.train import router as train_router
@@ -14,6 +15,7 @@ app.include_router(train_router)
 app.include_router(predict_router)
 app.include_router(backtest_router)
 app.include_router(features_router)
+app.include_router(data_update_router)
 
 
 @app.get("/health")
