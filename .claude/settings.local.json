@@ -19,7 +19,8 @@
       "Bash(pytest tests/test_train.py::test_train_unknown_model_type_returns_422 -v)",
       "Bash(git commit:*)",
       "Bash(python -m pytest tests/test_models_features.py -v)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git:*)"
     ]
   }
 }

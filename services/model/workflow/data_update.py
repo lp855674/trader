@@ -10,6 +10,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 from qlib.data.cache import H
+from workflow.shared import get_qlib_provider_dir
 
 router = APIRouter()
 
@@ -41,7 +42,7 @@ class DataUpdateResponse(BaseModel):
 
 
 def _provider_uri() -> Path:
-    return Path(os.getenv("QLIB_DATA_DIR", "~/.qlib/qlib_data/us_data")).expanduser()
+    return get_qlib_provider_dir()
 
 
 def _read_calendar(path: Path) -> list[str]:

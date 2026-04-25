@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,23 @@ from runtime.schemas import LoadedModel
 
 SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 SUPPORTED_MODELS = {"lstm", "alstm"}
+
+
+def get_qlib_base_dir() -> Path:
+    return Path(os.getenv("QLIB_DATA_DIR", "~/.qlib")).expanduser()
+
+
+def get_qlib_provider_dir() -> Path:
+    base_dir = get_qlib_base_dir()
+    if base_dir.name.lower() == "us_data":
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "QLIB_DATA_DIR must be a base directory, not a direct provider path. "
+                "Set QLIB_DATA_DIR to the base path and the service will use <base>/qlib/us_data."
+            ),
+        )
+    return base_dir / "qlib" / "us_data"
 
 
 def validate_name(value: str, field: str) -> str:
