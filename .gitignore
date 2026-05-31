@@ -6,7 +6,9 @@
 target*
 **/.tmp*
 
+**/.venv/**
 
 # client
 client/node_modules/
 client/dist/
+services/model/.venv/Lib/site-packages/torch/_refs/special/__init__.py
