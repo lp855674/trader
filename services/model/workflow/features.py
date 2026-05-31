@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
+from workflow.shared import get_qlib_provider_dir
 
 router = APIRouter()
 
@@ -14,7 +12,7 @@ async def get_features(symbol: str) -> dict:
         import qlib
         from qlib.constant import REG_US
         from qlib.contrib.data.handler import Alpha158
-        qlib_dir = Path(os.getenv("QLIB_DATA_DIR", "~/.qlib/qlib_data/us_data")).expanduser()
+        qlib_dir = get_qlib_provider_dir()
         qlib.init(provider_uri=str(qlib_dir), region=REG_US)
         qlib_symbol = symbol.split(".")[0]
         handler = Alpha158(instruments=[qlib_symbol], infer_processors=[])

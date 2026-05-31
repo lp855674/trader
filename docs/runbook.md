@@ -406,8 +406,14 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8000
 如果需要显式指定本地 Qlib 数据目录，可同时设置：
 
 ```powershell
-$env:QLIB_DATA_DIR = 'C:\Users\Hi\.qlib\qlib_data\us_data'
+$env:QLIB_DATA_DIR = 'C:\Users\Hi\.qlib'
 ```
+
+说明：
+
+- `QLIB_DATA_DIR` 现在表示基础目录，不是直接的 provider 目录
+- model service 会把实际 provider 路径解析为 `<QLIB_DATA_DIR>\qlib\us_data`
+- 不要再把 `QLIB_DATA_DIR` 直接设置为 `...\us_data`
 
 健康检查：
 

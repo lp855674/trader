@@ -77,21 +77,28 @@ class FakeAlpha158:
         return FakeDataFrame()
 
 
+class FakeQlibModule:
+    def __init__(self):
+        self.last_init: dict[str, str] | None = None
+
+    def init(self, provider_uri, region):
+        self.last_init = {"provider_uri": provider_uri, "region": region}
+
+
 def install_fake_qlib():
+    fake_qlib_module = FakeQlibModule()
     fake_handler_module = SimpleNamespace(Alpha158=FakeAlpha158)
     fake_data_module = SimpleNamespace(handler=fake_handler_module)
     fake_contrib_module = SimpleNamespace(data=fake_data_module)
     fake_constant = SimpleNamespace(REG_US="US_TEST_REGION")
-    fake_qlib = SimpleNamespace(
-        init=lambda provider_uri, region: None,
-        constant=fake_constant,
-        contrib=fake_contrib_module,
-    )
-    sys.modules["qlib"] = fake_qlib
+    fake_qlib_module.constant = fake_constant
+    fake_qlib_module.contrib = fake_contrib_module
+    sys.modules["qlib"] = fake_qlib_module
     sys.modules["qlib.constant"] = fake_constant
     sys.modules["qlib.contrib"] = fake_contrib_module
     sys.modules["qlib.contrib.data"] = fake_data_module
     sys.modules["qlib.contrib.data.handler"] = fake_handler_module
+    return fake_qlib_module
 
 
 def uninstall_fake_qlib():
@@ -145,7 +152,7 @@ def test_train_symbol_validation(monkeypatch):
 
 def test_train_uses_requested_date_range_and_writes_artifact(monkeypatch):
     models_dir = prepare_train_env(monkeypatch)
-    install_fake_qlib()
+    fake_qlib = install_fake_qlib()
     try:
         with TestClient(app) as client:
             resp = client.post(
@@ -162,6 +169,7 @@ def test_train_uses_requested_date_range_and_writes_artifact(monkeypatch):
             assert FakeAlpha158.last_args["instruments"] == ["AAPL"]
             assert FakeAlpha158.last_args["start_time"] == "2023-02-01"
             assert FakeAlpha158.last_args["end_time"] == "2023-03-01"
+            assert fake_qlib.last_init
             body = resp.json()
             assert body["requested_start"] == "2023-02-01"
             assert body["requested_end"] == "2023-03-01"
@@ -210,3 +218,50 @@ def test_train_missing_symbol_returns_422(monkeypatch):
 
 def test_train_response_schema():
     pytest.skip("Integration test: requires Qlib Yahoo data provider")
+
+
+def test_train_uses_resolved_qlib_provider_dir(monkeypatch, tmp_path):
+    models_dir = prepare_train_env(monkeypatch)
+    fake_qlib = install_fake_qlib()
+    monkeypatch.setenv("QLIB_DATA_DIR", str(tmp_path / "market"))
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/train",
+                json={
+                    "symbol": "AAPL.US",
+                    "model_type": "alstm",
+                    "start": "2023-02-01",
+                    "end": "2023-03-01",
+                },
+            )
+        assert resp.status_code == 200
+        assert fake_qlib.last_init == {
+            "provider_uri": str(tmp_path / "market" / "qlib" / "us_data"),
+            "region": "US_TEST_REGION",
+        }
+    finally:
+        uninstall_fake_qlib()
+        cleanup_case_dir(models_dir)
+
+
+def test_train_rejects_old_style_qlib_data_dir(monkeypatch, tmp_path):
+    models_dir = prepare_train_env(monkeypatch)
+    install_fake_qlib()
+    monkeypatch.setenv("QLIB_DATA_DIR", str(tmp_path / "qlib_data" / "us_data"))
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/train",
+                json={
+                    "symbol": "AAPL.US",
+                    "model_type": "alstm",
+                    "start": "2023-02-01",
+                    "end": "2023-03-01",
+                },
+            )
+        assert resp.status_code == 500
+        assert "base directory" in resp.json()["detail"]
+    finally:
+        uninstall_fake_qlib()
+        cleanup_case_dir(models_dir)

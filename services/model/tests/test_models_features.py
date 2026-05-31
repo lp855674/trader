@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import SimpleNamespace
 
 import torch
 from fastapi.testclient import TestClient
@@ -40,6 +42,44 @@ def write_stub_artifact(models_dir, symbol: str, model_type: str):
         ),
         encoding="utf-8",
     )
+
+
+class FakeFeatureRow:
+    def __init__(self):
+        self.name = (0,)
+
+    def drop(self, _label, errors="ignore"):
+        return {"close": 1.23456789, "volume": 2.0}
+
+
+class FakeFeatureIloc:
+    def __getitem__(self, index):
+        assert index == -1
+        return FakeFeatureRow()
+
+
+class FakeFeatureFrame:
+    empty = False
+
+    def __init__(self):
+        self.iloc = FakeFeatureIloc()
+
+
+class FakeFeatureHandler:
+    def __init__(self, instruments, infer_processors):
+        self.instruments = instruments
+        self.infer_processors = infer_processors
+
+    def fetch(self):
+        return FakeFeatureFrame()
+
+
+class FakeFeatureQlib:
+    def __init__(self):
+        self.last_init = None
+
+    def init(self, provider_uri, region):
+        self.last_init = {"provider_uri": provider_uri, "region": region}
 
 
 def test_get_models_lists_saved(monkeypatch):
@@ -83,3 +123,33 @@ def test_backtest_missing_model_returns_404(monkeypatch):
             assert resp.status_code == 404
     finally:
         cleanup_case_dir(models_dir)
+
+
+def test_features_uses_resolved_qlib_provider_dir(monkeypatch, tmp_path):
+    fake_qlib = FakeFeatureQlib()
+    fake_constant = SimpleNamespace(REG_US="US_TEST_REGION")
+    fake_handler_module = SimpleNamespace(Alpha158=FakeFeatureHandler)
+    fake_data_module = SimpleNamespace(handler=fake_handler_module)
+    fake_contrib_module = SimpleNamespace(data=fake_data_module)
+    fake_qlib.constant = fake_constant
+    fake_qlib.contrib = fake_contrib_module
+
+    monkeypatch.setenv("QLIB_DATA_DIR", str(tmp_path / "market"))
+    monkeypatch.setitem(sys.modules, "qlib", fake_qlib)
+    monkeypatch.setitem(sys.modules, "qlib.constant", fake_constant)
+    monkeypatch.setitem(sys.modules, "qlib.contrib", fake_contrib_module)
+    monkeypatch.setitem(sys.modules, "qlib.contrib.data", fake_data_module)
+    monkeypatch.setitem(sys.modules, "qlib.contrib.data.handler", fake_handler_module)
+
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/features/AAPL.US")
+
+        assert resp.status_code == 200
+        assert fake_qlib.last_init == {
+            "provider_uri": str(tmp_path / "market" / "qlib" / "us_data"),
+            "region": "US_TEST_REGION",
+        }
+    finally:
+        for module in ["qlib", "qlib.constant", "qlib.contrib", "qlib.contrib.data", "qlib.contrib.data.handler"]:
+            sys.modules.pop(module, None)

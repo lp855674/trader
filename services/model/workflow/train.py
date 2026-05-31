@@ -9,7 +9,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from runtime.networks import LOOKBACK, build_model
-from workflow.shared import SUPPORTED_MODELS, list_loaded_models, validate_name, write_artifact
+from workflow.shared import (
+    SUPPORTED_MODELS,
+    get_qlib_provider_dir,
+    list_loaded_models,
+    validate_name,
+    write_artifact,
+)
 
 router = APIRouter()
 
@@ -98,10 +104,7 @@ def fetch_and_train(symbol: str, model_type: str, start: str, end: str):
     qlib_dir = qlib_dir if qlib_dir.exists() else None
     provider_uri = str(qlib_dir) if qlib_dir else None
     if provider_uri is None:
-        import os
-        from pathlib import Path
-
-        provider_uri = str(Path(os.getenv("QLIB_DATA_DIR", "~/.qlib/qlib_data/us_data")).expanduser())
+        provider_uri = str(get_qlib_provider_dir())
     qlib.init(provider_uri=provider_uri, region=REG_US)
 
     qlib_symbol = validated_symbol.split(".")[0]
