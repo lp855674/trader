@@ -426,7 +426,7 @@ git commit -m "feat: persist runtime trading records"
 - Create: `crates/data/src/csv.rs`
 - Create: `crates/data/tests/csv_loader_tests.rs`
 
-- [ ] **Step 1: Add CSV dependencies**
+- [x] **Step 1: Add CSV dependencies**
 
 Update `crates/data/Cargo.toml`:
 
@@ -439,7 +439,7 @@ thiserror.workspace = true
 csv = "1"
 ```
 
-- [ ] **Step 2: Write CSV loader test**
+- [x] **Step 2: Write CSV loader test**
 
 Create `crates/data/tests/csv_loader_tests.rs`:
 
@@ -457,7 +457,7 @@ fn loads_sample_bars_from_csv() {
 }
 ```
 
-- [ ] **Step 3: Implement loader**
+- [x] **Step 3: Implement loader**
 
 Create `crates/data/src/csv.rs`:
 
@@ -505,7 +505,7 @@ pub use bar::*;
 pub use csv::*;
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run:
 
