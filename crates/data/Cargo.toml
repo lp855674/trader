@@ -6,3 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
