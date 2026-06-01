@@ -80,7 +80,7 @@ Create or modify these paths:
 - Create: `scripts/verify.ps1`
 - Create: `scripts/verify`
 
-- [ ] **Step 1: Replace root workspace manifest**
+- [x] **Step 1: Replace root workspace manifest**
 
 Write this `Cargo.toml`:
 
@@ -147,7 +147,7 @@ parking_lot = "0.12"
 dashmap = "6"
 ```
 
-- [ ] **Step 2: Create each crate manifest**
+- [x] **Step 2: Create each crate manifest**
 
 For each library crate except `crates/core`, create this shape and adjust package name:
 
@@ -176,7 +176,7 @@ name = "trader_core"
 [dependencies]
 ```
 
-- [ ] **Step 3: Create placeholder library entries**
+- [x] **Step 3: Create placeholder library entries**
 
 For every `crates/<name>/src/lib.rs`, start with:
 
@@ -188,7 +188,7 @@ pub fn crate_name() -> &'static str {
 }
 ```
 
-- [ ] **Step 4: Create app entries**
+- [x] **Step 4: Create app entries**
 
 `apps/trader-cli/Cargo.toml`:
 
@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 5: Add verification scripts**
+- [x] **Step 5: Add verification scripts**
 
 `scripts/verify.ps1`:
 
@@ -283,7 +283,7 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-- [ ] **Step 6: Run checks**
+- [x] **Step 6: Run checks**
 
 Run:
 
@@ -295,7 +295,7 @@ cargo test --workspace
 
 Expected: all commands pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add Cargo.toml apps crates scripts
@@ -315,7 +315,7 @@ git commit -m "chore: scaffold trader workspace"
 - Create: `crates/core/src/account.rs`
 - Create: `crates/core/tests/domain_tests.rs`
 
-- [ ] **Step 1: Add core dependencies**
+- [x] **Step 1: Add core dependencies**
 
 ```toml
 [dependencies]
@@ -326,7 +326,7 @@ chrono.workspace = true
 rust_decimal.workspace = true
 ```
 
-- [ ] **Step 2: Write tests**
+- [x] **Step 2: Write tests**
 
 `crates/core/tests/domain_tests.rs`:
 
@@ -354,7 +354,7 @@ fn order_side_has_sign() {
 }
 ```
 
-- [ ] **Step 3: Implement core exports**
+- [x] **Step 3: Implement core exports**
 
 `crates/core/src/lib.rs`:
 
@@ -372,7 +372,7 @@ pub use order::*;
 pub use symbol::*;
 ```
 
-- [ ] **Step 4: Implement market and symbol types**
+- [x] **Step 4: Implement market and symbol types**
 
 `crates/core/src/market.rs`:
 
@@ -463,7 +463,7 @@ impl fmt::Display for Symbol {
 }
 ```
 
-- [ ] **Step 5: Implement order and account types**
+- [x] **Step 5: Implement order and account types**
 
 `crates/core/src/order.rs`:
 
@@ -552,7 +552,7 @@ pub struct AccountSnapshot {
 }
 ```
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```powershell
 cargo test -p trader-core
@@ -574,7 +574,7 @@ Expected: tests pass and workspace checks.
 - Create: `crates/events/src/bus.rs`
 - Create: `crates/events/tests/event_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -587,7 +587,7 @@ tokio.workspace = true
 thiserror.workspace = true
 ```
 
-- [ ] **Step 2: Write tests**
+- [x] **Step 2: Write tests**
 
 `crates/events/tests/event_tests.rs`:
 
@@ -613,7 +613,7 @@ async fn event_bus_delivers_published_events() {
 }
 ```
 
-- [ ] **Step 3: Implement events**
+- [x] **Step 3: Implement events**
 
 `crates/events/src/lib.rs`:
 
@@ -701,7 +701,7 @@ pub fn envelope(source: impl Into<String>, payload: TraderEvent) -> AnyEventEnve
 }
 ```
 
-- [ ] **Step 4: Implement event bus**
+- [x] **Step 4: Implement event bus**
 
 `crates/events/src/bus.rs`:
 
@@ -744,7 +744,7 @@ impl EventBus {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p events
@@ -763,7 +763,7 @@ git commit -m "feat: add event model and bus"
 - Create: `crates/config/tests/config_tests.rs`
 - Create: `configs/backtest/ma_cross.toml`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -772,7 +772,7 @@ toml.workspace = true
 thiserror.workspace = true
 ```
 
-- [ ] **Step 2: Add example config**
+- [x] **Step 2: Add example config**
 
 `configs/backtest/ma_cross.toml`:
 
@@ -795,7 +795,7 @@ initial_cash = "100000"
 base_currency = "USD"
 ```
 
-- [ ] **Step 3: Write tests**
+- [x] **Step 3: Write tests**
 
 `crates/config/tests/config_tests.rs`:
 
@@ -829,7 +829,7 @@ fn parses_backtest_config() {
 }
 ```
 
-- [ ] **Step 4: Implement config types**
+- [x] **Step 4: Implement config types**
 
 `crates/config/src/lib.rs`:
 
@@ -894,7 +894,7 @@ impl AppConfig {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p config
@@ -915,7 +915,7 @@ git commit -m "feat: add config loading"
 - Create: `migrations/0001_init.sql`
 - Create: `crates/storage/tests/storage_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -931,7 +931,7 @@ rust_decimal.workspace = true
 thiserror.workspace = true
 ```
 
-- [ ] **Step 2: Add migration**
+- [x] **Step 2: Add migration**
 
 `migrations/0001_init.sql`:
 
@@ -1003,7 +1003,7 @@ CREATE TABLE IF NOT EXISTS event_store (
 );
 ```
 
-- [ ] **Step 3: Write repository tests**
+- [x] **Step 3: Write repository tests**
 
 `crates/storage/tests/storage_tests.rs`:
 
@@ -1038,7 +1038,7 @@ async fn instrument_round_trip() {
 }
 ```
 
-- [ ] **Step 4: Implement storage**
+- [x] **Step 4: Implement storage**
 
 `crates/storage/src/lib.rs`:
 
@@ -1168,7 +1168,7 @@ impl Db {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p storage
@@ -1188,7 +1188,7 @@ git commit -m "feat: add storage schema and instrument repository"
 - Create: `crates/data/tests/data_tests.rs`
 - Create: `datasets/sample/aapl_1d.csv`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -1201,7 +1201,7 @@ thiserror.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Add sample data**
+- [x] **Step 2: Add sample data**
 
 `datasets/sample/aapl_1d.csv`:
 
@@ -1211,7 +1211,7 @@ ts_ms,open,high,low,close,volume
 1704153600000,108.00,112.00,105.00,106.00,1200
 ```
 
-- [ ] **Step 3: Write tests**
+- [x] **Step 3: Write tests**
 
 `crates/data/tests/data_tests.rs`:
 
@@ -1227,7 +1227,7 @@ fn bar_return_uses_close_to_close() {
 }
 ```
 
-- [ ] **Step 4: Implement bar model**
+- [x] **Step 4: Implement bar model**
 
 `crates/data/src/lib.rs`:
 
@@ -1280,7 +1280,7 @@ impl Bar {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p data
@@ -1306,7 +1306,7 @@ git commit -m "feat: add historical bar model"
 - Modify: `crates/execution/src/lib.rs`
 - Create: `crates/strategies/tests/strategy_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 For `alpha`, `strategies`, `portfolio`, `risk`, and `execution`, add the local crates they use:
 
@@ -1323,7 +1323,7 @@ thiserror.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Write strategy test**
+- [x] **Step 2: Write strategy test**
 
 `crates/strategies/tests/strategy_tests.rs`:
 
@@ -1346,7 +1346,7 @@ fn moving_average_cross_emits_buy_signal() {
 }
 ```
 
-- [ ] **Step 3: Implement alpha trait**
+- [x] **Step 3: Implement alpha trait**
 
 `crates/alpha/src/lib.rs`:
 
@@ -1361,7 +1361,7 @@ pub trait AlphaModel {
 }
 ```
 
-- [ ] **Step 4: Implement example strategy**
+- [x] **Step 4: Implement example strategy**
 
 `crates/strategies/src/lib.rs`:
 
@@ -1437,7 +1437,7 @@ impl Strategy for MovingAverageCrossStrategy {
 }
 ```
 
-- [ ] **Step 5: Implement portfolio, risk, execution minimal contracts**
+- [x] **Step 5: Implement portfolio, risk, execution minimal contracts**
 
 `crates/portfolio/src/lib.rs`:
 
@@ -1517,7 +1517,7 @@ pub fn immediate_order(target: &TargetPosition, account_id: impl Into<String>) -
 }
 ```
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```powershell
 cargo test -p strategies
@@ -1538,7 +1538,7 @@ git commit -m "feat: add strategy to execution vertical slice"
 - Create: `crates/oms/tests/oms_tests.rs`
 - Create: `crates/broker/tests/broker_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 For both crates:
 
@@ -1554,7 +1554,7 @@ uuid.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Write OMS test**
+- [x] **Step 2: Write OMS test**
 
 `crates/oms/tests/oms_tests.rs`:
 
@@ -1572,7 +1572,7 @@ fn submitted_order_can_fill() {
 }
 ```
 
-- [ ] **Step 3: Implement OMS**
+- [x] **Step 3: Implement OMS**
 
 `crates/oms/src/lib.rs`:
 
@@ -1632,7 +1632,7 @@ impl OrderStateMachine {
 }
 ```
 
-- [ ] **Step 4: Write broker test and implementation**
+- [x] **Step 4: Write broker test and implementation**
 
 `crates/broker/tests/broker_tests.rs`:
 
@@ -1711,7 +1711,7 @@ impl Broker for MockBroker {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p oms -p broker
@@ -1729,7 +1729,7 @@ git commit -m "feat: add oms and mock broker"
 - Modify: `crates/backtest/src/lib.rs`
 - Create: `crates/backtest/tests/backtest_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -1747,7 +1747,7 @@ thiserror.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Write test**
+- [x] **Step 2: Write test**
 
 `crates/backtest/tests/backtest_tests.rs`:
 
@@ -1768,7 +1768,7 @@ async fn backtest_counts_signals() {
 }
 ```
 
-- [ ] **Step 3: Implement runtime**
+- [x] **Step 3: Implement runtime**
 
 `crates/backtest/src/lib.rs`:
 
@@ -1815,7 +1815,7 @@ impl BacktestRuntime {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```powershell
 cargo test -p backtest
@@ -1833,7 +1833,7 @@ git commit -m "feat: add minimal backtest runtime"
 - Modify: `crates/replay/src/lib.rs`
 - Create: `crates/replay/tests/replay_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -1845,7 +1845,7 @@ tokio.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Write test**
+- [x] **Step 2: Write test**
 
 `crates/replay/tests/replay_tests.rs`:
 
@@ -1865,7 +1865,7 @@ async fn replay_emits_all_bars() {
 }
 ```
 
-- [ ] **Step 3: Implement replay**
+- [x] **Step 3: Implement replay**
 
 `crates/replay/src/lib.rs`:
 
@@ -1896,7 +1896,7 @@ impl ReplayRuntime {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```powershell
 cargo test -p replay
@@ -1916,7 +1916,7 @@ git commit -m "feat: add minimal replay runtime"
 - Modify: `apps/trader-server/src/main.rs`
 - Create: `crates/api/tests/api_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 `crates/api/Cargo.toml` dependencies:
 
@@ -1939,7 +1939,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 ```
 
-- [ ] **Step 2: Write API test**
+- [x] **Step 2: Write API test**
 
 `crates/api/tests/api_tests.rs`:
 
@@ -1959,7 +1959,7 @@ async fn health_returns_ok() {
 }
 ```
 
-- [ ] **Step 3: Implement router**
+- [x] **Step 3: Implement router**
 
 `crates/api/src/lib.rs`:
 
@@ -1983,7 +1983,7 @@ async fn health() -> Json<HealthResponse> {
 }
 ```
 
-- [ ] **Step 4: Wire server**
+- [x] **Step 4: Wire server**
 
 `apps/trader-server/src/main.rs`:
 
@@ -2002,7 +2002,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p api
@@ -2020,7 +2020,7 @@ git commit -m "feat: add api health endpoint"
 - Modify: `apps/trader-cli/src/main.rs`
 - Create: `apps/trader-cli/tests/cli_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dev-dependencies]
@@ -2028,7 +2028,7 @@ assert_cmd = "2"
 predicates = "3"
 ```
 
-- [ ] **Step 2: Write CLI smoke test**
+- [x] **Step 2: Write CLI smoke test**
 
 `apps/trader-cli/tests/cli_tests.rs`:
 
@@ -2043,7 +2043,7 @@ fn check_config_prints_ok() {
 }
 ```
 
-- [ ] **Step 3: Extend CLI enum**
+- [x] **Step 3: Extend CLI enum**
 
 `apps/trader-cli/src/main.rs`:
 
@@ -2085,7 +2085,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```powershell
 cargo test -p trader-cli
@@ -2106,7 +2106,7 @@ git commit -m "feat: add trader cli commands"
 - Create: `crates/accounting/tests/accounting_tests.rs`
 - Create: `crates/metrics/tests/metrics_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 [dependencies]
@@ -2116,7 +2116,7 @@ rust_decimal.workspace = true
 rust_decimal_macros.workspace = true
 ```
 
-- [ ] **Step 2: Write accounting test**
+- [x] **Step 2: Write accounting test**
 
 `crates/accounting/tests/accounting_tests.rs`:
 
@@ -2135,7 +2135,7 @@ fn buy_updates_average_price() {
 }
 ```
 
-- [ ] **Step 3: Implement accounting**
+- [x] **Step 3: Implement accounting**
 
 `crates/accounting/src/lib.rs`:
 
@@ -2175,7 +2175,7 @@ impl PositionBook {
 }
 ```
 
-- [ ] **Step 4: Write metrics test and implementation**
+- [x] **Step 4: Write metrics test and implementation**
 
 `crates/metrics/tests/metrics_tests.rs`:
 
@@ -2201,7 +2201,7 @@ pub fn total_return(start_equity: Decimal, end_equity: Decimal) -> Decimal {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 cargo test -p accounting -p metrics
@@ -2219,7 +2219,7 @@ git commit -m "feat: add accounting and metrics basics"
 - Modify: `tech.md`
 - Modify: `docs/roadmap.md` if release scope changes during implementation.
 
-- [ ] **Step 1: Run full verification**
+- [x] **Step 1: Run full verification**
 
 ```powershell
 cargo fmt --all -- --check
@@ -2229,7 +2229,7 @@ cargo test --workspace
 
 Expected: all pass.
 
-- [ ] **Step 2: Run server smoke check**
+- [x] **Step 2: Run server smoke check**
 
 Start server:
 
@@ -2251,7 +2251,7 @@ status
 ok
 ```
 
-- [ ] **Step 3: Run CLI smoke check**
+- [x] **Step 3: Run CLI smoke check**
 
 ```powershell
 cargo run -p trader-cli -- check-config
@@ -2263,7 +2263,7 @@ Expected:
 config ok
 ```
 
-- [ ] **Step 4: Update README**
+- [x] **Step 4: Update README**
 
 Add:
 
@@ -2288,7 +2288,7 @@ cargo run -p trader-cli -- check-config
 ```
 ````
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add README.md tech.md docs Cargo.toml Cargo.lock apps crates configs datasets migrations scripts
