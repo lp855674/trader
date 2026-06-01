@@ -1,8 +1,10 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OrderSide {
     Buy,
     Sell,
@@ -18,6 +20,7 @@ impl OrderSide {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OrderType {
     Market,
     Limit,
@@ -27,6 +30,7 @@ pub enum OrderType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OrderStatus {
     New,
     PendingSubmit,
@@ -34,6 +38,7 @@ pub enum OrderStatus {
     PartiallyFilled,
     Filled,
     PendingCancel,
+    #[serde(rename = "CANCELLED")]
     Canceled,
     Rejected,
     Expired,
@@ -50,8 +55,14 @@ impl OrderStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrderId(pub Uuid);
+
+impl fmt::Display for OrderId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderRequest {
