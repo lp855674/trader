@@ -3,6 +3,11 @@ name = "trader-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "trader"
+path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
