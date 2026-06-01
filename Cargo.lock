@@ -35,6 +35,15 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "alpha"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data",
+ "events",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror",
+ "trader-core",
+]
 
 [[package]]
 name = "android_system_properties"
@@ -514,6 +523,16 @@ dependencies = [
 [[package]]
 name = "execution"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data",
+ "events",
+ "portfolio",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror",
+ "trader-core",
+]
 
 [[package]]
 name = "feature_store"
@@ -1181,6 +1200,15 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 [[package]]
 name = "portfolio"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data",
+ "events",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror",
+ "trader-core",
+]
 
 [[package]]
 name = "potential_utf"
@@ -1350,6 +1378,16 @@ version = "0.1.0"
 [[package]]
 name = "risk"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data",
+ "events",
+ "portfolio",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror",
+ "trader-core",
+]
 
 [[package]]
 name = "rkyv"
@@ -1850,6 +1888,15 @@ dependencies = [
 [[package]]
 name = "strategies"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data",
+ "events",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror",
+ "trader-core",
+]
 
 [[package]]
 name = "stringprep"

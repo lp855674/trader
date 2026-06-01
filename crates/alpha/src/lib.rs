@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
-pub fn crate_name() -> &'static str {
-    env!("CARGO_PKG_NAME")
+use data::Bar;
+use events::SignalEvent;
+
+pub trait AlphaModel {
+    fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent>;
 }
