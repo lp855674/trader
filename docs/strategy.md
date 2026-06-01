@@ -180,34 +180,13 @@ Live 一套逻辑
 
 ## 6. Signal Model
 
-```rust
-pub struct SignalEvent {
-    pub strategy_id: String,
-
-    pub symbol: String,
-
-    pub side: SignalSide,
-
-    pub confidence: f64,
-
-    pub reason: Option<String>,
-
-    pub ts: DateTime<Utc>,
-}
-```
+Strategy 的唯一业务输出是 `SignalEvent`。事件字段和事件持久化规则统一维护在 `events.md`，本文只约束策略如何产生信号。
 
 ---
 
 ## 7. Signal Side
 
-```rust
-pub enum SignalSide {
-    Buy,
-    Sell,
-    CloseLong,
-    CloseShort,
-}
-```
+`SignalSide` 的枚举定义见 `events.md`。策略只能表达方向和信心，不表达最终数量、订单类型、账户路由或券商参数。
 
 ---
 
@@ -894,40 +873,4 @@ Live
 
 ## 30. Mandatory Rules
 
-```text
-Strategy
-
-只产生 SignalEvent
-
-不产生 Order
-
-不连接 Broker
-
-不访问 SQLite
-
-不管理账户
-
-不管理仓位
-```
-
-唯一合法输出：
-
-```text
-SignalEvent
-```
-
-唯一合法路径：
-
-```text
-Strategy
- ↓
-Portfolio
- ↓
-Risk
- ↓
-Execution
- ↓
-OMS
- ↓
-Broker
-```
+本节不再重复事件与链路定义；强制规则以本文第 2 节为准，事件字段以 `events.md` 为准。

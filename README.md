@@ -1,1 +1,18 @@
-[[rules.md](E:\code\trader\docs)](E:\code\trader\docs\architecture.md)
+# Trader
+
+Rust quant trading system.
+
+## Verify
+
+```powershell
+cargo fmt --all -- --check
+cargo check --workspace
+cargo test --workspace
+```
+
+## Run
+
+```powershell
+cargo run -p trader-server
+cargo run -p trader-cli -- check-config
+```

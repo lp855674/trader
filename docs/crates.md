@@ -1,4 +1,3 @@
-````markdown
 # Trader Crates Design
 
 Version: v1.0  
@@ -25,7 +24,7 @@ Trader 使用 Rust Workspace 组织代码。
 便于后续扩展 Broker / DataSource / Strategy
 避免循环依赖
 避免策略直接访问 Broker / Storage / API
-````
+```
 
 Trader 是服务端项目，不包含 Dashboard 前端。
 
@@ -2527,7 +2526,4 @@ Execution
 OMS
   ↓
 Broker
-```
-
-```
 ```

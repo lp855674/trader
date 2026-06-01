@@ -1,4 +1,3 @@
-````markdown
 # Trader API Design
 
 Version: v1.0  
@@ -25,7 +24,7 @@ REST API
 WebSocket API
   ↓
 实时行情、订单、成交、持仓、账户、PnL、风控、Replay 推送与控制
-````
+```
 
 API 的设计目标：
 
@@ -2763,7 +2762,4 @@ V1 成功标准：
 可以通过 WebSocket 控制 Replay
 可以通过 WebSocket 接收订单、成交、组合、风控事件
 可以支持股票和数字货币统一事件格式
-```
-
-```
 ```

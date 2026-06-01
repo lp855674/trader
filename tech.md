@@ -1,96 +1,176 @@
-# trader 技术说明
+# Trader 技术说明
 
-## 产品
+本文是根目录技术摘要，和 `docs/` 下的新设计稿保持一致。详细设计以 `docs/README.md` 中列出的专题文档为准。
 
-- 独立量化后端 **`quantd`**：ingest → 策略 → 风控（MVP 全放行）→ paper 执行 → SQLite 台账。
-- 对外 **HTTP**（`/health`, `/v1/instruments`）与 **WebSocket**（`/v1/stream`）。
-- 半自动控制面新增：`/v1/runtime/mode` 与 `/v1/runtime/allowlist`。
-- 半自动单轮调度接口：`POST /v1/runtime/cycle` 与 `GET /v1/runtime/cycle/latest`。
-- 终端交易面新增统一入口 **`trader`**：同时提供 CLI 子命令与全屏 TUI，作为 `quantd` 的 HTTP / WS 客户端工作。
+## 产品目标
 
-## 流水线参数
+Trader 是一个 Rust 量化交易系统，目标是构建支持多市场、多运行模式、可扩展、可回测、可回放、可模拟交易、可实盘交易的统一交易平台。
 
-- `pipeline::VenueTickParams`：单次 `run_one_tick_for_venue` 的账户、标的 `symbol`、时间戳；与 `ingest` / `exec` 解耦。
-- `run_one_tick_for_venue` 返回 `Result<Option<exec::OrderAck>, PipelineError>`：策略未产出信号时为 `Ok(None)`；下单成功则为 `Ok(Some(ack))`（供 HTTP/WS 推送 `order_id`）。
+第一阶段覆盖：
 
-## Crate 边界
+| 维度 | 范围 |
+| --- | --- |
+| 市场 | A股、港股、美股、数字货币 |
+| 资产 | 股票、数字货币现货、永续合约、交割合约 |
+| 运行模式 | Backtest、Replay、Paper、Live |
+| 存储 | SQLite 运行状态与交易台账；Parquet 历史行情与研究数据 |
+| 控制方式 | CLI、REST API、WebSocket API |
 
-| crate      | 职责 |
-|------------|------|
-| `domain`   | 纯类型 |
-| `config`   | 环境变量配置 |
-| `db`       | SQLite + 迁移 + 仓储函数（`NewBar` / `NewOrder` / `NewFill` 封装写入） |
-| `ingest`   | `IngestAdapter` 与 mock 实现 |
-| `longbridge_adapters` | Longbridge：`QuoteContext` K 线 ingest、`TradeContext` 实盘下单（MO） |
-| `exec`     | `ExecutionAdapter`、`PaperAdapter`、`ExecutionRouter` |
-| `strategy` | 策略 trait 与 MVP 规则策略 |
-| `pipeline` | ingest → 策略 → 风控 → 执行（`quantd` 与 `api` 共用） |
-| `api`      | axum 路由 |
-| `quantd`   | 二进制；集成测试通过 `quantd` lib 重导出 `pipeline` |
-| `marketdata` | 研究/离线数据处理（Polars DataFrame 与 `NormalizedBar` 对齐） |
-| `terminal_core` | 终端共享模型与错误映射 |
-| `terminal_client` | `quantd` HTTP / WebSocket 客户端 |
-| `terminal_tui` | 终端多面板状态机、表单与渲染骨架 |
-| `trader` | 统一 CLI / TUI 二进制入口 |
+## 设计文档入口
 
-## Workspace 依赖
+- `docs/architecture.md`：总体目标、核心原则、分层架构、跨模块边界、V1 范围。
+- `docs/crates.md`：Rust workspace、crate 职责、依赖方向、feature flags、测试策略。
+- `docs/database.md`：SQLite 表、Parquet schema、repository、migration、状态恢复。
+- `docs/api.md`：REST / WebSocket 端点、消息格式、错误码、安全设计。
+- `docs/events.md`：Event envelope、事件分类、事件流、事件持久化。
+- `docs/strategy.md`：Strategy trait、StrategyContext、信号模型、策略边界。
+- `docs/broker.md`：Broker trait、路由、订单/成交/持仓映射、回报、重连、限流。
+- `docs/roadmap.md`：阶段目标、MVP 范围、发布计划。
 
-- 内部 crate（`domain`、`db`、`pipeline` 等）在根 `Cargo.toml` 的 `[workspace.dependencies]` 中以 `path = "crates/…"` 声明一次；各 member 使用 `name.workspace = true`，避免重复 path。
-- **库入口路径（与内部其它 Rust 工程对齐）**：各 library crate 在 `Cargo.toml` 中显式写 `[lib] path = "src/<crate 名>.rs"`（例如 `domain` → `src/domain.rs`，`longbridge_adapters` → `src/longbridge_adapters.rs`），二进制 `quantd` 使用 `[[bin]] path = "src/main.rs"` 与 `[lib] path = "src/quantd.rs"`。工作区 `edition` 为 **2024**（见根 `Cargo.toml`）。
+## Workspace 结构
 
-## WebSocket（规格 §7.1 对齐）
+目标 workspace：
 
-- 连接后首帧：`{"kind":"hello","schema_version":1}`。
-- 业务事件示例：`{"event_id":"<uuid>","kind":"order_created","payload":{"order_id":"…","venue":"US_EQUITY","symbol":"…"}}`。
-- 错误帧示例（`error_code` 仅出现在 `kind: error`）：`{"event_id":"<uuid>","kind":"error","error_code":"execution_not_configured","message":"…"}`。HTTP JSON 错误体同样使用 `error_code` 字段（与 WS 命名一致）。
+```text
+Trader/
+├── apps/
+│   ├── trader-cli/
+│   └── trader-server/
+├── crates/
+│   ├── core/
+│   ├── events/
+│   ├── config/
+│   ├── storage/
+│   ├── data/
+│   ├── market_rules/
+│   ├── universe/
+│   ├── alpha/
+│   ├── portfolio/
+│   ├── risk/
+│   ├── execution/
+│   ├── oms/
+│   ├── broker/
+│   ├── backtest/
+│   ├── replay/
+│   ├── accounting/
+│   ├── metrics/
+│   ├── api/
+│   ├── indicators/
+│   ├── feature_store/
+│   └── strategies/
+├── configs/
+├── migrations/
+├── datasets/
+├── docs/
+└── scripts/
+```
 
-## 配置（MVP）
+应用层只包含：
 
-- `QUANTD_DATABASE_URL`：默认 `sqlite:quantd.db`
-- `QUANTD_HTTP_BIND`：默认 `127.0.0.1:8080`
-- `QUANTD_API_KEY`：若设置，则 `/v1/*`（含 WebSocket `/v1/stream`）需要鉴权；支持 `Authorization: Bearer <key>` 或 `X-API-Key: <key>`。
-- `QUANTD_ENV`：默认 `dev`；`prod` 下默认不写入 MVP seed，除非 `QUANTD_ALLOW_SEED`。
-- `QUANTD_ALLOW_SEED`：`1/true/yes` 允许在 `prod` 写入 seed 并跑启动 tick。
+- `apps/trader-cli`：本地运维、数据导入、数据库迁移、回测、Replay、报告、配置检查。
+- `apps/trader-server`：HTTP / WebSocket 服务，加载配置，初始化 storage、event bus、runtime、broker、market data adapter。
 
-### Longbridge（可选）
+## 核心模块边界
 
-- 凭证：`LONGBRIDGE_APP_KEY`、`LONGBRIDGE_APP_SECRET`、`LONGBRIDGE_ACCESS_TOKEN`（见 [官方快速开始](https://open.longbridge.com/zh-CN/docs/getting-started)）。
-- `quantd` 在三个变量均非空时 `LongbridgeClients::connect()`；成功则 `ensure_longbridge_live_account`，注册 `acc_lb_live` → `LongbridgeTradeAdapter`，并对 US/HK venue 使用 `LongbridgeCandleIngest`（否则回退 mock）。
-- 若已配置 Longbridge 凭证但连接失败，`quantd` 会强制写回运行模式 `observe_only`，并记录一条 `reconciliation_snapshots.status = broker_connect_failed` 的失败快照。
-- Paper 账户路径不变；Longbridge 错误在 API 层可表现为 `PipelineError::Exec(ExecError::Longbridge(..))` → HTTP 502、`error_code: broker_error`。
+| 模块 | 职责 |
+| --- | --- |
+| `crates/core` (`trader_core`) | 领域类型：Market、AssetClass、Symbol、Security、Order、Fill、Position、Money、Error。目录沿用设计稿，crate 名避开 Rust 标准库 `core`。 |
+| `events` | Event envelope、事件枚举、发布订阅接口、事件持久化边界。 |
+| `config` | TOML / 环境变量配置、runtime config、strategy config、broker config。 |
+| `storage` | SQLite、Parquet、repository、migration、数据读写。 |
+| `data` | 历史数据、实时数据、MarketSlice、K线、tick、order book。 |
+| `market_rules` | A股、港股、美股、数字货币交易规则与校验。 |
+| `universe` | 标的池选择模型。 |
+| `alpha` / `strategies` | 信号生成与示例策略。 |
+| `portfolio` | 信号到目标仓位。 |
+| `risk` | 目标仓位和订单意图的最终风险检查。 |
+| `execution` | 目标仓位到订单意图，支持立即执行、TWAP、VWAP 等模型。 |
+| `oms` | 订单状态机、client order id、broker order id 映射、恢复与同步。 |
+| `broker` | 券商/交易所通道，发送订单、撤单、查询、接收回报。 |
+| `accounting` | 现金、持仓、PnL、费用、保证金、组合账本。 |
+| `metrics` | 收益、回撤、Sharpe、胜率、换手、成交质量。 |
+| `backtest` | 历史回测 runtime、模拟时钟、成交模型、报告。 |
+| `replay` | 历史行情实时回放、暂停、恢复、跳转、倍速。 |
+| `api` | REST / WebSocket router、command handler、query handler、event broadcast。 |
 
-## 运行控制面
+## 核心运行链路
 
-- 默认运行模式：`observe_only`（首次启动且 DB 中尚未写入 `runtime_controls.mode` 时自动补齐）。
-- 允许模式：`enabled`、`observe_only`、`paper_only`、`degraded`。
-- `GET /v1/runtime/mode`：读取当前模式；缺省值按 `observe_only` 返回。
-- `PUT /v1/runtime/mode`：写入运行模式，非法值返回 HTTP 400。
-- `GET /v1/runtime/allowlist`：返回标的 allowlist 与 `enabled` 标志。
-- `PUT /v1/runtime/allowlist`：整表替换 allowlist；空 symbol 拒绝写入。
-- `POST /v1/runtime/cycle`：按 allowlist 执行一轮 universe ingest → score → rank；`enabled/paper_only` 才会继续执行下单。
-- execution guard：`enabled/paper_only` 下，accepted symbol 在真正执行前还会检查稳定 `idempotency_key`、本地未完成订单、symbol cooldown 与本地同向持仓；命中时仅记 `skipped.reason`，不再重复下单。
-- `GET /v1/runtime/cycle/latest`：读取最近一轮结果，当前持久化落在 `system_config.key = runtime.last_cycle`。
-- `GET /v1/runtime/cycle/history`：读取最近多轮结构化历史；底层使用 `runtime_cycle_runs` / `runtime_cycle_symbols`。
-- `GET /v1/runtime/execution-state`：按 `account_id` 返回本地持仓、未完成订单，以及最近一轮 cycle 的执行摘要（`accepted` / `placed` / `skipped`）。
-- `GET /v1/runtime/reconciliation/latest`：按 `account_id` 返回当前运行模式、本地持仓、本地未完成订单，以及最近一次 `reconciliation_snapshots` 快照。
-- 模型策略配置当前优先读取 `system_config`：
-  - `strategy.<account_id>` 使用 `{"type":"model","model_type":"alstm",...}` 作为主格式
-  - `model.service_url` 作为模型服务地址真源
-  - 兼容旧格式 `{"type":"lstm",...}` 与旧 key `lstm.service_url`
-- `POST /v1/orders`：显式提交 terminal 订单；当前仅支持限价单，走 execution router 而不是 `POST /v1/tick`。
-- `POST /v1/orders/:order_id/cancel`：终端撤单；请求体提供 `account_id`。
-- `POST /v1/orders/:order_id/amend`：终端改价改量；请求体提供 `account_id`、`qty` 与可选 `limit_price`。
-- `GET /v1/terminal/overview`：返回 terminal 主屏聚合数据：runtime mode、watchlist、positions、open orders。
-- `GET /v1/quotes/:symbol`：返回单标的 terminal quote 视图与最近 bars。
-- `quantd` 可选后台 loop：`QUANTD_UNIVERSE_LOOP_ENABLED=1` 时按固定间隔触发 `run_universe_cycle`；默认关闭。
-- `QUANTD_EXEC_SYMBOL_COOLDOWN_SECS`：同账户、同 instrument、同方向的最小重复下单间隔；默认 `300` 秒。
+```text
+User / Operator
+  -> CLI / REST API / WebSocket API
+  -> Runtime Manager
+  -> BacktestRuntime / ReplayRuntime / PaperRuntime / LiveRuntime
+  -> Event Bus
+  -> Algorithm Framework
+  -> OMS
+  -> Broker Adapter
+  -> SQLite / Parquet
+```
 
-## 股票数据（研究侧：Polars / Rust）
+Algorithm Framework 顺序：
 
-- 运行期 K 线仍以 SQLite `bars` + `domain::NormalizedBar` 为准；**离线/研究** 以 **Rust 版 Polars** 作为 OHLCV 的基础表示。
-- `crates/marketdata` 提供 `BarsFrame`：DataFrame 列与 `NormalizedBar` 一致：`ts_ms`, `open`, `high`, `low`, `close`, `volume`。
-- 若需多标的面板，可在 DataFrame 上增加 `symbol`（Utf8）列，与 `ts_ms` 联合使用（目前未在 `BarsFrame` 强制建模）。
+```text
+Universe Selection
+  -> Alpha / Strategy
+  -> Portfolio Construction
+  -> Market Rule Validation
+  -> Risk Management
+  -> Execution Model
+  -> OMS
+```
 
-## 非目标（当前）
+## 强约束
 
-- gRPC、Qlib 在线路径；除 Longbridge 外的其它券商/交易所接入。
+- Strategy 只产生 Signal / Insight，不直接访问 Broker、OMS、SQLite、WebSocket 或 Exchange API。
+- 同一个策略必须能运行在 Backtest、Replay、Paper、Live 中；运行模式差异由 runtime 和 adapter 承担。
+- 所有订单必须经过 Market Rule、Risk、Execution、OMS，再到 Broker。
+- Broker 只负责交易通道，不负责风控、仓位管理、策略逻辑、订单拆分或 PnL。
+- SQLite 是交易状态和运行状态真源；Parquet 是历史行情和研究数据真源。
+- API 不直接暴露数据库，不绕过 OMS 下单，不绕过 Risk 控制。
+- 文档单一来源按 `docs/README.md` 执行：API、DB、事件、crate 职责不要在多个文件重复维护。
+
+## 技术栈
+
+- Rust workspace，resolver 2。
+- async runtime：Tokio。
+- HTTP / WebSocket：Axum、tower、tower-http。
+- 序列化：serde、serde_json、toml。
+- 错误处理：thiserror、anyhow。
+- 时间与 ID：chrono / time、uuid。
+- 金额与数量：rust_decimal。
+- 结构化日志：tracing、tracing-subscriber。
+- SQLite：sqlx。
+- 历史数据：Apache Arrow / Parquet、Polars。
+- CLI：clap。
+- HTTP / WS 客户端：reqwest、tokio-tungstenite。
+
+## V1 交付范围
+
+V1 优先完成：
+
+- workspace 与基础 crate 骨架。
+- `core` 领域类型。
+- `events` 事件总线与事件类型。
+- `storage` SQLite migration、repository、Parquet 读取边界。
+- `data` 历史数据加载。
+- `strategy` / `alpha` / `portfolio` / `risk` / `execution` / `oms` / `broker` 的最小闭环。
+- `backtest` 可运行单策略历史回测。
+- `replay` 可按倍速播放历史行情。
+- `paper` 路径通过 mock broker 模拟成交。
+- `api` 提供运行控制、订单、成交、持仓、账户、绩效查询和 WebSocket 推送。
+- `trader-cli` 提供 init、migrate、import、backtest、replay、report、check-config。
+
+V1 不做：
+
+- Qlib 在线集成。
+- 高频 order book 完整撮合。
+- 分布式部署。
+- 多用户权限系统。
+- 期权、传统期货、外汇。
+- 复杂实盘券商矩阵。
+
+## 实施计划
+
+完整执行计划见：
+
+- `docs/superpowers/plans/2026-05-31-trader-v1-implementation.md`

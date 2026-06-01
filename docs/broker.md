@@ -404,23 +404,7 @@ pub trait BrokerStream {
 
 ## 15. Broker Events
 
-Broker 接收到回报后发布事件。
-
-```text
-OrderAcceptedEvent
-
-OrderRejectedEvent
-
-PartialFillEvent
-
-FillEvent
-
-OrderCanceledEvent
-
-PositionUpdatedEvent
-
-BalanceUpdatedEvent
-```
+Broker 接收到回报后发布订单、成交、持仓、账户类事件。事件名称、字段和持久化规则统一维护在 `events.md`，本文只描述 Broker 产生事件的职责边界。
 
 ---
 

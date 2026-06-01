@@ -1,4 +1,3 @@
-````markdown
 # Trader Database Design
 
 Version: v1.0  
@@ -21,7 +20,7 @@ SQLite
 Parquet
   ↓
 历史行情、K线、Tick、OrderBook、基本面、复权数据、因子数据、资金费率、Open Interest
-````
+```
 
 SQLite 不负责存储大规模历史行情。
 
@@ -2977,7 +2976,4 @@ A股 T+1 可以正确校验
 数字货币永续仓位可以正确维护
 资金费率可以记录和参与 PnL
 历史行情可以从 Parquet 按 symbol / time range 扫描
-```
-
-```
 ```
