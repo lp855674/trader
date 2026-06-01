@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
-pub fn crate_name() -> &'static str {
-    env!("CARGO_PKG_NAME")
-}
+mod db;
+mod repositories;
+
+pub use db::*;
+pub use repositories::*;
