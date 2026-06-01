@@ -69,7 +69,7 @@ Create or modify these paths:
 - Create: `crates/config/tests/file_config_tests.rs`
 - Modify: `configs/backtest/ma_cross.toml`
 
-- [ ] **Step 1: Add path loading dependency**
+- [x] **Step 1: Add path loading dependency**
 
 Update `crates/config/Cargo.toml`:
 
@@ -82,7 +82,7 @@ thiserror.workspace = true
 
 No new dependency is required for file loading; use `std::fs`.
 
-- [ ] **Step 2: Expand example config**
+- [x] **Step 2: Expand example config**
 
 Replace `configs/backtest/ma_cross.toml` with:
 
@@ -111,7 +111,7 @@ order_qty = "1"
 max_abs_qty = "100"
 ```
 
-- [ ] **Step 3: Write config file loading tests**
+- [x] **Step 3: Write config file loading tests**
 
 Create `crates/config/tests/file_config_tests.rs`:
 
@@ -131,7 +131,7 @@ fn loads_config_from_file() {
 }
 ```
 
-- [ ] **Step 4: Implement config fields and file loading**
+- [x] **Step 4: Implement config fields and file loading**
 
 Update `crates/config/src/lib.rs` to include:
 
@@ -182,7 +182,7 @@ impl AppConfig {
 
 Keep existing `from_toml_str` and add `pub database: DatabaseConfig` to `AppConfig`.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 

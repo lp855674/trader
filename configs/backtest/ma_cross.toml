@@ -1,16 +1,22 @@
 [runtime]
 mode = "backtest"
+run_id = "sample-ma-cross"
+
+[database]
+url = "sqlite:data/trader.sqlite"
 
 [data]
-source = "parquet"
+source = "csv"
 path = "datasets/sample/aapl_1d.csv"
 
 [strategy]
 name = "moving_average_cross"
 symbols = ["US:NASDAQ:AAPL:EQUITY"]
-fast_window = 20
-slow_window = 60
+fast_window = 2
+slow_window = 3
 
 [portfolio]
 initial_cash = "100000"
 base_currency = "USD"
+order_qty = "1"
+max_abs_qty = "100"
