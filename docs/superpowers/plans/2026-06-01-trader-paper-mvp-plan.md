@@ -645,11 +645,11 @@ git commit -m "feat: persist backtest results"
 - Create: `crates/paper/src/lib.rs`
 - Create: `crates/paper/tests/paper_tests.rs`
 
-- [ ] **Step 1: Add paper crate to workspace**
+- [x] **Step 1: Add paper crate to workspace**
 
 Add `"crates/paper"` to the root `Cargo.toml` workspace members after `"crates/replay"`.
 
-- [ ] **Step 2: Create paper crate manifest**
+- [x] **Step 2: Create paper crate manifest**
 
 Create `crates/paper/Cargo.toml`:
 
@@ -668,7 +668,7 @@ storage = { path = "../storage" }
 anyhow.workspace = true
 ```
 
-- [ ] **Step 3: Write paper runtime test**
+- [x] **Step 3: Write paper runtime test**
 
 Create `crates/paper/tests/paper_tests.rs`:
 
@@ -695,7 +695,7 @@ async fn paper_runtime_uses_backtest_execution_path() {
 }
 ```
 
-- [ ] **Step 4: Implement paper runtime wrapper**
+- [x] **Step 4: Implement paper runtime wrapper**
 
 Create `crates/paper/src/lib.rs`:
 
@@ -723,7 +723,7 @@ impl PaperRuntime {
 }
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
