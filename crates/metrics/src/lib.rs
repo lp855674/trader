@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
-pub fn crate_name() -> &'static str {
-    env!("CARGO_PKG_NAME")
+use rust_decimal::Decimal;
+
+pub fn total_return(start_equity: Decimal, end_equity: Decimal) -> Decimal {
+    (end_equity - start_equity) / start_equity
 }
