@@ -1,0 +1,10 @@
+[package]
+name = "trader-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "trader_core"
+
+[dependencies]
