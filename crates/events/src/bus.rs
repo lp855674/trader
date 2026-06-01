@@ -24,10 +24,9 @@ impl EventBus {
     }
 
     pub fn publish(&self, event: AnyEventEnvelope) -> Result<(), EventBusError> {
-        self.sender
-            .send(event)
-            .map(|_| ())
-            .map_err(|_| EventBusError::NoReceivers)
+        match self.sender.send(event) {
+            Ok(_) | Err(broadcast::error::SendError(_)) => Ok(()),
+        }
     }
 
     pub fn publish_signal(&self, signal: SignalEvent) -> Result<(), EventBusError> {

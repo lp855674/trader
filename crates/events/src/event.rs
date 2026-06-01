@@ -45,7 +45,7 @@ pub struct SignalEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(tag = "kind", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TraderEvent {
     Signal(SignalEvent),
 }
