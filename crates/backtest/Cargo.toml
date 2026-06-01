@@ -6,3 +6,16 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+broker = { path = "../broker" }
+data = { path = "../data" }
+execution = { path = "../execution" }
+portfolio = { path = "../portfolio" }
+risk = { path = "../risk" }
+strategies = { path = "../strategies" }
+anyhow.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
