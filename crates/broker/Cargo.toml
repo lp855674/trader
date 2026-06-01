@@ -6,3 +6,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+trader_core = { package = "trader-core", path = "../core" }
+async-trait.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
