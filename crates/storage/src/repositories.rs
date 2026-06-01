@@ -24,6 +24,58 @@ pub struct InstrumentRecord {
     pub tradable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewStrategyRun {
+    pub id: String,
+    pub name: String,
+    pub mode: String,
+    pub status: String,
+    pub started_at_ms: i64,
+    pub ended_at_ms: Option<i64>,
+    pub config_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewOrder {
+    pub id: String,
+    pub run_id: String,
+    pub client_order_id: String,
+    pub broker_order_id: Option<String>,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: Option<String>,
+    pub qty: String,
+    pub filled_qty: String,
+    pub status: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewFill {
+    pub id: String,
+    pub order_id: String,
+    pub run_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub price: String,
+    pub qty: String,
+    pub fee: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewPosition {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub qty: String,
+    pub avg_price: String,
+    pub updated_at_ms: i64,
+}
+
 impl Db {
     pub async fn insert_instrument(&self, instrument: NewInstrument) -> Result<(), sqlx::Error> {
         sqlx::query(
@@ -76,5 +128,240 @@ impl Db {
                 }
             },
         ))
+    }
+
+    pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO strategy_runs (
+                id, name, mode, status, started_at_ms, ended_at_ms, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(run.id)
+        .bind(run.name)
+        .bind(run.mode)
+        .bind(run.status)
+        .bind(run.started_at_ms)
+        .bind(run.ended_at_ms)
+        .bind(run.config_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_order(&self, order: NewOrder) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO orders (
+                id, run_id, client_order_id, broker_order_id, account_id, symbol, side,
+                order_type, price, qty, filled_qty, status, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(order.id)
+        .bind(order.run_id)
+        .bind(order.client_order_id)
+        .bind(order.broker_order_id)
+        .bind(order.account_id)
+        .bind(order.symbol)
+        .bind(order.side)
+        .bind(order.order_type)
+        .bind(order.price)
+        .bind(order.qty)
+        .bind(order.filled_qty)
+        .bind(order.status)
+        .bind(order.created_at_ms)
+        .bind(order.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_fill(&self, fill: NewFill) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO fills (
+                id, order_id, run_id, symbol, side, price, qty, fee, ts_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(fill.id)
+        .bind(fill.order_id)
+        .bind(fill.run_id)
+        .bind(fill.symbol)
+        .bind(fill.side)
+        .bind(fill.price)
+        .bind(fill.qty)
+        .bind(fill.fee)
+        .bind(fill.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_position(&self, position: NewPosition) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO positions (
+                run_id, account_id, symbol, qty, avg_price, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, account_id, symbol) DO UPDATE SET
+                qty = excluded.qty,
+                avg_price = excluded.avg_price,
+                updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(position.run_id)
+        .bind(position.account_id)
+        .bind(position.symbol)
+        .bind(position.qty)
+        .bind(position.avg_price)
+        .bind(position.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_orders(&self, run_id: &str) -> Result<Vec<NewOrder>, sqlx::Error> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, run_id, client_order_id, broker_order_id, account_id, symbol, side,
+                   order_type, price, qty, filled_qty, status, created_at_ms, updated_at_ms
+            FROM orders
+            WHERE run_id = ?
+            ORDER BY created_at_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    run_id,
+                    client_order_id,
+                    broker_order_id,
+                    account_id,
+                    symbol,
+                    side,
+                    order_type,
+                    price,
+                    qty,
+                    filled_qty,
+                    status,
+                    created_at_ms,
+                    updated_at_ms,
+                )| NewOrder {
+                    id,
+                    run_id,
+                    client_order_id,
+                    broker_order_id,
+                    account_id,
+                    symbol,
+                    side,
+                    order_type,
+                    price,
+                    qty,
+                    filled_qty,
+                    status,
+                    created_at_ms,
+                    updated_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_fills(&self, run_id: &str) -> Result<Vec<NewFill>, sqlx::Error> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, order_id, run_id, symbol, side, price, qty, fee, ts_ms
+            FROM fills
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, order_id, run_id, symbol, side, price, qty, fee, ts_ms)| NewFill {
+                    id,
+                    order_id,
+                    run_id,
+                    symbol,
+                    side,
+                    price,
+                    qty,
+                    fee,
+                    ts_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_positions(&self, run_id: &str) -> Result<Vec<NewPosition>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
+            r#"
+            SELECT run_id, account_id, symbol, qty, avg_price, updated_at_ms
+            FROM positions
+            WHERE run_id = ?
+            ORDER BY account_id, symbol
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(run_id, account_id, symbol, qty, avg_price, updated_at_ms)| NewPosition {
+                    run_id,
+                    account_id,
+                    symbol,
+                    qty,
+                    avg_price,
+                    updated_at_ms,
+                },
+            )
+            .collect())
     }
 }

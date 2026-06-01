@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE TABLE IF NOT EXISTS fills (
     id TEXT PRIMARY KEY,
     order_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
     side TEXT NOT NULL,
     price TEXT NOT NULL,
@@ -48,12 +49,13 @@ CREATE TABLE IF NOT EXISTS fills (
 );
 
 CREATE TABLE IF NOT EXISTS positions (
+    run_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
     qty TEXT NOT NULL,
     avg_price TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL,
-    PRIMARY KEY (account_id, symbol)
+    PRIMARY KEY (run_id, account_id, symbol)
 );
 
 CREATE TABLE IF NOT EXISTS event_store (

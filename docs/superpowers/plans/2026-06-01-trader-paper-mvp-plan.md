@@ -209,7 +209,7 @@ git commit -m "feat: load trader config from file"
 - Modify: `crates/storage/src/repositories.rs`
 - Create: `crates/storage/tests/runtime_repository_tests.rs`
 
-- [ ] **Step 1: Extend SQLite schema**
+- [x] **Step 1: Extend SQLite schema**
 
 Update `migrations/0001_init.sql` so these tables exist with the listed columns:
 
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS positions (
 );
 ```
 
-- [ ] **Step 2: Write repository round-trip test**
+- [x] **Step 2: Write repository round-trip test**
 
 Create `crates/storage/tests/runtime_repository_tests.rs`:
 
@@ -338,7 +338,7 @@ async fn runtime_records_round_trip() {
 }
 ```
 
-- [ ] **Step 3: Implement storage records**
+- [x] **Step 3: Implement storage records**
 
 Add these structs to `crates/storage/src/repositories.rs`:
 
@@ -398,7 +398,7 @@ pub struct NewPosition {
 
 Implement `insert_strategy_run`, `insert_order`, `insert_fill`, `upsert_position`, `list_orders`, `list_fills`, and `list_positions` on `Db` using `sqlx::query` and `query_as`.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run:
 
