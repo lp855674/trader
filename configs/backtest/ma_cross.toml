@@ -1,0 +1,16 @@
+[runtime]
+mode = "backtest"
+
+[data]
+source = "parquet"
+path = "datasets/sample/aapl_1d.csv"
+
+[strategy]
+name = "moving_average_cross"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 20
+slow_window = 60
+
+[portfolio]
+initial_cash = "100000"
+base_currency = "USD"
