@@ -9,7 +9,7 @@ async fn backtest_counts_signals() {
         Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
-    let summary = BacktestRuntime.run(bars).await.unwrap();
+    let summary = BacktestRuntime::default().run(bars).await.unwrap();
 
     assert_eq!(
         summary,

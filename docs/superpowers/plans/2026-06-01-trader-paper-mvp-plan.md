@@ -532,7 +532,7 @@ git commit -m "feat: load bars from csv"
 - Modify: `crates/backtest/src/lib.rs`
 - Create: `crates/backtest/tests/persistent_backtest_tests.rs`
 
-- [ ] **Step 1: Add storage and uuid dependencies**
+- [x] **Step 1: Add storage and uuid dependencies**
 
 Update `crates/backtest/Cargo.toml`:
 
@@ -553,7 +553,7 @@ tokio.workspace = true
 uuid.workspace = true
 ```
 
-- [ ] **Step 2: Write persistent backtest test**
+- [x] **Step 2: Write persistent backtest test**
 
 Create `crates/backtest/tests/persistent_backtest_tests.rs`:
 
@@ -581,7 +581,7 @@ async fn backtest_persists_orders_and_positions() {
 }
 ```
 
-- [ ] **Step 3: Implement settings and persistence**
+- [x] **Step 3: Implement settings and persistence**
 
 Add to `crates/backtest/src/lib.rs`:
 
@@ -617,7 +617,7 @@ let order_id = format!("{}-order-{}", self.settings.run_id, orders + 1);
 let fill_id = format!("{}-fill-{}", self.settings.run_id, orders + 1);
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run:
 

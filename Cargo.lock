@@ -248,17 +248,21 @@ dependencies = [
 name = "backtest"
 version = "0.1.0"
 dependencies = [
+ "accounting",
  "anyhow",
  "broker",
+ "chrono",
  "data",
  "execution",
  "portfolio",
  "risk",
  "rust_decimal",
  "rust_decimal_macros",
+ "storage",
  "strategies",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
