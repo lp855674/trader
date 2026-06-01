@@ -1,4 +1,4 @@
-use crate::{envelope, AnyEventEnvelope, SignalEvent, TraderEvent};
+use crate::{AnyEventEnvelope, SignalEvent, TraderEvent, envelope};
 use thiserror::Error;
 use tokio::sync::broadcast;
 
