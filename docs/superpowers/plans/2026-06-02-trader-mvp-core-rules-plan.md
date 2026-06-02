@@ -926,7 +926,7 @@ git commit -m "feat: enforce core rules in paper runtime"
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-mvp-core-rules-plan.md`
 
-- [ ] **Step 1: Update docs**
+- [x] **Step 1: Update docs**
 
 In `tech.md`, add an `MVP Core Rules` section:
 
@@ -942,7 +942,7 @@ In `README.md`, add under Paper MVP:
 Paper runtime now enforces MVP core order rules before simulated broker fills: market rules, order-level risk, execution delta, and OMS lifecycle.
 ```
 
-- [ ] **Step 2: Final verification**
+- [x] **Step 2: Final verification**
 
 Run:
 
@@ -964,7 +964,7 @@ Expected:
 - naming check prints no files.
 - direct member dependency check prints no matches.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Commit:
 

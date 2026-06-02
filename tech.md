@@ -237,6 +237,10 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 当前状态仍是 MVP vertical slice，不代表 roadmap 中的分布式 Phase 6 已完成。下一步重点是补齐 MVP 核心交易规则：Market Rules、Risk、OMS、Execution delta，以及 PaperRuntime 对这些规则的串联。
 
+## MVP Core Rules
+
+当前 MVP 订单链路按 `Strategy -> Portfolio -> Execution delta -> MarketRules -> Risk -> OMS -> Broker -> Accounting -> Storage` 执行。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+
 ## 实施计划
 
 完整执行计划见：

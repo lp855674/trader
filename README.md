@@ -26,6 +26,8 @@ cargo run -p trader-cli -- paper-run --config configs/backtest/ma_cross.toml
 cargo run -p trader-server
 ```
 
+Paper runtime now enforces MVP core order rules before simulated broker fills: market rules, order-level risk, execution delta, and OMS lifecycle.
+
 ## REST API
 
 After starting `trader-server`, run a local paper workflow and query persisted state:
