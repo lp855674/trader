@@ -70,7 +70,7 @@ Modify:
 - Create: `crates/runtime/tests/runtime_manager_tests.rs`
 - Modify: `Cargo.toml`
 
-- [ ] **Step 1: Add failing runtime manager tests**
+- [x] **Step 1: Add failing runtime manager tests**
 
 Create `crates/runtime/tests/runtime_manager_tests.rs`:
 
@@ -132,7 +132,7 @@ async fn manager_rejects_duplicate_active_run_id() {
 }
 ```
 
-- [ ] **Step 2: Run runtime tests and verify RED**
+- [x] **Step 2: Run runtime tests and verify RED**
 
 Run:
 
@@ -142,7 +142,7 @@ cargo test -p runtime
 
 Expected: FAIL because the `runtime` crate and `RuntimeManager` do not exist.
 
-- [ ] **Step 3: Add workspace crate and manifest**
+- [x] **Step 3: Add workspace crate and manifest**
 
 Modify root `Cargo.toml`:
 
@@ -178,7 +178,7 @@ path = "src/runtime.rs"
 tokio.workspace = true
 ```
 
-- [ ] **Step 4: Implement cancellation flag**
+- [x] **Step 4: Implement cancellation flag**
 
 Create `crates/runtime/src/runtime.rs`:
 
@@ -216,7 +216,7 @@ impl CancellationFlag {
 }
 ```
 
-- [ ] **Step 5: Implement runtime manager**
+- [x] **Step 5: Implement runtime manager**
 
 Create `crates/runtime/src/manager.rs`:
 
@@ -292,7 +292,7 @@ impl RuntimeManager {
 }
 ```
 
-- [ ] **Step 6: Run runtime tests and fix spawn race if needed**
+- [x] **Step 6: Run runtime tests and fix spawn race if needed**
 
 Run:
 
@@ -302,7 +302,7 @@ cargo test -p runtime
 
 Expected: PASS. If `manager_rejects_duplicate_active_run_id` exposes a spawn-before-register race, move insertion before `tokio::spawn` while keeping the same public API and rerun until PASS.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run:
 

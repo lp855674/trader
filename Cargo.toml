@@ -18,6 +18,7 @@ members = [
     "crates/broker",
     "crates/backtest",
     "crates/replay",
+    "crates/runtime",
     "crates/paper",
     "crates/accounting",
     "crates/metrics",
@@ -49,6 +50,7 @@ metrics = { path = "crates/metrics" }
 paper = { path = "crates/paper" }
 portfolio = { path = "crates/portfolio" }
 risk = { path = "crates/risk" }
+runtime = { path = "crates/runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 storage = { path = "crates/storage" }
