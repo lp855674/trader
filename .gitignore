@@ -1,6 +1,6 @@
 /target
 .worktrees/
-data/
+/data/
 *.db
 .env
 .DS_Store

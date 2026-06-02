@@ -8,7 +8,7 @@ fn parses_backtest_config() {
         run_id = "sample-ma-cross"
 
         [database]
-        url = "sqlite:data/trader.sqlite"
+        url = "sqlite://data/trader.sqlite"
 
         [data]
         source = "csv"
@@ -31,7 +31,7 @@ fn parses_backtest_config() {
 
     assert_eq!(config.runtime.mode, RuntimeMode::Backtest);
     assert_eq!(config.runtime.run_id, "sample-ma-cross");
-    assert_eq!(config.database.url, "sqlite:data/trader.sqlite");
+    assert_eq!(config.database.url, "sqlite://data/trader.sqlite");
     assert_eq!(config.strategy.name, "moving_average_cross");
     assert_eq!(config.data.path, "datasets/sample/aapl_1d.csv");
     assert_eq!(config.portfolio.base_currency, "USD");

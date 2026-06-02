@@ -79,18 +79,24 @@ async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> 
 }
 
 fn ensure_database_parent(database_url: &str) -> Result<()> {
-    let Some(path) = database_url.strip_prefix("sqlite:") else {
+    let Some(path) = sqlite_file_path(database_url) else {
         return Ok(());
     };
-    if path == ":memory:" || path.starts_with(':') {
-        return Ok(());
-    }
     if let Some(parent) = std::path::Path::new(path).parent()
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)?;
     }
     Ok(())
+}
+
+fn sqlite_file_path(database_url: &str) -> Option<&str> {
+    if database_url == "sqlite::memory:" || database_url == "sqlite://:memory:" {
+        return None;
+    }
+    database_url
+        .strip_prefix("sqlite://")
+        .or_else(|| database_url.strip_prefix("sqlite:"))
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings> {

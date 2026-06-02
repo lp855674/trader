@@ -169,8 +169,26 @@ V1 不做：
 - 期权、传统期货、外汇。
 - 复杂实盘券商矩阵。
 
+## Phase 2 Paper MVP
+
+Phase 2 turns the V1 skeleton into a local paper/backtest workflow: config loading, SQLite persistence, CSV bar loading, persistent backtest output, CLI commands, and REST query routes.
+
+当前可执行链路：
+
+- `trader check-config --config configs/backtest/ma_cross.toml` 校验配置文件。
+- `trader migrate --config configs/backtest/ma_cross.toml` 创建 SQLite schema。
+- `trader backtest --config configs/backtest/ma_cross.toml` 加载样例 CSV，运行 MA cross，持久化 run、order、fill、position。
+- `trader-server` 提供 `POST /api/v1/backtests`、`GET /api/v1/orders`、`GET /api/v1/positions`。
+
+仍然保持的边界：
+
+- Strategy 只产生信号，不访问 Broker、OMS、Storage 或 API。
+- SQL 只在 `storage` crate 内部。
+- Paper runtime 目前复用 Backtest execution path；后续接实时行情和模拟撮合时再扩展独立 paper loop。
+
 ## 实施计划
 
 完整执行计划见：
 
 - `docs/superpowers/plans/2026-05-31-trader-v1-implementation.md`
+- `docs/superpowers/plans/2026-06-01-trader-paper-mvp-plan.md`

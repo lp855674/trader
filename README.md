@@ -16,3 +16,11 @@ cargo test --workspace
 cargo run -p trader-server
 cargo run -p trader-cli -- check-config
 ```
+
+## Paper MVP
+
+```powershell
+cargo run -p trader-cli -- migrate --config configs/backtest/ma_cross.toml
+cargo run -p trader-cli -- backtest --config configs/backtest/ma_cross.toml
+cargo run -p trader-server
+```

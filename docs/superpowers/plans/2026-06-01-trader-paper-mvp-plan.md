@@ -971,7 +971,7 @@ git commit -m "feat: add backtest api routes"
 - Modify: `tech.md`
 - Modify: `docs/superpowers/plans/2026-06-01-trader-paper-mvp-plan.md`
 
-- [ ] **Step 1: Run full verification**
+- [x] **Step 1: Run full verification**
 
 Run:
 
@@ -990,7 +990,7 @@ config ok
 backtest completed: signals=1 orders=1
 ```
 
-- [ ] **Step 2: Run server smoke**
+- [x] **Step 2: Run server smoke**
 
 Start:
 
@@ -1008,7 +1008,7 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/positions
 
 Expected: POST returns a summary with `signals = 1` and `orders = 1`; query routes return non-empty arrays.
 
-- [ ] **Step 3: Update README**
+- [x] **Step 3: Update README**
 
 Add:
 
@@ -1022,7 +1022,7 @@ cargo run -p trader-server
 ```
 ~~~
 
-- [ ] **Step 4: Update tech.md**
+- [x] **Step 4: Update tech.md**
 
 Add a short Phase 2 status section:
 
@@ -1032,7 +1032,7 @@ Add a short Phase 2 status section:
 Phase 2 turns the V1 skeleton into a local paper/backtest workflow: config loading, SQLite persistence, CSV bar loading, persistent backtest output, CLI commands, and REST query routes.
 ```
 
-- [ ] **Step 5: Mark plan complete and commit**
+- [x] **Step 5: Mark plan complete and commit**
 
 Change all task checkboxes in this plan to `- [x]`.
 
