@@ -220,6 +220,17 @@ Phase 4 将本地 paper workflow 进一步生产化：
 - REST 增加 `GET /api/v1/runs` 与 `GET /api/v1/runs/{run_id}` 查询运行记录。
 - `scripts/rest-smoke.ps1` 用于验证运行中的 server：health、paper-runs、fills、account-balances、portfolio snapshots、metrics。
 
+## Phase 5 Runtime Control
+
+Phase 5 增加最小运行控制面和 server smoke：
+
+- `strategy_runs` 持久化 `status`、`ended_at_ms` 和 `error`；旧 SQLite 库在 `migrate()` 时会幂等补齐 `error` 列。
+- 当前 run lifecycle 状态为 `running`、`completed`、`failed`、`cancelled`。
+- `POST /api/v1/paper-runs` 会先写入 `running`；执行成功由 `PaperRuntime` 写入 `completed`；配置已解析后发生的数据加载或 runtime 错误会更新为 `failed` 并保存错误文本。
+- `GET /api/v1/runs/{run_id}/status` 返回 `{ run_id, status, error }`，run 不存在时返回 `404`。
+- `POST /api/v1/runs/{run_id}/cancel` 将已存在 run 标记为 `cancelled` 并设置 `ended_at_ms`；当前 runtime 仍是同步短任务，cancel 是持久化状态控制，不中断已经在同一请求内执行完成的计算。
+- `scripts/server-smoke.ps1` 使用临时 Cargo target directory 和临时 SQLite 数据库，启动真实 `trader-server` 后执行 REST smoke。
+
 ## 实施计划
 
 完整执行计划见：
@@ -228,3 +239,4 @@ Phase 4 将本地 paper workflow 进一步生产化：
 - `docs/superpowers/plans/2026-06-01-trader-paper-mvp-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-paper-runtime-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
+- `docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md`

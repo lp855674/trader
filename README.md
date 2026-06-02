@@ -40,6 +40,8 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/account-balances
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/portfolio/snapshots
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/metrics
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/runs
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/runs/sample-ma-cross/status
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/v1/runs/sample-ma-cross/cancel
 ```
 
 Or run the smoke script:
