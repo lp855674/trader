@@ -750,7 +750,7 @@ git commit -m "feat: add paper runtime wrapper"
 - Modify: `apps/trader-cli/src/main.rs`
 - Modify: `apps/trader-cli/tests/cli_tests.rs`
 
-- [ ] **Step 1: Add CLI dependencies**
+- [x] **Step 1: Add CLI dependencies**
 
 Update `apps/trader-cli/Cargo.toml`:
 
@@ -766,7 +766,7 @@ storage = { path = "../../crates/storage" }
 tokio.workspace = true
 ```
 
-- [ ] **Step 2: Write CLI tests**
+- [x] **Step 2: Write CLI tests**
 
 Extend `apps/trader-cli/tests/cli_tests.rs`:
 
@@ -782,7 +782,7 @@ fn backtest_accepts_config_argument() {
 }
 ```
 
-- [ ] **Step 3: Implement CLI arguments**
+- [x] **Step 3: Implement CLI arguments**
 
 Replace `Command` in `apps/trader-cli/src/main.rs` with:
 
@@ -827,7 +827,7 @@ For `Backtest`, load config, migrate DB, load bars from CSV, build `BacktestSett
 backtest completed: signals=<N> orders=<N>
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run:
 
