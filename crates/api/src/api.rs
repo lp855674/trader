@@ -23,6 +23,13 @@ struct HealthResponse {
     status: &'static str,
 }
 
+#[derive(Serialize)]
+struct RunStatusResponse {
+    run_id: String,
+    status: String,
+    error: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -40,6 +47,8 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/metrics", get(metrics_summary))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
+        .route("/api/v1/runs/{run_id}/status", get(get_run_status))
+        .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
         .with_state(state)
 }
 
@@ -157,6 +166,42 @@ async fn get_run(
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     Ok(Json(run).into_response())
+}
+
+async fn get_run_status(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(run) = state.db.get_strategy_run(&run_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(RunStatusResponse {
+        run_id: run.id,
+        status: run.status,
+        error: run.error,
+    })
+    .into_response())
+}
+
+async fn cancel_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    if state.db.get_strategy_run(&run_id).await?.is_none() {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    state
+        .db
+        .update_strategy_run_status(
+            &run_id,
+            "cancelled",
+            Some(chrono::Utc::now().timestamp_millis()),
+            None,
+        )
+        .await?;
+
+    get_run_status(State(state), Path(run_id)).await
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

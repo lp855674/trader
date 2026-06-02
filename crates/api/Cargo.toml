@@ -12,6 +12,7 @@ path = "src/api.rs"
 anyhow.workspace = true
 axum.workspace = true
 backtest.workspace = true
+chrono.workspace = true
 config.workspace = true
 data.workspace = true
 metrics.workspace = true

@@ -146,7 +146,7 @@ git commit -m "feat: persist run status errors"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Add failing API tests**
+- [x] **Step 1: Add failing API tests**
 
 Add tests that:
 
@@ -163,7 +163,7 @@ Assert:
 - cancel response is `200 OK`;
 - second status response contains `"cancelled"`.
 
-- [ ] **Step 2: Run API test and verify RED**
+- [x] **Step 2: Run API test and verify RED**
 
 Run:
 
@@ -173,7 +173,7 @@ cargo test -p api
 
 Expected: FAIL with `404` for status/cancel routes.
 
-- [ ] **Step 3: Add response type**
+- [x] **Step 3: Add response type**
 
 In `crates/api/src/api.rs`, add:
 
@@ -186,7 +186,7 @@ struct RunStatusResponse {
 }
 ```
 
-- [ ] **Step 4: Implement routes**
+- [x] **Step 4: Implement routes**
 
 Add:
 
@@ -202,7 +202,7 @@ Implement:
 
 Use `chrono::Utc::now().timestamp_millis()` for `now_ms`; add `chrono.workspace = true` to `crates/api/Cargo.toml` if needed.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
