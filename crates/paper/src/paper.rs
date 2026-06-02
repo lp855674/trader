@@ -121,16 +121,20 @@ impl PaperRuntime {
                     })
                     .await?;
 
-                let signed_qty = match order.side {
-                    OrderSide::Buy => fill.qty,
-                    OrderSide::Sell => -fill.qty,
-                };
-                account_book.buy(&order.symbol, signed_qty, fill.price, fill.fee);
+                match order.side {
+                    OrderSide::Buy => {
+                        account_book.buy(&order.symbol, fill.qty, fill.price, fill.fee)
+                    }
+                    OrderSide::Sell => {
+                        account_book.sell(&order.symbol, fill.qty, fill.price, fill.fee)?
+                    }
+                }
                 orders += 1;
             }
 
             let market_value = account_book.market_value(&self.settings.symbol, bar.close);
             let equity = account_book.equity(&self.settings.symbol, bar.close);
+            let unrealized_pnl = account_book.unrealized_pnl(&self.settings.symbol, bar.close);
             self.db
                 .insert_portfolio_snapshot(NewPortfolioSnapshot {
                     id: format!("{}-snapshot-{}", self.settings.run_id, bar.ts_ms),
@@ -140,8 +144,8 @@ impl PaperRuntime {
                     cash: account_book.cash().to_string(),
                     market_value: market_value.to_string(),
                     equity: equity.to_string(),
-                    realized_pnl: account_book.realized_pnl.to_string(),
-                    unrealized_pnl: Decimal::ZERO.to_string(),
+                    realized_pnl: account_book.realized_pnl().to_string(),
+                    unrealized_pnl: unrealized_pnl.to_string(),
                 })
                 .await?;
         }

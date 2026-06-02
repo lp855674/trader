@@ -418,7 +418,7 @@ git commit -m "feat: configure paper runtime settings"
 - Modify: `crates/paper/src/paper.rs`
 - Modify: `crates/paper/tests/persistent_paper_tests.rs`
 
-- [ ] **Step 1: Add failing buy-then-sell paper test**
+- [x] **Step 1: Add failing buy-then-sell paper test**
 
 Add:
 
@@ -449,7 +449,7 @@ async fn paper_runtime_persists_realized_and_unrealized_pnl() {
 }
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run:
 
@@ -459,7 +459,7 @@ cargo test -p paper
 
 Expected: FAIL because paper still routes sell through `buy` with negative quantity and persists zero PnL.
 
-- [ ] **Step 3: Implement buy/sell branch in PaperRuntime**
+- [x] **Step 3: Implement buy/sell branch in PaperRuntime**
 
 Replace the current signed qty update with:
 
@@ -478,7 +478,7 @@ realized_pnl: account_book.realized_pnl().to_string(),
 unrealized_pnl: unrealized_pnl.to_string(),
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 

@@ -69,3 +69,28 @@ async fn paper_runtime_uses_initial_cash_and_broker_settings() {
     assert_eq!(Decimal::from_str(&fills[0].price).unwrap(), dec!(20.20));
     assert_eq!(Decimal::from_str(&fills[0].fee).unwrap(), dec!(0.0202));
 }
+
+#[tokio::test]
+async fn paper_runtime_persists_realized_and_unrealized_pnl() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.initial_cash = dec!(100000);
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(4, dec!(1), dec!(1), dec!(1), dec!(1), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 2);
+    let snapshots = db.list_portfolio_snapshots(&settings.run_id).await.unwrap();
+    let last = snapshots.last().unwrap();
+    assert_eq!(last.realized_pnl, "-19");
+    assert_eq!(last.unrealized_pnl, "0");
+}
