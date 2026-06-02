@@ -70,10 +70,30 @@ async fn run_backtest(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    insert_event(
+        &state.db,
+        &app_config.runtime.run_id,
+        "backtest.started",
+        &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+    )
+    .await?;
     let bars = data::load_bars_from_csv(&app_config.data.path)?;
     let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
         .run(bars)
         .await?;
+    let payload = serde_json::json!({
+        "run_id": &app_config.runtime.run_id,
+        "signals": summary.signals,
+        "orders": summary.orders
+    })
+    .to_string();
+    insert_event(
+        &state.db,
+        &app_config.runtime.run_id,
+        "backtest.completed",
+        &payload,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(summary)))
 }
 
