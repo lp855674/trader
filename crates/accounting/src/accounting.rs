@@ -2,6 +2,15 @@
 
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum AccountingError {
+    #[error("position not found")]
+    PositionNotFound,
+    #[error("sell quantity exceeds position")]
+    InsufficientPosition,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position {
@@ -33,6 +42,10 @@ impl PositionBook {
     pub fn position(&self, symbol: &str) -> Option<&Position> {
         self.positions.get(symbol)
     }
+
+    pub fn position_mut(&mut self, symbol: &str) -> Option<&mut Position> {
+        self.positions.get_mut(symbol)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +71,26 @@ impl AccountBook {
         self.positions.buy(symbol, qty, price);
     }
 
+    pub fn sell(
+        &mut self,
+        symbol: &str,
+        qty: Decimal,
+        price: Decimal,
+        fee: Decimal,
+    ) -> Result<(), AccountingError> {
+        let position = self
+            .positions
+            .position_mut(symbol)
+            .ok_or(AccountingError::PositionNotFound)?;
+        if qty > position.qty {
+            return Err(AccountingError::InsufficientPosition);
+        }
+        self.cash += qty * price - fee;
+        self.realized_pnl += qty * (price - position.avg_price) - fee;
+        position.qty -= qty;
+        Ok(())
+    }
+
     pub fn position(&self, symbol: &str) -> Option<&Position> {
         self.positions.position(symbol)
     }
@@ -73,5 +106,15 @@ impl AccountBook {
 
     pub fn cash(&self) -> Decimal {
         self.cash
+    }
+
+    pub fn realized_pnl(&self) -> Decimal {
+        self.realized_pnl
+    }
+
+    pub fn unrealized_pnl(&self, symbol: &str, mark_price: Decimal) -> Decimal {
+        self.position(symbol).map_or(Decimal::ZERO, |position| {
+            position.qty * (mark_price - position.avg_price)
+        })
     }
 }

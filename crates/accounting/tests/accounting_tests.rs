@@ -44,3 +44,25 @@ fn account_average_price_remains_decimal_precise() {
     assert_eq!(position.qty, dec!(0.3));
     assert_eq!(position.avg_price, dec!(100.16666666666666666666666667));
 }
+
+#[test]
+fn account_sell_decreases_position_and_increases_cash() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+    book.buy("AAPL", dec!(2), dec!(100), dec!(1));
+
+    book.sell("AAPL", dec!(1), dec!(110), dec!(0.5)).unwrap();
+    let position = book.position("AAPL").unwrap();
+
+    assert_eq!(book.cash(), dec!(9908.5));
+    assert_eq!(position.qty, dec!(1));
+    assert_eq!(position.avg_price, dec!(100));
+    assert_eq!(book.realized_pnl(), dec!(9.5));
+}
+
+#[test]
+fn account_unrealized_pnl_uses_mark_price() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+    book.buy("AAPL", dec!(2), dec!(100), dec!(1));
+
+    assert_eq!(book.unrealized_pnl("AAPL", dec!(110)), dec!(20));
+}

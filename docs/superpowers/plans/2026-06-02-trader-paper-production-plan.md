@@ -165,7 +165,7 @@ git commit -m "feat: configure paper execution settings"
 - Modify: `crates/accounting/src/accounting.rs`
 - Modify: `crates/accounting/tests/accounting_tests.rs`
 
-- [ ] **Step 1: Add failing sell tests**
+- [x] **Step 1: Add failing sell tests**
 
 Add tests:
 
@@ -193,7 +193,7 @@ fn account_unrealized_pnl_uses_mark_price() {
 }
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run:
 
@@ -203,7 +203,7 @@ cargo test -p accounting
 
 Expected: FAIL because `sell`, `realized_pnl`, and `unrealized_pnl` are missing.
 
-- [ ] **Step 3: Implement sell and PnL**
+- [x] **Step 3: Implement sell and PnL**
 
 Add error type:
 
@@ -253,7 +253,7 @@ pub fn unrealized_pnl(&self, symbol: &str, mark_price: Decimal) -> Decimal {
 
 Add `position_mut` to `PositionBook`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
