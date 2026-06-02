@@ -21,11 +21,17 @@ $fills = Invoke-RestMethod "$baseUrl/api/v1/fills"
 $balances = Invoke-RestMethod "$baseUrl/api/v1/account-balances"
 $snapshots = Invoke-RestMethod "$baseUrl/api/v1/portfolio/snapshots"
 $metrics = Invoke-RestMethod "$baseUrl/api/v1/metrics"
+$replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays"
+$events = Invoke-RestMethod "$baseUrl/api/v1/events"
+$runEvents = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/events"
 
 if (@($fills).Count -lt 1) { throw "expected at least one fill" }
 if (@($balances).Count -lt 1) { throw "expected at least one account balance" }
 if (@($snapshots).Count -lt 1) { throw "expected at least one portfolio snapshot" }
 if ($metrics.fill_count -lt 1) { throw "expected metrics fill_count >= 1" }
+if ($replay.bars -lt 1) { throw "expected replay bars >= 1" }
+if (@($events).Count -lt 1) { throw "expected at least one event" }
+if (@($runEvents).Count -lt 1) { throw "expected at least one run event" }
 
 [pscustomobject]@{
     run_id = $paper.run_id
@@ -34,4 +40,7 @@ if ($metrics.fill_count -lt 1) { throw "expected metrics fill_count >= 1" }
     balances = @($balances).Count
     snapshots = @($snapshots).Count
     total_return = $metrics.total_return
+    replay_bars = $replay.bars
+    events = @($events).Count
+    run_events = @($runEvents).Count
 }
