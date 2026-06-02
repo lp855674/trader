@@ -330,7 +330,7 @@ git commit -m "feat: add runtime manager"
 - Modify: `crates/config/src/config.rs`
 - Modify: `crates/config/tests/config_tests.rs`
 
-- [ ] **Step 1: Add failing config test for optional paper delay**
+- [x] **Step 1: Add failing config test for optional paper delay**
 
 In `crates/config/tests/config_tests.rs`, add:
 
@@ -375,7 +375,7 @@ fn parses_optional_paper_bar_delay() {
 }
 ```
 
-- [ ] **Step 2: Run config test and verify RED**
+- [x] **Step 2: Run config test and verify RED**
 
 Run:
 
@@ -385,7 +385,7 @@ cargo test -p config parses_optional_paper_bar_delay
 
 Expected: FAIL because `PaperConfig.bar_delay_ms` is missing.
 
-- [ ] **Step 3: Add optional config field**
+- [x] **Step 3: Add optional config field**
 
 In `crates/config/src/config.rs`, update `PaperConfig`:
 
@@ -399,7 +399,7 @@ pub struct PaperConfig {
 }
 ```
 
-- [ ] **Step 4: Add failing paper cancellation test**
+- [x] **Step 4: Add failing paper cancellation test**
 
 Create `crates/paper/tests/paper_cancellation_tests.rs`:
 
@@ -450,7 +450,7 @@ fn bars() -> Vec<Bar> {
 }
 ```
 
-- [ ] **Step 5: Run paper cancellation test and verify RED**
+- [x] **Step 5: Run paper cancellation test and verify RED**
 
 Run:
 
@@ -460,7 +460,7 @@ cargo test -p paper paper_runtime_stops_when_cancelled_before_next_bar
 
 Expected: FAIL because `runtime` dependency, `PaperRunError`, `PaperSettings.bar_delay_ms`, and `run_bars_with_cancel` are missing.
 
-- [ ] **Step 6: Add paper dependency and settings field**
+- [x] **Step 6: Add paper dependency and settings field**
 
 Modify `crates/paper/Cargo.toml`:
 
@@ -480,7 +480,7 @@ Update `PaperSettings::sample()`:
 bar_delay_ms: 0,
 ```
 
-- [ ] **Step 7: Implement cancellation-aware paper run**
+- [x] **Step 7: Implement cancellation-aware paper run**
 
 In `crates/paper/src/paper.rs`, add:
 
@@ -545,7 +545,7 @@ pub async fn run_bars(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> 
 }
 ```
 
-- [ ] **Step 8: Update API paper settings construction**
+- [x] **Step 8: Update API paper settings construction**
 
 In `crates/api/src/api.rs`, update `paper_settings`:
 
@@ -553,7 +553,7 @@ In `crates/api/src/api.rs`, update `paper_settings`:
 bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
 ```
 
-- [ ] **Step 9: Verify and commit**
+- [x] **Step 9: Verify and commit**
 
 Run:
 

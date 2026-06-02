@@ -73,6 +73,7 @@ pub struct PaperConfig {
     pub account_id: String,
     pub slippage_bps: String,
     pub fee_bps: String,
+    pub bar_delay_ms: Option<u64>,
 }
 
 impl AppConfig {

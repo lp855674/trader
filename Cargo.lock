@@ -1450,6 +1450,7 @@ dependencies = [
  "execution",
  "portfolio",
  "risk",
+ "runtime",
  "rust_decimal",
  "rust_decimal_macros",
  "storage",

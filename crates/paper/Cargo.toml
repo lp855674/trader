@@ -18,11 +18,12 @@ execution.workspace = true
 portfolio.workspace = true
 risk.workspace = true
 rust_decimal.workspace = true
+runtime.workspace = true
 storage.workspace = true
 strategies.workspace = true
+tokio.workspace = true
 trader_core.workspace = true
 
 [dev-dependencies]
 rust_decimal.workspace = true
 rust_decimal_macros.workspace = true
-tokio.workspace = true

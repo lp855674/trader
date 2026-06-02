@@ -7,7 +7,9 @@ use data::Bar;
 use execution::immediate_order;
 use portfolio::equal_weight_target;
 use risk::check_max_position;
+use runtime::CancellationFlag;
 use rust_decimal::Decimal;
+use std::{error::Error, fmt, time::Duration};
 use storage::{
     Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
 };
@@ -33,7 +35,23 @@ pub struct PaperSettings {
     pub fee_bps: Decimal,
     pub fast_window: usize,
     pub slow_window: usize,
+    pub bar_delay_ms: u64,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaperRunError {
+    Cancelled,
+}
+
+impl fmt::Display for PaperRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("paper run cancelled"),
+        }
+    }
+}
+
+impl Error for PaperRunError {}
 
 impl PaperSettings {
     pub fn sample() -> Self {
@@ -50,6 +68,7 @@ impl PaperSettings {
             fee_bps: Decimal::ZERO,
             fast_window: 2,
             slow_window: 3,
+            bar_delay_ms: 0,
         }
     }
 }
@@ -60,6 +79,15 @@ impl PaperRuntime {
     }
 
     pub async fn run_bars(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
+        self.run_bars_with_cancel(bars, CancellationFlag::default())
+            .await
+    }
+
+    pub async fn run_bars_with_cancel(
+        &self,
+        bars: Vec<Bar>,
+        cancel: CancellationFlag,
+    ) -> anyhow::Result<BacktestSummary> {
         let mut strategy = MovingAverageCrossStrategy::new(
             self.settings.strategy_name.clone(),
             self.settings.symbol.clone(),
@@ -78,6 +106,16 @@ impl PaperRuntime {
         let mut ended_at_ms = started_at_ms;
 
         for bar in bars {
+            if cancel.is_cancelled() {
+                return Err(PaperRunError::Cancelled.into());
+            }
+            if self.settings.bar_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.settings.bar_delay_ms)).await;
+            }
+            if cancel.is_cancelled() {
+                return Err(PaperRunError::Cancelled.into());
+            }
+
             ended_at_ms = bar.ts_ms;
             if let Some(signal) = strategy.on_bar(&bar) {
                 signals += 1;

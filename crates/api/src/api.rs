@@ -286,6 +286,7 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
+        bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
     })
 }
 
