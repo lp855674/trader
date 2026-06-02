@@ -9,3 +9,6 @@ rust-version.workspace = true
 path = "src/market_rules.rs"
 
 [dependencies]
+rust_decimal.workspace = true
+thiserror.workspace = true
+trader_core.workspace = true

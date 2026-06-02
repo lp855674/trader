@@ -126,7 +126,7 @@ git commit -m "docs: align mvp core rules direction"
 - Modify: `crates/market_rules/src/market_rules.rs`
 - Create: `crates/market_rules/tests/market_rules_tests.rs`
 
-- [ ] **Step 1: Add failing market rules tests**
+- [x] **Step 1: Add failing market rules tests**
 
 Create `crates/market_rules/tests/market_rules_tests.rs`:
 
@@ -196,7 +196,7 @@ fn market_order(qty: Decimal) -> OrderRequest {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -206,7 +206,7 @@ cargo test -p market_rules
 
 Expected: FAIL because `MarketRuleSet`, `MarketRuleError`, and `validate_order` do not exist.
 
-- [ ] **Step 3: Implement market rule model**
+- [x] **Step 3: Implement market rule model**
 
 Replace `crates/market_rules/src/market_rules.rs` with:
 
@@ -292,7 +292,7 @@ fn is_multiple(value: Decimal, step: Decimal) -> bool {
 }
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
