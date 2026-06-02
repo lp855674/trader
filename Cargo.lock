@@ -127,13 +127,16 @@ dependencies = [
  "data",
  "metrics",
  "paper",
+ "replay",
  "runtime",
  "rust_decimal",
  "serde",
+ "serde_json",
  "sqlx",
  "storage",
  "tokio",
  "tower",
+ "uuid",
 ]
 
 [[package]]
@@ -1809,6 +1812,7 @@ dependencies = [
  "events",
  "rust_decimal",
  "rust_decimal_macros",
+ "serde",
  "tokio",
 ]
 
@@ -2713,14 +2717,19 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "backtest",
+ "chrono",
  "clap",
  "config",
  "data",
+ "metrics",
  "paper",
  "predicates",
+ "replay",
  "rust_decimal",
+ "serde_json",
  "storage",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

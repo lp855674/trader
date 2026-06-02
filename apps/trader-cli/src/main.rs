@@ -140,7 +140,13 @@ async fn main() -> Result<()> {
                 "speed": summary.speed
             })
             .to_string();
-            insert_event(&db, &app_config.runtime.run_id, "replay.completed", &payload).await?;
+            insert_event(
+                &db,
+                &app_config.runtime.run_id,
+                "replay.completed",
+                &payload,
+            )
+            .await?;
             println!(
                 "replay completed: bars={} speed={}",
                 summary.bars, summary.speed

@@ -235,11 +235,39 @@ Phase 5 增加最小运行控制面和 server smoke：
 
 Phase 6 introduces `crates/runtime` as the in-memory active run registry. API starts paper runs in background tasks, persists `running`, and returns immediately with `{ run_id, status }`. `RuntimeManager` owns cancellation flags for active tasks; `PaperRuntime` checks the flag between bars and after optional pacing delay. Cancellation is now best-effort active cancellation for running paper jobs, not just a database status override.
 
-当前状态仍是 MVP vertical slice，不代表 roadmap 中的分布式 Phase 6 已完成。下一步重点是补齐 MVP 核心交易规则：Market Rules、Risk、OMS、Execution delta，以及 PaperRuntime 对这些规则的串联。
+当前状态仍是本地 MVP vertical slice，不代表 roadmap 中的分布式 Phase 6 已完成。
 
 ## MVP Core Rules
 
 当前 MVP 订单链路按 `Strategy -> Portfolio -> Execution delta -> MarketRules -> Risk -> OMS -> Broker -> Accounting -> Storage` 执行。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+
+## Local Verifiable MVP
+
+当前分支的 MVP 完成标准是“本地可实际验证的交易闭环”，不是完整实盘交易平台。可验证闭环包括：
+
+- CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
+- REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
+- Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
+- Core path：paper runtime 串联 Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS、Simulated Broker、Accounting、Storage。
+- Replay：从 CSV 加载历史 K 线并返回 replay bar summary。
+- Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
+- Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。
+
+本地完整验证命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1
+```
+
+该脚本会创建临时 config 与 SQLite，依次执行 CLI 全链路，然后启动真实 `trader-server` 并执行 REST smoke。通过时会输出 run id、status、fills、balances、snapshots、total_return、replay_bars、events、run_events。
+
+当前 MVP 明确不包含：
+
+- 真实 broker/live adapter。
+- 完整 WebSocket streaming。
+- 多市场完整规则矩阵。
+- Parquet 研究流水线。
+- 分布式 runtime、多用户权限、生产级鉴权。
 
 ## 实施计划
 
@@ -251,3 +279,4 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`
+- `docs/superpowers/plans/2026-06-02-trader-local-mvp-completion-plan.md`
