@@ -64,7 +64,7 @@ Existing tests to modify:
 - Modify: `rules.md`
 - Modify: `tech.md`
 
-- [ ] **Step 1: Update stale storage boundary wording**
+- [x] **Step 1: Update stale storage boundary wording**
 
 In `rules.md`, replace:
 
@@ -80,7 +80,7 @@ with:
 - 其它 crate 访问数据必须走 `storage::Db` 暴露的接口，禁止透传 `SqlitePool`。
 ```
 
-- [ ] **Step 2: Align cancellation wording with current implementation**
+- [x] **Step 2: Align cancellation wording with current implementation**
 
 In `rules.md`, replace:
 
@@ -94,7 +94,7 @@ with:
 - 可取消流程必须沿用仓库统一取消类型传递。当前统一类型是 `runtime::CancellationFlag`；若未来引入 `tokio_util::sync::CancellationToken`，必须一次性迁移并更新本规则。
 ```
 
-- [ ] **Step 3: Clarify current status in tech.md**
+- [x] **Step 3: Clarify current status in tech.md**
 
 In `tech.md`, add under Phase 6 Runtime Manager:
 
@@ -102,7 +102,7 @@ In `tech.md`, add under Phase 6 Runtime Manager:
 当前状态仍是 MVP vertical slice，不代表 roadmap 中的分布式 Phase 6 已完成。下一步重点是补齐 MVP 核心交易规则：Market Rules、Risk、OMS、Execution delta，以及 PaperRuntime 对这些规则的串联。
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 

@@ -235,6 +235,8 @@ Phase 5 增加最小运行控制面和 server smoke：
 
 Phase 6 introduces `crates/runtime` as the in-memory active run registry. API starts paper runs in background tasks, persists `running`, and returns immediately with `{ run_id, status }`. `RuntimeManager` owns cancellation flags for active tasks; `PaperRuntime` checks the flag between bars and after optional pacing delay. Cancellation is now best-effort active cancellation for running paper jobs, not just a database status override.
 
+当前状态仍是 MVP vertical slice，不代表 roadmap 中的分布式 Phase 6 已完成。下一步重点是补齐 MVP 核心交易规则：Market Rules、Risk、OMS、Execution delta，以及 PaperRuntime 对这些规则的串联。
+
 ## 实施计划
 
 完整执行计划见：

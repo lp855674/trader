@@ -32,7 +32,7 @@
 
 - async 失败必须能传播到调用方或 UI 层，返回可读错误。
 - 新增后台任务必须明确生命周期（await / detach / 持有句柄）。
-- 可取消流程必须沿用 `CancellationToken` 传递，不要私有取消协议。
+- 可取消流程必须沿用仓库统一取消类型传递。当前统一类型是 `runtime::CancellationFlag`；若未来引入 `tokio_util::sync::CancellationToken`，必须一次性迁移并更新本规则。
 
 ## 3.1) 日志写法规范（结构化 tracing）
 
@@ -53,8 +53,8 @@
 
 ## 4) 架构边界（强约束）
 
-- 仅 `crates/db` 允许依赖/使用 `sqlx` 与内联 SQL。
-- 其它 crate 访问数据必须走 `db::Db` 暴露的接口，禁止透传 `SqlitePool`。
+- 仅 `crates/storage` 允许依赖/使用 `sqlx` 与内联 SQL。
+- 其它 crate 访问数据必须走 `storage::Db` 暴露的接口，禁止透传 `SqlitePool`。
 - tools 文件能力必须受 workspace 边界约束（禁止绝对路径、`..`、symlink escape）。
 - gateway/channels/app 的请求处理必须复用统一契约：`ChannelRequest/ChannelResponse`。
 
