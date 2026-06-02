@@ -7,6 +7,16 @@ if (-not $baseUrl) {
 
 Invoke-RestMethod "$baseUrl/api/v1/health" | Out-Null
 $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
+if ($paper.status -ne "running") { throw "expected paper run to start as running" }
+
+$status = $null
+for ($i = 0; $i -lt 80; $i++) {
+    Start-Sleep -Milliseconds 250
+    $status = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/status"
+    if ($status.status -eq "completed") { break }
+}
+if ($status.status -ne "completed") { throw "expected paper run to complete" }
+
 $fills = Invoke-RestMethod "$baseUrl/api/v1/fills"
 $balances = Invoke-RestMethod "$baseUrl/api/v1/account-balances"
 $snapshots = Invoke-RestMethod "$baseUrl/api/v1/portfolio/snapshots"
@@ -18,8 +28,8 @@ if (@($snapshots).Count -lt 1) { throw "expected at least one portfolio snapshot
 if ($metrics.fill_count -lt 1) { throw "expected metrics fill_count >= 1" }
 
 [pscustomobject]@{
-    signals = $paper.signals
-    orders = $paper.orders
+    run_id = $paper.run_id
+    status = $status.status
     fills = @($fills).Count
     balances = @($balances).Count
     snapshots = @($snapshots).Count

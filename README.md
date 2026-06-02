@@ -44,6 +44,10 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/runs/sample-ma-cross/status
 Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/v1/runs/sample-ma-cross/cancel
 ```
 
+`POST /api/v1/paper-runs` starts a background paper run and returns `{ run_id, status }`.
+Poll `GET /api/v1/runs/{run_id}/status` until `completed`, `failed`, or `cancelled`.
+Use `POST /api/v1/runs/{run_id}/cancel` to request cancellation of an active run.
+
 Or run the smoke script:
 
 ```powershell

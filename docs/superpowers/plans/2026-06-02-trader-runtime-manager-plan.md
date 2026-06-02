@@ -953,7 +953,7 @@ git commit -m "feat: cancel active paper runs"
 - Modify: `tech.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`
 
-- [ ] **Step 1: Update REST smoke for async paper start**
+- [x] **Step 1: Update REST smoke for async paper start**
 
 Modify `scripts/rest-smoke.ps1` after `POST /api/v1/paper-runs`:
 
@@ -972,7 +972,7 @@ if ($status.status -ne "completed") { throw "expected paper run to complete" }
 
 Keep the existing fills, balances, snapshots, and metrics assertions after the polling block.
 
-- [ ] **Step 2: Run server smoke**
+- [x] **Step 2: Run server smoke**
 
 Run:
 
@@ -982,7 +982,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
 
 Expected: PASS with summary containing `orders = 1`, `fills = 1`, and non-empty snapshots.
 
-- [ ] **Step 3: Update README**
+- [x] **Step 3: Update README**
 
 In `README.md`, update the REST API section to state:
 
@@ -992,7 +992,7 @@ Poll `GET /api/v1/runs/{run_id}/status` until `completed`, `failed`, or `cancell
 Use `POST /api/v1/runs/{run_id}/cancel` to request cancellation of an active run.
 ```
 
-- [ ] **Step 4: Update tech.md**
+- [x] **Step 4: Update tech.md**
 
 In `tech.md`, update Phase 5/6 notes:
 
@@ -1002,7 +1002,7 @@ In `tech.md`, update Phase 5/6 notes:
 Phase 6 introduces `crates/runtime` as the in-memory active run registry. API starts paper runs in background tasks, persists `running`, and returns immediately with `{ run_id, status }`. `RuntimeManager` owns cancellation flags for active tasks; `PaperRuntime` checks the flag between bars and after optional pacing delay. Cancellation is now best-effort active cancellation for running paper jobs, not just a database status override.
 ```
 
-- [ ] **Step 5: Final verification**
+- [x] **Step 5: Final verification**
 
 Run:
 
@@ -1022,7 +1022,7 @@ Expected:
 - naming check prints no files.
 - direct member dependency check prints no matches.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit:
 

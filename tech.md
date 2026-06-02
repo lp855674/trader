@@ -231,6 +231,10 @@ Phase 5 增加最小运行控制面和 server smoke：
 - `POST /api/v1/runs/{run_id}/cancel` 将已存在 run 标记为 `cancelled` 并设置 `ended_at_ms`；当前 runtime 仍是同步短任务，cancel 是持久化状态控制，不中断已经在同一请求内执行完成的计算。
 - `scripts/server-smoke.ps1` 使用临时 Cargo target directory 和临时 SQLite 数据库，启动真实 `trader-server` 后执行 REST smoke。
 
+## Phase 6 Runtime Manager
+
+Phase 6 introduces `crates/runtime` as the in-memory active run registry. API starts paper runs in background tasks, persists `running`, and returns immediately with `{ run_id, status }`. `RuntimeManager` owns cancellation flags for active tasks; `PaperRuntime` checks the flag between bars and after optional pacing delay. Cancellation is now best-effort active cancellation for running paper jobs, not just a database status override.
+
 ## 实施计划
 
 完整执行计划见：
@@ -240,3 +244,4 @@ Phase 5 增加最小运行控制面和 server smoke：
 - `docs/superpowers/plans/2026-06-02-trader-paper-runtime-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md`
+- `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`
