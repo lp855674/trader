@@ -1,7 +1,9 @@
 use anyhow::Result;
 use backtest::{BacktestRuntime, BacktestSettings};
 use clap::{Parser, Subcommand};
+use metrics::paper_summary;
 use paper::{PaperRuntime, PaperSettings};
+use replay::ReplayRuntime;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -31,8 +33,14 @@ enum Command {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
     },
-    Replay,
-    Report,
+    Replay {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
+    Report {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
     CheckConfig {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -78,13 +86,102 @@ async fn main() -> Result<()> {
                 summary.signals, summary.orders
             );
         }
-        Command::Replay => println!("replay started"),
-        Command::Report => println!("report generated"),
+        Command::Replay { config } => {
+            let (app_config, db) = load_db(&config).await?;
+            db.migrate().await?;
+            let started_at_ms = chrono::Utc::now().timestamp_millis();
+            db.insert_strategy_run(storage::NewStrategyRun {
+                id: app_config.runtime.run_id.clone(),
+                name: app_config.strategy.name.clone(),
+                mode: "replay".to_string(),
+                status: "running".to_string(),
+                started_at_ms,
+                ended_at_ms: None,
+                error: None,
+                config_json: "{}".to_string(),
+            })
+            .await?;
+            insert_event(&db, &app_config.runtime.run_id, "replay.started", "{}").await?;
+
+            let bars = data::load_bars_from_csv(&app_config.data.path)?;
+            let summary = ReplayRuntime::new(100_000).replay_bars(bars).await;
+            let ended_at_ms = chrono::Utc::now().timestamp_millis();
+            db.update_strategy_run_status(
+                &app_config.runtime.run_id,
+                "completed",
+                Some(ended_at_ms),
+                None,
+            )
+            .await?;
+            let payload = serde_json::json!({
+                "run_id": app_config.runtime.run_id,
+                "bars": summary.bars,
+                "speed": summary.speed
+            })
+            .to_string();
+            insert_event(&db, &app_config.runtime.run_id, "replay.completed", &payload).await?;
+            println!(
+                "replay completed: bars={} speed={}",
+                summary.bars, summary.speed
+            );
+        }
+        Command::Report { config } => {
+            let (app_config, db) = load_db(&config).await?;
+            db.migrate().await?;
+            let run_id = &app_config.runtime.run_id;
+            let run_status = db
+                .get_strategy_run(run_id)
+                .await?
+                .map(|run| run.status)
+                .unwrap_or_else(|| "missing".to_string());
+            let orders = db.list_orders(run_id).await?;
+            let fills = db.list_fills(run_id).await?;
+            let balances = db.list_account_balances(run_id).await?;
+            let snapshots = db.list_portfolio_snapshots(run_id).await?;
+            let first_snapshot = snapshots.first();
+            let last_snapshot = snapshots.last().or(first_snapshot);
+            let total_return = match (first_snapshot, last_snapshot) {
+                (Some(first), Some(last)) => {
+                    let initial_equity = Decimal::from_str(&first.equity)?;
+                    let final_equity = Decimal::from_str(&last.equity)?;
+                    paper_summary(orders.len(), fills.len(), initial_equity, final_equity)
+                        .total_return
+                }
+                _ => Decimal::ZERO.to_string(),
+            };
+            println!(
+                "report: run_id={} status={} orders={} fills={} balances={} snapshots={} total_return={}",
+                run_id,
+                run_status,
+                orders.len(),
+                fills.len(),
+                balances.len(),
+                snapshots.len(),
+                total_return
+            );
+        }
         Command::CheckConfig { config } => {
             config::AppConfig::from_toml_file(config)?;
             println!("config ok");
         }
     }
+    Ok(())
+}
+
+async fn insert_event(
+    db: &storage::Db,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Result<()> {
+    db.insert_event(storage::NewEventRecord {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        source: source.to_string(),
+        category: category.to_string(),
+        payload_json: payload_json.to_string(),
+    })
+    .await?;
     Ok(())
 }
 

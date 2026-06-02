@@ -35,6 +35,35 @@ fn paper_run_accepts_config_argument() {
         .stdout(contains("paper completed"));
 }
 
+#[test]
+fn replay_accepts_config_argument() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["replay", "--config", "configs/backtest/ma_cross.toml"])
+        .assert()
+        .success()
+        .stdout(contains("replay completed: bars="));
+}
+
+#[test]
+fn report_accepts_config_argument() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-run", "--config", "configs/backtest/ma_cross.toml"])
+        .assert()
+        .success();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["report", "--config", "configs/backtest/ma_cross.toml"])
+        .assert()
+        .success()
+        .stdout(contains("report: run_id=sample-ma-cross"));
+}
+
 fn workspace_root() -> &'static str {
     Box::leak(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

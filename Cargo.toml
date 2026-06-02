@@ -51,6 +51,7 @@ market_rules = { path = "crates/market_rules" }
 oms = { path = "crates/oms" }
 paper = { path = "crates/paper" }
 portfolio = { path = "crates/portfolio" }
+replay = { path = "crates/replay" }
 risk = { path = "crates/risk" }
 runtime = { path = "crates/runtime" }
 serde = { version = "1", features = ["derive"] }

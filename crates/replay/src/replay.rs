@@ -1,7 +1,14 @@
 #![forbid(unsafe_code)]
 
 use data::Bar;
+use serde::Serialize;
 use std::time::Duration;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReplaySummary {
+    pub bars: usize,
+    pub speed: u32,
+}
 
 pub struct ReplayRuntime {
     speed: u32,
@@ -14,13 +21,16 @@ impl ReplayRuntime {
         }
     }
 
-    pub async fn replay_bars(&self, bars: Vec<Bar>) -> usize {
+    pub async fn replay_bars(&self, bars: Vec<Bar>) -> ReplaySummary {
         let delay = Duration::from_millis(1000 / u64::from(self.speed));
         let mut count = 0;
         for _bar in bars {
             tokio::time::sleep(delay).await;
             count += 1;
         }
-        count
+        ReplaySummary {
+            bars: count,
+            speed: self.speed,
+        }
     }
 }
