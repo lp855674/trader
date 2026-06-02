@@ -203,6 +203,56 @@ async fn paper_run_status_can_be_queried_and_cancelled() {
     );
 }
 
+#[tokio::test]
+async fn failed_paper_run_records_failed_status_and_error() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(
+        db,
+        "configs/backtest/missing-bars.toml".into(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/paper-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/runs/sample-missing-bars/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("failed".len())
+            .any(|window| window == b"failed")
+    );
+    assert!(
+        bytes
+            .as_ref()
+            .windows("\"error\":null".len())
+            .all(|window| window != b"\"error\":null")
+    );
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -71,10 +71,41 @@ async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let bars = data::load_bars_from_csv(&app_config.data.path)?;
-    let summary = PaperRuntime::new(state.db.clone(), paper_settings(&app_config)?)
-        .run_bars(bars)
+    let settings = paper_settings(&app_config)?;
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
+
+    state
+        .db
+        .insert_strategy_run(storage::NewStrategyRun {
+            id: settings.run_id.clone(),
+            name: settings.strategy_name.clone(),
+            mode: "paper".to_string(),
+            status: "running".to_string(),
+            started_at_ms,
+            ended_at_ms: None,
+            error: None,
+            config_json: "{}".to_string(),
+        })
         .await?;
+
+    let bars = match data::load_bars_from_csv(&app_config.data.path) {
+        Ok(bars) => bars,
+        Err(error) => {
+            record_failed_run(&state, &settings.run_id, error.to_string()).await?;
+            return Err(error.into());
+        }
+    };
+
+    let summary = match PaperRuntime::new(state.db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+    {
+        Ok(summary) => summary,
+        Err(error) => {
+            record_failed_run(&state, &settings.run_id, error.to_string()).await?;
+            return Err(error.into());
+        }
+    };
     Ok((StatusCode::CREATED, Json(summary)))
 }
 
@@ -202,6 +233,22 @@ async fn cancel_run(
         .await?;
 
     get_run_status(State(state), Path(run_id)).await
+}
+
+async fn record_failed_run(
+    state: &AppState,
+    run_id: &str,
+    error: String,
+) -> Result<(), sqlx::Error> {
+    state
+        .db
+        .update_strategy_run_status(
+            run_id,
+            "failed",
+            Some(chrono::Utc::now().timestamp_millis()),
+            Some(&error),
+        )
+        .await
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

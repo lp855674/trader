@@ -227,7 +227,7 @@ git commit -m "feat: expose run status controls"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Add failing test for failed paper run**
+- [x] **Step 1: Add failing test for failed paper run**
 
 Create an API test with a config path that points to a missing CSV:
 
@@ -243,7 +243,7 @@ Assert:
 - `GET /api/v1/runs/sample-missing-bars/status` returns `failed`;
 - response contains non-empty `error`.
 
-- [ ] **Step 2: Run API test and verify RED**
+- [x] **Step 2: Run API test and verify RED**
 
 Run:
 
@@ -253,7 +253,7 @@ cargo test -p api
 
 Expected: FAIL because failed run state is not inserted/updated when execution fails before completion.
 
-- [ ] **Step 3: Implement failure recording**
+- [x] **Step 3: Implement failure recording**
 
 In `run_paper`, insert a `strategy_runs` record with status `running` before loading bars/running runtime:
 
@@ -280,7 +280,7 @@ state.db
 
 Then return the original error.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
