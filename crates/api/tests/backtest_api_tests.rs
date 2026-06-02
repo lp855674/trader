@@ -13,6 +13,7 @@ async fn post_backtest_returns_created() {
     let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -69,6 +70,7 @@ async fn post_backtest_populates_query_routes() {
     }
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -87,6 +89,24 @@ async fn post_backtest_populates_query_routes() {
             .windows("total_return".len())
             .any(|window| window == b"total_return")
     );
+
+    for uri in ["/api/v1/runs", "/api/v1/runs/sample-ma-cross"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_ne!(bytes.as_ref(), b"[]");
+    }
 }
 
 fn workspace_root() -> PathBuf {

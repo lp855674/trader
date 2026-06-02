@@ -37,6 +37,17 @@ pub struct NewStrategyRun {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StrategyRunRecord {
+    pub id: String,
+    pub name: String,
+    pub mode: String,
+    pub status: String,
+    pub started_at_ms: i64,
+    pub ended_at_ms: Option<i64>,
+    pub config_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewOrder {
     pub id: String,
     pub run_id: String,
@@ -173,6 +184,63 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    pub async fn get_strategy_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<StrategyRunRecord>, sqlx::Error> {
+        let row = sqlx::query_as::<_, (String, String, String, String, i64, Option<i64>, String)>(
+            r#"
+            SELECT id, name, mode, status, started_at_ms, ended_at_ms, config_json
+            FROM strategy_runs
+            WHERE id = ?
+            "#,
+        )
+        .bind(run_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(id, name, mode, status, started_at_ms, ended_at_ms, config_json)| StrategyRunRecord {
+                id,
+                name,
+                mode,
+                status,
+                started_at_ms,
+                ended_at_ms,
+                config_json,
+            },
+        ))
+    }
+
+    pub async fn list_strategy_runs(&self) -> Result<Vec<StrategyRunRecord>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, i64, Option<i64>, String)>(
+            r#"
+            SELECT id, name, mode, status, started_at_ms, ended_at_ms, config_json
+            FROM strategy_runs
+            ORDER BY started_at_ms DESC, id
+            "#,
+        )
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, name, mode, status, started_at_ms, ended_at_ms, config_json)| {
+                    StrategyRunRecord {
+                        id,
+                        name,
+                        mode,
+                        status,
+                        started_at_ms,
+                        ended_at_ms,
+                        config_json,
+                    }
+                },
+            )
+            .collect())
     }
 
     pub async fn insert_order(&self, order: NewOrder) -> Result<(), sqlx::Error> {

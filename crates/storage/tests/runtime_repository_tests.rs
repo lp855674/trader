@@ -19,6 +19,11 @@ async fn runtime_records_round_trip() {
     .await
     .unwrap();
 
+    let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    assert_eq!(run.id, "run-1");
+    assert_eq!(run.status, "completed");
+    assert_eq!(db.list_strategy_runs().await.unwrap().len(), 1);
+
     db.insert_order(NewOrder {
         id: "order-1".to_string(),
         run_id: "run-1".to_string(),

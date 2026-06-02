@@ -4,8 +4,9 @@ mod state;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
 };
 use metrics::{MetricsSummary, paper_summary};
@@ -35,6 +36,8 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/metrics", get(metrics_summary))
+        .route("/api/v1/runs", get(list_runs))
+        .route("/api/v1/runs/{run_id}", get(get_run))
         .with_state(state)
 }
 
@@ -125,6 +128,22 @@ async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSu
         initial_equity,
         final_equity,
     )))
+}
+
+async fn list_runs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<storage::StrategyRunRecord>>, ApiError> {
+    Ok(Json(state.db.list_strategy_runs().await?))
+}
+
+async fn get_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(run) = state.db.get_strategy_run(&run_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(run).into_response())
 }
 
 fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiError> {

@@ -505,7 +505,7 @@ git commit -m "feat: persist paper sell pnl"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Add failing storage run query test**
+- [x] **Step 1: Add failing storage run query test**
 
 In `runtime_records_round_trip`, after inserting the strategy run, assert:
 
@@ -516,7 +516,7 @@ assert_eq!(run.status, "completed");
 assert_eq!(db.list_strategy_runs().await.unwrap().len(), 1);
 ```
 
-- [ ] **Step 2: Run storage test and verify RED**
+- [x] **Step 2: Run storage test and verify RED**
 
 Run:
 
@@ -526,7 +526,7 @@ cargo test -p storage
 
 Expected: FAIL because `get_strategy_run` and `list_strategy_runs` are missing.
 
-- [ ] **Step 3: Implement run record and repository methods**
+- [x] **Step 3: Implement run record and repository methods**
 
 Add:
 
@@ -550,7 +550,7 @@ Implement:
 
 Use `ORDER BY started_at_ms DESC, id` for list.
 
-- [ ] **Step 4: Add API test for runs**
+- [x] **Step 4: Add API test for runs**
 
 After POSTing a paper run in `crates/api/tests/backtest_api_tests.rs`, call:
 
@@ -561,7 +561,7 @@ GET /api/v1/runs/sample-ma-cross
 
 Assert both return `200 OK` and non-empty JSON.
 
-- [ ] **Step 5: Implement API routes**
+- [x] **Step 5: Implement API routes**
 
 Add:
 
@@ -570,7 +570,7 @@ Add:
 
 The by-id route returns `404 NOT_FOUND` when the run is missing.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
