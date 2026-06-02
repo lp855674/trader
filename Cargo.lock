@@ -1454,6 +1454,8 @@ dependencies = [
  "broker",
  "data",
  "execution",
+ "market_rules",
+ "oms",
  "portfolio",
  "risk",
  "runtime",

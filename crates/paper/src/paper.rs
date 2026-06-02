@@ -4,9 +4,11 @@ use accounting::AccountBook;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::Bar;
-use execution::immediate_order;
+use execution::order_for_target_delta;
+use market_rules::MarketRuleSet;
+use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
-use risk::check_max_position;
+use risk::{RiskPolicy, check_max_position};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
@@ -29,6 +31,9 @@ pub struct PaperSettings {
     pub account_id: String,
     pub order_qty: Decimal,
     pub max_abs_qty: Decimal,
+    pub max_order_qty: Decimal,
+    pub max_order_notional: Decimal,
+    pub min_cash_after_order: Decimal,
     pub initial_cash: Decimal,
     pub base_currency: String,
     pub slippage_bps: Decimal,
@@ -62,6 +67,9 @@ impl PaperSettings {
             account_id: "paper".to_string(),
             order_qty: Decimal::ONE,
             max_abs_qty: Decimal::from(100),
+            max_order_qty: Decimal::from(100),
+            max_order_notional: Decimal::from(1_000_000),
+            min_cash_after_order: Decimal::ZERO,
             initial_cash: Decimal::from(100_000),
             base_currency: "USD".to_string(),
             slippage_bps: Decimal::ZERO,
@@ -121,8 +129,26 @@ impl PaperRuntime {
                 signals += 1;
                 let target = equal_weight_target(&signal, self.settings.order_qty);
                 check_max_position(&target, self.settings.max_abs_qty)?;
-                let order = immediate_order(&target, self.settings.account_id.clone());
+                let current_qty = account_book
+                    .position(&self.settings.symbol)
+                    .map_or(Decimal::ZERO, |position| position.qty);
+                let Some(order) =
+                    order_for_target_delta(&target, current_qty, self.settings.account_id.clone())
+                else {
+                    continue;
+                };
+                MarketRuleSet::us_equity().validate_order(&order, bar.close)?;
+                RiskPolicy::new(
+                    self.settings.max_order_qty,
+                    self.settings.max_order_notional,
+                    self.settings.min_cash_after_order,
+                )
+                .check_order(&order, bar.close, account_book.cash(), false)?;
+                let mut order_state = OrderStateMachine::with_order_qty(order.qty);
+                order_state.submit()?;
+                order_state.accept()?;
                 let fill = simulate_market_fill(order.clone(), bar.close, broker_settings.clone())?;
+                order_state.record_fill(fill.qty)?;
                 let order_number = orders + 1;
                 let order_id = format!("{}-order-{}", self.settings.run_id, order_number);
                 let fill_id = format!("{}-fill-{}", self.settings.run_id, order_number);
@@ -140,7 +166,7 @@ impl PaperRuntime {
                         price: order.price.map(|price| price.to_string()),
                         qty: order.qty.to_string(),
                         filled_qty: fill.qty.to_string(),
-                        status: "FILLED".to_string(),
+                        status: format!("{:?}", order_state.status()).to_uppercase(),
                         created_at_ms: bar.ts_ms,
                         updated_at_ms: bar.ts_ms,
                     })

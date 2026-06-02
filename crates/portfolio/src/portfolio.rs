@@ -12,7 +12,7 @@ pub struct TargetPosition {
 pub fn equal_weight_target(signal: &SignalEvent, qty: Decimal) -> TargetPosition {
     let signed_qty = match signal.side {
         SignalSide::Buy | SignalSide::CloseShort => qty,
-        SignalSide::Sell | SignalSide::CloseLong => -qty,
+        SignalSide::Sell | SignalSide::CloseLong => Decimal::ZERO,
     };
     TargetPosition {
         symbol: signal.symbol.clone(),

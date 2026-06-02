@@ -42,6 +42,7 @@ Modify:
 - `crates/risk/src/risk.rs`: implement order-level risk policy.
 - `crates/oms/src/oms.rs`: implement quantity-aware order lifecycle.
 - `crates/execution/src/execution.rs`: implement target-vs-current position delta order generation.
+- `crates/portfolio/src/portfolio.rs`: keep MVP sell/close-long target semantics flat instead of opening shorts.
 - `crates/paper/src/paper.rs`: use execution delta, market rules, risk, and OMS before broker simulation.
 
 Create:
@@ -53,6 +54,7 @@ Create:
 Existing tests to modify:
 
 - `crates/oms/tests/oms_tests.rs`
+- `crates/portfolio/tests/portfolio_tests.rs`
 - `crates/paper/tests/paper_tests.rs`
 - `crates/paper/tests/persistent_paper_tests.rs`
 
@@ -765,7 +767,7 @@ git commit -m "feat: create orders from target deltas"
 - Modify: `crates/paper/tests/paper_tests.rs`
 - Modify: `crates/paper/tests/persistent_paper_tests.rs`
 
-- [ ] **Step 1: Add failing paper test for max order risk**
+- [x] **Step 1: Add failing paper test for max order risk**
 
 In `crates/paper/tests/paper_tests.rs`, add:
 
@@ -811,7 +813,7 @@ async fn paper_runtime_rejects_order_above_max_order_qty() {
 }
 ```
 
-- [ ] **Step 2: Run paper test and verify RED**
+- [x] **Step 2: Run paper test and verify RED**
 
 Run:
 
@@ -821,7 +823,7 @@ cargo test -p paper paper_runtime_rejects_order_above_max_order_qty
 
 Expected: FAIL because `PaperSettings.max_order_qty` does not exist and paper does not use order risk policy.
 
-- [ ] **Step 3: Extend PaperSettings**
+- [x] **Step 3: Extend PaperSettings**
 
 In `crates/paper/src/paper.rs`, add:
 
@@ -847,7 +849,7 @@ max_order_notional: Decimal::from(1_000_000),
 min_cash_after_order: Decimal::ZERO,
 ```
 
-- [ ] **Step 4: Integrate execution delta, market rules, risk, and OMS**
+- [x] **Step 4: Integrate execution delta, market rules, risk, and OMS**
 
 In `crates/paper/src/paper.rs`:
 
@@ -893,7 +895,7 @@ order_state.record_fill(fill.qty)?;
 
 Persist order status from `order_state.status()` instead of hard-coded `FILLED`.
 
-- [ ] **Step 5: Verify full paper path**
+- [x] **Step 5: Verify full paper path**
 
 Run:
 
@@ -906,7 +908,7 @@ cargo check --workspace --locked
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit:
 

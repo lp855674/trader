@@ -47,6 +47,8 @@ events = { path = "crates/events" }
 execution = { path = "crates/execution" }
 futures = "0.3"
 metrics = { path = "crates/metrics" }
+market_rules = { path = "crates/market_rules" }
+oms = { path = "crates/oms" }
 paper = { path = "crates/paper" }
 portfolio = { path = "crates/portfolio" }
 risk = { path = "crates/risk" }
