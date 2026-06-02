@@ -41,3 +41,13 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/portfolio/snapshots
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/metrics
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/runs
 ```
+
+Or run the smoke script:
+
+```powershell
+$env:TRADER_DATABASE_URL = "sqlite://data/rest-smoke.sqlite"
+cargo run -p trader-server
+
+# In another shell:
+powershell -ExecutionPolicy Bypass -File .\scripts\rest-smoke.ps1
+```

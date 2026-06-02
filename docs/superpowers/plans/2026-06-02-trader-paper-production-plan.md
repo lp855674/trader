@@ -680,7 +680,7 @@ git commit -m "feat: add explicit paper run api"
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
 
-- [ ] **Step 1: Create smoke script**
+- [x] **Step 1: Create smoke script**
 
 Create `scripts/rest-smoke.ps1`:
 
@@ -731,11 +731,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\rest-smoke.ps1
 
 Expected: prints an object with `fills`, `balances`, and `snapshots` all at least `1`.
 
-- [ ] **Step 3: Document smoke workflow**
+Status: blocked in this local shell by Windows target artifact permissions while building `trader-server`:
+
+```text
+failed to remove file ... libstorage-*.rlib: 拒绝访问。 (os error 5)
+failed to write ... libregex_syntax-*.rmeta: 拒绝访问。 (os error 5)
+```
+
+The script is still added and documented; route behavior remains covered by `cargo test -p api`.
+
+- [x] **Step 3: Document smoke workflow**
 
 Add the script command to README.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
