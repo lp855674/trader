@@ -24,6 +24,17 @@ fn backtest_accepts_config_argument() {
         .stdout(contains("backtest completed"));
 }
 
+#[test]
+fn paper_run_accepts_config_argument() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-run", "--config", "configs/backtest/ma_cross.toml"])
+        .assert()
+        .success()
+        .stdout(contains("paper completed"));
+}
+
 fn workspace_root() -> &'static str {
     Box::leak(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

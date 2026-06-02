@@ -15,6 +15,7 @@ backtest.workspace = true
 clap.workspace = true
 config.workspace = true
 data.workspace = true
+paper.workspace = true
 rust_decimal.workspace = true
 storage.workspace = true
 tokio.workspace = true

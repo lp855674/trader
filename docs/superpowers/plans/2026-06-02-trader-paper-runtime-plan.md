@@ -330,7 +330,7 @@ git commit -m "feat: run persistent paper runtime"
 - Modify: `apps/trader-cli/src/main.rs`
 - Modify: `apps/trader-cli/tests/cli_tests.rs`
 
-- [ ] **Step 1: Add CLI test**
+- [x] **Step 1: Add CLI test**
 
 Add:
 
@@ -347,7 +347,7 @@ fn paper_run_accepts_config_argument() {
 }
 ```
 
-- [ ] **Step 2: Implement command**
+- [x] **Step 2: Implement command**
 
 Add `Command::PaperRun { config: String }`.
 
@@ -359,7 +359,7 @@ Handler:
 - run `PaperRuntime`;
 - print `paper completed: signals=<N> orders=<N>`.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run:
 

@@ -2695,6 +2695,7 @@ dependencies = [
  "clap",
  "config",
  "data",
+ "paper",
  "predicates",
  "rust_decimal",
  "storage",

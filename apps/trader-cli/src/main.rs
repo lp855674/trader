@@ -1,6 +1,7 @@
 use anyhow::Result;
 use backtest::{BacktestRuntime, BacktestSettings};
 use clap::{Parser, Subcommand};
+use paper::PaperRuntime;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -23,6 +24,10 @@ enum Command {
         config: String,
     },
     Backtest {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
+    PaperRun {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
     },
@@ -58,6 +63,18 @@ async fn main() -> Result<()> {
                 .await?;
             println!(
                 "backtest completed: signals={} orders={}",
+                summary.signals, summary.orders
+            );
+        }
+        Command::PaperRun { config } => {
+            let (app_config, db) = load_db(&config).await?;
+            db.migrate().await?;
+            let bars = data::load_bars_from_csv(&app_config.data.path)?;
+            let mut settings = backtest_settings(&app_config)?;
+            settings.account_id = "paper".to_string();
+            let summary = PaperRuntime::new(db, settings).run_bars(bars).await?;
+            println!(
+                "paper completed: signals={} orders={}",
                 summary.signals, summary.orders
             );
         }
