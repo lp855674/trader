@@ -223,11 +223,11 @@ git commit -m "feat: track paper account equity"
 - Modify: `crates/broker/src/broker.rs`
 - Modify: `crates/broker/tests/broker_tests.rs`
 
-- [ ] **Step 1: Add simulated broker test**
+- [x] **Step 1: Add simulated broker test**
 
 Add a test asserting a buy market order at mark price `100` with slippage `0.01` produces fill price `101` and fee based on notional.
 
-- [ ] **Step 2: Implement simulated execution**
+- [x] **Step 2: Implement simulated execution**
 
 Add:
 
@@ -248,7 +248,7 @@ pub struct SimulatedFill {
 
 Implement `simulate_market_fill(request, mark_price, settings) -> Result<SimulatedFill, BrokerError>`.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run:
 
