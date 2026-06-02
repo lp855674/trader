@@ -857,7 +857,7 @@ git commit -m "feat: add cli backtest workflow"
 - Modify: `apps/trader-server/Cargo.toml`
 - Modify: `apps/trader-server/src/main.rs`
 
-- [ ] **Step 1: Add API dependencies**
+- [x] **Step 1: Add API dependencies**
 
 Update `crates/api/Cargo.toml`:
 
@@ -873,7 +873,7 @@ tokio.workspace = true
 tower.workspace = true
 ```
 
-- [ ] **Step 2: Write API integration test**
+- [x] **Step 2: Write API integration test**
 
 Create `crates/api/tests/backtest_api_tests.rs`:
 
@@ -899,7 +899,7 @@ async fn post_backtest_returns_created() {
 }
 ```
 
-- [ ] **Step 3: Implement API state**
+- [x] **Step 3: Implement API state**
 
 Create `crates/api/src/state.rs`:
 
@@ -919,7 +919,7 @@ impl AppState {
 }
 ```
 
-- [ ] **Step 4: Implement routes**
+- [x] **Step 4: Implement routes**
 
 Update `crates/api/src/lib.rs`:
 
@@ -940,11 +940,11 @@ pub fn router_with_state(state: AppState) -> Router {
 
 `run_backtest` must load config, load CSV bars, run `BacktestRuntime`, and return `(StatusCode::CREATED, Json(summary))`. `list_orders` and `list_positions` read `run_id` from the loaded config and return JSON arrays from storage.
 
-- [ ] **Step 5: Wire server state**
+- [x] **Step 5: Wire server state**
 
 Update `apps/trader-server/src/main.rs` to read config path from `TRADER_CONFIG` or default to `configs/backtest/ma_cross.toml`, connect and migrate DB, then call `api::router_with_state`.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 

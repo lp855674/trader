@@ -7,10 +7,11 @@ use execution::immediate_order;
 use portfolio::equal_weight_target;
 use risk::check_max_position;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use storage::{Db, NewFill, NewOrder, NewPosition, NewStrategyRun};
 use strategies::{MovingAverageCrossStrategy, Strategy};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
     pub signals: usize,
     pub orders: usize,

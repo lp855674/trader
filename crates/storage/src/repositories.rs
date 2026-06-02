@@ -1,4 +1,5 @@
 use crate::Db;
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewInstrument {
@@ -35,7 +36,7 @@ pub struct NewStrategyRun {
     pub config_json: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewOrder {
     pub id: String,
     pub run_id: String,
@@ -53,7 +54,7 @@ pub struct NewOrder {
     pub updated_at_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewFill {
     pub id: String,
     pub order_id: String,
@@ -66,7 +67,7 @@ pub struct NewFill {
     pub ts_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewPosition {
     pub run_id: String,
     pub account_id: String,

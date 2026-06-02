@@ -6,7 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 axum.workspace = true
+backtest = { path = "../backtest" }
+config = { path = "../config" }
+data = { path = "../data" }
 serde.workspace = true
+rust_decimal.workspace = true
+sqlx.workspace = true
+storage = { path = "../storage" }
 tokio.workspace = true
 tower.workspace = true

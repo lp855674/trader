@@ -118,8 +118,15 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
+ "backtest",
+ "config",
+ "data",
+ "rust_decimal",
  "serde",
+ "sqlx",
+ "storage",
  "tokio",
  "tower",
 ]
@@ -258,6 +265,7 @@ dependencies = [
  "risk",
  "rust_decimal",
  "rust_decimal_macros",
+ "serde",
  "storage",
  "strategies",
  "thiserror",
@@ -2703,6 +2711,8 @@ dependencies = [
  "anyhow",
  "api",
  "axum",
+ "config",
+ "storage",
  "tokio",
  "tracing",
  "tracing-subscriber",
