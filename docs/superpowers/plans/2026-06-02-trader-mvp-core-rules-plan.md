@@ -490,7 +490,7 @@ git commit -m "feat: add order risk policy"
 - Modify: `crates/oms/src/oms.rs`
 - Modify: `crates/oms/tests/oms_tests.rs`
 
-- [ ] **Step 1: Add failing OMS tests**
+- [x] **Step 1: Add failing OMS tests**
 
 Append to `crates/oms/tests/oms_tests.rs`:
 
@@ -536,7 +536,7 @@ fn cancel_requested_order_can_cancel_before_fill() {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -546,7 +546,7 @@ cargo test -p oms
 
 Expected: FAIL because `with_order_qty`, `record_fill`, quantity accessors, `Overfill`, and cancel methods do not exist.
 
-- [ ] **Step 3: Implement quantity-aware OMS**
+- [x] **Step 3: Implement quantity-aware OMS**
 
 Update `crates/oms/src/oms.rs`:
 
@@ -629,7 +629,7 @@ pub fn record_fill(&mut self, fill_qty: Decimal) -> Result<(), OmsError> {
 
 Make `new()` call `with_order_qty(Decimal::ONE)` for existing tests.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
