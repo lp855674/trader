@@ -317,7 +317,7 @@ git commit -m "feat: add market order rules"
 - Modify: `crates/risk/src/risk.rs`
 - Create: `crates/risk/tests/risk_tests.rs`
 
-- [ ] **Step 1: Add failing risk policy tests**
+- [x] **Step 1: Add failing risk policy tests**
 
 Create `crates/risk/tests/risk_tests.rs`:
 
@@ -389,7 +389,7 @@ fn buy_order(qty: Decimal) -> OrderRequest {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -399,7 +399,7 @@ cargo test -p risk
 
 Expected: FAIL because `RiskPolicy`, order-level errors, and `check_order` do not exist.
 
-- [ ] **Step 3: Implement risk policy**
+- [x] **Step 3: Implement risk policy**
 
 Update `crates/risk/src/risk.rs` while keeping `check_max_position` for compatibility:
 
@@ -465,7 +465,7 @@ impl RiskPolicy {
 }
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
