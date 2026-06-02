@@ -5,7 +5,7 @@ use rust_decimal_macros::dec;
 use storage::Db;
 
 #[tokio::test]
-async fn paper_runtime_uses_backtest_execution_path() {
+async fn paper_runtime_counts_orders() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let bars = vec![

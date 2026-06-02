@@ -274,7 +274,7 @@ git commit -m "feat: simulate paper fills with fees"
 - Create: `crates/paper/tests/persistent_paper_tests.rs`
 - Modify: `crates/paper/tests/paper_tests.rs`
 
-- [ ] **Step 1: Write persistent paper test**
+- [x] **Step 1: Write persistent paper test**
 
 Test:
 
@@ -285,7 +285,7 @@ Test:
 - assert one account balance;
 - assert at least one portfolio snapshot.
 
-- [ ] **Step 2: Replace thin wrapper with paper runtime**
+- [x] **Step 2: Replace thin wrapper with paper runtime**
 
 Keep public API:
 
@@ -305,7 +305,7 @@ But implementation must:
 - update `AccountBook`;
 - persist run, order, fill, position, account balance, portfolio snapshot.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run:
 

@@ -9,10 +9,18 @@ rust-version.workspace = true
 path = "src/paper.rs"
 
 [dependencies]
-backtest.workspace = true
-data.workspace = true
-storage.workspace = true
+accounting.workspace = true
 anyhow.workspace = true
+backtest.workspace = true
+broker.workspace = true
+data.workspace = true
+execution.workspace = true
+portfolio.workspace = true
+risk.workspace = true
+rust_decimal.workspace = true
+storage.workspace = true
+strategies.workspace = true
+trader_core.workspace = true
 
 [dev-dependencies]
 rust_decimal.workspace = true

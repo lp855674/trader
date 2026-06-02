@@ -1437,13 +1437,20 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "paper"
 version = "0.1.0"
 dependencies = [
+ "accounting",
  "anyhow",
  "backtest",
+ "broker",
  "data",
+ "execution",
+ "portfolio",
+ "risk",
  "rust_decimal",
  "rust_decimal_macros",
  "storage",
+ "strategies",
  "tokio",
+ "trader-core",
 ]
 
 [[package]]
