@@ -305,7 +305,7 @@ git commit -m "feat: record failed paper runs"
 - Create: `scripts/server-smoke.ps1`
 - Modify: `README.md`
 
-- [ ] **Step 1: Create script**
+- [x] **Step 1: Create script**
 
 Create `scripts/server-smoke.ps1`:
 
@@ -346,7 +346,7 @@ try {
 }
 ```
 
-- [ ] **Step 2: Run script**
+- [x] **Step 2: Run script**
 
 Run:
 
@@ -359,7 +359,9 @@ Expected:
 - If Windows permits temp target writes, script prints smoke summary.
 - If Windows still blocks cargo artifact writes, capture the exact failure in the plan and keep API integration tests as fallback evidence.
 
-- [ ] **Step 3: Document script**
+Result: Passed locally with `signals=1`, `orders=1`, `fills=1`, `balances=1`, `snapshots=3`.
+
+- [x] **Step 3: Document script**
 
 Update README to include:
 
@@ -367,7 +369,7 @@ Update README to include:
 powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 

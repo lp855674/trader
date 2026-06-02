@@ -51,3 +51,9 @@ cargo run -p trader-server
 # In another shell:
 powershell -ExecutionPolicy Bypass -File .\scripts\rest-smoke.ps1
 ```
+
+To build, start, and smoke-test the server in one command with an isolated Cargo target directory and temporary SQLite database:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
+```
