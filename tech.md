@@ -192,11 +192,13 @@ Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRunti
 当前可执行链路：
 
 - `trader paper-run --config configs/backtest/ma_cross.toml` 加载样例 CSV，运行 MA cross paper loop，持久化 run、order、fill、position、account balance、portfolio snapshot。
-- `POST /api/v1/backtests` 触发同一套本地 paper 持久化流程，用于后续查询路由 smoke。
+- `POST /api/v1/backtests` 触发 backtest 流程。
+- `POST /api/v1/paper-runs` 触发本地 paper 持久化流程，用于后续查询路由 smoke。
 - `GET /api/v1/fills` 查询成交。
 - `GET /api/v1/account-balances` 查询账户现金余额。
 - `GET /api/v1/portfolio/snapshots` 查询组合权益快照。
 - `GET /api/v1/metrics` 基于订单、成交和首尾权益快照返回 metrics summary。
+- `GET /api/v1/runs` 和 `GET /api/v1/runs/{run_id}` 查询运行记录。
 
 仍然保持的边界：
 

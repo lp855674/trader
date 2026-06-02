@@ -32,10 +32,12 @@ After starting `trader-server`, run a local paper workflow and query persisted s
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/v1/backtests
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/api/v1/paper-runs
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/orders
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/fills
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/positions
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/account-balances
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/portfolio/snapshots
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/metrics
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/runs
 ```

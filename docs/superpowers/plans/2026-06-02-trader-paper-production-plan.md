@@ -598,7 +598,7 @@ git commit -m "feat: expose strategy run queries"
 - Modify: `README.md`
 - Modify: `tech.md`
 
-- [ ] **Step 1: Add failing API test for paper-runs**
+- [x] **Step 1: Add failing API test for paper-runs**
 
 In `crates/api/tests/backtest_api_tests.rs`, add:
 
@@ -625,7 +625,7 @@ async fn post_paper_run_returns_created_and_populates_queries() {
 }
 ```
 
-- [ ] **Step 2: Run API test and verify RED**
+- [x] **Step 2: Run API test and verify RED**
 
 Run:
 
@@ -635,7 +635,7 @@ cargo test -p api
 
 Expected: FAIL with `404` for `/api/v1/paper-runs`.
 
-- [ ] **Step 3: Implement paper-runs route**
+- [x] **Step 3: Implement paper-runs route**
 
 Add:
 
@@ -647,14 +647,14 @@ Move the current paper-running implementation out of `run_backtest` into `run_pa
 
 Keep `/api/v1/backtests` running `BacktestRuntime` and returning backtest-only persisted output.
 
-- [ ] **Step 4: Update docs**
+- [x] **Step 4: Update docs**
 
 In README and `tech.md`, replace the paper trigger guidance:
 
 - use `POST /api/v1/paper-runs` for paper;
 - keep `POST /api/v1/backtests` for backtest.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

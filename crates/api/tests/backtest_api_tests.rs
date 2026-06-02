@@ -28,7 +28,28 @@ async fn post_backtest_returns_created() {
 }
 
 #[tokio::test]
-async fn post_backtest_populates_query_routes() {
+async fn post_paper_run_returns_created() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/paper-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn post_paper_run_populates_query_routes() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -39,7 +60,7 @@ async fn post_backtest_populates_query_routes() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/backtests")
+                .uri("/api/v1/paper-runs")
                 .body(Body::empty())
                 .unwrap(),
         )

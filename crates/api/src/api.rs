@@ -9,6 +9,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use backtest::{BacktestRuntime, BacktestSettings};
 use metrics::{MetricsSummary, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use rust_decimal::Decimal;
@@ -30,6 +31,7 @@ pub fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/backtests", post(run_backtest))
+        .route("/api/v1/paper-runs", post(run_paper))
         .route("/api/v1/orders", get(list_orders))
         .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
@@ -46,6 +48,17 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn run_backtest(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let bars = data::load_bars_from_csv(&app_config.data.path)?;
+    let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
+        .run(bars)
+        .await?;
+    Ok((StatusCode::CREATED, Json(summary)))
+}
+
+async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
@@ -144,6 +157,22 @@ async fn get_run(
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     Ok(Json(run).into_response())
+}
+
+fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {
+    Ok(BacktestSettings {
+        run_id: app_config.runtime.run_id.clone(),
+        strategy_name: app_config.strategy.name.clone(),
+        symbol: app_config
+            .strategy
+            .symbols
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
+        account_id: "backtest".to_string(),
+        order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
+        max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+    })
 }
 
 fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiError> {
