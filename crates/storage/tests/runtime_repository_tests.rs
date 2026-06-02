@@ -1,4 +1,6 @@
-use storage::{Db, NewFill, NewOrder, NewPosition, NewStrategyRun};
+use storage::{
+    Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
+};
 
 #[tokio::test]
 async fn runtime_records_round_trip() {
@@ -61,7 +63,35 @@ async fn runtime_records_round_trip() {
     .await
     .unwrap();
 
+    db.upsert_account_balance(NewAccountBalance {
+        run_id: "run-1".to_string(),
+        account_id: "paper".to_string(),
+        asset: "USD".to_string(),
+        total: "9990".to_string(),
+        available: "9990".to_string(),
+        frozen: "0".to_string(),
+        updated_at_ms: 3,
+    })
+    .await
+    .unwrap();
+
+    db.insert_portfolio_snapshot(NewPortfolioSnapshot {
+        id: "snapshot-1".to_string(),
+        run_id: "run-1".to_string(),
+        account_id: "paper".to_string(),
+        ts_ms: 3,
+        cash: "9990".to_string(),
+        market_value: "108".to_string(),
+        equity: "10098".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+    })
+    .await
+    .unwrap();
+
     assert_eq!(db.list_orders("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_fills("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_positions("run-1").await.unwrap().len(), 1);
+    assert_eq!(db.list_account_balances("run-1").await.unwrap().len(), 1);
+    assert_eq!(db.list_portfolio_snapshots("run-1").await.unwrap().len(), 1);
 }

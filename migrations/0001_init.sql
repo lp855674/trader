@@ -58,6 +58,29 @@ CREATE TABLE IF NOT EXISTS positions (
     PRIMARY KEY (run_id, account_id, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS account_balances (
+    run_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    total TEXT NOT NULL,
+    available TEXT NOT NULL,
+    frozen TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (run_id, account_id, asset)
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    cash TEXT NOT NULL,
+    market_value TEXT NOT NULL,
+    equity TEXT NOT NULL,
+    realized_pnl TEXT NOT NULL,
+    unrealized_pnl TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS event_store (
     event_id TEXT PRIMARY KEY,
     ts_ms INTEGER NOT NULL,

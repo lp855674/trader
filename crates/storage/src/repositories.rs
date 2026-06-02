@@ -77,6 +77,30 @@ pub struct NewPosition {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewAccountBalance {
+    pub run_id: String,
+    pub account_id: String,
+    pub asset: String,
+    pub total: String,
+    pub available: String,
+    pub frozen: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewPortfolioSnapshot {
+    pub id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub cash: String,
+    pub market_value: String,
+    pub equity: String,
+    pub realized_pnl: String,
+    pub unrealized_pnl: String,
+}
+
 impl Db {
     pub async fn insert_instrument(&self, instrument: NewInstrument) -> Result<(), sqlx::Error> {
         sqlx::query(
@@ -224,6 +248,60 @@ impl Db {
         Ok(())
     }
 
+    pub async fn upsert_account_balance(
+        &self,
+        balance: NewAccountBalance,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO account_balances (
+                run_id, account_id, asset, total, available, frozen, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, account_id, asset) DO UPDATE SET
+                total = excluded.total,
+                available = excluded.available,
+                frozen = excluded.frozen,
+                updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(balance.run_id)
+        .bind(balance.account_id)
+        .bind(balance.asset)
+        .bind(balance.total)
+        .bind(balance.available)
+        .bind(balance.frozen)
+        .bind(balance.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_portfolio_snapshot(
+        &self,
+        snapshot: NewPortfolioSnapshot,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO portfolio_snapshots (
+                id, run_id, account_id, ts_ms, cash, market_value, equity,
+                realized_pnl, unrealized_pnl
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(snapshot.id)
+        .bind(snapshot.run_id)
+        .bind(snapshot.account_id)
+        .bind(snapshot.ts_ms)
+        .bind(snapshot.cash)
+        .bind(snapshot.market_value)
+        .bind(snapshot.equity)
+        .bind(snapshot.realized_pnl)
+        .bind(snapshot.unrealized_pnl)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_orders(&self, run_id: &str) -> Result<Vec<NewOrder>, sqlx::Error> {
         let rows = sqlx::query_as::<
             _,
@@ -361,6 +439,98 @@ impl Db {
                     qty,
                     avg_price,
                     updated_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_account_balances(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<NewAccountBalance>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, i64)>(
+            r#"
+            SELECT run_id, account_id, asset, total, available, frozen, updated_at_ms
+            FROM account_balances
+            WHERE run_id = ?
+            ORDER BY account_id, asset
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(run_id, account_id, asset, total, available, frozen, updated_at_ms)| {
+                    NewAccountBalance {
+                        run_id,
+                        account_id,
+                        asset,
+                        total,
+                        available,
+                        frozen,
+                        updated_at_ms,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_portfolio_snapshots(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<NewPortfolioSnapshot>, sqlx::Error> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                i64,
+                String,
+                String,
+                String,
+                String,
+                String,
+            ),
+        >(
+            r#"
+            SELECT id, run_id, account_id, ts_ms, cash, market_value, equity,
+                   realized_pnl, unrealized_pnl
+            FROM portfolio_snapshots
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    run_id,
+                    account_id,
+                    ts_ms,
+                    cash,
+                    market_value,
+                    equity,
+                    realized_pnl,
+                    unrealized_pnl,
+                )| NewPortfolioSnapshot {
+                    id,
+                    run_id,
+                    account_id,
+                    ts_ms,
+                    cash,
+                    market_value,
+                    equity,
+                    realized_pnl,
+                    unrealized_pnl,
                 },
             )
             .collect())

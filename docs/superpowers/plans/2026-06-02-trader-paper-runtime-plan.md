@@ -72,7 +72,7 @@ Create:
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/tests/runtime_repository_tests.rs`
 
-- [ ] **Step 1: Extend schema**
+- [x] **Step 1: Extend schema**
 
 Add tables:
 
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
 );
 ```
 
-- [ ] **Step 2: Add repository records**
+- [x] **Step 2: Add repository records**
 
 Add:
 
@@ -138,11 +138,11 @@ Implement:
 - `insert_portfolio_snapshot`
 - `list_portfolio_snapshots`
 
-- [ ] **Step 3: Extend storage round-trip test**
+- [x] **Step 3: Extend storage round-trip test**
 
 In `runtime_records_round_trip`, insert one account balance and one portfolio snapshot, then assert both list methods return one row.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
