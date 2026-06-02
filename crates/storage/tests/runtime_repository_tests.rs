@@ -109,3 +109,48 @@ async fn runtime_records_round_trip() {
     assert_eq!(db.list_account_balances("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_portfolio_snapshots("run-1").await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn migrate_adds_error_column_to_existing_strategy_runs_table() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"
+        CREATE TABLE strategy_runs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at_ms INTEGER NOT NULL,
+            ended_at_ms INTEGER,
+            config_json TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    db.migrate().await.unwrap();
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-old-schema".to_string(),
+        name: "moving_average_cross".to_string(),
+        mode: "paper".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.update_strategy_run_status("run-old-schema", "failed", Some(2), Some("boom"))
+        .await
+        .unwrap();
+    let run = db
+        .get_strategy_run("run-old-schema")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.error, Some("boom".to_string()));
+}

@@ -28,6 +28,36 @@ impl Db {
         sqlx::raw_sql(include_str!("../../../migrations/0001_init.sql"))
             .execute(&self.pool)
             .await?;
+        self.ensure_strategy_runs_error_column().await?;
         Ok(())
     }
+
+    async fn ensure_strategy_runs_error_column(&self) -> Result<(), sqlx::Error> {
+        let columns = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
+            "PRAGMA table_info(strategy_runs)",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if columns.iter().any(|(_, name, _, _, _, _)| name == "error") {
+            return Ok(());
+        }
+
+        let result = sqlx::query("ALTER TABLE strategy_runs ADD COLUMN error TEXT")
+            .execute(&self.pool)
+            .await;
+        if let Err(error) = result {
+            if !is_duplicate_column_error(&error) {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_duplicate_column_error(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .map(|database_error| database_error.message().contains("duplicate column name"))
+        .unwrap_or(false)
 }
