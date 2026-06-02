@@ -769,7 +769,7 @@ git commit -m "test: add rest smoke script"
 - Modify: `tech.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
 
-- [ ] **Step 1: Full verification**
+- [x] **Step 1: Full verification**
 
 Run:
 
@@ -786,7 +786,7 @@ Expected CLI output includes:
 paper completed: signals=1 orders=1
 ```
 
-- [ ] **Step 2: Naming and dependency checks**
+- [x] **Step 2: Naming and dependency checks**
 
 Run:
 
@@ -797,7 +797,7 @@ rg "= \{ path =" apps crates -g Cargo.toml
 
 Expected: both commands produce no matches.
 
-- [ ] **Step 3: Update docs**
+- [x] **Step 3: Update docs**
 
 README must include:
 
@@ -812,7 +812,7 @@ README must include:
 - initial cash, base currency, fee, and slippage come from config;
 - paper sell path updates realized/unrealized PnL.
 
-- [ ] **Step 4: Mark plan complete and commit**
+- [x] **Step 4: Mark plan complete and commit**
 
 Commit:
 

@@ -207,6 +207,19 @@ Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRunti
 - Paper runtime 使用 `broker::simulate_market_fill` 生成本地模拟成交，账户现金与权益由 `accounting::AccountBook` 维护。
 - 金额/数量在 Rust 内使用 `rust_decimal::Decimal`，写入 SQLite 时使用 decimal string。
 
+## Phase 4 Paper Production
+
+Phase 4 将本地 paper workflow 进一步生产化：
+
+- `PaperRuntime` 使用 `paper::PaperSettings`，不再借用 `BacktestSettings` 作为配置载体。
+- `PaperSettings` 从 `AppConfig` 构造，使用配置文件中的 initial cash、base currency、slippage bps、fee bps、strategy windows、order qty 和 max position。
+- `[paper]` 配置提供 `account_id`、`slippage_bps`、`fee_bps`。
+- `accounting::AccountBook` 明确区分 `buy` 与 `sell`，卖出会更新 cash、position 和 realized PnL。
+- paper portfolio snapshot 持久化 realized PnL 与 unrealized PnL。
+- REST 使用明确的 `POST /api/v1/paper-runs` 触发 paper，`POST /api/v1/backtests` 保留给 backtest。
+- REST 增加 `GET /api/v1/runs` 与 `GET /api/v1/runs/{run_id}` 查询运行记录。
+- `scripts/rest-smoke.ps1` 用于验证运行中的 server：health、paper-runs、fills、account-balances、portfolio snapshots、metrics。
+
 ## 实施计划
 
 完整执行计划见：
@@ -214,3 +227,4 @@ Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRunti
 - `docs/superpowers/plans/2026-05-31-trader-v1-implementation.md`
 - `docs/superpowers/plans/2026-06-01-trader-paper-mvp-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-paper-runtime-plan.md`
+- `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
