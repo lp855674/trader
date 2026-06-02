@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use backtest::BacktestSettings;
+use metrics::{MetricsSummary, paper_summary};
 use paper::PaperRuntime;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -34,6 +35,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/positions", get(list_positions))
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
+        .route("/api/v1/metrics", get(metrics_summary))
         .with_state(state)
 }
 
@@ -101,6 +103,31 @@ async fn list_portfolio_snapshots(
             .list_portfolio_snapshots(&app_config.runtime.run_id)
             .await?,
     ))
+}
+
+async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSummary>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let run_id = &app_config.runtime.run_id;
+    let orders = state.db.list_orders(run_id).await?;
+    let fills = state.db.list_fills(run_id).await?;
+    let snapshots = state.db.list_portfolio_snapshots(run_id).await?;
+    let Some(first_snapshot) = snapshots.first() else {
+        return Ok(Json(MetricsSummary {
+            total_return: Decimal::ZERO.to_string(),
+            order_count: orders.len(),
+            fill_count: fills.len(),
+        }));
+    };
+    let last_snapshot = snapshots.last().unwrap_or(first_snapshot);
+    let initial_equity = Decimal::from_str(&first_snapshot.equity)?;
+    let final_equity = Decimal::from_str(&last_snapshot.equity)?;
+
+    Ok(Json(paper_summary(
+        orders.len(),
+        fills.len(),
+        initial_equity,
+        final_equity,
+    )))
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

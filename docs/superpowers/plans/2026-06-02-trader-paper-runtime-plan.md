@@ -430,11 +430,11 @@ git commit -m "feat: expose paper account queries"
 - Modify: `crates/metrics/tests/metrics_tests.rs`
 - Modify: `crates/api/src/api.rs`
 
-- [ ] **Step 1: Add metrics tests**
+- [x] **Step 1: Add metrics tests**
 
 Test `total_return(initial_equity, final_equity)` and `paper_summary(order_count, fill_count, initial_equity, final_equity)`.
 
-- [ ] **Step 2: Implement summary type**
+- [x] **Step 2: Implement summary type**
 
 Add:
 
@@ -447,7 +447,7 @@ pub struct MetricsSummary {
 }
 ```
 
-- [ ] **Step 3: Add API route**
+- [x] **Step 3: Add API route**
 
 Add `GET /api/v1/metrics`, deriving:
 
@@ -455,7 +455,7 @@ Add `GET /api/v1/metrics`, deriving:
 - fill count from `list_fills`;
 - total return from first/last portfolio snapshot.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 

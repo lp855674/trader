@@ -67,6 +67,26 @@ async fn post_backtest_populates_query_routes() {
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_ne!(bytes.as_ref(), b"[]");
     }
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("total_return".len())
+            .any(|window| window == b"total_return")
+    );
 }
 
 fn workspace_root() -> PathBuf {
