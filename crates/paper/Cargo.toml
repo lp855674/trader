@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/paper.rs"
+
 [dependencies]
 backtest.workspace = true
 data.workspace = true

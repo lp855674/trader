@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/config.rs"
+
 [dependencies]
 serde.workspace = true
 toml.workspace = true

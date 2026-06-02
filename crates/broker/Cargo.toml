@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/broker.rs"
+
 [dependencies]
-trader_core = { package = "trader-core", path = "../core" }
+trader_core.workspace = true
 async-trait.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true

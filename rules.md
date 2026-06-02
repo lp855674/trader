@@ -10,6 +10,7 @@
 - 禁止 `unwrap()` / `expect()`（测试代码除外）；统一使用 `?` 或显式错误分支。
 - 谨慎使用可能 panic 的索引访问；优先 `get()` 等安全访问方式。
 - 禁止缩写变量名（如 `q`/`tx2`/`rt2` 这类不含语义命名）。
+- **Crate 根文件**不要依赖 Cargo 默认的 `src/lib.rs`；库 crate 必须在 `Cargo.toml` 中显式声明 `[lib] path = "src/<crate_name>.rs"`（例如 `path = "src/accounting.rs"`）。业务代码放在这个具名根文件或其子模块中，避免使用匿名 `lib.rs` 作为实现入口。
 - **Crate 顶层模块**（`lib.rs`/`main.rs` 里 `mod foo;` 所对应的命名空间）：不要用 `src/foo/mod.rs` 作为该模块的唯一入口；统一使用 **`src/foo.rs`**，并与同名的 **`src/foo/`** 子目录合并（子文件仍在 `src/foo/*.rs`）。
 - **嵌套子模块**（已处于某一模块目录之下，例如 `src/foo/bar/`、`src/api/admin/`）：允许使用 **`mod.rs`** 作为该子目录的模块根文件，但 `mod.rs` 只能做模块声明与导出（`mod ...;` / `pub use ...;`），不写实际业务类型、函数、`impl` 或 `include!` 实现；业务代码必须放到同目录的具名子模块文件中。
 - 单个源文件过长时必须按职责拆分模块；生产代码文件原则上不承载大段测试代码。

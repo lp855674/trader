@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/backtest.rs"
+
 [dependencies]
 accounting.workspace = true
 broker.workspace = true

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/accounting.rs"
+
 [dependencies]
 rust_decimal.workspace = true
 
