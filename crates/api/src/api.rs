@@ -12,6 +12,7 @@ use axum::{
 use backtest::{BacktestRuntime, BacktestSettings};
 use metrics::{MetricsSummary, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
+use replay::{ReplayRuntime, ReplaySummary};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
@@ -45,6 +46,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/backtests", post(run_backtest))
         .route("/api/v1/paper-runs", post(run_paper))
+        .route("/api/v1/replays", post(run_replay))
         .route("/api/v1/orders", get(list_orders))
         .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
@@ -53,6 +55,8 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/metrics", get(metrics_summary))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
+        .route("/api/v1/events", get(list_events))
+        .route("/api/v1/runs/{run_id}/events", get(list_run_events))
         .route("/api/v1/runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
         .with_state(state)
@@ -93,6 +97,13 @@ async fn run_paper(
             config_json: "{}".to_string(),
         })
         .await?;
+    insert_event(
+        &state.db,
+        &settings.run_id,
+        "paper.started",
+        &serde_json::json!({ "run_id": &settings.run_id }).to_string(),
+    )
+    .await?;
 
     let bars = match data::load_bars_from_csv(&app_config.data.path) {
         Ok(bars) => bars,
@@ -112,28 +123,40 @@ async fn run_paper(
                 .run_bars_with_cancel(bars, cancel)
                 .await;
 
-            if let Err(error) = result {
-                if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
-                    && existing.status == "cancelled"
-                {
-                    return;
+            match result {
+                Ok(summary) => {
+                    let payload = serde_json::json!({
+                        "run_id": &task_settings.run_id,
+                        "signals": summary.signals,
+                        "orders": summary.orders
+                    })
+                    .to_string();
+                    let _ =
+                        insert_event(&db, &task_settings.run_id, "paper.completed", &payload).await;
                 }
-                let status = if error
-                    .downcast_ref::<paper::PaperRunError>()
-                    .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
-                {
-                    "cancelled"
-                } else {
-                    "failed"
-                };
-                let _ = db
-                    .update_strategy_run_status(
-                        &task_settings.run_id,
-                        status,
-                        Some(chrono::Utc::now().timestamp_millis()),
-                        Some(&error.to_string()),
-                    )
-                    .await;
+                Err(error) => {
+                    if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
+                        && existing.status == "cancelled"
+                    {
+                        return;
+                    }
+                    let status = if error
+                        .downcast_ref::<paper::PaperRunError>()
+                        .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
+                    {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    let _ = db
+                        .update_strategy_run_status(
+                            &task_settings.run_id,
+                            status,
+                            Some(chrono::Utc::now().timestamp_millis()),
+                            Some(&error.to_string()),
+                        )
+                        .await;
+                }
             }
         })
         .await
@@ -146,6 +169,60 @@ async fn run_paper(
             status: "running".to_string(),
         }),
     ))
+}
+
+async fn run_replay(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<ReplaySummary>), ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
+    state
+        .db
+        .insert_strategy_run(storage::NewStrategyRun {
+            id: app_config.runtime.run_id.clone(),
+            name: app_config.strategy.name.clone(),
+            mode: "replay".to_string(),
+            status: "running".to_string(),
+            started_at_ms,
+            ended_at_ms: None,
+            error: None,
+            config_json: "{}".to_string(),
+        })
+        .await?;
+    insert_event(
+        &state.db,
+        &app_config.runtime.run_id,
+        "replay.started",
+        &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+    )
+    .await?;
+
+    let bars = data::load_bars_from_csv(&app_config.data.path)?;
+    let summary = ReplayRuntime::new(100_000).replay_bars(bars).await;
+    state
+        .db
+        .update_strategy_run_status(
+            &app_config.runtime.run_id,
+            "completed",
+            Some(chrono::Utc::now().timestamp_millis()),
+            None,
+        )
+        .await?;
+    let payload = serde_json::json!({
+        "run_id": &app_config.runtime.run_id,
+        "bars": summary.bars,
+        "speed": summary.speed
+    })
+    .to_string();
+    insert_event(
+        &state.db,
+        &app_config.runtime.run_id,
+        "replay.completed",
+        &payload,
+    )
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(summary)))
 }
 
 async fn list_orders(
@@ -238,6 +315,19 @@ async fn get_run(
     Ok(Json(run).into_response())
 }
 
+async fn list_events(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<storage::EventRecord>>, ApiError> {
+    Ok(Json(state.db.list_events().await?))
+}
+
+async fn list_run_events(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<storage::EventRecord>>, ApiError> {
+    Ok(Json(state.db.list_events_by_source(&run_id).await?))
+}
+
 async fn get_run_status(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -296,6 +386,22 @@ async fn record_failed_run(
             Some(&error),
         )
         .await
+}
+
+async fn insert_event(
+    db: &storage::Db,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Result<(), sqlx::Error> {
+    db.insert_event(storage::NewEventRecord {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        source: source.to_string(),
+        category: category.to_string(),
+        payload_json: payload_json.to_string(),
+    })
+    .await
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

@@ -28,6 +28,57 @@ async fn post_backtest_returns_created() {
 }
 
 #[tokio::test]
+async fn post_replay_returns_created_and_persists_events() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("\"bars\"".len())
+            .any(|window| window == b"\"bars\"")
+    );
+
+    for uri in ["/api/v1/events", "/api/v1/runs/sample-ma-cross/events"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            bytes
+                .as_ref()
+                .windows("replay.completed".len())
+                .any(|window| window == b"replay.completed")
+        );
+    }
+}
+
+#[tokio::test]
 async fn post_paper_run_returns_accepted_run_start() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
