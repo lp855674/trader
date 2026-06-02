@@ -114,6 +114,24 @@ pub struct NewPortfolioSnapshot {
     pub unrealized_pnl: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewEventRecord {
+    pub event_id: String,
+    pub ts_ms: i64,
+    pub source: String,
+    pub category: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EventRecord {
+    pub event_id: String,
+    pub ts_ms: i64,
+    pub source: String,
+    pub category: String,
+    pub payload_json: String,
+}
+
 impl Db {
     pub async fn insert_instrument(&self, instrument: NewInstrument) -> Result<(), sqlx::Error> {
         sqlx::query(
@@ -424,6 +442,24 @@ impl Db {
         Ok(())
     }
 
+    pub async fn insert_event(&self, event: NewEventRecord) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO event_store (
+                event_id, ts_ms, source, category, payload_json
+            ) VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(event.event_id)
+        .bind(event.ts_ms)
+        .bind(event.source)
+        .bind(event.category)
+        .bind(event.payload_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_orders(&self, run_id: &str) -> Result<Vec<NewOrder>, sqlx::Error> {
         let rows = sqlx::query_as::<
             _,
@@ -653,6 +689,61 @@ impl Db {
                     equity,
                     realized_pnl,
                     unrealized_pnl,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_events(&self) -> Result<Vec<EventRecord>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, i64, String, String, String)>(
+            r#"
+            SELECT event_id, ts_ms, source, category, payload_json
+            FROM event_store
+            ORDER BY ts_ms, event_id
+            "#,
+        )
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(event_id, ts_ms, source, category, payload_json)| EventRecord {
+                    event_id,
+                    ts_ms,
+                    source,
+                    category,
+                    payload_json,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_events_by_source(
+        &self,
+        source: &str,
+    ) -> Result<Vec<EventRecord>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, (String, i64, String, String, String)>(
+            r#"
+            SELECT event_id, ts_ms, source, category, payload_json
+            FROM event_store
+            WHERE source = ?
+            ORDER BY ts_ms, event_id
+            "#,
+        )
+        .bind(source)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(event_id, ts_ms, source, category, payload_json)| EventRecord {
+                    event_id,
+                    ts_ms,
+                    source,
+                    category,
+                    payload_json,
                 },
             )
             .collect())
