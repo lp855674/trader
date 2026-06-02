@@ -654,7 +654,7 @@ git commit -m "feat: track oms fill quantities"
 - Modify: `crates/execution/src/execution.rs`
 - Create: `crates/execution/tests/execution_tests.rs`
 
-- [ ] **Step 1: Add failing execution tests**
+- [x] **Step 1: Add failing execution tests**
 
 Create `crates/execution/tests/execution_tests.rs`:
 
@@ -697,7 +697,7 @@ fn target(target_qty: Decimal) -> TargetPosition {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -707,7 +707,7 @@ cargo test -p execution
 
 Expected: FAIL because `order_for_target_delta` does not exist.
 
-- [ ] **Step 3: Implement execution delta**
+- [x] **Step 3: Implement execution delta**
 
 In `crates/execution/src/execution.rs`, add:
 
@@ -739,7 +739,7 @@ pub fn order_for_target_delta(
 
 Keep `immediate_order` for compatibility.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
