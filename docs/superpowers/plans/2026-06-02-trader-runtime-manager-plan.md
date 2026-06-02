@@ -792,7 +792,7 @@ git commit -m "feat: start paper runs asynchronously"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Create slow paper fixture**
+- [x] **Step 1: Create slow paper fixture**
 
 Create `configs/backtest/slow-paper.toml`:
 
@@ -824,10 +824,10 @@ max_abs_qty = "100"
 account_id = "paper"
 slippage_bps = "25"
 fee_bps = "10"
-bar_delay_ms = 1000
+bar_delay_ms = 50
 ```
 
-- [ ] **Step 2: Add failing API cancellation test**
+- [x] **Step 2: Add failing API cancellation test**
 
 In `crates/api/tests/backtest_api_tests.rs`, add:
 
@@ -869,7 +869,7 @@ async fn active_paper_run_can_be_cancelled() {
 }
 ```
 
-- [ ] **Step 3: Run API test and verify RED**
+- [x] **Step 3: Run API test and verify RED**
 
 Run:
 
@@ -879,7 +879,7 @@ cargo test -p api active_paper_run_can_be_cancelled
 
 Expected: FAIL if cancel only updates storage and the background job later overwrites status to `completed`, or if runtime does not observe cancellation.
 
-- [ ] **Step 4: Update cancel route to signal active run**
+- [x] **Step 4: Update cancel route to signal active run**
 
 In `crates/api/src/api.rs`, update `cancel_run`:
 
@@ -911,7 +911,7 @@ Ok(Json(RunStatusResponse {
 
 This preserves completed/failed terminal status when no active run exists.
 
-- [ ] **Step 5: Prevent background task from overwriting cancelled**
+- [x] **Step 5: Prevent background task from overwriting cancelled**
 
 In the background paper task, before writing `failed`, read the current run:
 
@@ -925,7 +925,7 @@ if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
 
 Cancelled `PaperRunError` should update `cancelled`; non-cancel errors update `failed`.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 

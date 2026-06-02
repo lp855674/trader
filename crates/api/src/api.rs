@@ -113,6 +113,11 @@ async fn run_paper(
                 .await;
 
             if let Err(error) = result {
+                if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
+                    && existing.status == "cancelled"
+                {
+                    return;
+                }
                 let status = if error
                     .downcast_ref::<paper::PaperRunError>()
                     .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
@@ -252,21 +257,29 @@ async fn cancel_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
-    if state.db.get_strategy_run(&run_id).await?.is_none() {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+    if state.runtime_manager.cancel(&run_id).await {
+        state
+            .db
+            .update_strategy_run_status(
+                &run_id,
+                "cancelled",
+                Some(chrono::Utc::now().timestamp_millis()),
+                None,
+            )
+            .await?;
+        return get_run_status(State(state), Path(run_id)).await;
     }
 
-    state
-        .db
-        .update_strategy_run_status(
-            &run_id,
-            "cancelled",
-            Some(chrono::Utc::now().timestamp_millis()),
-            None,
-        )
-        .await?;
+    let Some(run) = state.db.get_strategy_run(&run_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    get_run_status(State(state), Path(run_id)).await
+    Ok(Json(RunStatusResponse {
+        run_id: run.id,
+        status: run.status,
+        error: run.error,
+    })
+    .into_response())
 }
 
 async fn record_failed_run(

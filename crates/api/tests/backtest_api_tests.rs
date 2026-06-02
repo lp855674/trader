@@ -139,7 +139,7 @@ async fn post_paper_run_populates_query_routes() {
 }
 
 #[tokio::test]
-async fn paper_run_status_can_be_queried_and_cancelled() {
+async fn completed_paper_run_status_is_preserved_after_late_cancel() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -207,8 +207,8 @@ async fn paper_run_status_can_be_queried_and_cancelled() {
     assert!(
         bytes
             .as_ref()
-            .windows("cancelled".len())
-            .any(|window| window == b"cancelled")
+            .windows("completed".len())
+            .any(|window| window == b"completed")
     );
 }
 
@@ -262,12 +262,70 @@ async fn failed_paper_run_records_failed_status_and_error() {
     );
 }
 
+#[tokio::test]
+async fn active_paper_run_can_be_cancelled() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/slow-paper.toml".into()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/paper-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/runs/sample-slow-paper/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_status(app.clone(), "sample-slow-paper", "cancelled").await;
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
         .unwrap()
         .to_path_buf()
+}
+
+async fn assert_status(app: axum::Router, run_id: &str, expected_status: &str) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/runs/{run_id}/status"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows(expected_status.len())
+            .any(|window| window == expected_status.as_bytes())
+    );
 }
 
 async fn wait_for_status(app: axum::Router, run_id: &str, expected_status: &str) {
