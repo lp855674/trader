@@ -1,5 +1,5 @@
 use api::{AppState, router_with_state};
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use std::path::PathBuf;
 use storage::Db;
@@ -24,6 +24,49 @@ async fn post_backtest_returns_created() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn post_backtest_populates_query_routes() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    for uri in [
+        "/api/v1/fills",
+        "/api/v1/account-balances",
+        "/api/v1/portfolio/snapshots",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_ne!(bytes.as_ref(), b"[]");
+    }
 }
 
 fn workspace_root() -> PathBuf {

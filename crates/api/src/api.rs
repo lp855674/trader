@@ -8,7 +8,8 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use backtest::{BacktestRuntime, BacktestSettings};
+use backtest::BacktestSettings;
+use paper::PaperRuntime;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
@@ -29,7 +30,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/backtests", post(run_backtest))
         .route("/api/v1/orders", get(list_orders))
+        .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
+        .route("/api/v1/account-balances", get(list_account_balances))
+        .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .with_state(state)
 }
 
@@ -42,8 +46,10 @@ async fn run_backtest(
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let bars = data::load_bars_from_csv(&app_config.data.path)?;
-    let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
-        .run(bars)
+    let mut settings = backtest_settings(&app_config)?;
+    settings.account_id = "paper".to_string();
+    let summary = PaperRuntime::new(state.db.clone(), settings)
+        .run_bars(bars)
         .await?;
     Ok((StatusCode::CREATED, Json(summary)))
 }
@@ -57,12 +63,43 @@ async fn list_orders(
     ))
 }
 
+async fn list_fills(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<storage::NewFill>>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    Ok(Json(state.db.list_fills(&app_config.runtime.run_id).await?))
+}
+
 async fn list_positions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<storage::NewPosition>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     Ok(Json(
         state.db.list_positions(&app_config.runtime.run_id).await?,
+    ))
+}
+
+async fn list_account_balances(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<storage::NewAccountBalance>>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    Ok(Json(
+        state
+            .db
+            .list_account_balances(&app_config.runtime.run_id)
+            .await?,
+    ))
+}
+
+async fn list_portfolio_snapshots(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<storage::NewPortfolioSnapshot>>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    Ok(Json(
+        state
+            .db
+            .list_portfolio_snapshots(&app_config.runtime.run_id)
+            .await?,
     ))
 }
 

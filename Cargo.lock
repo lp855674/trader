@@ -123,6 +123,7 @@ dependencies = [
  "backtest",
  "config",
  "data",
+ "paper",
  "rust_decimal",
  "serde",
  "sqlx",

@@ -384,7 +384,7 @@ git commit -m "feat: add cli paper run"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Add API tests**
+- [x] **Step 1: Add API tests**
 
 Extend API test to:
 
@@ -394,7 +394,7 @@ Extend API test to:
 - `GET /api/v1/portfolio/snapshots`;
 - assert all return `200 OK` with non-empty arrays.
 
-- [ ] **Step 2: Implement routes**
+- [x] **Step 2: Implement routes**
 
 Add:
 
@@ -404,7 +404,7 @@ Add:
 
 Each route reads configured `run_id` and queries storage.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run:
 
