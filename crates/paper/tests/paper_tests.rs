@@ -1,6 +1,5 @@
-use backtest::BacktestSettings;
 use data::Bar;
-use paper::PaperRuntime;
+use paper::{PaperRuntime, PaperSettings};
 use rust_decimal_macros::dec;
 use storage::Db;
 
@@ -14,7 +13,7 @@ async fn paper_runtime_counts_orders() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let summary = PaperRuntime::new(db, BacktestSettings::sample())
+    let summary = PaperRuntime::new(db, PaperSettings::sample())
         .run_bars(bars)
         .await
         .unwrap();

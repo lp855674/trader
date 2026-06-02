@@ -281,7 +281,7 @@ git commit -m "feat: account for paper sells and pnl"
 - Modify: `apps/trader-cli/src/main.rs`
 - Modify: `crates/api/src/api.rs`
 
-- [ ] **Step 1: Add failing paper settings test**
+- [x] **Step 1: Add failing paper settings test**
 
 In `crates/paper/tests/persistent_paper_tests.rs`, add a test that constructs settings with initial cash and fee/slippage:
 
@@ -306,14 +306,14 @@ async fn paper_runtime_uses_initial_cash_and_broker_settings() {
         .unwrap();
 
     let balances = db.list_account_balances(&settings.run_id).await.unwrap();
-    assert_eq!(balances[0].total, "99979.798");
+    assert_eq!(balances[0].total, "99979.7798");
     let fills = db.list_fills(&settings.run_id).await.unwrap();
     assert_eq!(fills[0].price, "20.20");
     assert_eq!(fills[0].fee, "0.0202");
 }
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run:
 
@@ -323,7 +323,7 @@ cargo test -p paper
 
 Expected: FAIL because `PaperSettings` is missing and runtime still hard-codes cash/fees/slippage.
 
-- [ ] **Step 3: Implement PaperSettings**
+- [x] **Step 3: Implement PaperSettings**
 
 In `crates/paper/src/paper.rs`, add:
 
@@ -363,7 +363,7 @@ Change `PaperRuntime` to store `PaperSettings`, not `BacktestSettings`, and use:
 - `settings.slippage_bps` / `settings.fee_bps` for `SimulatedBrokerSettings`;
 - `settings.fast_window` / `settings.slow_window` for `MovingAverageCrossStrategy`.
 
-- [ ] **Step 4: Update CLI and API constructors**
+- [x] **Step 4: Update CLI and API constructors**
 
 In `apps/trader-cli/src/main.rs` and `crates/api/src/api.rs`, replace `backtest_settings` usage for paper with a helper that builds `PaperSettings` from `AppConfig`:
 
@@ -391,7 +391,7 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
 }
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

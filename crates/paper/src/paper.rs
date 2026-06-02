@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use accounting::AccountBook;
-use backtest::{BacktestSettings, BacktestSummary};
+use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::Bar;
 use execution::immediate_order;
@@ -16,11 +16,46 @@ use trader_core::OrderSide;
 
 pub struct PaperRuntime {
     db: Db,
-    settings: BacktestSettings,
+    settings: PaperSettings,
+}
+
+#[derive(Debug, Clone)]
+pub struct PaperSettings {
+    pub run_id: String,
+    pub strategy_name: String,
+    pub symbol: String,
+    pub account_id: String,
+    pub order_qty: Decimal,
+    pub max_abs_qty: Decimal,
+    pub initial_cash: Decimal,
+    pub base_currency: String,
+    pub slippage_bps: Decimal,
+    pub fee_bps: Decimal,
+    pub fast_window: usize,
+    pub slow_window: usize,
+}
+
+impl PaperSettings {
+    pub fn sample() -> Self {
+        Self {
+            run_id: "sample-ma-cross".to_string(),
+            strategy_name: "moving_average_cross".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            account_id: "paper".to_string(),
+            order_qty: Decimal::ONE,
+            max_abs_qty: Decimal::from(100),
+            initial_cash: Decimal::from(100_000),
+            base_currency: "USD".to_string(),
+            slippage_bps: Decimal::ZERO,
+            fee_bps: Decimal::ZERO,
+            fast_window: 2,
+            slow_window: 3,
+        }
+    }
 }
 
 impl PaperRuntime {
-    pub fn new(db: Db, settings: BacktestSettings) -> Self {
+    pub fn new(db: Db, settings: PaperSettings) -> Self {
         Self { db, settings }
     }
 
@@ -28,15 +63,15 @@ impl PaperRuntime {
         let mut strategy = MovingAverageCrossStrategy::new(
             self.settings.strategy_name.clone(),
             self.settings.symbol.clone(),
-            2,
-            3,
+            self.settings.fast_window,
+            self.settings.slow_window,
         );
         let broker_settings = SimulatedBrokerSettings {
-            slippage_bps: Decimal::ZERO,
-            fee_bps: Decimal::ZERO,
+            slippage_bps: self.settings.slippage_bps,
+            fee_bps: self.settings.fee_bps,
         };
         let mut account_book =
-            AccountBook::new(self.settings.account_id.clone(), Decimal::from(10_000));
+            AccountBook::new(self.settings.account_id.clone(), self.settings.initial_cash);
         let mut signals = 0;
         let mut orders = 0;
         let started_at_ms = bars.first().map_or(0, |bar| bar.ts_ms);
@@ -127,7 +162,7 @@ impl PaperRuntime {
             .upsert_account_balance(NewAccountBalance {
                 run_id: self.settings.run_id.clone(),
                 account_id: self.settings.account_id.clone(),
-                asset: "USD".to_string(),
+                asset: self.settings.base_currency.clone(),
                 total: account_book.cash().to_string(),
                 available: account_book.cash().to_string(),
                 frozen: Decimal::ZERO.to_string(),

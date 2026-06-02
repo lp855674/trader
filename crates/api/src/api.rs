@@ -8,9 +8,8 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use backtest::BacktestSettings;
 use metrics::{MetricsSummary, paper_summary};
-use paper::PaperRuntime;
+use paper::{PaperRuntime, PaperSettings};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
@@ -48,9 +47,7 @@ async fn run_backtest(
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let bars = data::load_bars_from_csv(&app_config.data.path)?;
-    let mut settings = backtest_settings(&app_config)?;
-    settings.account_id = "paper".to_string();
-    let summary = PaperRuntime::new(state.db.clone(), settings)
+    let summary = PaperRuntime::new(state.db.clone(), paper_settings(&app_config)?)
         .run_bars(bars)
         .await?;
     Ok((StatusCode::CREATED, Json(summary)))
@@ -130,8 +127,8 @@ async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSu
     )))
 }
 
-fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {
-    Ok(BacktestSettings {
+fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiError> {
+    Ok(PaperSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
         symbol: app_config
@@ -140,9 +137,15 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
             .first()
             .cloned()
             .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
-        account_id: "backtest".to_string(),
+        account_id: app_config.paper.account_id.clone(),
         order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
         max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+        initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        base_currency: app_config.portfolio.base_currency.clone(),
+        slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
+        fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,
+        fast_window: app_config.strategy.fast_window,
+        slow_window: app_config.strategy.slow_window,
     })
 }
 
