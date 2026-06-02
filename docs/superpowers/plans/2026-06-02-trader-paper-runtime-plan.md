@@ -167,7 +167,7 @@ git commit -m "feat: persist account and portfolio snapshots"
 - Modify: `crates/accounting/src/accounting.rs`
 - Modify: `crates/accounting/tests/accounting_tests.rs`
 
-- [ ] **Step 1: Add failing accounting tests**
+- [x] **Step 1: Add failing accounting tests**
 
 Add tests for:
 
@@ -175,7 +175,7 @@ Add tests for:
 - equity equals cash plus market value;
 - average price remains decimal precise.
 
-- [ ] **Step 2: Implement account book**
+- [x] **Step 2: Implement account book**
 
 Add:
 
@@ -198,7 +198,7 @@ Methods:
 - `equity(symbol, mark_price)`
 - `cash()`
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run:
 
