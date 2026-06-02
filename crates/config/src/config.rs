@@ -32,6 +32,7 @@ pub struct AppConfig {
     pub data: DataConfig,
     pub strategy: StrategyConfig,
     pub portfolio: PortfolioConfig,
+    pub paper: PaperConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +66,13 @@ pub struct PortfolioConfig {
     pub base_currency: String,
     pub order_qty: String,
     pub max_abs_qty: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaperConfig {
+    pub account_id: String,
+    pub slippage_bps: String,
+    pub fee_bps: String,
 }
 
 impl AppConfig {

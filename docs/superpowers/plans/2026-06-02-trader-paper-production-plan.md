@@ -74,7 +74,7 @@ Create:
 - Modify: `crates/config/tests/config_tests.rs`
 - Modify: `crates/config/tests/file_config_tests.rs`
 
-- [ ] **Step 1: Add failing config test**
+- [x] **Step 1: Add failing config test**
 
 In `crates/config/tests/config_tests.rs`, extend the TOML input used by `parses_backtest_config` with:
 
@@ -93,7 +93,7 @@ assert_eq!(config.paper.slippage_bps, "25");
 assert_eq!(config.paper.fee_bps, "10");
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run:
 
@@ -103,7 +103,7 @@ cargo test -p config
 
 Expected: FAIL because `AppConfig` has no `paper` field.
 
-- [ ] **Step 3: Implement config model**
+- [x] **Step 3: Implement config model**
 
 In `crates/config/src/config.rs`, add `paper` to `AppConfig`:
 
@@ -129,7 +129,7 @@ pub struct PaperConfig {
 }
 ```
 
-- [ ] **Step 4: Update sample config**
+- [x] **Step 4: Update sample config**
 
 In `configs/backtest/ma_cross.toml`, add:
 
@@ -140,7 +140,7 @@ slippage_bps = "25"
 fee_bps = "10"
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

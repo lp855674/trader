@@ -25,6 +25,11 @@ fn parses_backtest_config() {
         base_currency = "USD"
         order_qty = "1"
         max_abs_qty = "100"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
     "#;
 
     let config = AppConfig::from_toml_str(input).unwrap();
@@ -35,4 +40,7 @@ fn parses_backtest_config() {
     assert_eq!(config.strategy.name, "moving_average_cross");
     assert_eq!(config.data.path, "datasets/sample/aapl_1d.csv");
     assert_eq!(config.portfolio.base_currency, "USD");
+    assert_eq!(config.paper.account_id, "paper");
+    assert_eq!(config.paper.slippage_bps, "25");
+    assert_eq!(config.paper.fee_bps, "10");
 }
