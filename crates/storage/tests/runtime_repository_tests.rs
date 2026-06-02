@@ -14,6 +14,7 @@ async fn runtime_records_round_trip() {
         status: "completed".to_string(),
         started_at_ms: 1,
         ended_at_ms: Some(2),
+        error: None,
         config_json: "{}".to_string(),
     })
     .await
@@ -23,6 +24,14 @@ async fn runtime_records_round_trip() {
     assert_eq!(run.id, "run-1");
     assert_eq!(run.status, "completed");
     assert_eq!(db.list_strategy_runs().await.unwrap().len(), 1);
+
+    db.update_strategy_run_status("run-1", "failed", Some(9), Some("boom"))
+        .await
+        .unwrap();
+    let failed = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.ended_at_ms, Some(9));
+    assert_eq!(failed.error, Some("boom".to_string()));
 
     db.insert_order(NewOrder {
         id: "order-1".to_string(),

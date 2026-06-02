@@ -158,6 +158,7 @@ impl PaperRuntime {
                 status: "completed".to_string(),
                 started_at_ms,
                 ended_at_ms: Some(ended_at_ms),
+                error: None,
                 config_json: "{}".to_string(),
             })
             .await?;

@@ -56,7 +56,7 @@ Create:
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/tests/runtime_repository_tests.rs`
 
-- [ ] **Step 1: Add failing storage test for run error updates**
+- [x] **Step 1: Add failing storage test for run error updates**
 
 In `crates/storage/tests/runtime_repository_tests.rs`, after inserting `run-1`, add:
 
@@ -70,7 +70,7 @@ assert_eq!(failed.ended_at_ms, Some(9));
 assert_eq!(failed.error, Some("boom".to_string()));
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run:
 
@@ -80,7 +80,7 @@ cargo test -p storage
 
 Expected: FAIL because `update_strategy_run_status` and `StrategyRunRecord.error` are missing.
 
-- [ ] **Step 3: Extend schema and record**
+- [x] **Step 3: Extend schema and record**
 
 In `migrations/0001_init.sql`, add `error TEXT` to `strategy_runs`.
 
@@ -92,7 +92,7 @@ pub error: Option<String>,
 
 Update all inserts to bind `error`.
 
-- [ ] **Step 4: Implement status update**
+- [x] **Step 4: Implement status update**
 
 Add to `Db`:
 
@@ -121,7 +121,7 @@ pub async fn update_strategy_run_status(
 }
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

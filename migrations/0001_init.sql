@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS strategy_runs (
     status TEXT NOT NULL,
     started_at_ms INTEGER NOT NULL,
     ended_at_ms INTEGER,
+    error TEXT,
     config_json TEXT NOT NULL
 );
 

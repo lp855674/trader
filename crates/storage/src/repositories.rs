@@ -33,6 +33,7 @@ pub struct NewStrategyRun {
     pub status: String,
     pub started_at_ms: i64,
     pub ended_at_ms: Option<i64>,
+    pub error: Option<String>,
     pub config_json: String,
 }
 
@@ -44,6 +45,7 @@ pub struct StrategyRunRecord {
     pub status: String,
     pub started_at_ms: i64,
     pub ended_at_ms: Option<i64>,
+    pub error: Option<String>,
     pub config_json: String,
 }
 
@@ -170,8 +172,8 @@ impl Db {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO strategy_runs (
-                id, name, mode, status, started_at_ms, ended_at_ms, config_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, name, mode, status, started_at_ms, ended_at_ms, error, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(run.id)
@@ -180,7 +182,31 @@ impl Db {
         .bind(run.status)
         .bind(run.started_at_ms)
         .bind(run.ended_at_ms)
+        .bind(run.error)
         .bind(run.config_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_strategy_run_status(
+        &self,
+        run_id: &str,
+        status: &str,
+        ended_at_ms: Option<i64>,
+        error: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE strategy_runs
+            SET status = ?, ended_at_ms = ?, error = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(ended_at_ms)
+        .bind(error)
+        .bind(run_id)
         .execute(self.pool())
         .await?;
         Ok(())
@@ -190,9 +216,21 @@ impl Db {
         &self,
         run_id: &str,
     ) -> Result<Option<StrategyRunRecord>, sqlx::Error> {
-        let row = sqlx::query_as::<_, (String, String, String, String, i64, Option<i64>, String)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                i64,
+                Option<i64>,
+                Option<String>,
+                String,
+            ),
+        >(
             r#"
-            SELECT id, name, mode, status, started_at_ms, ended_at_ms, config_json
+            SELECT id, name, mode, status, started_at_ms, ended_at_ms, error, config_json
             FROM strategy_runs
             WHERE id = ?
             "#,
@@ -202,22 +240,37 @@ impl Db {
         .await?;
 
         Ok(row.map(
-            |(id, name, mode, status, started_at_ms, ended_at_ms, config_json)| StrategyRunRecord {
-                id,
-                name,
-                mode,
-                status,
-                started_at_ms,
-                ended_at_ms,
-                config_json,
+            |(id, name, mode, status, started_at_ms, ended_at_ms, error, config_json)| {
+                StrategyRunRecord {
+                    id,
+                    name,
+                    mode,
+                    status,
+                    started_at_ms,
+                    ended_at_ms,
+                    error,
+                    config_json,
+                }
             },
         ))
     }
 
     pub async fn list_strategy_runs(&self) -> Result<Vec<StrategyRunRecord>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, i64, Option<i64>, String)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                i64,
+                Option<i64>,
+                Option<String>,
+                String,
+            ),
+        >(
             r#"
-            SELECT id, name, mode, status, started_at_ms, ended_at_ms, config_json
+            SELECT id, name, mode, status, started_at_ms, ended_at_ms, error, config_json
             FROM strategy_runs
             ORDER BY started_at_ms DESC, id
             "#,
@@ -228,7 +281,7 @@ impl Db {
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, mode, status, started_at_ms, ended_at_ms, config_json)| {
+                |(id, name, mode, status, started_at_ms, ended_at_ms, error, config_json)| {
                     StrategyRunRecord {
                         id,
                         name,
@@ -236,6 +289,7 @@ impl Db {
                         status,
                         started_at_ms,
                         ended_at_ms,
+                        error,
                         config_json,
                     }
                 },
