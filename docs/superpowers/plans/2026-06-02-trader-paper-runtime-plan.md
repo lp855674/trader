@@ -482,7 +482,7 @@ git commit -m "feat: expose paper metrics summary"
 - Modify: `tech.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-paper-runtime-plan.md`
 
-- [ ] **Step 1: Full verification**
+- [x] **Step 1: Full verification**
 
 Run:
 
@@ -520,13 +520,20 @@ Invoke-RestMethod http://127.0.0.1:8080/api/v1/metrics
 
 Expected: all query routes return non-empty results after POST.
 
-- [ ] **Step 3: Update docs**
+Status: blocked in this local shell by Windows target artifact permissions while starting `trader-server` with `cargo run`:
+
+- default target: `failed to write ... libregex_syntax-*.rmeta: 拒绝访问。 (os error 5)`;
+- alternate target: `failed to create directory ... target-rest-smoke: 拒绝访问。 (os error 5)`.
+
+Equivalent route behavior is covered by `cargo test -p api`, which posts `/api/v1/backtests` and verifies `/api/v1/fills`, `/api/v1/account-balances`, `/api/v1/portfolio/snapshots`, and `/api/v1/metrics`.
+
+- [x] **Step 3: Update docs**
 
 README: add `paper-run` and new REST routes.
 
 tech.md: update Phase 2 status to say paper runtime is independent from backtest runtime and persists account/equity state.
 
-- [ ] **Step 4: Mark plan complete and commit**
+- [x] **Step 4: Mark plan complete and commit**
 
 Commit:
 

@@ -184,7 +184,26 @@ Phase 2 turns the V1 skeleton into a local paper/backtest workflow: config loadi
 
 - Strategy 只产生信号，不访问 Broker、OMS、Storage 或 API。
 - SQL 只在 `storage` crate 内部。
-- Paper runtime 目前复用 Backtest execution path；后续接实时行情和模拟撮合时再扩展独立 paper loop。
+
+## Phase 3 Paper Runtime
+
+Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRuntime` 自己执行 strategy loop，并串联 portfolio、risk、execution、simulated broker、accounting、storage。
+
+当前可执行链路：
+
+- `trader paper-run --config configs/backtest/ma_cross.toml` 加载样例 CSV，运行 MA cross paper loop，持久化 run、order、fill、position、account balance、portfolio snapshot。
+- `POST /api/v1/backtests` 触发同一套本地 paper 持久化流程，用于后续查询路由 smoke。
+- `GET /api/v1/fills` 查询成交。
+- `GET /api/v1/account-balances` 查询账户现金余额。
+- `GET /api/v1/portfolio/snapshots` 查询组合权益快照。
+- `GET /api/v1/metrics` 基于订单、成交和首尾权益快照返回 metrics summary。
+
+仍然保持的边界：
+
+- Strategy 只产生信号，不访问 Broker、OMS、Storage 或 API。
+- SQL 只在 `storage` crate 内部。
+- Paper runtime 使用 `broker::simulate_market_fill` 生成本地模拟成交，账户现金与权益由 `accounting::AccountBook` 维护。
+- 金额/数量在 Rust 内使用 `rust_decimal::Decimal`，写入 SQLite 时使用 decimal string。
 
 ## 实施计划
 
@@ -192,3 +211,4 @@ Phase 2 turns the V1 skeleton into a local paper/backtest workflow: config loadi
 
 - `docs/superpowers/plans/2026-05-31-trader-v1-implementation.md`
 - `docs/superpowers/plans/2026-06-01-trader-paper-mvp-plan.md`
+- `docs/superpowers/plans/2026-06-02-trader-paper-runtime-plan.md`
