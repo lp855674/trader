@@ -30,6 +30,12 @@ struct RunStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct RunStartResponse {
+    run_id: String,
+    status: String,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -69,7 +75,7 @@ async fn run_backtest(
 
 async fn run_paper(
     State(state): State<AppState>,
-) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
+) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let settings = paper_settings(&app_config)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -96,17 +102,45 @@ async fn run_paper(
         }
     };
 
-    let summary = match PaperRuntime::new(state.db.clone(), settings.clone())
-        .run_bars(bars)
+    let run_id = settings.run_id.clone();
+    let db = state.db.clone();
+    let task_settings = settings.clone();
+    state
+        .runtime_manager
+        .spawn(run_id.clone(), move |cancel| async move {
+            let result = PaperRuntime::new(db.clone(), task_settings.clone())
+                .run_bars_with_cancel(bars, cancel)
+                .await;
+
+            if let Err(error) = result {
+                let status = if error
+                    .downcast_ref::<paper::PaperRunError>()
+                    .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
+                {
+                    "cancelled"
+                } else {
+                    "failed"
+                };
+                let _ = db
+                    .update_strategy_run_status(
+                        &task_settings.run_id,
+                        status,
+                        Some(chrono::Utc::now().timestamp_millis()),
+                        Some(&error.to_string()),
+                    )
+                    .await;
+            }
+        })
         .await
-    {
-        Ok(summary) => summary,
-        Err(error) => {
-            record_failed_run(&state, &settings.run_id, error.to_string()).await?;
-            return Err(error.into());
-        }
-    };
-    Ok((StatusCode::CREATED, Json(summary)))
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(RunStartResponse {
+            run_id,
+            status: "running".to_string(),
+        }),
+    ))
 }
 
 async fn list_orders(

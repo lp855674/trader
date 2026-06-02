@@ -19,6 +19,7 @@ metrics.workspace = true
 paper.workspace = true
 serde.workspace = true
 rust_decimal.workspace = true
+runtime.workspace = true
 sqlx.workspace = true
 storage.workspace = true
 tokio.workspace = true

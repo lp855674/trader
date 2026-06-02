@@ -28,7 +28,7 @@ async fn post_backtest_returns_created() {
 }
 
 #[tokio::test]
-async fn post_paper_run_returns_created() {
+async fn post_paper_run_returns_accepted_run_start() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -45,7 +45,14 @@ async fn post_paper_run_returns_created() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("\"status\":\"running\"".len())
+            .any(|window| window == b"\"status\":\"running\"")
+    );
 }
 
 #[tokio::test]
@@ -66,7 +73,8 @@ async fn post_paper_run_populates_query_routes() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    wait_for_status(app.clone(), "sample-ma-cross", "completed").await;
 
     for uri in [
         "/api/v1/fills",
@@ -148,7 +156,8 @@ async fn paper_run_status_can_be_queried_and_cancelled() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    wait_for_status(app.clone(), "sample-ma-cross", "completed").await;
 
     let response = app
         .clone()
@@ -259,4 +268,32 @@ fn workspace_root() -> PathBuf {
         .and_then(|path| path.parent())
         .unwrap()
         .to_path_buf()
+}
+
+async fn wait_for_status(app: axum::Router, run_id: &str, expected_status: &str) {
+    for _ in 0..50 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/v1/runs/{run_id}/status"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if response.status() == StatusCode::OK {
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            if bytes
+                .as_ref()
+                .windows(expected_status.len())
+                .any(|window| window == expected_status.as_bytes())
+            {
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("run {run_id} did not reach {expected_status}");
 }

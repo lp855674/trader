@@ -581,7 +581,7 @@ git commit -m "feat: make paper runtime cancellable"
 - Modify: `crates/api/src/api.rs`
 - Modify: `crates/api/tests/backtest_api_tests.rs`
 
-- [ ] **Step 1: Add failing API test for accepted paper start**
+- [x] **Step 1: Add failing API test for accepted paper start**
 
 In `crates/api/tests/backtest_api_tests.rs`, update `post_paper_run_returns_created` into:
 
@@ -615,7 +615,7 @@ async fn post_paper_run_returns_accepted_run_start() {
 }
 ```
 
-- [ ] **Step 2: Run API test and verify RED**
+- [x] **Step 2: Run API test and verify RED**
 
 Run:
 
@@ -625,7 +625,7 @@ cargo test -p api post_paper_run_returns_accepted_run_start
 
 Expected: FAIL because current endpoint returns `201 CREATED` with summary.
 
-- [ ] **Step 3: Add runtime manager to API state**
+- [x] **Step 3: Add runtime manager to API state**
 
 Modify `crates/api/Cargo.toml`:
 
@@ -657,7 +657,7 @@ impl AppState {
 }
 ```
 
-- [ ] **Step 4: Add run start response**
+- [x] **Step 4: Add run start response**
 
 In `crates/api/src/api.rs`, add:
 
@@ -669,7 +669,7 @@ struct RunStartResponse {
 }
 ```
 
-- [ ] **Step 5: Convert `run_paper` to background start**
+- [x] **Step 5: Convert `run_paper` to background start**
 
 Replace `run_paper` signature:
 
@@ -725,7 +725,7 @@ Ok((
 
 Keep data-load failure handling before spawn: if `load_bars_from_csv` fails, update persisted status to `failed` and return the original error.
 
-- [ ] **Step 6: Update existing paper API tests**
+- [x] **Step 6: Update existing paper API tests**
 
 Update tests that call `POST /api/v1/paper-runs`:
 
@@ -766,7 +766,7 @@ async fn wait_for_status(app: axum::Router, run_id: &str, expected_status: &str)
 }
 ```
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run:
 

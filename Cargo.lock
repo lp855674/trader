@@ -127,6 +127,7 @@ dependencies = [
  "data",
  "metrics",
  "paper",
+ "runtime",
  "rust_decimal",
  "serde",
  "sqlx",
