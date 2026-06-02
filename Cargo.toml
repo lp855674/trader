@@ -34,14 +34,28 @@ license = "MIT"
 rust-version = "1.96"
 
 [workspace.dependencies]
+accounting = { path = "crates/accounting" }
 anyhow = "1"
-thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+api = { path = "crates/api" }
 async-trait = "0.1"
+backtest = { path = "crates/backtest" }
+broker = { path = "crates/broker" }
+config = { path = "crates/config" }
+data = { path = "crates/data" }
+events = { path = "crates/events" }
+execution = { path = "crates/execution" }
 futures = "0.3"
+paper = { path = "crates/paper" }
+portfolio = { path = "crates/portfolio" }
+risk = { path = "crates/risk" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+storage = { path = "crates/storage" }
+strategies = { path = "crates/strategies" }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
+trader_core = { package = "trader-core", path = "crates/core" }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 time = "0.3"

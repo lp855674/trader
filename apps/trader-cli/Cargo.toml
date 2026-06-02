@@ -11,12 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-backtest = { path = "../../crates/backtest" }
+backtest.workspace = true
 clap.workspace = true
-config = { path = "../../crates/config" }
-data = { path = "../../crates/data" }
+config.workspace = true
+data.workspace = true
 rust_decimal.workspace = true
-storage = { path = "../../crates/storage" }
+storage.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

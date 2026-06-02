@@ -6,8 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-data = { path = "../data" }
-events = { path = "../events" }
+data.workspace = true
+events.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

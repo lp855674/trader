@@ -8,12 +8,12 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-backtest = { path = "../backtest" }
-config = { path = "../config" }
-data = { path = "../data" }
+backtest.workspace = true
+config.workspace = true
+data.workspace = true
 serde.workspace = true
 rust_decimal.workspace = true
 sqlx.workspace = true
-storage = { path = "../storage" }
+storage.workspace = true
 tokio.workspace = true
 tower.workspace = true

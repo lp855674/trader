@@ -6,10 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-trader_core = { package = "trader-core", path = "../core" }
-data = { path = "../data" }
-events = { path = "../events" }
-portfolio = { path = "../portfolio" }
+trader_core.workspace = true
+data.workspace = true
+events.workspace = true
+portfolio.workspace = true
 chrono.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true

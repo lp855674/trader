@@ -6,14 +6,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-accounting = { path = "../accounting" }
-broker = { path = "../broker" }
-data = { path = "../data" }
-execution = { path = "../execution" }
-portfolio = { path = "../portfolio" }
-risk = { path = "../risk" }
-storage = { path = "../storage" }
-strategies = { path = "../strategies" }
+accounting.workspace = true
+broker.workspace = true
+data.workspace = true
+execution.workspace = true
+portfolio.workspace = true
+risk.workspace = true
+storage.workspace = true
+strategies.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 rust_decimal.workspace = true

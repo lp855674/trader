@@ -6,9 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-backtest = { path = "../backtest" }
-data = { path = "../data" }
-storage = { path = "../storage" }
+backtest.workspace = true
+data.workspace = true
+storage.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
