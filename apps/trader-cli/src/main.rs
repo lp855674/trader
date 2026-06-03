@@ -1,7 +1,7 @@
 use anyhow::Result;
 use backtest::{BacktestRuntime, BacktestSettings};
 use clap::{Parser, Subcommand};
-use metrics::paper_summary;
+use metrics::{equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
@@ -165,26 +165,25 @@ async fn main() -> Result<()> {
             let fills = db.list_fills(run_id).await?;
             let balances = db.list_account_balances(run_id).await?;
             let snapshots = db.list_portfolio_snapshots(run_id).await?;
-            let first_snapshot = snapshots.first();
-            let last_snapshot = snapshots.last().or(first_snapshot);
-            let total_return = match (first_snapshot, last_snapshot) {
-                (Some(first), Some(last)) => {
-                    let initial_equity = Decimal::from_str(&first.equity)?;
-                    let final_equity = Decimal::from_str(&last.equity)?;
-                    paper_summary(orders.len(), fills.len(), initial_equity, final_equity)
-                        .total_return
-                }
-                _ => Decimal::ZERO.to_string(),
-            };
+            let equity = snapshots
+                .iter()
+                .map(|snapshot| Decimal::from_str(&snapshot.equity))
+                .collect::<Result<Vec<_>, _>>()?;
+            let returns = equity_returns(&equity);
+            let summary = paper_summary(orders.len(), fills.len(), &equity, &returns);
             println!(
-                "report: run_id={} status={} orders={} fills={} balances={} snapshots={} total_return={}",
+                "report: run_id={} status={} orders={} fills={} balances={} snapshots={} total_return={} sharpe={} sortino={} max_drawdown={} win_rate={}",
                 run_id,
                 run_status,
                 orders.len(),
                 fills.len(),
                 balances.len(),
                 snapshots.len(),
-                total_return
+                summary.total_return,
+                summary.sharpe,
+                summary.sortino,
+                summary.max_drawdown,
+                summary.win_rate
             );
         }
         Command::CheckConfig { config } => {

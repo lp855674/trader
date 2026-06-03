@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use backtest::{BacktestRuntime, BacktestSettings};
-use metrics::{MetricsSummary, paper_summary};
+use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::{ReplayRuntime, ReplaySummary};
 use rust_decimal::Decimal;
@@ -300,22 +300,17 @@ async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSu
     let orders = state.db.list_orders(run_id).await?;
     let fills = state.db.list_fills(run_id).await?;
     let snapshots = state.db.list_portfolio_snapshots(run_id).await?;
-    let Some(first_snapshot) = snapshots.first() else {
-        return Ok(Json(MetricsSummary {
-            total_return: Decimal::ZERO.to_string(),
-            order_count: orders.len(),
-            fill_count: fills.len(),
-        }));
-    };
-    let last_snapshot = snapshots.last().unwrap_or(first_snapshot);
-    let initial_equity = Decimal::from_str(&first_snapshot.equity)?;
-    let final_equity = Decimal::from_str(&last_snapshot.equity)?;
+    let equity = snapshots
+        .iter()
+        .map(|snapshot| Decimal::from_str(&snapshot.equity))
+        .collect::<Result<Vec<_>, _>>()?;
+    let returns = equity_returns(&equity);
 
     Ok(Json(paper_summary(
         orders.len(),
         fills.len(),
-        initial_equity,
-        final_equity,
+        &equity,
+        &returns,
     )))
 }
 
