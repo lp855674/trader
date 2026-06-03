@@ -1,6 +1,6 @@
 use anyhow::Result;
 use backtest::{BacktestRuntime, BacktestSettings};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
@@ -42,11 +42,36 @@ enum Command {
     Report {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+        #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+        format: ReportFormat,
+        #[arg(long)]
+        output: Option<String>,
     },
     CheckConfig {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ReportFormat {
+    Text,
+    Csv,
+    Html,
+}
+
+struct ReportData {
+    run_id: String,
+    run_status: String,
+    orders: usize,
+    fills: usize,
+    balances: usize,
+    snapshots: usize,
+    total_return: String,
+    sharpe: String,
+    sortino: String,
+    max_drawdown: String,
+    win_rate: String,
 }
 
 #[tokio::main]
@@ -162,7 +187,11 @@ async fn main() -> Result<()> {
                 summary.bars, summary.speed
             );
         }
-        Command::Report { config } => {
+        Command::Report {
+            config,
+            format,
+            output,
+        } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
             let run_id = &app_config.runtime.run_id;
@@ -181,20 +210,26 @@ async fn main() -> Result<()> {
                 .collect::<Result<Vec<_>, _>>()?;
             let returns = equity_returns(&equity);
             let summary = paper_summary(orders.len(), fills.len(), &equity, &returns);
-            println!(
-                "report: run_id={} status={} orders={} fills={} balances={} snapshots={} total_return={} sharpe={} sortino={} max_drawdown={} win_rate={}",
-                run_id,
+            let report = ReportData {
+                run_id: run_id.clone(),
                 run_status,
-                orders.len(),
-                fills.len(),
-                balances.len(),
-                snapshots.len(),
-                summary.total_return,
-                summary.sharpe,
-                summary.sortino,
-                summary.max_drawdown,
-                summary.win_rate
-            );
+                orders: orders.len(),
+                fills: fills.len(),
+                balances: balances.len(),
+                snapshots: snapshots.len(),
+                total_return: summary.total_return,
+                sharpe: summary.sharpe,
+                sortino: summary.sortino,
+                max_drawdown: summary.max_drawdown,
+                win_rate: summary.win_rate,
+            };
+            let rendered = render_report(&report, format);
+            if let Some(output_path) = output {
+                std::fs::write(&output_path, rendered)?;
+                println!("wrote report: {output_path}");
+            } else {
+                print!("{rendered}");
+            }
         }
         Command::CheckConfig { config } => {
             config::AppConfig::from_toml_file(config)?;
@@ -202,6 +237,69 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn render_report(report: &ReportData, format: ReportFormat) -> String {
+    match format {
+        ReportFormat::Text => format!(
+            "report: run_id={} status={} orders={} fills={} balances={} snapshots={} total_return={} sharpe={} sortino={} max_drawdown={} win_rate={}\n",
+            report.run_id,
+            report.run_status,
+            report.orders,
+            report.fills,
+            report.balances,
+            report.snapshots,
+            report.total_return,
+            report.sharpe,
+            report.sortino,
+            report.max_drawdown,
+            report.win_rate
+        ),
+        ReportFormat::Csv => format!(
+            "run_id,status,orders,fills,balances,snapshots,total_return,sharpe,sortino,max_drawdown,win_rate\n{},{},{},{},{},{},{},{},{},{},{}\n",
+            csv_escape(&report.run_id),
+            csv_escape(&report.run_status),
+            report.orders,
+            report.fills,
+            report.balances,
+            report.snapshots,
+            csv_escape(&report.total_return),
+            csv_escape(&report.sharpe),
+            csv_escape(&report.sortino),
+            csv_escape(&report.max_drawdown),
+            csv_escape(&report.win_rate)
+        ),
+        ReportFormat::Html => format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Trader Report</title></head><body><h1>Trader Report</h1><table><tbody><tr><th>Run ID</th><td>{}</td></tr><tr><th>Status</th><td>{}</td></tr><tr><th>Orders</th><td>{}</td></tr><tr><th>Fills</th><td>{}</td></tr><tr><th>Balances</th><td>{}</td></tr><tr><th>Snapshots</th><td>{}</td></tr><tr><th>Total Return</th><td>{}</td></tr><tr><th>Sharpe</th><td>{}</td></tr><tr><th>Sortino</th><td>{}</td></tr><tr><th>Max Drawdown</th><td>{}</td></tr><tr><th>Win Rate</th><td>{}</td></tr></tbody></table></body></html>\n",
+            html_escape(&report.run_id),
+            html_escape(&report.run_status),
+            report.orders,
+            report.fills,
+            report.balances,
+            report.snapshots,
+            html_escape(&report.total_return),
+            html_escape(&report.sharpe),
+            html_escape(&report.sortino),
+            html_escape(&report.max_drawdown),
+            html_escape(&report.win_rate)
+        ),
+    }
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 async fn insert_event(

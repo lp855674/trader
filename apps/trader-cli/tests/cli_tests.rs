@@ -91,6 +91,81 @@ fn report_accepts_config_argument() {
         .stdout(contains("report: run_id=sample-ma-cross"));
 }
 
+#[test]
+fn report_can_export_csv() {
+    let output = temp_output("trader-report", "csv");
+    run_paper();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "report",
+            "--config",
+            "configs/backtest/ma_cross.toml",
+            "--format",
+            "csv",
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote report"));
+
+    let content = std::fs::read_to_string(&output).unwrap();
+    assert!(content.contains("run_id,status,orders,fills,balances,snapshots"));
+    assert!(content.contains("sample-ma-cross"));
+    std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn report_can_export_html() {
+    let output = temp_output("trader-report", "html");
+    run_paper();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "report",
+            "--config",
+            "configs/backtest/ma_cross.toml",
+            "--format",
+            "html",
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote report"));
+
+    let content = std::fs::read_to_string(&output).unwrap();
+    assert!(content.contains("<h1>Trader Report</h1>"));
+    assert!(content.contains("sample-ma-cross"));
+    std::fs::remove_file(output).unwrap();
+}
+
+fn run_paper() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-run", "--config", "configs/backtest/ma_cross.toml"])
+        .assert()
+        .success();
+}
+
+fn temp_output(prefix: &str, extension: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "{}-{}.{}",
+        prefix,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        extension
+    ))
+}
+
 fn workspace_root() -> &'static str {
     Box::leak(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
