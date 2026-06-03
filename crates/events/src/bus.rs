@@ -29,6 +29,16 @@ impl EventBus {
         }
     }
 
+    pub fn replay(
+        &self,
+        events: impl IntoIterator<Item = AnyEventEnvelope>,
+    ) -> Result<(), EventBusError> {
+        for event in events {
+            self.publish(event)?;
+        }
+        Ok(())
+    }
+
     pub fn publish_signal(&self, signal: SignalEvent) -> Result<(), EventBusError> {
         self.publish(envelope("strategy", TraderEvent::Signal(signal)))
     }

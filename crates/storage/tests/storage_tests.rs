@@ -89,3 +89,47 @@ async fn list_events_by_source_filters_to_one_run() {
     assert_eq!(events[0].source, "run-b");
     assert_eq!(events[0].category, "replay.completed");
 }
+
+#[tokio::test]
+async fn persisted_events_can_replay_to_event_bus() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_event(NewEventRecord {
+        event_id: "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a11".to_string(),
+        ts_ms: 1,
+        source: "run-a".to_string(),
+        category: "paper.started".to_string(),
+        payload_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_event(NewEventRecord {
+        event_id: "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a12".to_string(),
+        ts_ms: 2,
+        source: "run-a".to_string(),
+        category: "paper.completed".to_string(),
+        payload_json: r#"{"orders":1}"#.to_string(),
+    })
+    .await
+    .unwrap();
+    let bus = events::EventBus::new(16);
+    let mut receiver = bus.subscribe();
+
+    let replayed = db.replay_events_to_bus("run-a", &bus).await.unwrap();
+
+    assert_eq!(replayed, 2);
+    let first = receiver.recv().await.unwrap();
+    let second = receiver.recv().await.unwrap();
+    assert_eq!(first.source, "run-a");
+    assert_eq!(
+        first.event_id.to_string(),
+        "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a11"
+    );
+    match second.payload {
+        events::TraderEvent::Runtime(event) => {
+            assert_eq!(event.category, "paper.completed");
+            assert_eq!(event.payload_json, r#"{"orders":1}"#);
+        }
+        other => panic!("expected runtime event, got {other:?}"),
+    }
+}

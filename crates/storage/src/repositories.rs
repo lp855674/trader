@@ -1,5 +1,8 @@
 use crate::Db;
+use chrono::{TimeZone, Utc};
+use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
 use serde::Serialize;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewInstrument {
@@ -747,5 +750,37 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn replay_events_to_bus(
+        &self,
+        source: &str,
+        bus: &EventBus,
+    ) -> Result<usize, sqlx::Error> {
+        let events = self.list_events_by_source(source).await?;
+        let envelopes = events
+            .into_iter()
+            .map(event_record_to_envelope)
+            .collect::<Vec<_>>();
+        let replayed = envelopes.len();
+        bus.replay(envelopes)
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        Ok(replayed)
+    }
+}
+
+fn event_record_to_envelope(record: EventRecord) -> AnyEventEnvelope {
+    EventEnvelope {
+        event_id: Uuid::parse_str(&record.event_id).unwrap_or_else(|_| Uuid::new_v4()),
+        ts: Utc
+            .timestamp_millis_opt(record.ts_ms)
+            .single()
+            .unwrap_or_else(Utc::now),
+        source: record.source,
+        category: EventCategory::System,
+        payload: TraderEvent::Runtime(RuntimeEvent {
+            category: record.category,
+            payload_json: record.payload_json,
+        }),
     }
 }

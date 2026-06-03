@@ -45,15 +45,23 @@ pub struct SignalEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeEvent {
+    pub category: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TraderEvent {
     Signal(SignalEvent),
+    Runtime(RuntimeEvent),
 }
 
 impl TraderEvent {
     pub fn category(&self) -> EventCategory {
         match self {
             Self::Signal(_) => EventCategory::Signal,
+            Self::Runtime(_) => EventCategory::System,
         }
     }
 }

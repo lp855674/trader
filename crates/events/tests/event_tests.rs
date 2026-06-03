@@ -1,4 +1,6 @@
-use events::{EventBus, EventCategory, EventEnvelope, SignalEvent, SignalSide, TraderEvent};
+use events::{
+    EventBus, EventCategory, EventEnvelope, RuntimeEvent, SignalEvent, SignalSide, TraderEvent,
+};
 
 #[tokio::test]
 async fn event_bus_delivers_published_events() {
@@ -31,6 +33,45 @@ async fn publish_without_subscribers_is_ok() {
     });
 
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn event_bus_replays_envelopes_in_order() {
+    let bus = EventBus::new(16);
+    let mut receiver = bus.subscribe();
+    let first = EventEnvelope {
+        event_id: uuid::Uuid::parse_str("01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a11").unwrap(),
+        ts: chrono::Utc::now(),
+        source: "run-1".to_string(),
+        category: EventCategory::System,
+        payload: TraderEvent::Runtime(RuntimeEvent {
+            category: "paper.started".to_string(),
+            payload_json: "{}".to_string(),
+        }),
+    };
+    let second = EventEnvelope {
+        event_id: uuid::Uuid::parse_str("01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a12").unwrap(),
+        ts: chrono::Utc::now(),
+        source: "run-1".to_string(),
+        category: EventCategory::System,
+        payload: TraderEvent::Runtime(RuntimeEvent {
+            category: "paper.completed".to_string(),
+            payload_json: "{}".to_string(),
+        }),
+    };
+
+    bus.replay([first, second]).unwrap();
+
+    let first = receiver.recv().await.unwrap();
+    let second = receiver.recv().await.unwrap();
+    assert_eq!(
+        first.event_id.to_string(),
+        "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a11"
+    );
+    assert_eq!(
+        second.event_id.to_string(),
+        "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a12"
+    );
 }
 
 #[test]
@@ -74,5 +115,22 @@ fn event_envelope_uses_stable_json_shape() {
     assert_eq!(
         value["payload"]["data"]["strategy_id"],
         serde_json::json!("ma_cross")
+    );
+}
+
+#[test]
+fn runtime_event_uses_stable_wire_format() {
+    let event = TraderEvent::Runtime(RuntimeEvent {
+        category: "replay.speed".to_string(),
+        payload_json: r#"{"speed":25}"#.to_string(),
+    });
+
+    let value = serde_json::to_value(event).unwrap();
+
+    assert_eq!(value["kind"], serde_json::json!("RUNTIME"));
+    assert_eq!(value["data"]["category"], serde_json::json!("replay.speed"));
+    assert_eq!(
+        value["data"]["payload_json"],
+        serde_json::json!(r#"{"speed":25}"#)
     );
 }
