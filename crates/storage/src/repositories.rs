@@ -71,6 +71,16 @@ pub struct NewOrder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecoveredOrderState {
+    pub id: String,
+    pub run_id: String,
+    pub order_qty: String,
+    pub filled_qty: String,
+    pub status: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewFill {
     pub id: String,
     pub order_id: String,
@@ -531,6 +541,35 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn recover_order_state(
+        &self,
+        run_id: &str,
+        order_id: &str,
+    ) -> Result<Option<RecoveredOrderState>, sqlx::Error> {
+        let row = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
+            r#"
+            SELECT id, run_id, qty, filled_qty, status, updated_at_ms
+            FROM orders
+            WHERE run_id = ? AND id = ?
+            "#,
+        )
+        .bind(run_id)
+        .bind(order_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(id, run_id, order_qty, filled_qty, status, updated_at_ms)| RecoveredOrderState {
+                id,
+                run_id,
+                order_qty,
+                filled_qty,
+                status,
+                updated_at_ms,
+            },
+        ))
     }
 
     pub async fn list_fills(&self, run_id: &str) -> Result<Vec<NewFill>, sqlx::Error> {

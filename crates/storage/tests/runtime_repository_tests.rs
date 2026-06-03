@@ -108,6 +108,15 @@ async fn runtime_records_round_trip() {
     assert_eq!(db.list_positions("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_account_balances("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_portfolio_snapshots("run-1").await.unwrap().len(), 1);
+
+    let recovered = db
+        .recover_order_state("run-1", "order-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.order_qty, "1");
+    assert_eq!(recovered.filled_qty, "1");
+    assert_eq!(recovered.status, "FILLED");
 }
 
 #[tokio::test]
