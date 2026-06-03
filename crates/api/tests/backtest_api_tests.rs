@@ -119,6 +119,83 @@ async fn post_replay_returns_created_and_persists_events() {
 }
 
 #[tokio::test]
+async fn replay_control_routes_update_replay_state() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    for (uri, expected_status, expected_fragment) in [
+        (
+            "/api/v1/replay/sample-ma-cross/pause",
+            "paused",
+            "\"status\":\"paused\"",
+        ),
+        (
+            "/api/v1/replay/sample-ma-cross/seek/2",
+            "paused",
+            "\"offset\":2",
+        ),
+        (
+            "/api/v1/replay/sample-ma-cross/speed/25",
+            "paused",
+            "\"speed\":25",
+        ),
+        (
+            "/api/v1/replay/sample-ma-cross/resume",
+            "running",
+            "\"status\":\"running\"",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(
+            bytes
+                .as_ref()
+                .windows(expected_fragment.len())
+                .any(|window| window == expected_fragment.as_bytes()),
+            "missing {expected_fragment} in {uri}"
+        );
+        assert!(
+            bytes
+                .as_ref()
+                .windows(expected_status.len())
+                .any(|window| window == expected_status.as_bytes())
+        );
+    }
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/runs/sample-ma-cross/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("replay.speed".len())
+            .any(|window| window == b"replay.speed")
+    );
+}
+
+#[tokio::test]
 async fn post_paper_run_returns_accepted_run_start() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

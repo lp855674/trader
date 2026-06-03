@@ -12,7 +12,7 @@ use axum::{
 use backtest::{BacktestRuntime, BacktestSettings};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
-use replay::{ReplayRuntime, ReplaySummary};
+use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
@@ -59,6 +59,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
         .route("/api/v1/runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
+        .route("/api/v1/replay/{run_id}/pause", post(pause_replay))
+        .route("/api/v1/replay/{run_id}/resume", post(resume_replay))
+        .route("/api/v1/replay/{run_id}/seek/{offset}", post(seek_replay))
+        .route("/api/v1/replay/{run_id}/speed/{speed}", post(speed_replay))
         .with_state(state)
 }
 
@@ -209,6 +213,10 @@ async fn run_replay(
             config_json: "{}".to_string(),
         })
         .await?;
+    state.replay_controllers.lock().await.insert(
+        app_config.runtime.run_id.clone(),
+        ReplayController::new(app_config.runtime.run_id.clone(), 100_000),
+    );
     insert_event(
         &state.db,
         &app_config.runtime.run_id,
@@ -387,6 +395,46 @@ async fn cancel_run(
     .into_response())
 }
 
+async fn pause_replay(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<ReplayState>, ApiError> {
+    update_replay_controller(state, run_id, "replay.pause", |controller| {
+        controller.pause();
+    })
+    .await
+}
+
+async fn resume_replay(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<ReplayState>, ApiError> {
+    update_replay_controller(state, run_id, "replay.resume", |controller| {
+        controller.resume();
+    })
+    .await
+}
+
+async fn seek_replay(
+    State(state): State<AppState>,
+    Path((run_id, offset)): Path<(String, usize)>,
+) -> Result<Json<ReplayState>, ApiError> {
+    update_replay_controller(state, run_id, "replay.seek", |controller| {
+        controller.seek(offset);
+    })
+    .await
+}
+
+async fn speed_replay(
+    State(state): State<AppState>,
+    Path((run_id, speed)): Path<(String, u32)>,
+) -> Result<Json<ReplayState>, ApiError> {
+    update_replay_controller(state, run_id, "replay.speed", |controller| {
+        controller.set_speed(speed);
+    })
+    .await
+}
+
 async fn record_failed_run(
     state: &AppState,
     run_id: &str,
@@ -417,6 +465,26 @@ async fn insert_event(
         payload_json: payload_json.to_string(),
     })
     .await
+}
+
+async fn update_replay_controller(
+    state: AppState,
+    run_id: String,
+    category: &str,
+    update: impl FnOnce(&mut ReplayController),
+) -> Result<Json<ReplayState>, ApiError> {
+    let replay_state = {
+        let mut controllers = state.replay_controllers.lock().await;
+        let controller = controllers
+            .entry(run_id.clone())
+            .or_insert_with(|| ReplayController::new(run_id.clone(), 1));
+        update(controller);
+        controller.state().clone()
+    };
+    let payload =
+        serde_json::to_string(&replay_state).map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+    insert_event(&state.db, &run_id, category, &payload).await?;
+    Ok(Json(replay_state))
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

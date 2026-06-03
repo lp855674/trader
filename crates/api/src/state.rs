@@ -1,11 +1,15 @@
+use replay::ReplayController;
 use runtime::RuntimeManager;
+use std::{collections::HashMap, sync::Arc};
 use storage::Db;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub config_path: String,
     pub runtime_manager: RuntimeManager,
+    pub replay_controllers: Arc<Mutex<HashMap<String, ReplayController>>>,
 }
 
 impl AppState {
@@ -14,6 +18,7 @@ impl AppState {
             db,
             config_path,
             runtime_manager: RuntimeManager::default(),
+            replay_controllers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
