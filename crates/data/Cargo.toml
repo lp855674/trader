@@ -11,6 +11,7 @@ path = "src/data.rs"
 [dependencies]
 chrono.workspace = true
 csv = "1"
+polars.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
 thiserror.workspace = true

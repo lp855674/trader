@@ -77,7 +77,7 @@ async fn run_backtest(
         &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
     )
     .await?;
-    let bars = data::load_bars_from_csv(&app_config.data.path)?;
+    let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
         .run(bars)
         .await?;
@@ -125,7 +125,7 @@ async fn run_paper(
     )
     .await?;
 
-    let bars = match data::load_bars_from_csv(&app_config.data.path) {
+    let bars = match data::load_bars(&app_config.data.source, &app_config.data.path) {
         Ok(bars) => bars,
         Err(error) => {
             record_failed_run(&state, &settings.run_id, error.to_string()).await?;
@@ -217,7 +217,7 @@ async fn run_replay(
     )
     .await?;
 
-    let bars = data::load_bars_from_csv(&app_config.data.path)?;
+    let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     let summary = ReplayRuntime::new(100_000).replay_bars(bars).await;
     state
         .db

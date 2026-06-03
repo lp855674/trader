@@ -24,6 +24,8 @@ enum Command {
     ImportBars {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+        #[arg(long)]
+        output_parquet: Option<String>,
     },
     Backtest {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -57,10 +59,18 @@ async fn main() -> Result<()> {
             db.migrate().await?;
             println!("migrated");
         }
-        Command::ImportBars { config } => {
+        Command::ImportBars {
+            config,
+            output_parquet,
+        } => {
             let (app_config, _) = load_db(&config).await?;
-            let bars = data::load_bars_from_csv(&app_config.data.path)?;
-            println!("imported bars: {}", bars.len());
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+            if let Some(output_path) = output_parquet {
+                data::write_bars_to_parquet(output_path, &bars)?;
+                println!("wrote parquet bars: {}", bars.len());
+            } else {
+                println!("imported bars: {}", bars.len());
+            }
         }
         Command::Backtest { config } => {
             let (app_config, db) = load_db(&config).await?;
@@ -72,7 +82,7 @@ async fn main() -> Result<()> {
                 &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
             )
             .await?;
-            let bars = data::load_bars_from_csv(&app_config.data.path)?;
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
             let summary = BacktestRuntime::new(db, backtest_settings(&app_config)?)
                 .run(bars)
                 .await?;
@@ -98,7 +108,7 @@ async fn main() -> Result<()> {
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
-            let bars = data::load_bars_from_csv(&app_config.data.path)?;
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
             let summary = PaperRuntime::new(db, paper_settings(&app_config)?)
                 .run_bars(bars)
                 .await?;
@@ -124,7 +134,7 @@ async fn main() -> Result<()> {
             .await?;
             insert_event(&db, &app_config.runtime.run_id, "replay.started", "{}").await?;
 
-            let bars = data::load_bars_from_csv(&app_config.data.path)?;
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
             let summary = ReplayRuntime::new(100_000).replay_bars(bars).await;
             let ended_at_ms = chrono::Utc::now().timestamp_millis();
             db.update_strategy_run_status(

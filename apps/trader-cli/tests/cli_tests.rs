@@ -25,6 +25,33 @@ fn backtest_accepts_config_argument() {
 }
 
 #[test]
+fn import_bars_can_write_parquet_output() {
+    let output = std::env::temp_dir().join(format!(
+        "trader-cli-import-{}.parquet",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "import-bars",
+            "--config",
+            "configs/backtest/ma_cross.toml",
+            "--output-parquet",
+            output.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote parquet bars: 3"));
+
+    assert!(output.exists());
+    std::fs::remove_file(output).unwrap();
+}
+
+#[test]
 fn paper_run_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
