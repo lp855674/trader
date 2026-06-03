@@ -8,6 +8,51 @@ Target Markets: A股 / 港股 / 美股 / 数字货币
 
 ---
 
+# 0. 当前 V1 本地实现状态
+
+当前代码实现的是 V1 local-verifiable API surface，不是生产实盘 API。
+
+已实现并由 `scripts/v1-smoke.ps1` 覆盖：
+
+```text
+GET  /api/v1/health
+POST /api/v1/backtests
+POST /api/v1/paper-runs
+POST /api/v1/replays
+POST /api/v1/live-runs
+GET  /api/v1/live-runs/{run_id}/status
+POST /api/v1/live-runs/{run_id}/stop
+GET  /api/v1/brokers/status
+GET  /api/v1/orders
+GET  /api/v1/fills
+GET  /api/v1/positions
+GET  /api/v1/account-balances
+GET  /api/v1/portfolio/snapshots
+GET  /api/v1/metrics
+GET  /api/v1/runs
+GET  /api/v1/runs/{run_id}
+GET  /api/v1/runs/{run_id}/status
+POST /api/v1/runs/{run_id}/cancel
+GET  /api/v1/events
+GET  /api/v1/runs/{run_id}/events
+POST /api/v1/replay/{run_id}/pause
+POST /api/v1/replay/{run_id}/resume
+POST /api/v1/replay/{run_id}/seek/{offset}
+POST /api/v1/replay/{run_id}/speed/{speed}
+GET  /ws
+```
+
+WebSocket 当前支持：
+
+```text
+subscribe       -> replay persisted events for run_id
+replay_control  -> pause / resume / seek / speed
+```
+
+Broker status 返回 Futu、Binance、OKX、Interactive Brokers 的 deterministic fake adapters。Live runtime 只验证本地 lifecycle、broker status 和 stop，不连接真实 broker、不接收凭证、不发真实订单。
+
+---
+
 # 1. 设计目标
 
 Trader API 负责对外提供服务端控制与实时状态推送能力。

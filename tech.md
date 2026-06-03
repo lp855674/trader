@@ -144,6 +144,30 @@ Universe Selection
 - CLI：clap。
 - HTTP / WS 客户端：reqwest、tokio-tungstenite。
 
+## V1 当前状态
+
+当前分支已实现 `docs/architecture.md` 中的 V1 本地可验证功能集：
+
+- CLI：`check-config`、`migrate`、`import-bars`、`backtest`、`paper-run`、`replay`、`report --format text|csv|html`。
+- Storage：SQLite 交易状态与事件持久化；Parquet K 线读写边界。
+- Runtime：Backtest、Replay、Paper、Live surface；Live 使用本地 fake broker，不连接真实券商。
+- API：REST 查询与运行控制、Replay 控制、Broker status、Live start/status/stop；WebSocket 事件 replay 与 Replay 控制。
+- Core chain：Strategy Registry/Context、MarketRules、Risk、Execution intents、OMS、Broker fake adapters、Accounting、Metrics。
+- Verification：`scripts/v1-smoke.ps1` 覆盖 CLI、REST、WebSocket、SQLite、Parquet、Replay control、CSV/HTML report、fake broker/live surface。
+
+V1 当前仍明确不包含：
+
+- 真实资金实盘交易。
+- 真实 Futu/Binance/OKX/IB 网络连接、凭证、下单。
+- 分布式部署、Kafka/NATS、SOR、完整机构级执行算法。
+- 多用户权限、生产级鉴权、生产监控告警。
+
+完整本地验证命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
+```
+
 ## V1 交付范围
 
 V1 优先完成：
