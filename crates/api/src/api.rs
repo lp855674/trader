@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod state;
+mod ws;
 
 use axum::{
     Json, Router,
@@ -63,6 +64,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/replay/{run_id}/resume", post(resume_replay))
         .route("/api/v1/replay/{run_id}/seek/{offset}", post(seek_replay))
         .route("/api/v1/replay/{run_id}/speed/{speed}", post(speed_replay))
+        .route("/ws", get(ws::ws_handler))
         .with_state(state)
 }
 
