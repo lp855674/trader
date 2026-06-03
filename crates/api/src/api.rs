@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
 };
 use backtest::{BacktestRuntime, BacktestSettings};
+use broker::{Broker, BrokerKind, BrokerStatus, FakeBrokerAdapter};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
@@ -54,6 +55,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/metrics", get(metrics_summary))
+        .route("/api/v1/brokers/status", get(broker_status))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/events", get(list_events))
@@ -70,6 +72,24 @@ pub fn router_with_state(state: AppState) -> Router {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn broker_status() -> Result<Json<Vec<BrokerStatus>>, ApiError> {
+    let mut statuses = Vec::new();
+    for kind in [
+        BrokerKind::Futu,
+        BrokerKind::Binance,
+        BrokerKind::Okx,
+        BrokerKind::InteractiveBrokers,
+    ] {
+        statuses.push(
+            FakeBrokerAdapter::new(kind)
+                .status()
+                .await
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
+        );
+    }
+    Ok(Json(statuses))
 }
 
 async fn run_backtest(

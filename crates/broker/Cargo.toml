@@ -12,6 +12,7 @@ path = "src/broker.rs"
 trader_core.workspace = true
 async-trait.workspace = true
 rust_decimal.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 tokio.workspace = true
