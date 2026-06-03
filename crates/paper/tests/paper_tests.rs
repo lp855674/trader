@@ -66,3 +66,38 @@ async fn paper_runtime_uses_market_rules_for_crypto_spot_symbols() {
 
     assert_eq!(summary.orders, 1);
 }
+
+#[tokio::test]
+async fn paper_runtime_rejects_projected_exposure_above_limit() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.max_exposure = dec!(10);
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let result = PaperRuntime::new(db, settings).run_bars(bars).await;
+
+    assert!(result.unwrap_err().to_string().contains("max exposure"));
+}
+
+#[tokio::test]
+async fn paper_runtime_rejects_drawdown_above_limit() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.max_drawdown = dec!(0);
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(4, dec!(1), dec!(1), dec!(1), dec!(5), dec!(1)),
+    ];
+
+    let result = PaperRuntime::new(db, settings).run_bars(bars).await;
+
+    assert!(result.unwrap_err().to_string().contains("max drawdown"));
+}

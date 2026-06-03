@@ -8,7 +8,7 @@ use execution::order_for_target_delta;
 use market_rules::MarketRuleSet;
 use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
-use risk::{RiskPolicy, check_max_position};
+use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
@@ -34,6 +34,11 @@ pub struct PaperSettings {
     pub max_order_qty: Decimal,
     pub max_order_notional: Decimal,
     pub min_cash_after_order: Decimal,
+    pub max_exposure: Decimal,
+    pub max_drawdown: Decimal,
+    pub max_leverage: Decimal,
+    pub max_margin_used: Decimal,
+    pub trading_halted: bool,
     pub initial_cash: Decimal,
     pub base_currency: String,
     pub slippage_bps: Decimal,
@@ -70,6 +75,11 @@ impl PaperSettings {
             max_order_qty: Decimal::from(100),
             max_order_notional: Decimal::from(1_000_000),
             min_cash_after_order: Decimal::ZERO,
+            max_exposure: Decimal::from(1_000_000),
+            max_drawdown: Decimal::ONE,
+            max_leverage: Decimal::from(10),
+            max_margin_used: Decimal::ZERO,
+            trading_halted: false,
             initial_cash: Decimal::from(100_000),
             base_currency: "USD".to_string(),
             slippage_bps: Decimal::ZERO,
@@ -113,6 +123,13 @@ impl PaperRuntime {
         };
         let mut account_book =
             AccountBook::new(self.settings.account_id.clone(), self.settings.initial_cash);
+        let portfolio_risk = PortfolioRiskPolicy::new(
+            self.settings.max_exposure,
+            self.settings.max_drawdown,
+            self.settings.max_leverage,
+            self.settings.max_margin_used,
+        );
+        let mut peak_equity = self.settings.initial_cash;
         let mut signals = 0;
         let mut orders = 0;
         let started_at_ms = bars.first().map_or(0, |bar| bar.ts_ms);
@@ -143,12 +160,27 @@ impl PaperRuntime {
                     continue;
                 };
                 MarketRuleSet::for_symbol(&order.symbol)?.validate_order(&order, bar.close)?;
+                let gross_exposure = account_book.market_value(&self.settings.symbol, bar.close);
+                let equity = account_book.equity(&self.settings.symbol, bar.close);
+                let portfolio_state = PortfolioRiskState::new(
+                    equity,
+                    peak_equity,
+                    gross_exposure,
+                    Decimal::ZERO,
+                    self.settings.trading_halted,
+                );
+                portfolio_risk.check_projected_order(&order, bar.close, &portfolio_state)?;
                 RiskPolicy::new(
                     self.settings.max_order_qty,
                     self.settings.max_order_notional,
                     self.settings.min_cash_after_order,
                 )
-                .check_order(&order, bar.close, account_book.cash(), false)?;
+                .check_order(
+                    &order,
+                    bar.close,
+                    account_book.cash(),
+                    self.settings.trading_halted,
+                )?;
                 let mut order_state = OrderStateMachine::with_order_qty(order.qty);
                 order_state.submit()?;
                 order_state.accept()?;
@@ -203,6 +235,16 @@ impl PaperRuntime {
 
             let market_value = account_book.market_value(&self.settings.symbol, bar.close);
             let equity = account_book.equity(&self.settings.symbol, bar.close);
+            portfolio_risk.check_portfolio(&PortfolioRiskState::new(
+                equity,
+                peak_equity,
+                market_value,
+                Decimal::ZERO,
+                self.settings.trading_halted,
+            ))?;
+            if equity > peak_equity {
+                peak_equity = equity;
+            }
             let unrealized_pnl = account_book.unrealized_pnl(&self.settings.symbol, bar.close);
             self.db
                 .insert_portfolio_snapshot(NewPortfolioSnapshot {

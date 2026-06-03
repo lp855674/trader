@@ -1,5 +1,6 @@
-use risk::{RiskError, RiskPolicy};
+use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskError, RiskPolicy};
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[test]
@@ -63,6 +64,63 @@ fn rejects_when_trading_halted() {
             )
             .unwrap_err(),
         RiskError::TradingHalted
+    );
+}
+
+#[test]
+fn rejects_portfolio_exposure_above_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(1000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(1001), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy.check_portfolio(&state).unwrap_err(),
+        RiskError::MaxExposure
+    );
+}
+
+#[test]
+fn rejects_portfolio_drawdown_above_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(1000), dec!(0.1), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(800), dec!(1000), dec!(100), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy.check_portfolio(&state).unwrap_err(),
+        RiskError::MaxDrawdown
+    );
+}
+
+#[test]
+fn rejects_portfolio_leverage_above_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(5000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(2001), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy.check_portfolio(&state).unwrap_err(),
+        RiskError::MaxLeverage
+    );
+}
+
+#[test]
+fn rejects_portfolio_margin_above_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(5000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(100), dec!(501), false);
+
+    assert_eq!(
+        policy.check_portfolio(&state).unwrap_err(),
+        RiskError::MaxMargin
+    );
+}
+
+#[test]
+fn rejects_projected_buy_when_exposure_would_exceed_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(1000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(900), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy
+            .check_projected_order(&buy_order(dec!(2)), dec!(100), &state)
+            .unwrap_err(),
+        RiskError::MaxExposure
     );
 }
 
