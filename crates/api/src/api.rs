@@ -502,6 +502,8 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
         account_id: "backtest".to_string(),
         order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
         max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+        fast_window: app_config.strategy.fast_window,
+        slow_window: app_config.strategy.slow_window,
     })
 }
 

@@ -15,7 +15,7 @@ use std::{error::Error, fmt, time::Duration};
 use storage::{
     Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
 };
-use strategies::{MovingAverageCrossStrategy, Strategy};
+use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 use trader_core::OrderSide;
 
 pub struct PaperRuntime {
@@ -96,12 +96,17 @@ impl PaperRuntime {
         bars: Vec<Bar>,
         cancel: CancellationFlag,
     ) -> anyhow::Result<BacktestSummary> {
-        let mut strategy = MovingAverageCrossStrategy::new(
-            self.settings.strategy_name.clone(),
-            self.settings.symbol.clone(),
+        let registry = StrategyRegistry;
+        let mut strategy = registry.create(
+            &self.settings.strategy_name,
+            StrategyContext::new(
+                self.settings.strategy_name.clone(),
+                self.settings.symbol.clone(),
+                StrategyRuntimeMode::Paper,
+            ),
             self.settings.fast_window,
             self.settings.slow_window,
-        );
+        )?;
         let broker_settings = SimulatedBrokerSettings {
             slippage_bps: self.settings.slippage_bps,
             fee_bps: self.settings.fee_bps,

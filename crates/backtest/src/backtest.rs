@@ -9,7 +9,7 @@ use risk::check_max_position;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use storage::{Db, NewFill, NewOrder, NewPosition, NewStrategyRun};
-use strategies::{MovingAverageCrossStrategy, Strategy};
+use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
@@ -25,6 +25,8 @@ pub struct BacktestSettings {
     pub account_id: String,
     pub order_qty: Decimal,
     pub max_abs_qty: Decimal,
+    pub fast_window: usize,
+    pub slow_window: usize,
 }
 
 impl BacktestSettings {
@@ -36,6 +38,8 @@ impl BacktestSettings {
             account_id: "backtest".to_string(),
             order_qty: Decimal::ONE,
             max_abs_qty: Decimal::from(100),
+            fast_window: 2,
+            slow_window: 3,
         }
     }
 }
@@ -55,12 +59,17 @@ impl BacktestRuntime {
     }
 
     pub async fn run(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
-        let mut strategy = MovingAverageCrossStrategy::new(
-            self.settings.strategy_name.clone(),
-            self.settings.symbol.clone(),
-            2,
-            3,
-        );
+        let registry = StrategyRegistry;
+        let mut strategy = registry.create(
+            &self.settings.strategy_name,
+            StrategyContext::new(
+                self.settings.strategy_name.clone(),
+                self.settings.symbol.clone(),
+                StrategyRuntimeMode::Backtest,
+            ),
+            self.settings.fast_window,
+            self.settings.slow_window,
+        )?;
         let broker = MockBroker;
         let mut position_book = PositionBook::default();
         let mut signals = 0;
