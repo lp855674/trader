@@ -43,3 +43,26 @@ async fn paper_runtime_rejects_order_above_max_order_qty() {
             .contains("max order quantity")
     );
 }
+
+#[tokio::test]
+async fn paper_runtime_uses_market_rules_for_crypto_spot_symbols() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.symbol = "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT".to_string();
+    settings.order_qty = dec!(0.001);
+    settings.max_abs_qty = dec!(1);
+    settings.max_order_qty = dec!(1);
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10000), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11000), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(12000), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new(db, settings)
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+}

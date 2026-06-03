@@ -18,6 +18,8 @@ pub enum MarketRuleError {
     MarketOrdersDisabled,
     #[error("reference price must be positive")]
     InvalidReferencePrice,
+    #[error("unsupported symbol {0}")]
+    UnsupportedSymbol(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +32,26 @@ pub struct MarketRuleSet {
 }
 
 impl MarketRuleSet {
+    pub fn cn_equity() -> Self {
+        Self {
+            lot_size: Decimal::from(100),
+            tick_size: Decimal::new(1, 2),
+            min_qty: Decimal::from(100),
+            min_notional: Decimal::ZERO,
+            allow_market_orders: true,
+        }
+    }
+
+    pub fn hk_equity() -> Self {
+        Self {
+            lot_size: Decimal::from(100),
+            tick_size: Decimal::new(1, 3),
+            min_qty: Decimal::from(100),
+            min_notional: Decimal::ZERO,
+            allow_market_orders: true,
+        }
+    }
+
     pub fn us_equity() -> Self {
         Self {
             lot_size: Decimal::ONE,
@@ -37,6 +59,46 @@ impl MarketRuleSet {
             min_qty: Decimal::ONE,
             min_notional: Decimal::ZERO,
             allow_market_orders: true,
+        }
+    }
+
+    pub fn crypto_spot() -> Self {
+        Self {
+            lot_size: Decimal::new(1, 6),
+            tick_size: Decimal::new(1, 2),
+            min_qty: Decimal::new(1, 6),
+            min_notional: Decimal::from(10),
+            allow_market_orders: true,
+        }
+    }
+
+    pub fn crypto_perp() -> Self {
+        Self {
+            lot_size: Decimal::new(1, 3),
+            tick_size: Decimal::new(1, 2),
+            min_qty: Decimal::new(1, 3),
+            min_notional: Decimal::from(5),
+            allow_market_orders: true,
+        }
+    }
+
+    pub fn for_symbol(symbol: &str) -> Result<Self, MarketRuleError> {
+        let mut parts = symbol.split(':');
+        let market = parts.next();
+        let _exchange = parts.next();
+        let _code = parts.next();
+        let asset_class = parts.next();
+        if parts.next().is_some() {
+            return Err(MarketRuleError::UnsupportedSymbol(symbol.to_string()));
+        }
+
+        match (market, asset_class) {
+            (Some("CN"), Some("EQUITY")) => Ok(Self::cn_equity()),
+            (Some("HK"), Some("EQUITY")) => Ok(Self::hk_equity()),
+            (Some("US"), Some("EQUITY")) => Ok(Self::us_equity()),
+            (Some("CRYPTO"), Some("CRYPTO_SPOT")) => Ok(Self::crypto_spot()),
+            (Some("CRYPTO"), Some("CRYPTO_PERP")) => Ok(Self::crypto_perp()),
+            _ => Err(MarketRuleError::UnsupportedSymbol(symbol.to_string())),
         }
     }
 

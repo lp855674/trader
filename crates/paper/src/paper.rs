@@ -142,7 +142,7 @@ impl PaperRuntime {
                 else {
                     continue;
                 };
-                MarketRuleSet::us_equity().validate_order(&order, bar.close)?;
+                MarketRuleSet::for_symbol(&order.symbol)?.validate_order(&order, bar.close)?;
                 RiskPolicy::new(
                     self.settings.max_order_qty,
                     self.settings.max_order_notional,
