@@ -15,6 +15,7 @@ use broker::{Broker, BrokerKind, BrokerStatus, FakeBrokerAdapter};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
+use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
@@ -49,6 +50,9 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/backtests", post(run_backtest))
         .route("/api/v1/paper-runs", post(run_paper))
         .route("/api/v1/replays", post(run_replay))
+        .route("/api/v1/live-runs", post(start_live_run))
+        .route("/api/v1/live-runs/{run_id}/status", get(get_run_status))
+        .route("/api/v1/live-runs/{run_id}/stop", post(stop_live_run))
         .route("/api/v1/orders", get(list_orders))
         .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
@@ -273,6 +277,46 @@ async fn run_replay(
     .await?;
 
     Ok((StatusCode::CREATED, Json(summary)))
+}
+
+async fn start_live_run(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let run_id = app_config.runtime.run_id.clone();
+    let db = state.db.clone();
+    let task_run_id = run_id.clone();
+    state
+        .runtime_manager
+        .spawn(run_id.clone(), move |cancel| async move {
+            let runtime = LiveRuntime::new(
+                db,
+                LiveRuntimeSettings {
+                    run_id: task_run_id,
+                    broker_kind: BrokerKind::Futu,
+                },
+            );
+            let _ = runtime.run(cancel).await;
+        })
+        .await
+        .map_err(|error| ApiError(anyhow::anyhow!("{error:?}")))?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(RunStartResponse {
+            run_id,
+            status: "running".to_string(),
+        }),
+    ))
+}
+
+async fn stop_live_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    state.runtime_manager.cancel(&run_id).await;
+    state.runtime_manager.wait_for_idle(&run_id).await;
+    get_run_status(State(state), Path(run_id)).await
 }
 
 async fn list_orders(
