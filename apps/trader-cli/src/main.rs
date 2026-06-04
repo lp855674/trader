@@ -162,7 +162,8 @@ async fn main() -> Result<()> {
             let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
                 .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
             let settings = paper_settings(&app_config)?;
-            let summary = paper_runtime(&app_config, db, settings)?
+            let summary = paper_runtime(&app_config, db, settings)
+                .await?
                 .run_bars(bars)
                 .await?;
             println!(
@@ -648,7 +649,7 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
     }
 }
 
-fn paper_runtime(
+async fn paper_runtime(
     app_config: &config::AppConfig,
     db: storage::Db,
     settings: PaperSettings,
@@ -666,9 +667,12 @@ fn paper_runtime(
         config::BrokerKind::Binance => {
             let adapter =
                 BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(app_config)?)?;
+            let account = adapter
+                .account_snapshot(&app_config.paper.account_id)
+                .await?;
             Ok(PaperRuntime::new_with_executor(
                 db,
-                settings,
+                settings_with_broker_initial_cash(settings, account.cash),
                 Box::new(BinancePaperOrderExecutor::new(adapter)),
             ))
         }
@@ -679,6 +683,14 @@ fn paper_runtime(
             bail!("paper-run broker order submit only supports Binance Spot Testnet in this phase")
         }
     }
+}
+
+fn settings_with_broker_initial_cash(
+    mut settings: PaperSettings,
+    broker_cash: Decimal,
+) -> PaperSettings {
+    settings.initial_cash = broker_cash;
+    settings
 }
 
 fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
@@ -788,6 +800,7 @@ async fn insert_event(
 mod tests {
     use super::{
         binance_accounting_records_from_fills, binance_cancel_outcome, binance_testnet_settings,
+        settings_with_broker_initial_cash,
     };
     use rust_decimal_macros::dec;
 
@@ -891,6 +904,16 @@ mod tests {
         let error = binance_testnet_settings(&config).unwrap_err();
 
         assert!(error.to_string().contains("BINANCE_TESTNET_API_KEY"));
+    }
+
+    #[test]
+    fn binance_submit_uses_broker_cash_as_initial_cash() {
+        let mut settings = paper::PaperSettings::sample();
+        settings.initial_cash = dec!(100000);
+
+        let settings = settings_with_broker_initial_cash(settings, dec!(9744.45561));
+
+        assert_eq!(settings.initial_cash, dec!(9744.45561));
     }
 
     fn sample_app_config() -> config::AppConfig {

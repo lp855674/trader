@@ -236,7 +236,7 @@ async fn run_paper(
     let run_id = settings.run_id.clone();
     let db = state.db.clone();
     let task_settings = settings.clone();
-    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone())?;
+    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone()).await?;
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {
@@ -742,7 +742,7 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
     }
 }
 
-fn paper_runtime(
+async fn paper_runtime(
     app_config: &config::AppConfig,
     db: storage::Db,
     settings: PaperSettings,
@@ -764,9 +764,13 @@ fn paper_runtime(
         config::BrokerKind::Binance => {
             let adapter = BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(app_config)?)
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            let account = adapter
+                .account_snapshot(&app_config.paper.account_id)
+                .await
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
             Ok(PaperRuntime::new_with_executor(
                 db,
-                settings,
+                settings_with_broker_initial_cash(settings, account.cash),
                 Box::new(BinancePaperOrderExecutor::new(adapter)),
             ))
         }
@@ -777,6 +781,14 @@ fn paper_runtime(
             "paper-run broker order submit only supports Binance Spot Testnet in this phase"
         ))),
     }
+}
+
+fn settings_with_broker_initial_cash(
+    mut settings: PaperSettings,
+    broker_cash: Decimal,
+) -> PaperSettings {
+    settings.initial_cash = broker_cash;
+    settings
 }
 
 fn binance_testnet_settings(
