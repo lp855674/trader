@@ -180,6 +180,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
 
 CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前仍使用本地 fake broker adapter。
 
+`PaperRuntime` 现在提供两类入口：
+
+- `run_bars` / `run_bars_with_cancel`：一次性输入历史 bars，保持 V1 本地验证路径。
+- `run_bar_stream_with_cancel`：从 channel-based bar stream 顺序消费 bars，复用同一套 Strategy、Portfolio、MarketRules、Risk、OMS、Broker simulation、Accounting、Storage 处理逻辑，并支持 pacing 与取消。
+
 ## V1 交付范围
 
 V1 优先完成：
