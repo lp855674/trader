@@ -224,8 +224,12 @@ async fn post_paper_run_returns_accepted_run_start() {
 }
 
 #[tokio::test]
-async fn post_paper_run_rejects_enabled_broker_order_submit_gate() {
+async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
     std::env::set_current_dir(workspace_root()).unwrap();
+    unsafe {
+        std::env::remove_var("BINANCE_TESTNET_API_KEY");
+        std::env::remove_var("BINANCE_TESTNET_SECRET_KEY");
+    }
     let config_path = temp_config_with_enabled_broker_submit();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -248,8 +252,7 @@ async fn post_paper_run_rejects_enabled_broker_order_submit_gate() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(bytes.to_vec()).unwrap();
-    assert!(body.contains("not implemented"));
-    assert!(body.contains("binance-paper-tiny-order"));
+    assert!(body.contains("BINANCE_TESTNET_API_KEY"));
 
     std::fs::remove_file(config_path).unwrap();
 }

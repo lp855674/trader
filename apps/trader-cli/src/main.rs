@@ -6,7 +6,7 @@ use broker::{
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
-use paper::{PaperRuntime, PaperSettings};
+use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -158,11 +158,11 @@ async fn main() -> Result<()> {
         }
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
-            ensure_paper_runtime_order_submit_gate(&app_config)?;
             db.migrate().await?;
             let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
                 .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
-            let summary = PaperRuntime::new(db, paper_settings(&app_config)?)
+            let settings = paper_settings(&app_config)?;
+            let summary = paper_runtime(&app_config, db, settings)?
                 .run_bars(bars)
                 .await?;
             println!(
@@ -648,13 +648,37 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
     }
 }
 
-fn ensure_paper_runtime_order_submit_gate(app_config: &config::AppConfig) -> Result<()> {
-    if app_config.broker.order_submit_enabled {
-        bail!(
-            "paper-run broker order submit is gated but not implemented; use binance-paper-tiny-order for manual Binance testnet orders"
-        );
+fn paper_runtime(
+    app_config: &config::AppConfig,
+    db: storage::Db,
+    settings: PaperSettings,
+) -> Result<PaperRuntime> {
+    if !app_config.broker.order_submit_enabled {
+        return Ok(PaperRuntime::new(db, settings));
     }
-    Ok(())
+    if app_config.runtime.mode != config::RuntimeMode::Paper {
+        bail!("broker order submit requires runtime.mode = paper");
+    }
+    if app_config.broker.mode != config::BrokerMode::Paper {
+        bail!("broker order submit requires broker.mode = paper");
+    }
+    match app_config.broker.kind {
+        config::BrokerKind::Binance => {
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(app_config)?)?;
+            Ok(PaperRuntime::new_with_executor(
+                db,
+                settings,
+                Box::new(BinancePaperOrderExecutor::new(adapter)),
+            ))
+        }
+        config::BrokerKind::Simulated
+        | config::BrokerKind::Futu
+        | config::BrokerKind::Okx
+        | config::BrokerKind::InteractiveBrokers => {
+            bail!("paper-run broker order submit only supports Binance Spot Testnet in this phase")
+        }
+    }
 }
 
 fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
@@ -763,8 +787,7 @@ async fn insert_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        binance_accounting_records_from_fills, binance_cancel_outcome,
-        ensure_paper_runtime_order_submit_gate,
+        binance_accounting_records_from_fills, binance_cancel_outcome, binance_testnet_settings,
     };
     use rust_decimal_macros::dec;
 
@@ -857,14 +880,17 @@ mod tests {
     }
 
     #[test]
-    fn paper_run_rejects_enabled_broker_order_submit_gate() {
+    fn binance_submit_requires_testnet_credentials() {
+        unsafe {
+            std::env::remove_var("BINANCE_TESTNET_API_KEY");
+            std::env::remove_var("BINANCE_TESTNET_SECRET_KEY");
+        }
         let mut config = sample_app_config();
         config.broker.order_submit_enabled = true;
 
-        let error = ensure_paper_runtime_order_submit_gate(&config).unwrap_err();
+        let error = binance_testnet_settings(&config).unwrap_err();
 
-        assert!(error.to_string().contains("not implemented"));
-        assert!(error.to_string().contains("binance-paper-tiny-order"));
+        assert!(error.to_string().contains("BINANCE_TESTNET_API_KEY"));
     }
 
     fn sample_app_config() -> config::AppConfig {

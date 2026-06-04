@@ -11,9 +11,12 @@ use axum::{
     routing::{get, post},
 };
 use backtest::{BacktestRuntime, BacktestSettings};
-use broker::{Broker, BrokerAccountSnapshot, BrokerKind, BrokerStatus, FakeBrokerAdapter};
+use broker::{
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, BrokerAccountSnapshot,
+    BrokerKind, BrokerStatus, FakeBrokerAdapter,
+};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
-use paper::{PaperRuntime, PaperSettings};
+use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
@@ -198,7 +201,6 @@ async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    ensure_paper_runtime_order_submit_gate(&app_config)?;
     let settings = paper_settings(&app_config)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
 
@@ -234,12 +236,11 @@ async fn run_paper(
     let run_id = settings.run_id.clone();
     let db = state.db.clone();
     let task_settings = settings.clone();
+    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone())?;
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {
-            let result = PaperRuntime::new(db.clone(), task_settings.clone())
-                .run_bars_with_cancel(bars, cancel)
-                .await;
+            let result = runtime.run_bars_with_cancel(bars, cancel).await;
 
             match result {
                 Ok(summary) => {
@@ -741,13 +742,77 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
     }
 }
 
-fn ensure_paper_runtime_order_submit_gate(app_config: &config::AppConfig) -> Result<(), ApiError> {
-    if app_config.broker.order_submit_enabled {
+fn paper_runtime(
+    app_config: &config::AppConfig,
+    db: storage::Db,
+    settings: PaperSettings,
+) -> Result<PaperRuntime, ApiError> {
+    if !app_config.broker.order_submit_enabled {
+        return Ok(PaperRuntime::new(db, settings));
+    }
+    if app_config.runtime.mode != config::RuntimeMode::Paper {
         return Err(ApiError(anyhow::anyhow!(
-            "paper-run broker order submit is gated but not implemented; use binance-paper-tiny-order for manual Binance testnet orders"
+            "broker order submit requires runtime.mode = paper"
         )));
     }
-    Ok(())
+    if app_config.broker.mode != config::BrokerMode::Paper {
+        return Err(ApiError(anyhow::anyhow!(
+            "broker order submit requires broker.mode = paper"
+        )));
+    }
+    match app_config.broker.kind {
+        config::BrokerKind::Binance => {
+            let adapter = BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(app_config)?)
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            Ok(PaperRuntime::new_with_executor(
+                db,
+                settings,
+                Box::new(BinancePaperOrderExecutor::new(adapter)),
+            ))
+        }
+        config::BrokerKind::Simulated
+        | config::BrokerKind::Futu
+        | config::BrokerKind::Okx
+        | config::BrokerKind::InteractiveBrokers => Err(ApiError(anyhow::anyhow!(
+            "paper-run broker order submit only supports Binance Spot Testnet in this phase"
+        ))),
+    }
+}
+
+fn binance_testnet_settings(
+    app_config: &config::AppConfig,
+) -> Result<BinanceSpotTestnetSettings, ApiError> {
+    let api_key_env = app_config
+        .broker
+        .api_key_env
+        .as_deref()
+        .unwrap_or("BINANCE_TESTNET_API_KEY");
+    let secret_key_env = app_config
+        .broker
+        .secret_key_env
+        .as_deref()
+        .unwrap_or("BINANCE_TESTNET_SECRET_KEY");
+    let api_key = std::env::var(api_key_env).map_err(|_| {
+        ApiError(anyhow::anyhow!(
+            "missing Binance testnet API key env {api_key_env}"
+        ))
+    })?;
+    let secret_key = std::env::var(secret_key_env).map_err(|_| {
+        ApiError(anyhow::anyhow!(
+            "missing Binance testnet secret key env {secret_key_env}"
+        ))
+    })?;
+
+    Ok(BinanceSpotTestnetSettings {
+        base_url: app_config
+            .broker
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://testnet.binance.vision/api".to_string()),
+        api_key,
+        secret_key,
+        recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
+    })
 }
 
 struct ApiError(anyhow::Error);
