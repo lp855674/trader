@@ -139,6 +139,33 @@ async fn paper_runtime_can_use_injected_order_executor() {
     assert_eq!(fills[0].fee, "0.01");
 }
 
+#[tokio::test]
+async fn paper_runtime_persists_pending_order_before_executor_call() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let result = PaperRuntime::new_with_executor(
+        db.clone(),
+        PaperSettings::sample(),
+        Box::new(FailingExecutor),
+    )
+    .run_bars(bars)
+    .await;
+
+    assert!(result.unwrap_err().to_string().contains("broker down"));
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].client_order_id, "pending-client-1");
+    assert_eq!(orders[0].broker_order_id, None);
+    assert_eq!(orders[0].status, "SUBMITTED");
+    assert_eq!(orders[0].filled_qty, "0");
+}
+
 #[test]
 fn binance_spot_symbol_maps_strategy_symbol_to_exchange_symbol() {
     assert_eq!(
@@ -233,6 +260,10 @@ struct FixedExecutor;
 
 #[async_trait]
 impl PaperOrderExecutor for FixedExecutor {
+    fn client_order_id(&self, _run_id: &str, _order_number: usize) -> String {
+        "external-client-1".to_string()
+    }
+
     async fn execute_order(
         &self,
         order: OrderRequest,
@@ -247,6 +278,24 @@ impl PaperOrderExecutor for FixedExecutor {
             qty: order.qty,
             fee: dec!(0.01),
         })
+    }
+}
+
+struct FailingExecutor;
+
+#[async_trait]
+impl PaperOrderExecutor for FailingExecutor {
+    fn client_order_id(&self, _run_id: &str, _order_number: usize) -> String {
+        "pending-client-1".to_string()
+    }
+
+    async fn execute_order(
+        &self,
+        _order: OrderRequest,
+        _mark_price: rust_decimal::Decimal,
+        _order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        anyhow::bail!("broker down")
     }
 }
 

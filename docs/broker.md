@@ -591,7 +591,7 @@ event_store: binance.testnet_order.started / completed
 
 当前已把 manual tiny order 的 Binance `myTrades` 同步为 `fills`，并把当前 run 的已持久化 fills 聚合为本地 position 与 portfolio snapshot。策略自动订单已提供 Binance Spot Testnet executor，但仍未做完整 broker account/position reconciliation。
 
-`[broker] order_submit_enabled` 是策略自动送单闸门，默认必须为 `false`。当该字段为 `true` 时，`paper-run` 只允许 `broker.kind = "binance"`、`broker.mode = "paper"`、Spot Testnet `base_url` 与 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` 同时满足；否则拒绝启动。自动 Binance paper run 启动时会读取 Binance account snapshot，并用 USDT cash 覆盖本次 `PaperSettings.initial_cash`。executor 会用策略订单意图生成 Binance testnet limit order，使用稳定的 `client_order_id = trader-paper-{run_id_prefix}-{order_number}`；每次执行前会先通过 Binance `origClientOrderId` 查询已存在订单，查到则同步该订单 `myTrades`，查不到才提交新 testnet order。executor 只根据 Binance `myTrades` 聚合成交价格、数量与 fee；没有真实 trades 时 run 会失败，不写入伪造成交。
+`[broker] order_submit_enabled` 是策略自动送单闸门，默认必须为 `false`。当该字段为 `true` 时，`paper-run` 只允许 `broker.kind = "binance"`、`broker.mode = "paper"`、Spot Testnet `base_url` 与 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` 同时满足；否则拒绝启动。自动 Binance paper run 启动时会读取 Binance account snapshot，并用 USDT cash 覆盖本次 `PaperSettings.initial_cash`。runtime 会在调用 broker executor 前先持久化一条 `SUBMITTED` pending order，写入稳定的 `client_order_id = trader-paper-{run_id_prefix}-{order_number}`。executor 每次执行前会先通过 Binance `origClientOrderId` 查询已存在订单，查到则同步该订单 `myTrades`，查不到才提交新 testnet order。executor 只根据 Binance `myTrades` 聚合成交价格、数量与 fee；没有真实 trades 时 run 会失败，不写入伪造成交。
 
 注意：自动策略送单使用 bar close 作为 limit price。执行前必须确认数据源价格与 Binance 当前价格保护范围一致，否则 Binance 会因价格过滤拒单。当前 `configs/paper/binance_testnet.toml` 仍指向本地样例 CSV，不应直接开闸作为 BTCUSDT 实际行情源。
 

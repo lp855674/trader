@@ -182,6 +182,8 @@ pub struct ExecutedPaperOrder {
 
 #[async_trait]
 pub trait PaperOrderExecutor: Send + Sync {
+    fn client_order_id(&self, run_id: &str, order_number: usize) -> String;
+
     async fn execute_order(
         &self,
         order: OrderRequest,
@@ -197,6 +199,10 @@ struct SimulatedPaperOrderExecutor {
 
 #[async_trait]
 impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
+    fn client_order_id(&self, _run_id: &str, order_number: usize) -> String {
+        format!("{}-order-{}", self.client_order_prefix, order_number)
+    }
+
     async fn execute_order(
         &self,
         order: OrderRequest,
@@ -205,7 +211,7 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
     ) -> anyhow::Result<ExecutedPaperOrder> {
         let fill = simulate_market_fill(order, mark_price, self.settings.clone())?;
         Ok(ExecutedPaperOrder {
-            client_order_id: format!("{}-order-{}", self.client_order_prefix, order_number),
+            client_order_id: self.client_order_id("", order_number),
             broker_order_id: format!("simulated-{order_number}"),
             status: "FILLED".to_string(),
             price: fill.price,
@@ -308,6 +314,10 @@ impl<Client> PaperOrderExecutor for BinancePaperOrderExecutor<Client>
 where
     Client: BinancePaperOrderClient,
 {
+    fn client_order_id(&self, _run_id: &str, order_number: usize) -> String {
+        binance_client_order_id(&self.client_order_prefix, order_number)
+    }
+
     async fn execute_order(
         &self,
         order: OrderRequest,
@@ -321,7 +331,7 @@ where
             anyhow::bail!("Binance paper executor requires positive mark price");
         }
         let symbol = binance_spot_symbol(&order.symbol)?;
-        let client_order_id = binance_client_order_id(&self.client_order_prefix, order_number);
+        let client_order_id = self.client_order_id("", order_number);
         let placed = match self
             .client
             .query_order_by_client_order_id(&symbol, &client_order_id)
@@ -501,21 +511,44 @@ impl<'a> PaperRunSession<'a> {
             order_state.submit()?;
             order_state.accept()?;
             let order_number = self.orders + 1;
+            let order_id = format!("{}-order-{}", settings.run_id, order_number);
+            let fill_id = format!("{}-fill-{}", settings.run_id, order_number);
+            let client_order_id = self
+                .runtime
+                .executor
+                .client_order_id(&settings.run_id, order_number);
+            self.runtime
+                .db
+                .insert_order(NewOrder {
+                    id: order_id.clone(),
+                    run_id: settings.run_id.clone(),
+                    client_order_id: client_order_id.clone(),
+                    broker_order_id: None,
+                    account_id: order.account_id.clone(),
+                    symbol: order.symbol.clone(),
+                    side: format!("{:?}", order.side).to_uppercase(),
+                    order_type: format!("{:?}", order.order_type).to_uppercase(),
+                    price: order.price.map(|price| price.to_string()),
+                    qty: order.qty.to_string(),
+                    filled_qty: Decimal::ZERO.to_string(),
+                    status: format!("{:?}", order_state.status()).to_uppercase(),
+                    created_at_ms: bar.ts_ms,
+                    updated_at_ms: bar.ts_ms,
+                })
+                .await?;
             let fill = self
                 .runtime
                 .executor
                 .execute_order(order.clone(), bar.close, order_number)
                 .await?;
             order_state.record_fill(fill.qty)?;
-            let order_id = format!("{}-order-{}", settings.run_id, order_number);
-            let fill_id = format!("{}-fill-{}", settings.run_id, order_number);
 
             self.runtime
                 .db
                 .insert_order(NewOrder {
                     id: order_id.clone(),
                     run_id: settings.run_id.clone(),
-                    client_order_id: fill.client_order_id.clone(),
+                    client_order_id,
                     broker_order_id: Some(fill.broker_order_id.clone()),
                     account_id: order.account_id.clone(),
                     symbol: order.symbol.clone(),
