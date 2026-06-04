@@ -158,6 +158,7 @@ async fn main() -> Result<()> {
         }
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
+            ensure_paper_runtime_order_submit_gate(&app_config)?;
             db.migrate().await?;
             let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
                 .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
@@ -182,7 +183,7 @@ async fn main() -> Result<()> {
             let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
                 .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
             println!(
-                "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={} real_broker_connection={}",
+                "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={} real_broker_connection={} order_submit_enabled={}",
                 settings.run_id,
                 settings.strategy_name,
                 settings.symbol,
@@ -194,7 +195,8 @@ async fn main() -> Result<()> {
                 settings.max_order_notional,
                 settings.max_exposure,
                 settings.trading_halted,
-                real_broker_connection
+                real_broker_connection,
+                app_config.broker.order_submit_enabled
             );
         }
         Command::BinancePaperReadonly { config } => {
@@ -646,6 +648,15 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
     }
 }
 
+fn ensure_paper_runtime_order_submit_gate(app_config: &config::AppConfig) -> Result<()> {
+    if app_config.broker.order_submit_enabled {
+        bail!(
+            "paper-run broker order submit is gated but not implemented; use binance-paper-tiny-order for manual Binance testnet orders"
+        );
+    }
+    Ok(())
+}
+
 fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
     match input.to_ascii_lowercase().as_str() {
         "buy" => Ok(BinanceOrderSide::Buy),
@@ -751,7 +762,10 @@ async fn insert_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{binance_accounting_records_from_fills, binance_cancel_outcome};
+    use super::{
+        binance_accounting_records_from_fills, binance_cancel_outcome,
+        ensure_paper_runtime_order_submit_gate,
+    };
     use rust_decimal_macros::dec;
 
     #[test]
@@ -840,6 +854,70 @@ mod tests {
         assert_eq!(position.qty, "0.002");
         assert_eq!(position.avg_price, "63890.1950");
         assert_eq!(records.snapshot.market_value, "127.7803900");
+    }
+
+    #[test]
+    fn paper_run_rejects_enabled_broker_order_submit_gate() {
+        let mut config = sample_app_config();
+        config.broker.order_submit_enabled = true;
+
+        let error = ensure_paper_runtime_order_submit_gate(&config).unwrap_err();
+
+        assert!(error.to_string().contains("not implemented"));
+        assert!(error.to_string().contains("binance-paper-tiny-order"));
+    }
+
+    fn sample_app_config() -> config::AppConfig {
+        config::AppConfig::from_toml_str(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "run-1"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "datasets/sample/aapl_1d.csv"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USDT"
+            order_qty = "0.001"
+            max_abs_qty = "1"
+
+            [risk]
+            max_order_notional = "50"
+            min_cash_after_order = "10"
+            max_exposure = "1000"
+            max_drawdown = "0.2"
+            max_leverage = "1"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "binance"
+            mode = "paper"
+            base_url = "https://testnet.binance.vision/api"
+            order_submit_enabled = false
+
+            [paper]
+            account_id = "binance-testnet"
+            slippage_bps = "5"
+            fee_bps = "10"
+
+            [live]
+            enabled = false
+            "#,
+        )
+        .unwrap()
     }
 }
 

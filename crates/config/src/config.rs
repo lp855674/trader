@@ -107,6 +107,8 @@ pub struct BrokerConfig {
     pub api_key_env: Option<String>,
     pub secret_key_env: Option<String>,
     pub recv_window_ms: Option<u64>,
+    #[serde(default)]
+    pub order_submit_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

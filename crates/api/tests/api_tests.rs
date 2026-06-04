@@ -98,6 +98,7 @@ async fn paper_preflight_returns_configured_dry_run_summary() {
     assert!(body.contains("\"broker\":\"simulated\""));
     assert!(body.contains("\"broker_mode\":\"paper\""));
     assert!(body.contains("\"bars\":3"));
+    assert!(body.contains("\"order_submit_enabled\":false"));
 }
 
 #[tokio::test]

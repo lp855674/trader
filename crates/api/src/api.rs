@@ -55,6 +55,7 @@ struct PaperPreflightResponse {
     max_exposure: String,
     trading_halted: bool,
     real_broker_connection: bool,
+    order_submit_enabled: bool,
 }
 
 pub fn router() -> Router {
@@ -158,6 +159,7 @@ async fn paper_preflight(
         max_exposure: settings.max_exposure.to_string(),
         trading_halted: settings.trading_halted,
         real_broker_connection,
+        order_submit_enabled: app_config.broker.order_submit_enabled,
     }))
 }
 
@@ -196,6 +198,7 @@ async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    ensure_paper_runtime_order_submit_gate(&app_config)?;
     let settings = paper_settings(&app_config)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
 
@@ -736,6 +739,15 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
         | config::BrokerKind::Okx
         | config::BrokerKind::InteractiveBrokers => Ok(false),
     }
+}
+
+fn ensure_paper_runtime_order_submit_gate(app_config: &config::AppConfig) -> Result<(), ApiError> {
+    if app_config.broker.order_submit_enabled {
+        return Err(ApiError(anyhow::anyhow!(
+            "paper-run broker order submit is gated but not implemented; use binance-paper-tiny-order for manual Binance testnet orders"
+        )));
+    }
+    Ok(())
 }
 
 struct ApiError(anyhow::Error);

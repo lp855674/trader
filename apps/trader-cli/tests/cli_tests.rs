@@ -77,7 +77,8 @@ fn paper_preflight_prints_dry_run_summary() {
         .stdout(contains("paper preflight ok"))
         .stdout(contains("run_id=sample-slow-paper"))
         .stdout(contains("broker=simulated"))
-        .stdout(contains("bars=3"));
+        .stdout(contains("bars=3"))
+        .stdout(contains("order_submit_enabled=false"));
 }
 
 #[test]
@@ -127,7 +128,8 @@ fn binance_paper_preflight_reports_real_testnet_readiness() {
         .assert()
         .success()
         .stdout(contains("broker=binance"))
-        .stdout(contains("real_broker_connection=true"));
+        .stdout(contains("real_broker_connection=true"))
+        .stdout(contains("order_submit_enabled=false"));
 }
 
 #[test]

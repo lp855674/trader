@@ -542,6 +542,7 @@ manual testnet order: limit order, query order, cancel order
 manual sync: order status, executed quantity, myTrades fills, account balance, position, portfolio snapshot into SQLite
 disabled: strategy auto-submit, full OMS recovery, full broker account/position reconciliation
 credentials: environment variables only
+strategy auto-submit gate: broker.order_submit_enabled, default false
 ```
 
 当前 CLI 入口：
@@ -589,6 +590,8 @@ event_store: binance.testnet_order.started / completed
 ```
 
 当前已把 manual tiny order 的 Binance `myTrades` 同步为 `fills`，并把当前 run 的已持久化 fills 聚合为本地 position 与 portfolio snapshot。仍未把策略自动订单接入 Binance，也未做完整 broker account/position reconciliation。
+
+`[broker] order_submit_enabled` 是策略自动送单闸门，默认必须为 `false`。当前 `paper-run` 在该字段为 `true` 时会直接拒绝启动，避免误以为策略订单已经接入 Binance；真正的策略自动 Binance paper submit 需要单独实现。
 
 ---
 

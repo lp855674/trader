@@ -224,6 +224,37 @@ async fn post_paper_run_returns_accepted_run_start() {
 }
 
 #[tokio::test]
+async fn post_paper_run_rejects_enabled_broker_order_submit_gate() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let config_path = temp_config_with_enabled_broker_submit();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(
+        db,
+        config_path.to_string_lossy().into_owned(),
+    ));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/paper-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("not implemented"));
+    assert!(body.contains("binance-paper-tiny-order"));
+
+    std::fs::remove_file(config_path).unwrap();
+}
+
+#[tokio::test]
 async fn post_paper_run_populates_query_routes() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -473,6 +504,23 @@ fn workspace_root() -> PathBuf {
         .and_then(|path| path.parent())
         .unwrap()
         .to_path_buf()
+}
+
+fn temp_config_with_enabled_broker_submit() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "trader-api-order-submit-gate-{}.toml",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let input = std::fs::read_to_string("configs/paper/binance_testnet.toml").unwrap();
+    let content = input.replace(
+        "order_submit_enabled = false",
+        "order_submit_enabled = true",
+    );
+    std::fs::write(&path, content).unwrap();
+    path
 }
 
 async fn assert_status(app: axum::Router, run_id: &str, expected_status: &str) {

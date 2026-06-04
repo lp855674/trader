@@ -37,6 +37,7 @@ base_url = "https://testnet.binance.vision/api"
 api_key_env = "BINANCE_TESTNET_API_KEY"
 secret_key_env = "BINANCE_TESTNET_SECRET_KEY"
 recv_window_ms = 5000
+order_submit_enabled = false
 
 [paper]
 account_id = "binance-testnet"

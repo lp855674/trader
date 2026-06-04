@@ -68,6 +68,7 @@ fn parses_backtest_config() {
     assert!(!config.risk.trading_halted);
     assert_eq!(config.broker.kind, config::BrokerKind::Simulated);
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
+    assert!(!config.broker.order_submit_enabled);
     assert!(!config.live.enabled);
 }
 
@@ -235,6 +236,7 @@ fn parses_binance_paper_connection_config_without_secrets() {
         api_key_env = "BINANCE_TESTNET_API_KEY"
         secret_key_env = "BINANCE_TESTNET_SECRET_KEY"
         recv_window_ms = 5000
+        order_submit_enabled = true
 
         [paper]
         account_id = "binance-testnet"
@@ -262,4 +264,5 @@ fn parses_binance_paper_connection_config_without_secrets() {
         Some("BINANCE_TESTNET_SECRET_KEY")
     );
     assert_eq!(config.broker.recv_window_ms, Some(5000));
+    assert!(config.broker.order_submit_enabled);
 }
