@@ -212,6 +212,19 @@ fn binance_trade_response_maps_to_domain_trade() {
     assert_eq!(trades[0].ts_ms, 1700000000001);
 }
 
+#[test]
+fn binance_error_response_preserves_code_and_message() {
+    let message = BinanceSpotTestnetAdapter::format_error_body(
+        400,
+        r#"{"code":-1013,"msg":"Filter failure: NOTIONAL"}"#,
+    );
+
+    assert_eq!(
+        message,
+        "Binance API error 400 code=-1013 msg=Filter failure: NOTIONAL"
+    );
+}
+
 fn order() -> OrderRequest {
     OrderRequest {
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),

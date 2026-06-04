@@ -308,9 +308,17 @@ async fn main() -> Result<()> {
             let queried = adapter
                 .query_binance_order(&symbol, placed.order_id)
                 .await?;
-            let cancelled = adapter
-                .cancel_binance_order(&symbol, placed.order_id)
-                .await?;
+            let (final_order_status, cancel_error) =
+                match adapter.cancel_binance_order(&symbol, placed.order_id).await {
+                    Ok(cancelled) => binance_cancel_outcome(cancelled.status, None),
+                    Err(error) => {
+                        let refreshed = adapter
+                            .query_binance_order(&symbol, placed.order_id)
+                            .await
+                            .unwrap_or_else(|_| queried.clone());
+                        binance_cancel_outcome(refreshed.status, Some(error.to_string()))
+                    }
+                };
             let trades = adapter.my_trades(&symbol, placed.order_id).await?;
             let trade_filled_qty = trades
                 .iter()
@@ -341,7 +349,7 @@ async fn main() -> Result<()> {
             db.update_order_execution_by_broker_id(
                 &app_config.runtime.run_id,
                 &placed.order_id.to_string(),
-                &cancelled.status,
+                &final_order_status,
                 &filled_qty.to_string(),
                 ended_at_ms,
             )
@@ -362,7 +370,8 @@ async fn main() -> Result<()> {
                     "order_id": placed.order_id,
                     "placed_status": placed.status,
                     "queried_status": queried.status,
-                    "cancelled_status": cancelled.status,
+                    "final_status": final_order_status,
+                    "cancel_error": cancel_error,
                     "filled_qty": filled_qty.to_string(),
                     "trades": trades.len()
                 })
@@ -370,14 +379,15 @@ async fn main() -> Result<()> {
             )
             .await?;
             println!(
-                "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} cancelled_status={} filled_qty={} trades={} client_order_id={}",
+                "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} final_status={} filled_qty={} trades={} cancel_error={} client_order_id={}",
                 symbol,
                 placed.order_id,
                 placed.status,
                 queried.status,
-                cancelled.status,
+                final_order_status,
                 filled_qty,
                 trades.len(),
+                cancel_error.as_deref().unwrap_or("none"),
                 placed.client_order_id
             );
         }
@@ -625,6 +635,13 @@ fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
     }
 }
 
+fn binance_cancel_outcome(
+    final_status: String,
+    cancel_error: Option<String>,
+) -> (String, Option<String>) {
+    (final_status, cancel_error)
+}
+
 async fn insert_event(
     db: &storage::Db,
     source: &str,
@@ -640,6 +657,25 @@ async fn insert_event(
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::binance_cancel_outcome;
+
+    #[test]
+    fn binance_cancel_error_preserves_refreshed_order_status() {
+        let (status, error) = binance_cancel_outcome(
+            "FILLED".to_string(),
+            Some("broker rejected order: Unknown order sent".to_string()),
+        );
+
+        assert_eq!(status, "FILLED");
+        assert_eq!(
+            error.as_deref(),
+            Some("broker rejected order: Unknown order sent")
+        );
+    }
 }
 
 async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {

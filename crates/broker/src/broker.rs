@@ -339,15 +339,16 @@ impl BinanceSpotTestnetAdapter {
         order: &BinanceLimitOrderRequest,
     ) -> Result<BinanceOrderAck, BrokerError> {
         let request = self.signed_limit_order_request(order, chrono::Utc::now().timestamp_millis());
-        let response = self
-            .client
-            .post(&request.url)
-            .header("X-MBX-APIKEY", request.api_key)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<BinanceOrderResponse>()
-            .await?;
+        let body = binance_response_body(
+            self.client
+                .post(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        let response = serde_json::from_str::<BinanceOrderResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
         Ok(response.into_ack())
     }
 
@@ -361,15 +362,16 @@ impl BinanceSpotTestnetAdapter {
             order_id,
             chrono::Utc::now().timestamp_millis(),
         );
-        let response = self
-            .client
-            .get(&request.url)
-            .header("X-MBX-APIKEY", request.api_key)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<BinanceOrderResponse>()
-            .await?;
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        let response = serde_json::from_str::<BinanceOrderResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
         Ok(response.into_ack())
     }
 
@@ -383,15 +385,16 @@ impl BinanceSpotTestnetAdapter {
             order_id,
             chrono::Utc::now().timestamp_millis(),
         );
-        let response = self
-            .client
-            .delete(&request.url)
-            .header("X-MBX-APIKEY", request.api_key)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<BinanceOrderResponse>()
-            .await?;
+        let body = binance_response_body(
+            self.client
+                .delete(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        let response = serde_json::from_str::<BinanceOrderResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
         Ok(response.into_ack())
     }
 
@@ -402,15 +405,14 @@ impl BinanceSpotTestnetAdapter {
     ) -> Result<Vec<BinanceTrade>, BrokerError> {
         let request =
             self.signed_my_trades_request(symbol, order_id, chrono::Utc::now().timestamp_millis());
-        let body = self
-            .client
-            .get(&request.url)
-            .header("X-MBX-APIKEY", request.api_key)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
         Self::parse_trades_json(&body)
     }
 
@@ -421,6 +423,16 @@ impl BinanceSpotTestnetAdapter {
             .into_iter()
             .map(BinanceTradeResponse::try_into_trade)
             .collect()
+    }
+
+    pub fn format_error_body(status: u16, body: &str) -> String {
+        match serde_json::from_str::<BinanceErrorResponse>(body) {
+            Ok(error) => format!(
+                "Binance API error {status} code={} msg={}",
+                error.code, error.msg
+            ),
+            Err(_) => format!("Binance API error {status}: {body}"),
+        }
     }
 
     fn signed_request(&self, path: &str, query: &str) -> BinanceSignedRequest {
@@ -520,15 +532,16 @@ impl Broker for BinanceSpotTestnetAdapter {
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
         let request = self.signed_account_request(chrono::Utc::now().timestamp_millis());
-        let response = self
-            .client
-            .get(&request.url)
-            .header("X-MBX-APIKEY", request.api_key)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<BinanceAccountResponse>()
-            .await?;
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        let response = serde_json::from_str::<BinanceAccountResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
         Ok(BrokerAccountSnapshot {
             account_id: account_id.to_string(),
             cash: response
@@ -565,6 +578,23 @@ struct BinanceAccountResponse {
 struct BinanceBalance {
     asset: String,
     free: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BinanceErrorResponse {
+    code: i64,
+    msg: String,
+}
+
+async fn binance_response_body(response: reqwest::Response) -> Result<String, BrokerError> {
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(BrokerError::Rejected(
+            BinanceSpotTestnetAdapter::format_error_body(status.as_u16(), &body),
+        ));
+    }
+    Ok(body)
 }
 
 fn hmac_sha256_hex(secret_key: &str, payload: &str) -> String {

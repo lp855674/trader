@@ -571,11 +571,11 @@ trader binance-paper-tiny-order `
   --symbol BTCUSDT `
   --side buy `
   --qty 0.001 `
-  --price 10000 `
+  --price 100000 `
   --confirm-testnet-order
 ```
 
-该命令会在 Binance Spot Testnet 发送一笔 limit order，随后 query 并 cancel。没有 `--confirm-testnet-order` 时会拒绝执行。
+该命令会在 Binance Spot Testnet 发送一笔 limit order，随后 query 并 cancel。没有 `--confirm-testnet-order` 时会拒绝执行。价格必须落在 Binance 当前价格保护范围内；如果订单立即成交导致 cancel 返回 `Unknown order sent`，流程会重新 query、同步 `myTrades`，并把 cancel 错误写入审计事件。
 
 执行成功后会写入 SQLite：
 

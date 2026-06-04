@@ -211,10 +211,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1
 手动 tiny order/cancel：
 
 ```powershell
-trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --symbol BTCUSDT --side buy --qty 0.001 --price 10000 --confirm-testnet-order
+trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --symbol BTCUSDT --side buy --qty 0.001 --price 100000 --confirm-testnet-order
 ```
 
-该命令会把 testnet order 写入 SQLite 的 `strategy_runs`、`orders` 和 `event_store`，并把 Binance `myTrades` 返回的成交明细写入 `fills`，便于通过现有查询链路审计。当前还不会更新 accounting/positions。
+该命令会把 testnet order 写入 SQLite 的 `strategy_runs`、`orders` 和 `event_store`，并把 Binance `myTrades` 返回的成交明细写入 `fills`，便于通过现有查询链路审计。如果订单立即成交导致 cancel 返回 `Unknown order sent`，流程会保留最终订单状态并把 cancel 错误写入事件。当前还不会更新 accounting/positions。
 
 当前 paper 验证命令：
 
