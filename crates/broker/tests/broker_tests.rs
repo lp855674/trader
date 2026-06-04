@@ -174,6 +174,24 @@ fn binance_testnet_adapter_builds_signed_limit_order_cancel_and_query_urls() {
     assert!(query.url.contains("orderId=42"));
     assert!(query.url.contains("signature="));
 
+    let query_by_client_id = adapter.signed_query_order_by_client_order_id_request(
+        "BTCUSDT",
+        "trader-paper-paper-run-1-1",
+        1_700_000_000_000,
+    );
+    assert!(
+        query_by_client_id
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/order?")
+    );
+    assert!(query_by_client_id.url.contains("symbol=BTCUSDT"));
+    assert!(
+        query_by_client_id
+            .url
+            .contains("origClientOrderId=trader-paper-paper-run-1-1")
+    );
+    assert!(query_by_client_id.url.contains("signature="));
+
     let cancel = adapter.signed_cancel_order_request("BTCUSDT", 42, 1_700_000_000_000);
     assert!(
         cancel

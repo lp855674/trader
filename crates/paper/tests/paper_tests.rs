@@ -149,7 +149,8 @@ fn binance_spot_symbol_maps_strategy_symbol_to_exchange_symbol() {
 
 #[tokio::test]
 async fn binance_paper_executor_uses_actual_testnet_trades_as_fill() {
-    let executor = BinancePaperOrderExecutor::new(FakeBinanceClient);
+    let executor =
+        BinancePaperOrderExecutor::new_with_client_order_prefix(FakeBinanceClient, "paper-run-1");
 
     let fill = executor
         .execute_order(
@@ -229,7 +230,7 @@ impl BinancePaperOrderClient for FakeBinanceClient {
         assert_eq!(order.side, BinanceOrderSide::Buy);
         assert_eq!(order.quantity, dec!(0.002));
         assert_eq!(order.price, dec!(100000));
-        assert!(order.client_order_id.starts_with("trader-paper-1-"));
+        assert_eq!(order.client_order_id, "trader-paper-paper-run-1-1");
         Ok(BinanceOrderAck {
             order_id: 42,
             client_order_id: order.client_order_id.clone(),

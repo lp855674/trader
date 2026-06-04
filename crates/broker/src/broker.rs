@@ -308,6 +308,19 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/order", &query)
     }
 
+    pub fn signed_query_order_by_client_order_id_request(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&origClientOrderId={client_order_id}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/order", &query)
+    }
+
     pub fn signed_cancel_order_request(
         &self,
         symbol: &str,
@@ -360,6 +373,29 @@ impl BinanceSpotTestnetAdapter {
         let request = self.signed_query_order_request(
             symbol,
             order_id,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        let response = serde_json::from_str::<BinanceOrderResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        Ok(response.into_ack())
+    }
+
+    pub async fn query_binance_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        let request = self.signed_query_order_by_client_order_id_request(
+            symbol,
+            client_order_id,
             chrono::Utc::now().timestamp_millis(),
         );
         let body = binance_response_body(

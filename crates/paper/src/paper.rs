@@ -259,11 +259,22 @@ impl BinancePaperOrderClient for BinanceSpotTestnetAdapter {
 
 pub struct BinancePaperOrderExecutor<Client> {
     client: Client,
+    client_order_prefix: String,
 }
 
 impl<Client> BinancePaperOrderExecutor<Client> {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self::new_with_client_order_prefix(client, "default")
+    }
+
+    pub fn new_with_client_order_prefix(
+        client: Client,
+        client_order_prefix: impl Into<String>,
+    ) -> Self {
+        Self {
+            client,
+            client_order_prefix: client_order_prefix.into(),
+        }
     }
 }
 
@@ -290,7 +301,7 @@ where
             side: binance_order_side(order.side),
             quantity: order.qty,
             price: mark_price,
-            client_order_id: binance_client_order_id(order_number),
+            client_order_id: binance_client_order_id(&self.client_order_prefix, order_number),
         };
         let placed = self.client.place_limit_order(&request).await?;
         let queried = self.client.query_order(&symbol, placed.order_id).await?;
@@ -325,14 +336,18 @@ fn binance_order_side(side: OrderSide) -> BinanceOrderSide {
     }
 }
 
-fn binance_client_order_id(order_number: usize) -> String {
-    let suffix = uuid::Uuid::new_v4()
-        .simple()
-        .to_string()
+fn binance_client_order_id(client_order_prefix: &str, order_number: usize) -> String {
+    let sanitized = client_order_prefix
         .chars()
-        .take(12)
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+        .take(16)
         .collect::<String>();
-    format!("trader-paper-{order_number}-{suffix}")
+    let prefix = if sanitized.is_empty() {
+        "run".to_string()
+    } else {
+        sanitized
+    };
+    format!("trader-paper-{prefix}-{order_number}")
 }
 
 fn aggregate_binance_trades(

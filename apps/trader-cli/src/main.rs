@@ -673,7 +673,10 @@ async fn paper_runtime(
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings_with_broker_initial_cash(settings, account.cash),
-                Box::new(BinancePaperOrderExecutor::new(adapter)),
+                Box::new(BinancePaperOrderExecutor::new_with_client_order_prefix(
+                    adapter,
+                    app_config.runtime.run_id.clone(),
+                )),
             ))
         }
         config::BrokerKind::Simulated
