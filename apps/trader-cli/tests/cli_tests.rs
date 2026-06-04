@@ -63,6 +63,39 @@ fn paper_run_accepts_config_argument() {
 }
 
 #[test]
+fn paper_preflight_prints_dry_run_summary() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "paper-preflight",
+            "--config",
+            "configs/backtest/slow-paper.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("paper preflight ok"))
+        .stdout(contains("run_id=sample-slow-paper"))
+        .stdout(contains("broker=simulated"))
+        .stdout(contains("bars=3"));
+}
+
+#[test]
+fn paper_preflight_fails_when_bars_are_missing() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "paper-preflight",
+            "--config",
+            "configs/backtest/missing-bars.toml",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("missing-bars.csv"));
+}
+
+#[test]
 fn replay_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

@@ -61,6 +61,7 @@ try {
     Write-Host "Paper database: $databaseUrl"
 
     Invoke-CheckedTrader @("check-config", "--config", $configPath)
+    Invoke-CheckedTrader @("paper-preflight", "--config", $configPath)
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
 
     $env:TRADER_CONFIG = $configPath

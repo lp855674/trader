@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
@@ -33,6 +33,10 @@ enum Command {
     },
     PaperRun {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
+    PaperPreflight {
+        #[arg(long, default_value = "configs/backtest/slow-paper.toml")]
         config: String,
     },
     Replay {
@@ -133,13 +137,40 @@ async fn main() -> Result<()> {
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
-            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
+                .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
             let summary = PaperRuntime::new(db, paper_settings(&app_config)?)
                 .run_bars(bars)
                 .await?;
             println!(
                 "paper completed: signals={} orders={}",
                 summary.signals, summary.orders
+            );
+        }
+        Command::PaperPreflight { config } => {
+            let (app_config, _) = load_db(&config).await?;
+            let settings = paper_settings(&app_config)?;
+            if app_config.runtime.mode != config::RuntimeMode::Paper {
+                bail!("paper preflight requires runtime.mode = paper");
+            }
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                bail!("paper preflight requires broker.mode = paper");
+            }
+            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
+                .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
+            println!(
+                "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={}",
+                settings.run_id,
+                settings.strategy_name,
+                settings.symbol,
+                bars.len(),
+                app_config.database.url,
+                broker_kind_slug(app_config.broker.kind),
+                broker_mode_slug(app_config.broker.mode),
+                settings.account_id,
+                settings.max_order_notional,
+                settings.max_exposure,
+                settings.trading_halted
             );
         }
         Command::Replay { config } => {
@@ -300,6 +331,23 @@ fn html_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn broker_kind_slug(kind: config::BrokerKind) -> &'static str {
+    match kind {
+        config::BrokerKind::Simulated => "simulated",
+        config::BrokerKind::Futu => "futu",
+        config::BrokerKind::Binance => "binance",
+        config::BrokerKind::Okx => "okx",
+        config::BrokerKind::InteractiveBrokers => "interactive_brokers",
+    }
+}
+
+fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
+    match mode {
+        config::BrokerMode::Paper => "paper",
+        config::BrokerMode::Live => "live",
+    }
 }
 
 async fn insert_event(

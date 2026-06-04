@@ -195,6 +195,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\paper-smoke.ps1
 
 该脚本会创建临时配置和 SQLite，启动真实 `trader-server`，执行 paper run，并验证 run status、orders、fills、account balances、portfolio snapshots、metrics、events 和 broker account snapshot。
 
+CLI 也提供独立 preflight：
+
+```powershell
+trader paper-preflight --config configs/backtest/slow-paper.toml
+```
+
+该命令会校验 runtime mode、broker mode、risk decimal 参数、SQLite 可连接性和行情源可读取性，并输出 run id、strategy、symbol、bars、database、broker、account 与关键 risk limit。
+
 ## V1 交付范围
 
 V1 优先完成：
