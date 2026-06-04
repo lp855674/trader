@@ -96,6 +96,23 @@ fn paper_preflight_fails_when_bars_are_missing() {
 }
 
 #[test]
+fn binance_paper_readonly_requires_testnet_credentials() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .env_remove("BINANCE_TESTNET_API_KEY")
+        .env_remove("BINANCE_TESTNET_SECRET_KEY")
+        .args([
+            "binance-paper-readonly",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("BINANCE_TESTNET_API_KEY"));
+}
+
+#[test]
 fn replay_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

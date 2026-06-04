@@ -189,6 +189,14 @@ Broker fake adapters 现在提供 paper 测试 surface：`place_order`、`query_
 
 REST 也提供 `GET /api/v1/preflight/paper`，用于在 server 运行时检查当前配置是否满足本地 paper 验证条件。响应中 `real_broker_connection` 当前固定为 `false`，明确表示这仍是本地 fake broker paper，不是真实券商 paper account。
 
+Binance testnet read-only adapter 已开始接入。当前只支持 `ping` 和 signed account snapshot；不支持真实 testnet 下单、撤单或订单回报同步。凭证只从环境变量读取：
+
+```powershell
+$env:BINANCE_TESTNET_API_KEY = "..."
+$env:BINANCE_TESTNET_SECRET_KEY = "..."
+trader binance-paper-readonly --config configs/paper/binance_testnet.toml
+```
+
 当前 paper 验证命令：
 
 ```powershell

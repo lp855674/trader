@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
+use broker::{BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker};
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
@@ -37,6 +38,10 @@ enum Command {
     },
     PaperPreflight {
         #[arg(long, default_value = "configs/backtest/slow-paper.toml")]
+        config: String,
+    },
+    BinancePaperReadonly {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
     },
     Replay {
@@ -171,6 +176,30 @@ async fn main() -> Result<()> {
                 settings.max_order_notional,
                 settings.max_exposure,
                 settings.trading_halted
+            );
+        }
+        Command::BinancePaperReadonly { config } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            if app_config.broker.kind != config::BrokerKind::Binance {
+                bail!("binance paper readonly requires broker.kind = binance");
+            }
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                bail!("binance paper readonly requires broker.mode = paper");
+            }
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let status = adapter.status().await?;
+            let account = adapter
+                .account_snapshot(&app_config.paper.account_id)
+                .await?;
+            println!(
+                "binance paper readonly ok: connected={} trading_enabled={} account={} cash={} equity={} margin_used={}",
+                status.connected,
+                status.trading_enabled,
+                account.account_id,
+                account.cash,
+                account.equity,
+                account.margin_used
             );
         }
         Command::Replay { config } => {
@@ -348,6 +377,34 @@ fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
         config::BrokerMode::Paper => "paper",
         config::BrokerMode::Live => "live",
     }
+}
+
+fn binance_testnet_settings(app_config: &config::AppConfig) -> Result<BinanceSpotTestnetSettings> {
+    let api_key_env = app_config
+        .broker
+        .api_key_env
+        .as_deref()
+        .unwrap_or("BINANCE_TESTNET_API_KEY");
+    let secret_key_env = app_config
+        .broker
+        .secret_key_env
+        .as_deref()
+        .unwrap_or("BINANCE_TESTNET_SECRET_KEY");
+    let api_key = std::env::var(api_key_env)
+        .with_context(|| format!("missing Binance testnet API key env {api_key_env}"))?;
+    let secret_key = std::env::var(secret_key_env)
+        .with_context(|| format!("missing Binance testnet secret key env {secret_key_env}"))?;
+
+    Ok(BinanceSpotTestnetSettings {
+        base_url: app_config
+            .broker
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://testnet.binance.vision/api".to_string()),
+        api_key,
+        secret_key,
+        recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
+    })
 }
 
 async fn insert_event(

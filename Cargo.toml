@@ -46,6 +46,8 @@ data = { path = "crates/data" }
 events = { path = "crates/events" }
 execution = { path = "crates/execution" }
 futures = "0.3"
+hex = "0.4"
+hmac = "0.12"
 metrics = { path = "crates/metrics" }
 market_rules = { path = "crates/market_rules" }
 oms = { path = "crates/oms" }
@@ -56,6 +58,7 @@ risk = { path = "crates/risk" }
 runtime = { path = "crates/runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 storage = { path = "crates/storage" }
 strategies = { path = "crates/strategies" }
 thiserror = "2"

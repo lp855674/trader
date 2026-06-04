@@ -191,3 +191,75 @@ fn parses_production_paper_controls() {
     assert!(!config.live.enabled);
     assert_eq!(config.live.heartbeat_ms, Some(500));
 }
+
+#[test]
+fn parses_binance_paper_connection_config_without_secrets() {
+    let config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "binance-paper-readonly"
+
+        [database]
+        url = "sqlite://data/binance-paper.sqlite"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+        fast_window = 5
+        slow_window = 20
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+        base_url = "https://testnet.binance.vision/api"
+        api_key_env = "BINANCE_TESTNET_API_KEY"
+        secret_key_env = "BINANCE_TESTNET_SECRET_KEY"
+        recv_window_ms = 5000
+
+        [paper]
+        account_id = "binance-testnet"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.broker.kind, config::BrokerKind::Binance);
+    assert_eq!(config.broker.mode, config::BrokerMode::Paper);
+    assert_eq!(
+        config.broker.base_url.as_deref(),
+        Some("https://testnet.binance.vision/api")
+    );
+    assert_eq!(
+        config.broker.api_key_env.as_deref(),
+        Some("BINANCE_TESTNET_API_KEY")
+    );
+    assert_eq!(
+        config.broker.secret_key_env.as_deref(),
+        Some("BINANCE_TESTNET_SECRET_KEY")
+    );
+    assert_eq!(config.broker.recv_window_ms, Some(5000));
+}

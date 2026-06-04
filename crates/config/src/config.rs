@@ -103,6 +103,10 @@ pub struct RiskConfig {
 pub struct BrokerConfig {
     pub kind: BrokerKind,
     pub mode: BrokerMode,
+    pub base_url: Option<String>,
+    pub api_key_env: Option<String>,
+    pub secret_key_env: Option<String>,
+    pub recv_window_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

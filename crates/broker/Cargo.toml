@@ -11,8 +11,13 @@ path = "src/broker.rs"
 [dependencies]
 trader_core.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
+hex.workspace = true
+hmac.workspace = true
+reqwest.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 tokio.workspace = true

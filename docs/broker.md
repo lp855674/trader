@@ -533,6 +533,25 @@ status
 
 该 surface 只保存在进程内存，用于 paper 测试和 API smoke；不连接真实券商网络，也不作为 SQLite 交易状态真源。
 
+Binance testnet 已开始接入 read-only adapter：
+
+```text
+base_url: https://testnet.binance.vision/api
+read-only: ping, signed account snapshot
+disabled: order submit, cancel, order sync
+credentials: environment variables only
+```
+
+当前 CLI 入口：
+
+```powershell
+$env:BINANCE_TESTNET_API_KEY = "..."
+$env:BINANCE_TESTNET_SECRET_KEY = "..."
+trader binance-paper-readonly --config configs/paper/binance_testnet.toml
+```
+
+该入口只用于验证 Spot Testnet 连接与账户读取，不会发送订单。
+
 ---
 
 ## 21. Broker Configuration

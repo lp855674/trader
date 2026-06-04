@@ -1,6 +1,6 @@
 use broker::{
-    Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter, MockBroker, SimulatedBrokerSettings,
-    simulate_market_fill,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus,
+    FakeBrokerAdapter, MockBroker, SimulatedBrokerSettings, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use trader_core::{OrderRequest, OrderSide, OrderType};
@@ -96,6 +96,40 @@ async fn fake_broker_returns_deterministic_account_snapshot() {
     assert_eq!(account.cash, dec!(100000));
     assert_eq!(account.equity, dec!(100000));
     assert_eq!(account.margin_used, dec!(0));
+}
+
+#[test]
+fn binance_testnet_adapter_builds_signed_account_url() {
+    let adapter = BinanceSpotTestnetAdapter::new(BinanceSpotTestnetSettings {
+        base_url: "https://testnet.binance.vision/api".to_string(),
+        api_key: "test-key".to_string(),
+        secret_key: "test-secret".to_string(),
+        recv_window_ms: 5000,
+    });
+
+    let request = adapter.signed_account_request(1_700_000_000_000);
+
+    assert_eq!(request.api_key, "test-key");
+    assert!(request.url.starts_with(
+        "https://testnet.binance.vision/api/v3/account?timestamp=1700000000000&recvWindow=5000&signature="
+    ));
+    assert!(
+        request
+            .url
+            .ends_with("3c006375c631729ab444c2afb86bee2999c35b6eeec838b8f96697e8f096d7b3")
+    );
+}
+
+#[test]
+fn binance_testnet_adapter_rejects_live_base_url() {
+    let result = BinanceSpotTestnetAdapter::try_new(BinanceSpotTestnetSettings {
+        base_url: "https://api.binance.com/api".to_string(),
+        api_key: "test-key".to_string(),
+        secret_key: "test-secret".to_string(),
+        recv_window_ms: 5000,
+    });
+
+    assert!(result.unwrap_err().to_string().contains("testnet"));
 }
 
 fn order() -> OrderRequest {

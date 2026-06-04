@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
+use hmac::{Hmac, Mac};
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -15,6 +17,10 @@ pub enum BrokerError {
     Rejected(String),
     #[error("broker order not found: {0}")]
     OrderNotFound(String),
+    #[error("broker configuration error: {0}")]
+    Config(String),
+    #[error("broker http error: {0}")]
+    Http(#[from] reqwest::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +164,26 @@ pub struct FakeBrokerAdapter {
     orders: Arc<Mutex<HashMap<String, BrokerOrder>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BinanceSpotTestnetSettings {
+    pub base_url: String,
+    pub api_key: String,
+    pub secret_key: String,
+    pub recv_window_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinanceSignedRequest {
+    pub url: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BinanceSpotTestnetAdapter {
+    settings: BinanceSpotTestnetSettings,
+    client: reqwest::Client,
+}
+
 impl FakeBrokerAdapter {
     pub fn new(kind: BrokerKind) -> Self {
         Self {
@@ -181,6 +207,114 @@ impl FakeBrokerAdapter {
     pub fn interactive_brokers() -> Self {
         Self::new(BrokerKind::InteractiveBrokers)
     }
+}
+
+impl BinanceSpotTestnetAdapter {
+    pub fn try_new(settings: BinanceSpotTestnetSettings) -> Result<Self, BrokerError> {
+        if !settings.base_url.contains("testnet.binance.vision") {
+            return Err(BrokerError::Config(
+                "Binance paper adapter requires Spot testnet base_url".to_string(),
+            ));
+        }
+        Ok(Self::new(settings))
+    }
+
+    pub fn new(settings: BinanceSpotTestnetSettings) -> Self {
+        Self {
+            settings,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    pub fn signed_account_request(&self, timestamp_ms: i64) -> BinanceSignedRequest {
+        let query = format!(
+            "timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        let signature = hmac_sha256_hex(&self.settings.secret_key, &query);
+        BinanceSignedRequest {
+            url: format!(
+                "{}/v3/account?{query}&signature={signature}",
+                self.settings.base_url.trim_end_matches('/')
+            ),
+            api_key: self.settings.api_key.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl Broker for BinanceSpotTestnetAdapter {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "Binance testnet order submit is not enabled yet".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        let request = self.signed_account_request(chrono::Utc::now().timestamp_millis());
+        let response = self
+            .client
+            .get(&request.url)
+            .header("X-MBX-APIKEY", request.api_key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BinanceAccountResponse>()
+            .await?;
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: response
+                .balances
+                .iter()
+                .find(|balance| balance.asset == "USDT")
+                .and_then(|balance| balance.free.parse::<Decimal>().ok())
+                .unwrap_or(Decimal::ZERO),
+            equity: Decimal::ZERO,
+            buying_power: Decimal::ZERO,
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        self.client
+            .get(format!(
+                "{}/v3/ping",
+                self.settings.base_url.trim_end_matches('/')
+            ))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(fake_status(BrokerKind::Binance))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BinanceAccountResponse {
+    balances: Vec<BinanceBalance>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BinanceBalance {
+    asset: String,
+    free: String,
+}
+
+fn hmac_sha256_hex(secret_key: &str, payload: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret_key.as_bytes())
+        .expect("HMAC accepts keys of any length");
+    mac.update(payload.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
 #[async_trait]
