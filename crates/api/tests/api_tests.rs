@@ -73,6 +73,34 @@ async fn broker_account_returns_configured_fake_snapshot() {
 }
 
 #[tokio::test]
+async fn paper_preflight_returns_configured_dry_run_summary() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/slow-paper.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/preflight/paper")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"status\":\"ok\""));
+    assert!(body.contains("\"run_id\":\"sample-slow-paper\""));
+    assert!(body.contains("\"broker\":\"simulated\""));
+    assert!(body.contains("\"broker_mode\":\"paper\""));
+    assert!(body.contains("\"bars\":3"));
+}
+
+#[tokio::test]
 async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

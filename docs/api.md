@@ -16,6 +16,7 @@ Target Markets: A股 / 港股 / 美股 / 数字货币
 
 ```text
 GET  /api/v1/health
+GET  /api/v1/preflight/paper
 POST /api/v1/backtests
 POST /api/v1/paper-runs
 POST /api/v1/replays

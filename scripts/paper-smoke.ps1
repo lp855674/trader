@@ -91,6 +91,10 @@ try {
         throw "trader-server did not become ready"
     }
 
+    $serverPreflight = Invoke-RestMethod "$baseUrl/api/v1/preflight/paper"
+    Assert-True ($serverPreflight.status -eq "ok") "expected server paper preflight ok"
+    Assert-True ($serverPreflight.real_broker_connection -eq $false) "expected local fake broker paper"
+
     $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
     Assert-True ($paper.status -eq "running") "expected paper run to start as running"
     $status = Wait-RunStatus $baseUrl $paper.run_id "completed"
@@ -123,6 +127,7 @@ try {
         snapshots = @($snapshots).Count
         total_return = $metrics.total_return
         broker_cash = $brokerAccount.cash
+        server_preflight = $serverPreflight.status
         events = @($events).Count
     }
 } finally {

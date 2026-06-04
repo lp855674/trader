@@ -40,6 +40,23 @@ struct RunStartResponse {
     status: String,
 }
 
+#[derive(Serialize)]
+struct PaperPreflightResponse {
+    status: &'static str,
+    run_id: String,
+    strategy: String,
+    symbol: String,
+    bars: usize,
+    database: String,
+    broker: &'static str,
+    broker_mode: &'static str,
+    account: String,
+    max_order_notional: String,
+    max_exposure: String,
+    trading_halted: bool,
+    real_broker_connection: bool,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -47,6 +64,7 @@ pub fn router() -> Router {
 pub fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/preflight/paper", get(paper_preflight))
         .route("/api/v1/backtests", post(run_backtest))
         .route("/api/v1/paper-runs", post(run_paper))
         .route("/api/v1/replays", post(run_replay))
@@ -107,6 +125,39 @@ async fn broker_account(
         .await
         .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
     Ok(Json(snapshot))
+}
+
+async fn paper_preflight(
+    State(state): State<AppState>,
+) -> Result<Json<PaperPreflightResponse>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let settings = paper_settings(&app_config)?;
+    if app_config.runtime.mode != config::RuntimeMode::Paper {
+        return Err(ApiError(anyhow::anyhow!(
+            "paper preflight requires runtime.mode = paper"
+        )));
+    }
+    if app_config.broker.mode != config::BrokerMode::Paper {
+        return Err(ApiError(anyhow::anyhow!(
+            "paper preflight requires broker.mode = paper"
+        )));
+    }
+    let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+    Ok(Json(PaperPreflightResponse {
+        status: "ok",
+        run_id: settings.run_id,
+        strategy: settings.strategy_name,
+        symbol: settings.symbol,
+        bars: bars.len(),
+        database: app_config.database.url,
+        broker: broker_kind_slug(app_config.broker.kind),
+        broker_mode: broker_mode_slug(app_config.broker.mode),
+        account: settings.account_id,
+        max_order_notional: settings.max_order_notional.to_string(),
+        max_exposure: settings.max_exposure.to_string(),
+        trading_halted: settings.trading_halted,
+        real_broker_connection: false,
+    }))
 }
 
 async fn run_backtest(
@@ -628,6 +679,23 @@ fn broker_kind(kind: config::BrokerKind) -> BrokerKind {
         config::BrokerKind::Binance => BrokerKind::Binance,
         config::BrokerKind::Okx => BrokerKind::Okx,
         config::BrokerKind::InteractiveBrokers => BrokerKind::InteractiveBrokers,
+    }
+}
+
+fn broker_kind_slug(kind: config::BrokerKind) -> &'static str {
+    match kind {
+        config::BrokerKind::Simulated => "simulated",
+        config::BrokerKind::Futu => "futu",
+        config::BrokerKind::Binance => "binance",
+        config::BrokerKind::Okx => "okx",
+        config::BrokerKind::InteractiveBrokers => "interactive_brokers",
+    }
+}
+
+fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
+    match mode {
+        config::BrokerMode::Paper => "paper",
+        config::BrokerMode::Live => "live",
     }
 }
 
