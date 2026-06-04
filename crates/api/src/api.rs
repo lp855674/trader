@@ -142,6 +142,7 @@ async fn paper_preflight(
             "paper preflight requires broker.mode = paper"
         )));
     }
+    let real_broker_connection = paper_real_broker_connection_ready(&app_config)?;
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     Ok(Json(PaperPreflightResponse {
         status: "ok",
@@ -156,7 +157,7 @@ async fn paper_preflight(
         max_order_notional: settings.max_order_notional.to_string(),
         max_exposure: settings.max_exposure.to_string(),
         trading_halted: settings.trading_halted,
-        real_broker_connection: false,
+        real_broker_connection,
     }))
 }
 
@@ -696,6 +697,44 @@ fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
     match mode {
         config::BrokerMode::Paper => "paper",
         config::BrokerMode::Live => "live",
+    }
+}
+
+fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<bool, ApiError> {
+    match app_config.broker.kind {
+        config::BrokerKind::Simulated => Ok(false),
+        config::BrokerKind::Binance => {
+            let base_url = app_config.broker.base_url.as_deref().unwrap_or_default();
+            if !base_url.contains("testnet.binance.vision") {
+                return Err(ApiError(anyhow::anyhow!(
+                    "Binance paper preflight requires Spot testnet base_url"
+                )));
+            }
+            let api_key_env = app_config
+                .broker
+                .api_key_env
+                .as_deref()
+                .unwrap_or("BINANCE_TESTNET_API_KEY");
+            let secret_key_env = app_config
+                .broker
+                .secret_key_env
+                .as_deref()
+                .unwrap_or("BINANCE_TESTNET_SECRET_KEY");
+            std::env::var(api_key_env).map_err(|_| {
+                ApiError(anyhow::anyhow!(
+                    "missing Binance testnet API key env {api_key_env}"
+                ))
+            })?;
+            std::env::var(secret_key_env).map_err(|_| {
+                ApiError(anyhow::anyhow!(
+                    "missing Binance testnet secret key env {secret_key_env}"
+                ))
+            })?;
+            Ok(true)
+        }
+        config::BrokerKind::Futu
+        | config::BrokerKind::Okx
+        | config::BrokerKind::InteractiveBrokers => Ok(false),
     }
 }
 

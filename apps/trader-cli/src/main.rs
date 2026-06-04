@@ -178,10 +178,11 @@ async fn main() -> Result<()> {
             if app_config.broker.mode != config::BrokerMode::Paper {
                 bail!("paper preflight requires broker.mode = paper");
             }
+            let real_broker_connection = paper_real_broker_connection_ready(&app_config)?;
             let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
                 .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
             println!(
-                "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={}",
+                "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={} real_broker_connection={}",
                 settings.run_id,
                 settings.strategy_name,
                 settings.symbol,
@@ -192,7 +193,8 @@ async fn main() -> Result<()> {
                 settings.account_id,
                 settings.max_order_notional,
                 settings.max_exposure,
-                settings.trading_halted
+                settings.trading_halted,
+                real_broker_connection
             );
         }
         Command::BinancePaperReadonly { config } => {
@@ -582,6 +584,37 @@ fn binance_testnet_settings(app_config: &config::AppConfig) -> Result<BinanceSpo
         secret_key,
         recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
     })
+}
+
+fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<bool> {
+    match app_config.broker.kind {
+        config::BrokerKind::Simulated => Ok(false),
+        config::BrokerKind::Binance => {
+            let base_url = app_config.broker.base_url.as_deref().unwrap_or_default();
+            if !base_url.contains("testnet.binance.vision") {
+                bail!("Binance paper preflight requires Spot testnet base_url");
+            }
+            let api_key_env = app_config
+                .broker
+                .api_key_env
+                .as_deref()
+                .unwrap_or("BINANCE_TESTNET_API_KEY");
+            let secret_key_env = app_config
+                .broker
+                .secret_key_env
+                .as_deref()
+                .unwrap_or("BINANCE_TESTNET_SECRET_KEY");
+            std::env::var(api_key_env)
+                .with_context(|| format!("missing Binance testnet API key env {api_key_env}"))?;
+            std::env::var(secret_key_env).with_context(|| {
+                format!("missing Binance testnet secret key env {secret_key_env}")
+            })?;
+            Ok(true)
+        }
+        config::BrokerKind::Futu
+        | config::BrokerKind::Okx
+        | config::BrokerKind::InteractiveBrokers => Ok(false),
+    }
 }
 
 fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {

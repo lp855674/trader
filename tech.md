@@ -194,8 +194,11 @@ Binance testnet adapter 已开始接入。当前支持 `ping`、signed account s
 ```powershell
 $env:BINANCE_TESTNET_API_KEY = "..."
 $env:BINANCE_TESTNET_SECRET_KEY = "..."
+trader paper-preflight --config configs/paper/binance_testnet.toml
 trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 ```
+
+当 `[broker] kind = "binance"` 且 `mode = "paper"` 时，`paper-preflight` 会要求 Spot Testnet base_url 和 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` 存在；通过后输出 `real_broker_connection=true`。该检查不访问网络，网络连接仍由 `binance-paper-readonly` 验证。
 
 手动 tiny order/cancel：
 

@@ -549,10 +549,11 @@ credentials: environment variables only
 ```powershell
 $env:BINANCE_TESTNET_API_KEY = "..."
 $env:BINANCE_TESTNET_SECRET_KEY = "..."
+trader paper-preflight --config configs/paper/binance_testnet.toml
 trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 ```
 
-该入口只用于验证 Spot Testnet 连接与账户读取，不会发送订单。
+`paper-preflight` 会在不访问网络的情况下校验 Binance paper config、Spot Testnet base_url 和凭证环境变量是否存在，并输出 `real_broker_connection=true`。`binance-paper-readonly` 用于实际验证 Spot Testnet 连接与账户读取，不会发送订单。
 
 手动 tiny order/cancel 入口：
 
