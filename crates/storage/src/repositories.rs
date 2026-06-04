@@ -591,6 +591,75 @@ impl Db {
             .collect())
     }
 
+    pub async fn get_order_by_client_order_id(
+        &self,
+        client_order_id: &str,
+    ) -> Result<Option<NewOrder>, sqlx::Error> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, run_id, client_order_id, broker_order_id, account_id, symbol, side,
+                   order_type, price, qty, filled_qty, status, created_at_ms, updated_at_ms
+            FROM orders
+            WHERE client_order_id = ?
+            "#,
+        )
+        .bind(client_order_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                run_id,
+                client_order_id,
+                broker_order_id,
+                account_id,
+                symbol,
+                side,
+                order_type,
+                price,
+                qty,
+                filled_qty,
+                status,
+                created_at_ms,
+                updated_at_ms,
+            )| NewOrder {
+                id,
+                run_id,
+                client_order_id,
+                broker_order_id,
+                account_id,
+                symbol,
+                side,
+                order_type,
+                price,
+                qty,
+                filled_qty,
+                status,
+                created_at_ms,
+                updated_at_ms,
+            },
+        ))
+    }
+
     pub async fn recover_order_state(
         &self,
         run_id: &str,

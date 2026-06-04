@@ -104,6 +104,16 @@ async fn runtime_records_round_trip() {
     .unwrap();
 
     assert_eq!(db.list_orders("run-1").await.unwrap().len(), 1);
+    let order_by_client_id = db
+        .get_order_by_client_order_id("client-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(order_by_client_id.id, "order-1");
+    assert_eq!(
+        order_by_client_id.broker_order_id.as_deref(),
+        Some("broker-1")
+    );
     assert_eq!(db.list_fills("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_positions("run-1").await.unwrap().len(), 1);
     assert_eq!(db.list_account_balances("run-1").await.unwrap().len(), 1);

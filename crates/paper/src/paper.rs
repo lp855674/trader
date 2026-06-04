@@ -100,6 +100,7 @@ impl PaperSettings {
 impl PaperRuntime {
     pub fn new(db: Db, settings: PaperSettings) -> Self {
         let executor = Box::new(SimulatedPaperOrderExecutor {
+            client_order_prefix: settings.run_id.clone(),
             settings: SimulatedBrokerSettings {
                 slippage_bps: settings.slippage_bps,
                 fee_bps: settings.fee_bps,
@@ -171,6 +172,7 @@ impl PaperRuntime {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutedPaperOrder {
+    pub client_order_id: String,
     pub broker_order_id: String,
     pub status: String,
     pub price: Decimal,
@@ -189,6 +191,7 @@ pub trait PaperOrderExecutor: Send + Sync {
 }
 
 struct SimulatedPaperOrderExecutor {
+    client_order_prefix: String,
     settings: SimulatedBrokerSettings,
 }
 
@@ -202,6 +205,7 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
     ) -> anyhow::Result<ExecutedPaperOrder> {
         let fill = simulate_market_fill(order, mark_price, self.settings.clone())?;
         Ok(ExecutedPaperOrder {
+            client_order_id: format!("{}-order-{}", self.client_order_prefix, order_number),
             broker_order_id: format!("simulated-{order_number}"),
             status: "FILLED".to_string(),
             price: fill.price,
@@ -213,6 +217,12 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
 
 #[async_trait]
 pub trait BinancePaperOrderClient: Send + Sync {
+    async fn query_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<Option<BinanceOrderAck>, BrokerError>;
+
     async fn place_limit_order(
         &self,
         order: &BinanceLimitOrderRequest,
@@ -233,6 +243,21 @@ pub trait BinancePaperOrderClient: Send + Sync {
 
 #[async_trait]
 impl BinancePaperOrderClient for BinanceSpotTestnetAdapter {
+    async fn query_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<Option<BinanceOrderAck>, BrokerError> {
+        match self
+            .query_binance_order_by_client_order_id(symbol, client_order_id)
+            .await
+        {
+            Ok(order) => Ok(Some(order)),
+            Err(BrokerError::Rejected(message)) if message.contains("code=-2013") => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn place_limit_order(
         &self,
         order: &BinanceLimitOrderRequest,
@@ -296,19 +321,34 @@ where
             anyhow::bail!("Binance paper executor requires positive mark price");
         }
         let symbol = binance_spot_symbol(&order.symbol)?;
-        let request = BinanceLimitOrderRequest {
-            symbol: symbol.clone(),
-            side: binance_order_side(order.side),
-            quantity: order.qty,
-            price: mark_price,
-            client_order_id: binance_client_order_id(&self.client_order_prefix, order_number),
+        let client_order_id = binance_client_order_id(&self.client_order_prefix, order_number);
+        let placed = match self
+            .client
+            .query_order_by_client_order_id(&symbol, &client_order_id)
+            .await?
+        {
+            Some(existing) => existing,
+            None => {
+                let request = BinanceLimitOrderRequest {
+                    symbol: symbol.clone(),
+                    side: binance_order_side(order.side),
+                    quantity: order.qty,
+                    price: mark_price,
+                    client_order_id: client_order_id.clone(),
+                };
+                self.client.place_limit_order(&request).await?
+            }
         };
-        let placed = self.client.place_limit_order(&request).await?;
-        let queried = self.client.query_order(&symbol, placed.order_id).await?;
+        let queried = if placed.status == "FILLED" || placed.status == "PARTIALLY_FILLED" {
+            placed.clone()
+        } else {
+            self.client.query_order(&symbol, placed.order_id).await?
+        };
         let trades = self.client.my_trades(&symbol, placed.order_id).await?;
         let (qty, price, fee) = aggregate_binance_trades(&trades)?;
 
         Ok(ExecutedPaperOrder {
+            client_order_id,
             broker_order_id: placed.order_id.to_string(),
             status: queried.status,
             price,
@@ -475,7 +515,7 @@ impl<'a> PaperRunSession<'a> {
                 .insert_order(NewOrder {
                     id: order_id.clone(),
                     run_id: settings.run_id.clone(),
-                    client_order_id: order_id.clone(),
+                    client_order_id: fill.client_order_id.clone(),
                     broker_order_id: Some(fill.broker_order_id.clone()),
                     account_id: order.account_id.clone(),
                     symbol: order.symbol.clone(),
