@@ -183,6 +183,33 @@ fn binance_testnet_adapter_builds_signed_limit_order_cancel_and_query_urls() {
     assert!(cancel.url.contains("symbol=BTCUSDT"));
     assert!(cancel.url.contains("orderId=42"));
     assert!(cancel.url.contains("signature="));
+
+    let trades = adapter.signed_my_trades_request("BTCUSDT", 42, 1_700_000_000_000);
+    assert!(
+        trades
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/myTrades?")
+    );
+    assert!(trades.url.contains("symbol=BTCUSDT"));
+    assert!(trades.url.contains("orderId=42"));
+    assert!(trades.url.contains("signature="));
+}
+
+#[test]
+fn binance_trade_response_maps_to_domain_trade() {
+    let trades = BinanceSpotTestnetAdapter::parse_trades_json(
+        r#"[{"id":7,"orderId":42,"symbol":"BTCUSDT","price":"10000.5","qty":"0.001","commission":"0.000001","commissionAsset":"BTC","time":1700000000001}]"#,
+    )
+    .unwrap();
+
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].trade_id, 7);
+    assert_eq!(trades[0].order_id, 42);
+    assert_eq!(trades[0].symbol, "BTCUSDT");
+    assert_eq!(trades[0].price, dec!(10000.5));
+    assert_eq!(trades[0].qty, dec!(0.001));
+    assert_eq!(trades[0].fee, dec!(0.000001));
+    assert_eq!(trades[0].ts_ms, 1700000000001);
 }
 
 fn order() -> OrderRequest {

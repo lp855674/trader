@@ -539,7 +539,8 @@ Binance testnet 已开始接入 read-only adapter：
 base_url: https://testnet.binance.vision/api
 read-only: ping, signed account snapshot
 manual testnet order: limit order, query order, cancel order
-disabled: strategy auto-submit, order sync into OMS/accounting
+manual sync: order status, executed quantity, myTrades fills into SQLite
+disabled: strategy auto-submit, order sync into OMS/accounting/positions
 credentials: environment variables only
 ```
 
@@ -571,11 +572,12 @@ trader binance-paper-tiny-order `
 
 ```text
 strategy_runs: run status completed
-orders: broker_order_id 与最终 cancel status
+orders: broker_order_id、最终 cancel status 与 filled_qty
+fills: Binance myTrades 成交明细；没有成交时为空
 event_store: binance.testnet_order.started / completed
 ```
 
-当前仍未把 testnet 成交回报同步为 `fills`，也未把策略自动订单接入 Binance。
+当前已把 manual tiny order 的 Binance `myTrades` 同步为 `fills`，但仍未把策略自动订单接入 Binance，也未把 testnet 成交接入 accounting/positions。
 
 ---
 

@@ -287,7 +287,7 @@ async fn main() -> Result<()> {
             let order_id = format!("{}-binance-{}", app_config.runtime.run_id, placed.order_id);
             let now_ms = chrono::Utc::now().timestamp_millis();
             db.insert_order(storage::NewOrder {
-                id: order_id,
+                id: order_id.clone(),
                 run_id: app_config.runtime.run_id.clone(),
                 client_order_id: order.client_order_id.clone(),
                 broker_order_id: Some(placed.order_id.to_string()),
@@ -309,11 +309,38 @@ async fn main() -> Result<()> {
             let cancelled = adapter
                 .cancel_binance_order(&symbol, placed.order_id)
                 .await?;
+            let trades = adapter.my_trades(&symbol, placed.order_id).await?;
+            let trade_filled_qty = trades
+                .iter()
+                .fold(Decimal::ZERO, |total, trade| total + trade.qty);
+            let filled_qty = if trade_filled_qty > Decimal::ZERO {
+                trade_filled_qty
+            } else {
+                queried.executed_qty
+            };
             let ended_at_ms = chrono::Utc::now().timestamp_millis();
-            db.update_order_status_by_broker_id(
+            for trade in &trades {
+                db.insert_fill(storage::NewFill {
+                    id: format!(
+                        "{}-binance-trade-{}",
+                        app_config.runtime.run_id, trade.trade_id
+                    ),
+                    order_id: order_id.clone(),
+                    run_id: app_config.runtime.run_id.clone(),
+                    symbol: trade.symbol.clone(),
+                    side: side.to_ascii_uppercase(),
+                    price: trade.price.to_string(),
+                    qty: trade.qty.to_string(),
+                    fee: trade.fee.to_string(),
+                    ts_ms: trade.ts_ms,
+                })
+                .await?;
+            }
+            db.update_order_execution_by_broker_id(
                 &app_config.runtime.run_id,
                 &placed.order_id.to_string(),
                 &cancelled.status,
+                &filled_qty.to_string(),
                 ended_at_ms,
             )
             .await?;
@@ -333,18 +360,22 @@ async fn main() -> Result<()> {
                     "order_id": placed.order_id,
                     "placed_status": placed.status,
                     "queried_status": queried.status,
-                    "cancelled_status": cancelled.status
+                    "cancelled_status": cancelled.status,
+                    "filled_qty": filled_qty.to_string(),
+                    "trades": trades.len()
                 })
                 .to_string(),
             )
             .await?;
             println!(
-                "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} cancelled_status={} client_order_id={}",
+                "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} cancelled_status={} filled_qty={} trades={} client_order_id={}",
                 symbol,
                 placed.order_id,
                 placed.status,
                 queried.status,
                 cancelled.status,
+                filled_qty,
+                trades.len(),
                 placed.client_order_id
             );
         }

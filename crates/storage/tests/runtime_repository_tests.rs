@@ -124,6 +124,14 @@ async fn runtime_records_round_trip() {
     let updated = db.list_orders("run-1").await.unwrap();
     assert_eq!(updated[0].status, "CANCELLED");
     assert_eq!(updated[0].updated_at_ms, 9);
+
+    db.update_order_execution_by_broker_id("run-1", "broker-1", "FILLED", "1", 10)
+        .await
+        .unwrap();
+    let executed = db.list_orders("run-1").await.unwrap();
+    assert_eq!(executed[0].status, "FILLED");
+    assert_eq!(executed[0].filled_qty, "1");
+    assert_eq!(executed[0].updated_at_ms, 10);
 }
 
 #[tokio::test]

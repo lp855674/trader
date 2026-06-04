@@ -379,6 +379,31 @@ impl Db {
         Ok(())
     }
 
+    pub async fn update_order_execution_by_broker_id(
+        &self,
+        run_id: &str,
+        broker_order_id: &str,
+        status: &str,
+        filled_qty: &str,
+        updated_at_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE orders
+            SET status = ?, filled_qty = ?, updated_at_ms = ?
+            WHERE run_id = ? AND broker_order_id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(filled_qty)
+        .bind(updated_at_ms)
+        .bind(run_id)
+        .bind(broker_order_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn insert_fill(&self, fill: NewFill) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"

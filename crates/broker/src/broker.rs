@@ -207,6 +207,19 @@ pub struct BinanceOrderAck {
     pub order_id: u64,
     pub client_order_id: String,
     pub status: String,
+    pub executed_qty: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BinanceTrade {
+    pub trade_id: u64,
+    pub order_id: u64,
+    pub symbol: String,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+    pub fee_asset: String,
+    pub ts_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +321,19 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/order", &query)
     }
 
+    pub fn signed_my_trades_request(
+        &self,
+        symbol: &str,
+        order_id: u64,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&orderId={order_id}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/myTrades", &query)
+    }
+
     pub async fn place_limit_order(
         &self,
         order: &BinanceLimitOrderRequest,
@@ -369,6 +395,34 @@ impl BinanceSpotTestnetAdapter {
         Ok(response.into_ack())
     }
 
+    pub async fn my_trades(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        let request =
+            self.signed_my_trades_request(symbol, order_id, chrono::Utc::now().timestamp_millis());
+        let body = self
+            .client
+            .get(&request.url)
+            .header("X-MBX-APIKEY", request.api_key)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        Self::parse_trades_json(&body)
+    }
+
+    pub fn parse_trades_json(input: &str) -> Result<Vec<BinanceTrade>, BrokerError> {
+        let response = serde_json::from_str::<Vec<BinanceTradeResponse>>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        response
+            .into_iter()
+            .map(BinanceTradeResponse::try_into_trade)
+            .collect()
+    }
+
     fn signed_request(&self, path: &str, query: &str) -> BinanceSignedRequest {
         let signature = hmac_sha256_hex(&self.settings.secret_key, query);
         BinanceSignedRequest {
@@ -388,6 +442,7 @@ struct BinanceOrderResponse {
     client_order_id: Option<String>,
     orig_client_order_id: Option<String>,
     status: String,
+    executed_qty: Option<String>,
 }
 
 impl BinanceOrderResponse {
@@ -399,7 +454,48 @@ impl BinanceOrderResponse {
                 .or(self.orig_client_order_id)
                 .unwrap_or_default(),
             status: self.status,
+            executed_qty: self
+                .executed_qty
+                .and_then(|qty| qty.parse::<Decimal>().ok())
+                .unwrap_or(Decimal::ZERO),
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinanceTradeResponse {
+    id: u64,
+    order_id: u64,
+    symbol: String,
+    price: String,
+    qty: String,
+    commission: String,
+    commission_asset: String,
+    time: i64,
+}
+
+impl BinanceTradeResponse {
+    fn try_into_trade(self) -> Result<BinanceTrade, BrokerError> {
+        Ok(BinanceTrade {
+            trade_id: self.id,
+            order_id: self.order_id,
+            symbol: self.symbol,
+            price: self
+                .price
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            qty: self
+                .qty
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            fee: self
+                .commission
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            fee_asset: self.commission_asset,
+            ts_ms: self.time,
+        })
     }
 }
 
