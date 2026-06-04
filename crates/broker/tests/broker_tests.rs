@@ -1,6 +1,7 @@
 use broker::{
-    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus,
-    FakeBrokerAdapter, MockBroker, SimulatedBrokerSettings, simulate_market_fill,
+    BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
+    BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
+    MockBroker, SimulatedBrokerSettings, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use trader_core::{OrderRequest, OrderSide, OrderType};
@@ -130,6 +131,58 @@ fn binance_testnet_adapter_rejects_live_base_url() {
     });
 
     assert!(result.unwrap_err().to_string().contains("testnet"));
+}
+
+#[test]
+fn binance_testnet_adapter_builds_signed_limit_order_cancel_and_query_urls() {
+    let adapter = BinanceSpotTestnetAdapter::new(BinanceSpotTestnetSettings {
+        base_url: "https://testnet.binance.vision/api".to_string(),
+        api_key: "test-key".to_string(),
+        secret_key: "test-secret".to_string(),
+        recv_window_ms: 5000,
+    });
+    let order = BinanceLimitOrderRequest {
+        symbol: "BTCUSDT".to_string(),
+        side: BinanceOrderSide::Buy,
+        quantity: dec!(0.001),
+        price: dec!(10000),
+        client_order_id: "trader-test-1".to_string(),
+    };
+
+    let place = adapter.signed_limit_order_request(&order, 1_700_000_000_000);
+    assert!(
+        place
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/order?")
+    );
+    assert!(place.url.contains("symbol=BTCUSDT"));
+    assert!(place.url.contains("side=BUY"));
+    assert!(place.url.contains("type=LIMIT"));
+    assert!(place.url.contains("timeInForce=GTC"));
+    assert!(place.url.contains("quantity=0.001"));
+    assert!(place.url.contains("price=10000"));
+    assert!(place.url.contains("newClientOrderId=trader-test-1"));
+    assert!(place.url.contains("signature="));
+
+    let query = adapter.signed_query_order_request("BTCUSDT", 42, 1_700_000_000_000);
+    assert!(
+        query
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/order?")
+    );
+    assert!(query.url.contains("symbol=BTCUSDT"));
+    assert!(query.url.contains("orderId=42"));
+    assert!(query.url.contains("signature="));
+
+    let cancel = adapter.signed_cancel_order_request("BTCUSDT", 42, 1_700_000_000_000);
+    assert!(
+        cancel
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/order?")
+    );
+    assert!(cancel.url.contains("symbol=BTCUSDT"));
+    assert!(cancel.url.contains("orderId=42"));
+    assert!(cancel.url.contains("signature="));
 }
 
 fn order() -> OrderRequest {

@@ -1,6 +1,9 @@
 use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
-use broker::{BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker};
+use broker::{
+    BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
+    BinanceSpotTestnetSettings, Broker,
+};
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
@@ -43,6 +46,20 @@ enum Command {
     BinancePaperReadonly {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
+    },
+    BinancePaperTinyOrder {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long)]
+        side: String,
+        #[arg(long)]
+        qty: String,
+        #[arg(long)]
+        price: String,
+        #[arg(long)]
+        confirm_testnet_order: bool,
     },
     Replay {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -200,6 +217,58 @@ async fn main() -> Result<()> {
                 account.cash,
                 account.equity,
                 account.margin_used
+            );
+        }
+        Command::BinancePaperTinyOrder {
+            config,
+            symbol,
+            side,
+            qty,
+            price,
+            confirm_testnet_order,
+        } => {
+            if !confirm_testnet_order {
+                bail!("refusing to submit Binance testnet order without --confirm-testnet-order");
+            }
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            if app_config.broker.kind != config::BrokerKind::Binance {
+                bail!("binance paper tiny order requires broker.kind = binance");
+            }
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                bail!("binance paper tiny order requires broker.mode = paper");
+            }
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let client_order_id = format!(
+                "trader-{}",
+                uuid::Uuid::new_v4()
+                    .simple()
+                    .to_string()
+                    .get(..24)
+                    .unwrap_or("order")
+            );
+            let order = BinanceLimitOrderRequest {
+                symbol: symbol.clone(),
+                side: binance_order_side(&side)?,
+                quantity: Decimal::from_str(&qty)?,
+                price: Decimal::from_str(&price)?,
+                client_order_id,
+            };
+            let placed = adapter.place_limit_order(&order).await?;
+            let queried = adapter
+                .query_binance_order(&symbol, placed.order_id)
+                .await?;
+            let cancelled = adapter
+                .cancel_binance_order(&symbol, placed.order_id)
+                .await?;
+            println!(
+                "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} cancelled_status={} client_order_id={}",
+                symbol,
+                placed.order_id,
+                placed.status,
+                queried.status,
+                cancelled.status,
+                placed.client_order_id
             );
         }
         Command::Replay { config } => {
@@ -405,6 +474,14 @@ fn binance_testnet_settings(app_config: &config::AppConfig) -> Result<BinanceSpo
         secret_key,
         recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
     })
+}
+
+fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
+    match input.to_ascii_lowercase().as_str() {
+        "buy" => Ok(BinanceOrderSide::Buy),
+        "sell" => Ok(BinanceOrderSide::Sell),
+        other => bail!("unsupported Binance order side {other}; expected buy or sell"),
+    }
 }
 
 async fn insert_event(

@@ -113,6 +113,29 @@ fn binance_paper_readonly_requires_testnet_credentials() {
 }
 
 #[test]
+fn binance_paper_tiny_order_requires_explicit_confirmation() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "binance-paper-tiny-order",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+            "--symbol",
+            "BTCUSDT",
+            "--side",
+            "buy",
+            "--qty",
+            "0.001",
+            "--price",
+            "10000",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--confirm-testnet-order"));
+}
+
+#[test]
 fn replay_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

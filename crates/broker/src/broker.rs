@@ -178,6 +178,37 @@ pub struct BinanceSignedRequest {
     pub api_key: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinanceOrderSide {
+    Buy,
+    Sell,
+}
+
+impl BinanceOrderSide {
+    fn as_query_value(self) -> &'static str {
+        match self {
+            Self::Buy => "BUY",
+            Self::Sell => "SELL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinanceLimitOrderRequest {
+    pub symbol: String,
+    pub side: BinanceOrderSide,
+    pub quantity: Decimal,
+    pub price: Decimal,
+    pub client_order_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BinanceOrderAck {
+    pub order_id: u64,
+    pub client_order_id: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct BinanceSpotTestnetAdapter {
     settings: BinanceSpotTestnetSettings,
@@ -231,13 +262,143 @@ impl BinanceSpotTestnetAdapter {
             "timestamp={timestamp_ms}&recvWindow={}",
             self.settings.recv_window_ms
         );
-        let signature = hmac_sha256_hex(&self.settings.secret_key, &query);
+        self.signed_request("/v3/account", &query)
+    }
+
+    pub fn signed_limit_order_request(
+        &self,
+        order: &BinanceLimitOrderRequest,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={}&side={}&type=LIMIT&timeInForce=GTC&quantity={}&price={}&newClientOrderId={}&timestamp={timestamp_ms}&recvWindow={}",
+            order.symbol,
+            order.side.as_query_value(),
+            order.quantity,
+            order.price,
+            order.client_order_id,
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/order", &query)
+    }
+
+    pub fn signed_query_order_request(
+        &self,
+        symbol: &str,
+        order_id: u64,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&orderId={order_id}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/order", &query)
+    }
+
+    pub fn signed_cancel_order_request(
+        &self,
+        symbol: &str,
+        order_id: u64,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&orderId={order_id}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/order", &query)
+    }
+
+    pub async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        let request = self.signed_limit_order_request(order, chrono::Utc::now().timestamp_millis());
+        let response = self
+            .client
+            .post(&request.url)
+            .header("X-MBX-APIKEY", request.api_key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BinanceOrderResponse>()
+            .await?;
+        Ok(response.into_ack())
+    }
+
+    pub async fn query_binance_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        let request = self.signed_query_order_request(
+            symbol,
+            order_id,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        let response = self
+            .client
+            .get(&request.url)
+            .header("X-MBX-APIKEY", request.api_key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BinanceOrderResponse>()
+            .await?;
+        Ok(response.into_ack())
+    }
+
+    pub async fn cancel_binance_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        let request = self.signed_cancel_order_request(
+            symbol,
+            order_id,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        let response = self
+            .client
+            .delete(&request.url)
+            .header("X-MBX-APIKEY", request.api_key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<BinanceOrderResponse>()
+            .await?;
+        Ok(response.into_ack())
+    }
+
+    fn signed_request(&self, path: &str, query: &str) -> BinanceSignedRequest {
+        let signature = hmac_sha256_hex(&self.settings.secret_key, query);
         BinanceSignedRequest {
             url: format!(
-                "{}/v3/account?{query}&signature={signature}",
+                "{}{path}?{query}&signature={signature}",
                 self.settings.base_url.trim_end_matches('/')
             ),
             api_key: self.settings.api_key.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinanceOrderResponse {
+    order_id: u64,
+    client_order_id: Option<String>,
+    orig_client_order_id: Option<String>,
+    status: String,
+}
+
+impl BinanceOrderResponse {
+    fn into_ack(self) -> BinanceOrderAck {
+        BinanceOrderAck {
+            order_id: self.order_id,
+            client_order_id: self
+                .client_order_id
+                .or(self.orig_client_order_id)
+                .unwrap_or_default(),
+            status: self.status,
         }
     }
 }
