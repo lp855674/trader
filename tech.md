@@ -189,7 +189,7 @@ Broker fake adapters 现在提供 paper 测试 surface：`place_order`、`query_
 
 REST 也提供 `GET /api/v1/preflight/paper`，用于在 server 运行时检查当前配置是否满足本地 paper 验证条件。响应中 `real_broker_connection` 当前固定为 `false`，明确表示这仍是本地 fake broker paper，不是真实券商 paper account。
 
-Binance testnet adapter 已开始接入。当前支持 `ping`、signed account snapshot，以及手动 tiny limit order -> query -> cancel -> myTrades sync；不支持策略自动提交真实 testnet 订单，也不支持订单回报同步进 OMS/accounting/positions。凭证只从环境变量读取：
+Binance testnet adapter 已开始接入。当前支持 `ping`、signed account snapshot，以及手动 tiny limit order -> query -> cancel -> myTrades sync -> local accounting snapshot；不支持策略自动提交真实 testnet 订单，也不支持完整 OMS recovery 或 broker account/position reconciliation。凭证只从环境变量读取：
 
 ```powershell
 $env:BINANCE_TESTNET_API_KEY = "..."
@@ -214,7 +214,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1
 trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --symbol BTCUSDT --side buy --qty 0.001 --price 100000 --confirm-testnet-order
 ```
 
-该命令会把 testnet order 写入 SQLite 的 `strategy_runs`、`orders` 和 `event_store`，并把 Binance `myTrades` 返回的成交明细写入 `fills`，便于通过现有查询链路审计。如果订单立即成交导致 cancel 返回 `Unknown order sent`，流程会保留最终订单状态并把 cancel 错误写入事件。当前还不会更新 accounting/positions。
+该命令会把 testnet order 写入 SQLite 的 `strategy_runs`、`orders` 和 `event_store`，并把 Binance `myTrades` 返回的成交明细写入 `fills`，再基于当前 run 已持久化 fills 更新 `account_balances`、`positions` 和 `portfolio_snapshots`。如果订单立即成交导致 cancel 返回 `Unknown order sent`，流程会保留最终订单状态并把 cancel 错误写入事件。
 
 当前 paper 验证命令：
 

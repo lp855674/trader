@@ -346,6 +346,25 @@ async fn main() -> Result<()> {
                 })
                 .await?;
             }
+            if !trades.is_empty() {
+                let account = adapter
+                    .account_snapshot(&app_config.paper.account_id)
+                    .await?;
+                let all_fills = db.list_fills(&app_config.runtime.run_id).await?;
+                let accounting = binance_accounting_records_from_fills(
+                    &app_config.runtime.run_id,
+                    &app_config.paper.account_id,
+                    &app_config.portfolio.base_currency,
+                    account.cash,
+                    &all_fills,
+                    ended_at_ms,
+                )?;
+                db.upsert_account_balance(accounting.balance).await?;
+                if let Some(position) = accounting.position {
+                    db.upsert_position(position).await?;
+                }
+                db.insert_portfolio_snapshot(accounting.snapshot).await?;
+            }
             db.update_order_execution_by_broker_id(
                 &app_config.runtime.run_id,
                 &placed.order_id.to_string(),
@@ -642,6 +661,77 @@ fn binance_cancel_outcome(
     (final_status, cancel_error)
 }
 
+struct BinanceAccountingRecords {
+    balance: storage::NewAccountBalance,
+    position: Option<storage::NewPosition>,
+    snapshot: storage::NewPortfolioSnapshot,
+}
+
+fn binance_accounting_records_from_fills(
+    run_id: &str,
+    account_id: &str,
+    base_currency: &str,
+    cash: Decimal,
+    fills: &[storage::NewFill],
+    updated_at_ms: i64,
+) -> Result<BinanceAccountingRecords> {
+    let mut symbol = String::new();
+    let mut signed_qty = Decimal::ZERO;
+    let mut notional = Decimal::ZERO;
+    let mut abs_qty = Decimal::ZERO;
+
+    for fill in fills {
+        symbol = fill.symbol.clone();
+        let qty = Decimal::from_str(&fill.qty)?;
+        let price = Decimal::from_str(&fill.price)?;
+        if fill.side.eq_ignore_ascii_case("buy") {
+            signed_qty += qty;
+        } else {
+            signed_qty -= qty;
+        }
+        notional += qty * price;
+        abs_qty += qty;
+    }
+
+    let avg_price = if abs_qty > Decimal::ZERO {
+        notional / abs_qty
+    } else {
+        Decimal::ZERO
+    };
+    let market_value = signed_qty * avg_price;
+
+    Ok(BinanceAccountingRecords {
+        balance: storage::NewAccountBalance {
+            run_id: run_id.to_string(),
+            account_id: account_id.to_string(),
+            asset: base_currency.to_string(),
+            total: cash.to_string(),
+            available: cash.to_string(),
+            frozen: Decimal::ZERO.to_string(),
+            updated_at_ms,
+        },
+        position: (!fills.is_empty()).then(|| storage::NewPosition {
+            run_id: run_id.to_string(),
+            account_id: account_id.to_string(),
+            symbol: symbol.clone(),
+            qty: signed_qty.to_string(),
+            avg_price: avg_price.to_string(),
+            updated_at_ms,
+        }),
+        snapshot: storage::NewPortfolioSnapshot {
+            id: format!("{run_id}-binance-snapshot-{updated_at_ms}"),
+            run_id: run_id.to_string(),
+            account_id: account_id.to_string(),
+            ts_ms: updated_at_ms,
+            cash: cash.to_string(),
+            market_value: market_value.to_string(),
+            equity: (cash + market_value).to_string(),
+            realized_pnl: Decimal::ZERO.to_string(),
+            unrealized_pnl: Decimal::ZERO.to_string(),
+        },
+    })
+}
+
 async fn insert_event(
     db: &storage::Db,
     source: &str,
@@ -661,7 +751,8 @@ async fn insert_event(
 
 #[cfg(test)]
 mod tests {
-    use super::binance_cancel_outcome;
+    use super::{binance_accounting_records_from_fills, binance_cancel_outcome};
+    use rust_decimal_macros::dec;
 
     #[test]
     fn binance_cancel_error_preserves_refreshed_order_status() {
@@ -675,6 +766,80 @@ mod tests {
             error.as_deref(),
             Some("broker rejected order: Unknown order sent")
         );
+    }
+
+    #[test]
+    fn binance_buy_fills_create_accounting_records() {
+        let records = binance_accounting_records_from_fills(
+            "run-1",
+            "binance-testnet",
+            "USDT",
+            dec!(9936.17961),
+            &[storage::NewFill {
+                id: "fill-1".to_string(),
+                order_id: "order-1".to_string(),
+                run_id: "run-1".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                side: "BUY".to_string(),
+                price: "63820.39".to_string(),
+                qty: "0.001".to_string(),
+                fee: "0".to_string(),
+                ts_ms: 10,
+            }],
+            11,
+        )
+        .unwrap();
+
+        assert_eq!(records.balance.total, "9936.17961");
+        let position = records.position.unwrap();
+        assert_eq!(position.symbol, "BTCUSDT");
+        assert_eq!(position.qty, "0.001");
+        assert_eq!(position.avg_price, "63820.39");
+        assert_eq!(records.snapshot.market_value, "63.82039");
+        assert_eq!(records.snapshot.equity, "10000.00000");
+    }
+
+    #[test]
+    fn binance_accounting_records_accumulate_existing_fills() {
+        let fills = vec![
+            storage::NewFill {
+                id: "fill-1".to_string(),
+                order_id: "order-1".to_string(),
+                run_id: "run-1".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                side: "BUY".to_string(),
+                price: "63820.39".to_string(),
+                qty: "0.001".to_string(),
+                fee: "0".to_string(),
+                ts_ms: 10,
+            },
+            storage::NewFill {
+                id: "fill-2".to_string(),
+                order_id: "order-2".to_string(),
+                run_id: "run-1".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                side: "BUY".to_string(),
+                price: "63960".to_string(),
+                qty: "0.001".to_string(),
+                fee: "0".to_string(),
+                ts_ms: 11,
+            },
+        ];
+
+        let records = binance_accounting_records_from_fills(
+            "run-1",
+            "binance-testnet",
+            "USDT",
+            dec!(9808.38961),
+            &fills,
+            12,
+        )
+        .unwrap();
+
+        let position = records.position.unwrap();
+        assert_eq!(position.qty, "0.002");
+        assert_eq!(position.avg_price, "63890.1950");
+        assert_eq!(records.snapshot.market_value, "127.7803900");
     }
 }
 
