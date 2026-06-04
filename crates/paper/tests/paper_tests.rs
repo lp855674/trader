@@ -1,7 +1,9 @@
+use async_trait::async_trait;
 use data::Bar;
-use paper::{PaperRuntime, PaperSettings};
+use paper::{ExecutedPaperOrder, PaperOrderExecutor, PaperRuntime, PaperSettings};
 use rust_decimal_macros::dec;
 use storage::Db;
+use trader_core::OrderRequest;
 
 #[tokio::test]
 async fn paper_runtime_counts_orders() {
@@ -100,4 +102,52 @@ async fn paper_runtime_rejects_drawdown_above_limit() {
     let result = PaperRuntime::new(db, settings).run_bars(bars).await;
 
     assert!(result.unwrap_err().to_string().contains("max drawdown"));
+}
+
+#[tokio::test]
+async fn paper_runtime_can_use_injected_order_executor() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new_with_executor(
+        db.clone(),
+        PaperSettings::sample(),
+        Box::new(FixedExecutor),
+    )
+    .run_bars(bars)
+    .await
+    .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders[0].broker_order_id.as_deref(), Some("external-1"));
+    assert_eq!(orders[0].status, "FILLED");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills[0].price, "19.5");
+    assert_eq!(fills[0].fee, "0.01");
+}
+
+struct FixedExecutor;
+
+#[async_trait]
+impl PaperOrderExecutor for FixedExecutor {
+    async fn execute_order(
+        &self,
+        order: OrderRequest,
+        _mark_price: rust_decimal::Decimal,
+        _order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        Ok(ExecutedPaperOrder {
+            broker_order_id: "external-1".to_string(),
+            status: "FILLED".to_string(),
+            price: dec!(19.5),
+            qty: order.qty,
+            fee: dec!(0.01),
+        })
+    }
 }

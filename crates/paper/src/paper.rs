@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use accounting::AccountBook;
+use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::Bar;
@@ -17,11 +18,12 @@ use storage::{
 };
 use strategies::{Strategy, StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 use tokio::sync::mpsc;
-use trader_core::OrderSide;
+use trader_core::{OrderRequest, OrderSide};
 
 pub struct PaperRuntime {
     db: Db,
     settings: PaperSettings,
+    executor: Box<dyn PaperOrderExecutor>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +96,29 @@ impl PaperSettings {
 
 impl PaperRuntime {
     pub fn new(db: Db, settings: PaperSettings) -> Self {
-        Self { db, settings }
+        let executor = Box::new(SimulatedPaperOrderExecutor {
+            settings: SimulatedBrokerSettings {
+                slippage_bps: settings.slippage_bps,
+                fee_bps: settings.fee_bps,
+            },
+        });
+        Self {
+            db,
+            settings,
+            executor,
+        }
+    }
+
+    pub fn new_with_executor(
+        db: Db,
+        settings: PaperSettings,
+        executor: Box<dyn PaperOrderExecutor>,
+    ) -> Self {
+        Self {
+            db,
+            settings,
+            executor,
+        }
     }
 
     pub async fn run_bars(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
@@ -142,10 +166,51 @@ impl PaperRuntime {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutedPaperOrder {
+    pub broker_order_id: String,
+    pub status: String,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+}
+
+#[async_trait]
+pub trait PaperOrderExecutor: Send + Sync {
+    async fn execute_order(
+        &self,
+        order: OrderRequest,
+        mark_price: Decimal,
+        order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder>;
+}
+
+struct SimulatedPaperOrderExecutor {
+    settings: SimulatedBrokerSettings,
+}
+
+#[async_trait]
+impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
+    async fn execute_order(
+        &self,
+        order: OrderRequest,
+        mark_price: Decimal,
+        order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        let fill = simulate_market_fill(order, mark_price, self.settings.clone())?;
+        Ok(ExecutedPaperOrder {
+            broker_order_id: format!("simulated-{order_number}"),
+            status: "FILLED".to_string(),
+            price: fill.price,
+            qty: fill.qty,
+            fee: fill.fee,
+        })
+    }
+}
+
 struct PaperRunSession<'a> {
     runtime: &'a PaperRuntime,
     strategy: Box<dyn Strategy + Send>,
-    broker_settings: SimulatedBrokerSettings,
     account_book: AccountBook,
     portfolio_risk: PortfolioRiskPolicy,
     peak_equity: Decimal,
@@ -168,10 +233,6 @@ impl<'a> PaperRunSession<'a> {
             runtime.settings.fast_window,
             runtime.settings.slow_window,
         )?;
-        let broker_settings = SimulatedBrokerSettings {
-            slippage_bps: runtime.settings.slippage_bps,
-            fee_bps: runtime.settings.fee_bps,
-        };
         let account_book = AccountBook::new(
             runtime.settings.account_id.clone(),
             runtime.settings.initial_cash,
@@ -186,7 +247,6 @@ impl<'a> PaperRunSession<'a> {
         Ok(Self {
             runtime,
             strategy,
-            broker_settings,
             account_book,
             portfolio_risk,
             peak_equity: runtime.settings.initial_cash,
@@ -241,10 +301,13 @@ impl<'a> PaperRunSession<'a> {
             let mut order_state = OrderStateMachine::with_order_qty(order.qty);
             order_state.submit()?;
             order_state.accept()?;
-            let fill =
-                simulate_market_fill(order.clone(), bar.close, self.broker_settings.clone())?;
-            order_state.record_fill(fill.qty)?;
             let order_number = self.orders + 1;
+            let fill = self
+                .runtime
+                .executor
+                .execute_order(order.clone(), bar.close, order_number)
+                .await?;
+            order_state.record_fill(fill.qty)?;
             let order_id = format!("{}-order-{}", settings.run_id, order_number);
             let fill_id = format!("{}-fill-{}", settings.run_id, order_number);
 
@@ -254,7 +317,7 @@ impl<'a> PaperRunSession<'a> {
                     id: order_id.clone(),
                     run_id: settings.run_id.clone(),
                     client_order_id: order_id.clone(),
-                    broker_order_id: Some(format!("simulated-{}", order_number)),
+                    broker_order_id: Some(fill.broker_order_id.clone()),
                     account_id: order.account_id.clone(),
                     symbol: order.symbol.clone(),
                     side: format!("{:?}", order.side).to_uppercase(),
@@ -262,7 +325,7 @@ impl<'a> PaperRunSession<'a> {
                     price: order.price.map(|price| price.to_string()),
                     qty: order.qty.to_string(),
                     filled_qty: fill.qty.to_string(),
-                    status: format!("{:?}", order_state.status()).to_uppercase(),
+                    status: fill.status.clone(),
                     created_at_ms: bar.ts_ms,
                     updated_at_ms: bar.ts_ms,
                 })

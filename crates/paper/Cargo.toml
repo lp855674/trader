@@ -11,6 +11,7 @@ path = "src/paper.rs"
 [dependencies]
 accounting.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 backtest.workspace = true
 broker.workspace = true
 data.workspace = true
