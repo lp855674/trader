@@ -218,6 +218,14 @@ trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --sy
 
 策略自动 testnet order 当前复用 `trader paper-run --config ...`，但必须显式把目标配置中的 `[broker] order_submit_enabled = true`。执行前必须确认行情数据价格与 Binance 当前价格保护范围一致；例如 `configs/paper/binance_testnet.toml` 目前仍使用本地样例 CSV 路径，不应直接开闸作为真实 BTCUSDT 行情源。
 
+自动策略送单 smoke：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
+```
+
+该脚本会从 Binance Spot Testnet 读取当前 BTCUSDT ticker，生成临时 BTCUSDT bars，创建临时 SQLite 与临时配置，打开 `order_submit_enabled = true` 后执行 `paper-run` 和 `report`。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
+
 当前 paper 验证命令：
 
 ```powershell

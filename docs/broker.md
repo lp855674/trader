@@ -595,6 +595,14 @@ event_store: binance.testnet_order.started / completed
 
 注意：自动策略送单使用 bar close 作为 limit price。执行前必须确认数据源价格与 Binance 当前价格保护范围一致，否则 Binance 会因价格过滤拒单。当前 `configs/paper/binance_testnet.toml` 仍指向本地样例 CSV，不应直接开闸作为 BTCUSDT 实际行情源。
 
+自动策略送单 smoke 可用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
+```
+
+该脚本读取 Binance Spot Testnet 当前 BTCUSDT ticker，生成临时 BTCUSDT bars、临时配置和临时 SQLite，然后打开 `order_submit_enabled = true` 执行 `paper-run`。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
+
 ---
 
 ## 21. Broker Configuration
