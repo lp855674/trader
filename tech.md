@@ -200,6 +200,14 @@ trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 
 当 `[broker] kind = "binance"` 且 `mode = "paper"` 时，`paper-preflight` 会要求 Spot Testnet base_url 和 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_SECRET_KEY` 存在；通过后输出 `real_broker_connection=true`。该检查不访问网络，网络连接仍由 `binance-paper-readonly` 验证。
 
+只读 smoke：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1
+```
+
+该脚本会使用临时 SQLite 且不会下单；如当前环境不能访问外网，可追加 `-SkipNetwork` 只跑配置、凭证和 SQLite migration 检查。
+
 手动 tiny order/cancel：
 
 ```powershell

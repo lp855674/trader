@@ -555,6 +555,14 @@ trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 
 `paper-preflight` 会在不访问网络的情况下校验 Binance paper config、Spot Testnet base_url 和凭证环境变量是否存在，并输出 `real_broker_connection=true`。`binance-paper-readonly` 用于实际验证 Spot Testnet 连接与账户读取，不会发送订单。
 
+只读 smoke：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1
+```
+
+该脚本会复制临时 config 并使用临时 SQLite，执行 `check-config`、`paper-preflight`、`migrate` 和 `binance-paper-readonly`，不会发送订单。无网络环境可追加 `-SkipNetwork` 只验证配置、凭证环境变量和 SQLite migration。
+
 手动 tiny order/cancel 入口：
 
 ```powershell
