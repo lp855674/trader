@@ -203,6 +203,8 @@ trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --symbol BTCUSDT --side buy --qty 0.001 --price 10000 --confirm-testnet-order
 ```
 
+该命令会把 testnet order 写入 SQLite 的 `strategy_runs`、`orders` 和 `event_store`，便于通过现有查询链路审计。当前还不会写入真实成交 `fills`，也不会更新 accounting/positions。
+
 当前 paper 验证命令：
 
 ```powershell

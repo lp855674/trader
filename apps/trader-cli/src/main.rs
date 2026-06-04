@@ -237,6 +237,8 @@ async fn main() -> Result<()> {
             if app_config.broker.mode != config::BrokerMode::Paper {
                 bail!("binance paper tiny order requires broker.mode = paper");
             }
+            let (_, db) = load_db(&config).await?;
+            db.migrate().await?;
             let adapter =
                 BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
             let client_order_id = format!(
@@ -254,13 +256,88 @@ async fn main() -> Result<()> {
                 price: Decimal::from_str(&price)?,
                 client_order_id,
             };
+            let started_at_ms = chrono::Utc::now().timestamp_millis();
+            db.insert_strategy_run(storage::NewStrategyRun {
+                id: app_config.runtime.run_id.clone(),
+                name: "binance_paper_tiny_order".to_string(),
+                mode: "paper".to_string(),
+                status: "running".to_string(),
+                started_at_ms,
+                ended_at_ms: None,
+                error: None,
+                config_json: serde_json::json!({
+                    "broker": "binance",
+                    "testnet": true,
+                    "symbol": symbol,
+                    "side": side,
+                    "qty": qty,
+                    "price": price
+                })
+                .to_string(),
+            })
+            .await?;
+            insert_event(
+                &db,
+                &app_config.runtime.run_id,
+                "binance.testnet_order.started",
+                &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+            )
+            .await?;
             let placed = adapter.place_limit_order(&order).await?;
+            let order_id = format!("{}-binance-{}", app_config.runtime.run_id, placed.order_id);
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            db.insert_order(storage::NewOrder {
+                id: order_id,
+                run_id: app_config.runtime.run_id.clone(),
+                client_order_id: order.client_order_id.clone(),
+                broker_order_id: Some(placed.order_id.to_string()),
+                account_id: app_config.paper.account_id.clone(),
+                symbol: symbol.clone(),
+                side: side.to_ascii_uppercase(),
+                order_type: "LIMIT".to_string(),
+                price: Some(price.clone()),
+                qty: qty.clone(),
+                filled_qty: "0".to_string(),
+                status: placed.status.clone(),
+                created_at_ms: now_ms,
+                updated_at_ms: now_ms,
+            })
+            .await?;
             let queried = adapter
                 .query_binance_order(&symbol, placed.order_id)
                 .await?;
             let cancelled = adapter
                 .cancel_binance_order(&symbol, placed.order_id)
                 .await?;
+            let ended_at_ms = chrono::Utc::now().timestamp_millis();
+            db.update_order_status_by_broker_id(
+                &app_config.runtime.run_id,
+                &placed.order_id.to_string(),
+                &cancelled.status,
+                ended_at_ms,
+            )
+            .await?;
+            db.update_strategy_run_status(
+                &app_config.runtime.run_id,
+                "completed",
+                Some(ended_at_ms),
+                None,
+            )
+            .await?;
+            insert_event(
+                &db,
+                &app_config.runtime.run_id,
+                "binance.testnet_order.completed",
+                &serde_json::json!({
+                    "run_id": &app_config.runtime.run_id,
+                    "order_id": placed.order_id,
+                    "placed_status": placed.status,
+                    "queried_status": queried.status,
+                    "cancelled_status": cancelled.status
+                })
+                .to_string(),
+            )
+            .await?;
             println!(
                 "binance paper tiny order ok: symbol={} order_id={} placed_status={} queried_status={} cancelled_status={} client_order_id={}",
                 symbol,

@@ -567,6 +567,16 @@ trader binance-paper-tiny-order `
 
 该命令会在 Binance Spot Testnet 发送一笔 limit order，随后 query 并 cancel。没有 `--confirm-testnet-order` 时会拒绝执行。
 
+执行成功后会写入 SQLite：
+
+```text
+strategy_runs: run status completed
+orders: broker_order_id 与最终 cancel status
+event_store: binance.testnet_order.started / completed
+```
+
+当前仍未把 testnet 成交回报同步为 `fills`，也未把策略自动订单接入 Binance。
+
 ---
 
 ## 21. Broker Configuration
