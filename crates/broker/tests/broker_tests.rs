@@ -1,5 +1,5 @@
 use broker::{
-    Broker, BrokerKind, FakeBrokerAdapter, MockBroker, SimulatedBrokerSettings,
+    Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter, MockBroker, SimulatedBrokerSettings,
     simulate_market_fill,
 };
 use rust_decimal_macros::dec;
@@ -67,6 +67,35 @@ async fn fake_v1_connector_adapters_report_status_and_accept_orders() {
         assert!(ack.accepted);
         assert!(ack.broker_order_id.starts_with("fake-"));
     }
+}
+
+#[tokio::test]
+async fn fake_broker_tracks_query_and_cancel_order() {
+    let broker = FakeBrokerAdapter::new(BrokerKind::Futu);
+    let ack = broker.place_order(order()).await.unwrap();
+
+    let placed = broker.query_order(&ack.broker_order_id).await.unwrap();
+    assert_eq!(placed.broker_order_id, ack.broker_order_id);
+    assert_eq!(placed.status, BrokerOrderStatus::Accepted);
+    assert_eq!(placed.symbol, "US:NASDAQ:AAPL:EQUITY");
+
+    let cancelled = broker.cancel_order(&ack.broker_order_id).await.unwrap();
+    assert_eq!(cancelled.status, BrokerOrderStatus::Cancelled);
+
+    let queried_again = broker.query_order(&ack.broker_order_id).await.unwrap();
+    assert_eq!(queried_again.status, BrokerOrderStatus::Cancelled);
+}
+
+#[tokio::test]
+async fn fake_broker_returns_deterministic_account_snapshot() {
+    let broker = FakeBrokerAdapter::new(BrokerKind::Binance);
+
+    let account = broker.account_snapshot("paper").await.unwrap();
+
+    assert_eq!(account.account_id, "paper");
+    assert_eq!(account.cash, dec!(100000));
+    assert_eq!(account.equity, dec!(100000));
+    assert_eq!(account.margin_used, dec!(0));
 }
 
 fn order() -> OrderRequest {

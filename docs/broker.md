@@ -521,6 +521,18 @@ PAPER
 延迟模拟
 ```
 
+当前 V1 fake broker adapter 已实现本地 deterministic paper surface：
+
+```text
+place_order
+query_order
+cancel_order
+account_snapshot
+status
+```
+
+该 surface 只保存在进程内存，用于 paper 测试和 API smoke；不连接真实券商网络，也不作为 SQLite 交易状态真源。
+
 ---
 
 ## 21. Broker Configuration

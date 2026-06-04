@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
 };
 use backtest::{BacktestRuntime, BacktestSettings};
-use broker::{Broker, BrokerKind, BrokerStatus, FakeBrokerAdapter};
+use broker::{Broker, BrokerAccountSnapshot, BrokerKind, BrokerStatus, FakeBrokerAdapter};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{PaperRuntime, PaperSettings};
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
@@ -60,6 +60,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/metrics", get(metrics_summary))
         .route("/api/v1/brokers/status", get(broker_status))
+        .route("/api/v1/brokers/account/{account_id}", get(broker_account))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/events", get(list_events))
@@ -94,6 +95,18 @@ async fn broker_status() -> Result<Json<Vec<BrokerStatus>>, ApiError> {
         );
     }
     Ok(Json(statuses))
+}
+
+async fn broker_account(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+) -> Result<Json<BrokerAccountSnapshot>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let snapshot = FakeBrokerAdapter::new(broker_kind(app_config.broker.kind))
+        .account_snapshot(&account_id)
+        .await
+        .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+    Ok(Json(snapshot))
 }
 
 async fn run_backtest(

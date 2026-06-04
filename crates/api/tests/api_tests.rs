@@ -47,6 +47,32 @@ async fn broker_status_returns_v1_fake_connectors() {
 }
 
 #[tokio::test]
+async fn broker_account_returns_configured_fake_snapshot() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/brokers/account/paper")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"account_id\":\"paper\""));
+    assert!(body.contains("\"cash\":\"100000\""));
+    assert!(body.contains("\"margin_used\":\"0\""));
+}
+
+#[tokio::test]
 async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

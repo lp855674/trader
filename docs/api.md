@@ -23,6 +23,7 @@ POST /api/v1/live-runs
 GET  /api/v1/live-runs/{run_id}/status
 POST /api/v1/live-runs/{run_id}/stop
 GET  /api/v1/brokers/status
+GET  /api/v1/brokers/account/{account_id}
 GET  /api/v1/orders
 GET  /api/v1/fills
 GET  /api/v1/positions
