@@ -1,9 +1,15 @@
 use async_trait::async_trait;
+use broker::{
+    BinanceLimitOrderRequest, BinanceOrderAck, BinanceOrderSide, BinanceTrade, BrokerError,
+};
 use data::Bar;
-use paper::{ExecutedPaperOrder, PaperOrderExecutor, PaperRuntime, PaperSettings};
+use paper::{
+    BinancePaperOrderClient, BinancePaperOrderExecutor, ExecutedPaperOrder, PaperOrderExecutor,
+    PaperRuntime, PaperSettings, binance_spot_symbol,
+};
 use rust_decimal_macros::dec;
 use storage::Db;
-use trader_core::OrderRequest;
+use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[tokio::test]
 async fn paper_runtime_counts_orders() {
@@ -132,6 +138,65 @@ async fn paper_runtime_can_use_injected_order_executor() {
     assert_eq!(fills[0].fee, "0.01");
 }
 
+#[test]
+fn binance_spot_symbol_maps_strategy_symbol_to_exchange_symbol() {
+    assert_eq!(
+        binance_spot_symbol("CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT").unwrap(),
+        "BTCUSDT"
+    );
+    assert_eq!(binance_spot_symbol("BTCUSDT").unwrap(), "BTCUSDT");
+}
+
+#[tokio::test]
+async fn binance_paper_executor_uses_actual_testnet_trades_as_fill() {
+    let executor = BinancePaperOrderExecutor::new(FakeBinanceClient);
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(0.002),
+                price: None,
+                account_id: "binance-testnet".to_string(),
+            },
+            dec!(100000),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.broker_order_id, "42");
+    assert_eq!(fill.status, "FILLED");
+    assert_eq!(fill.qty, dec!(0.002));
+    assert_eq!(fill.price, dec!(100010));
+    assert_eq!(fill.fee, dec!(0.000002));
+}
+
+#[tokio::test]
+async fn binance_paper_executor_rejects_unfilled_testnet_order() {
+    let executor = BinancePaperOrderExecutor::new(UnfilledBinanceClient);
+
+    let error = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "BTCUSDT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(0.001),
+                price: None,
+                account_id: "binance-testnet".to_string(),
+            },
+            dec!(100000),
+            1,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("no fills"));
+}
+
 struct FixedExecutor;
 
 #[async_trait]
@@ -149,5 +214,111 @@ impl PaperOrderExecutor for FixedExecutor {
             qty: order.qty,
             fee: dec!(0.01),
         })
+    }
+}
+
+struct FakeBinanceClient;
+
+#[async_trait]
+impl BinancePaperOrderClient for FakeBinanceClient {
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        assert_eq!(order.symbol, "BTCUSDT");
+        assert_eq!(order.side, BinanceOrderSide::Buy);
+        assert_eq!(order.quantity, dec!(0.002));
+        assert_eq!(order.price, dec!(100000));
+        assert!(order.client_order_id.starts_with("trader-paper-1-"));
+        Ok(BinanceOrderAck {
+            order_id: 42,
+            client_order_id: order.client_order_id.clone(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        assert_eq!(symbol, "BTCUSDT");
+        assert_eq!(order_id, 42);
+        Ok(BinanceOrderAck {
+            order_id,
+            client_order_id: "trader-paper-1-test".to_string(),
+            status: "FILLED".to_string(),
+            executed_qty: dec!(0.002),
+        })
+    }
+
+    async fn my_trades(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        assert_eq!(symbol, "BTCUSDT");
+        assert_eq!(order_id, 42);
+        Ok(vec![
+            BinanceTrade {
+                trade_id: 1,
+                order_id,
+                symbol: symbol.to_string(),
+                price: dec!(100000),
+                qty: dec!(0.001),
+                fee: dec!(0.000001),
+                fee_asset: "BTC".to_string(),
+                ts_ms: 1,
+            },
+            BinanceTrade {
+                trade_id: 2,
+                order_id,
+                symbol: symbol.to_string(),
+                price: dec!(100020),
+                qty: dec!(0.001),
+                fee: dec!(0.000001),
+                fee_asset: "BTC".to_string(),
+                ts_ms: 2,
+            },
+        ])
+    }
+}
+
+struct UnfilledBinanceClient;
+
+#[async_trait]
+impl BinancePaperOrderClient for UnfilledBinanceClient {
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id: 99,
+            client_order_id: order.client_order_id.clone(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(
+        &self,
+        _symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id,
+            client_order_id: "trader-paper-1-test".to_string(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn my_trades(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        Ok(Vec::new())
     }
 }

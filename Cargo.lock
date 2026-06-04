@@ -2233,6 +2233,7 @@ dependencies = [
  "strategies",
  "tokio",
  "trader-core",
+ "uuid",
 ]
 
 [[package]]

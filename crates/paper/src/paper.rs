@@ -3,7 +3,10 @@
 use accounting::AccountBook;
 use async_trait::async_trait;
 use backtest::BacktestSummary;
-use broker::{SimulatedBrokerSettings, simulate_market_fill};
+use broker::{
+    BinanceLimitOrderRequest, BinanceOrderAck, BinanceOrderSide, BinanceSpotTestnetAdapter,
+    BinanceTrade, BrokerError, SimulatedBrokerSettings, simulate_market_fill,
+};
 use data::Bar;
 use execution::order_for_target_delta;
 use market_rules::MarketRuleSet;
@@ -18,7 +21,7 @@ use storage::{
 };
 use strategies::{Strategy, StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 use tokio::sync::mpsc;
-use trader_core::{OrderRequest, OrderSide};
+use trader_core::{OrderRequest, OrderSide, OrderType};
 
 pub struct PaperRuntime {
     db: Db,
@@ -206,6 +209,147 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
             fee: fill.fee,
         })
     }
+}
+
+#[async_trait]
+pub trait BinancePaperOrderClient: Send + Sync {
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError>;
+
+    async fn query_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError>;
+
+    async fn my_trades(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError>;
+}
+
+#[async_trait]
+impl BinancePaperOrderClient for BinanceSpotTestnetAdapter {
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        self.place_limit_order(order).await
+    }
+
+    async fn query_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        self.query_binance_order(symbol, order_id).await
+    }
+
+    async fn my_trades(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        self.my_trades(symbol, order_id).await
+    }
+}
+
+pub struct BinancePaperOrderExecutor<Client> {
+    client: Client,
+}
+
+impl<Client> BinancePaperOrderExecutor<Client> {
+    pub fn new(client: Client) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl<Client> PaperOrderExecutor for BinancePaperOrderExecutor<Client>
+where
+    Client: BinancePaperOrderClient,
+{
+    async fn execute_order(
+        &self,
+        order: OrderRequest,
+        mark_price: Decimal,
+        order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        if order.order_type != OrderType::Market {
+            anyhow::bail!("Binance paper executor only accepts market intents");
+        }
+        if mark_price <= Decimal::ZERO {
+            anyhow::bail!("Binance paper executor requires positive mark price");
+        }
+        let symbol = binance_spot_symbol(&order.symbol)?;
+        let request = BinanceLimitOrderRequest {
+            symbol: symbol.clone(),
+            side: binance_order_side(order.side),
+            quantity: order.qty,
+            price: mark_price,
+            client_order_id: binance_client_order_id(order_number),
+        };
+        let placed = self.client.place_limit_order(&request).await?;
+        let queried = self.client.query_order(&symbol, placed.order_id).await?;
+        let trades = self.client.my_trades(&symbol, placed.order_id).await?;
+        let (qty, price, fee) = aggregate_binance_trades(&trades)?;
+
+        Ok(ExecutedPaperOrder {
+            broker_order_id: placed.order_id.to_string(),
+            status: queried.status,
+            price,
+            qty,
+            fee,
+        })
+    }
+}
+
+pub fn binance_spot_symbol(symbol: &str) -> anyhow::Result<String> {
+    if !symbol.contains(':') {
+        return Ok(symbol.to_string());
+    }
+    let parts = symbol.split(':').collect::<Vec<_>>();
+    if parts.len() == 4 && parts[0] == "CRYPTO" && parts[1] == "BINANCE" {
+        return Ok(parts[2].to_string());
+    }
+    anyhow::bail!("unsupported Binance paper symbol {symbol}");
+}
+
+fn binance_order_side(side: OrderSide) -> BinanceOrderSide {
+    match side {
+        OrderSide::Buy => BinanceOrderSide::Buy,
+        OrderSide::Sell => BinanceOrderSide::Sell,
+    }
+}
+
+fn binance_client_order_id(order_number: usize) -> String {
+    let suffix = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(12)
+        .collect::<String>();
+    format!("trader-paper-{order_number}-{suffix}")
+}
+
+fn aggregate_binance_trades(
+    trades: &[BinanceTrade],
+) -> anyhow::Result<(Decimal, Decimal, Decimal)> {
+    let mut qty = Decimal::ZERO;
+    let mut notional = Decimal::ZERO;
+    let mut fee = Decimal::ZERO;
+    for trade in trades {
+        qty += trade.qty;
+        notional += trade.qty * trade.price;
+        fee += trade.fee;
+    }
+    if qty <= Decimal::ZERO {
+        anyhow::bail!("Binance testnet order has no fills");
+    }
+    Ok((qty, notional / qty, fee))
 }
 
 struct PaperRunSession<'a> {
