@@ -293,7 +293,7 @@ async fn start_live_run(
                 db,
                 LiveRuntimeSettings {
                     run_id: task_run_id,
-                    broker_kind: BrokerKind::Futu,
+                    broker_kind: broker_kind(app_config.broker.kind),
                 },
             );
             let _ = runtime.run(cancel).await;
@@ -566,11 +566,11 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
         account_id: "backtest".to_string(),
         order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
         max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
-        max_exposure: Decimal::from(1_000_000),
-        max_drawdown: Decimal::ONE,
-        max_leverage: Decimal::from(10),
-        max_margin_used: Decimal::ZERO,
-        trading_halted: false,
+        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
+        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
+        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
+        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
+        trading_halted: app_config.risk.trading_halted,
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
@@ -591,13 +591,13 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
         max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
         max_order_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
-        max_order_notional: Decimal::from(1_000_000),
-        min_cash_after_order: Decimal::ZERO,
-        max_exposure: Decimal::from(1_000_000),
-        max_drawdown: Decimal::ONE,
-        max_leverage: Decimal::from(10),
-        max_margin_used: Decimal::ZERO,
-        trading_halted: false,
+        max_order_notional: Decimal::from_str(&app_config.risk.max_order_notional)?,
+        min_cash_after_order: Decimal::from_str(&app_config.risk.min_cash_after_order)?,
+        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
+        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
+        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
+        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
+        trading_halted: app_config.risk.trading_halted,
         initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
@@ -606,6 +606,16 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
     })
+}
+
+fn broker_kind(kind: config::BrokerKind) -> BrokerKind {
+    match kind {
+        config::BrokerKind::Simulated => BrokerKind::Simulated,
+        config::BrokerKind::Futu => BrokerKind::Futu,
+        config::BrokerKind::Binance => BrokerKind::Binance,
+        config::BrokerKind::Okx => BrokerKind::Okx,
+        config::BrokerKind::InteractiveBrokers => BrokerKind::InteractiveBrokers,
+    }
 }
 
 struct ApiError(anyhow::Error);

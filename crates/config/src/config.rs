@@ -25,6 +25,23 @@ pub enum RuntimeMode {
     Live,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerKind {
+    Simulated,
+    Futu,
+    Binance,
+    Okx,
+    InteractiveBrokers,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerMode {
+    Paper,
+    Live,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub runtime: RuntimeConfig,
@@ -32,7 +49,10 @@ pub struct AppConfig {
     pub data: DataConfig,
     pub strategy: StrategyConfig,
     pub portfolio: PortfolioConfig,
+    pub risk: RiskConfig,
+    pub broker: BrokerConfig,
     pub paper: PaperConfig,
+    pub live: LiveConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,11 +89,34 @@ pub struct PortfolioConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RiskConfig {
+    pub max_order_notional: String,
+    pub min_cash_after_order: String,
+    pub max_exposure: String,
+    pub max_drawdown: String,
+    pub max_leverage: String,
+    pub max_margin_used: String,
+    pub trading_halted: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrokerConfig {
+    pub kind: BrokerKind,
+    pub mode: BrokerMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct PaperConfig {
     pub account_id: String,
     pub slippage_bps: String,
     pub fee_bps: String,
     pub bar_delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiveConfig {
+    pub enabled: bool,
+    pub heartbeat_ms: Option<u64>,
 }
 
 impl AppConfig {

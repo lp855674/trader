@@ -21,8 +21,24 @@ base_currency = "USD"
 order_qty = "1"
 max_abs_qty = "100"
 
+[risk]
+max_order_notional = "1000000"
+min_cash_after_order = "0"
+max_exposure = "1000000"
+max_drawdown = "1"
+max_leverage = "10"
+max_margin_used = "0"
+trading_halted = false
+
+[broker]
+kind = "simulated"
+mode = "paper"
+
 [paper]
 account_id = "paper"
 slippage_bps = "25"
 fee_bps = "10"
 bar_delay_ms = 50
+
+[live]
+enabled = false

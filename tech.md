@@ -168,6 +168,18 @@ V1 当前仍明确不包含：
 powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
 ```
 
+## Production Paper Prep
+
+当前分支开始进入生产前 paper 验证准备阶段。该阶段目标是让 paper run 使用真实配置、真实运行控制、真实持久化和可审计报告，但仍不连接真实券商网络、不发送真实资金订单。
+
+配置真源已扩展为：
+
+- `[risk]`：`max_order_notional`、`min_cash_after_order`、`max_exposure`、`max_drawdown`、`max_leverage`、`max_margin_used`、`trading_halted`。
+- `[broker]`：`kind` 与 `mode`。当前支持配置枚举 `simulated`、`futu`、`binance`、`okx`、`interactive_brokers`；`mode` 支持 `paper`、`live`。
+- `[live]`：`enabled` 与可选 `heartbeat_ms`。
+
+CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前仍使用本地 fake broker adapter。
+
 ## V1 交付范围
 
 V1 优先完成：
@@ -304,3 +316,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1
 - `docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`
 - `docs/superpowers/plans/2026-06-02-trader-local-mvp-completion-plan.md`
+- `docs/superpowers/plans/2026-06-04-trader-production-paper-prep-plan.md`
