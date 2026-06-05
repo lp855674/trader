@@ -13,6 +13,10 @@ if ($Limit -lt 1 -or $Limit -gt 1000) {
     throw "Limit must be between 1 and 1000"
 }
 
+if ($ConfirmTestnetOrder -and $SkipRefresh) {
+    throw "ConfirmTestnetOrder requires a fresh Binance kline refresh; remove -SkipRefresh"
+}
+
 $repoRoot = Get-Location
 $traderExe = Join-Path $repoRoot "target/debug/trader.exe"
 $id = [guid]::NewGuid().ToString("N")
@@ -24,6 +28,7 @@ $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $textReportPath = Join-Path $runDir "report.txt"
 $csvReportPath = Join-Path $runDir "report.csv"
 $htmlReportPath = Join-Path $runDir "report.html"
+$tickerPrice = $null
 
 function Invoke-CheckedCargo {
     param([string[]]$CargoArgs)
@@ -70,6 +75,8 @@ try {
         -replace 'url = "sqlite://data/binance-btcusdt-1m-paper.sqlite"', "url = `"$databaseUrl`""
 
     if ($ConfirmTestnetOrder) {
+        $ticker = Invoke-RestMethod -Uri "https://testnet.binance.vision/api/v3/ticker/price?symbol=$Symbol"
+        $tickerPrice = [decimal]$ticker.price
         $configText = $configText -replace 'order_submit_enabled = false', 'order_submit_enabled = true'
     }
 
@@ -81,6 +88,9 @@ try {
     Write-Host "Binance paper symbol: $Symbol"
     Write-Host "Binance paper refresh: $(-not $SkipRefresh)"
     Write-Host "Submit testnet orders: $ConfirmTestnetOrder"
+    if ($null -ne $tickerPrice) {
+        Write-Host "Binance paper ticker price: $tickerPrice"
+    }
 
     Invoke-CheckedTrader @("check-config", "--config", $runConfigPath)
     Invoke-CheckedTrader @("paper-preflight", "--config", $runConfigPath)
@@ -103,6 +113,7 @@ try {
         report_text = $textReportPath
         report_csv = $csvReportPath
         report_html = $htmlReportPath
+        ticker_price = if ($null -ne $tickerPrice) { $tickerPrice.ToString() } else { "not_checked" }
         refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
         order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }
     }
