@@ -737,7 +737,7 @@ impl Db {
             SELECT id, run_id, client_order_id, broker_order_id, account_id, symbol, side,
                    order_type, price, qty, filled_qty, status, created_at_ms, updated_at_ms
             FROM orders
-            WHERE run_id = ? AND status IN ('SUBMITTED', 'PARTIALLY_FILLED')
+            WHERE run_id = ? AND status IN ('SUBMITTED', 'NEW', 'PARTIALLY_FILLED')
             ORDER BY created_at_ms, id
             "#,
         )

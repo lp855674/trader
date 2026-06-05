@@ -191,6 +191,28 @@ async fn runtime_records_round_trip() {
     assert_eq!(cancelled.broker_order_id.as_deref(), Some("broker-2"));
     assert_eq!(cancelled.status, "CANCELLED");
     assert_eq!(cancelled.updated_at_ms, 13);
+
+    db.insert_order(NewOrder {
+        id: "order-3".to_string(),
+        run_id: "run-1".to_string(),
+        client_order_id: "client-3".to_string(),
+        broker_order_id: Some("broker-3".to_string()),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: "3".to_string(),
+        filled_qty: "0".to_string(),
+        status: "NEW".to_string(),
+        created_at_ms: 14,
+        updated_at_ms: 14,
+    })
+    .await
+    .unwrap();
+    let recoverable = db.list_recoverable_orders("run-1").await.unwrap();
+    assert_eq!(recoverable.len(), 1);
+    assert_eq!(recoverable[0].client_order_id, "client-3");
 }
 
 #[tokio::test]

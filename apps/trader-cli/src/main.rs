@@ -440,8 +440,13 @@ async fn main() -> Result<()> {
                 BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
             let recovered = recover_binance_paper_orders(&app_config, &db, &adapter).await?;
             println!(
-                "binance paper recover ok: scanned={} recovered={} missing={} trades={}",
-                recovered.scanned, recovered.recovered, recovered.missing, recovered.trades
+                "binance paper recover ok: scanned={} recovered={} missing={} remaining={} trades={} run_status_updated={}",
+                recovered.scanned,
+                recovered.recovered,
+                recovered.missing,
+                recovered.remaining,
+                recovered.trades,
+                recovered.run_status_updated
             );
         }
         Command::BinancePaperOpenOrders { config, symbol } => {
@@ -826,7 +831,9 @@ struct BinancePaperRecoverSummary {
     scanned: usize,
     recovered: usize,
     missing: usize,
+    remaining: usize,
     trades: usize,
+    run_status_updated: bool,
 }
 
 async fn recover_binance_paper_orders(
@@ -840,7 +847,9 @@ async fn recover_binance_paper_orders(
         scanned: orders.len(),
         recovered: 0,
         missing: 0,
+        remaining: 0,
         trades: 0,
+        run_status_updated: false,
     };
 
     for order in orders {
@@ -904,6 +913,21 @@ async fn recover_binance_paper_orders(
         summary.trades += trades.len();
     }
 
+    summary.remaining = db.list_recoverable_orders(run_id).await?.len();
+    if summary.scanned > 0 && summary.missing == 0 && summary.remaining == 0 {
+        if let Some(run) = db.get_strategy_run(run_id).await? {
+            if run.status != "completed" {
+                db.update_strategy_run_status(
+                    run_id,
+                    "recovered",
+                    Some(chrono::Utc::now().timestamp_millis()),
+                    None,
+                )
+                .await?;
+                summary.run_status_updated = true;
+            }
+        }
+    }
     Ok(summary)
 }
 

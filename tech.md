@@ -234,7 +234,7 @@ pending order 恢复：
 trader binance-paper-recover --config configs/paper/binance_testnet.toml
 ```
 
-该命令扫描当前 run 的 `SUBMITTED` / `PARTIALLY_FILLED` 本地订单，使用本地 `client_order_id` 调 Binance `origClientOrderId` 查询订单，查到后同步 `myTrades`、更新订单执行状态，并刷新本地 account balance、position 和 portfolio snapshot。该命令不会提交新订单。
+该命令扫描当前 run 的 `SUBMITTED` / `NEW` / `PARTIALLY_FILLED` 本地订单，使用本地 `client_order_id` 调 Binance `origClientOrderId` 查询订单，查到后同步 `myTrades`、更新订单执行状态，并刷新本地 account balance、position 和 portfolio snapshot。该命令不会提交新订单；输出中的 `remaining` 表示恢复后仍需继续跟踪的订单数。如果本次扫描过订单、没有 missing、且 `remaining=0`，非 completed 的 run 会标记为 `recovered`。
 
 恢复 smoke：
 
