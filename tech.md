@@ -244,6 +244,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-recover-smoke.p
 
 该脚本使用临时配置与临时 SQLite，只执行配置、migration 和恢复命令验证；它不会打开 `order_submit_enabled`，不会提交新订单。无网络环境可追加 `-SkipNetwork`。
 
+open order 巡检：
+
+```powershell
+trader binance-paper-open-orders --config configs/paper/binance_testnet.toml --symbol BTCUSDT
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-open-orders-smoke.ps1
+```
+
+该命令和 smoke 只查询 Spot Testnet open orders，不会提交或撤销订单。清理 testnet 挂单必须显式使用：
+
+```powershell
+trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.toml --symbol BTCUSDT --confirm-testnet-cancel
+```
+
 当前 paper 验证命令：
 
 ```powershell

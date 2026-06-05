@@ -211,6 +211,15 @@ fn binance_testnet_adapter_builds_signed_limit_order_cancel_and_query_urls() {
     assert!(trades.url.contains("symbol=BTCUSDT"));
     assert!(trades.url.contains("orderId=42"));
     assert!(trades.url.contains("signature="));
+
+    let open_orders = adapter.signed_open_orders_request("BTCUSDT", 1_700_000_000_000);
+    assert!(
+        open_orders
+            .url
+            .starts_with("https://testnet.binance.vision/api/v3/openOrders?")
+    );
+    assert!(open_orders.url.contains("symbol=BTCUSDT"));
+    assert!(open_orders.url.contains("signature="));
 }
 
 #[test]
@@ -228,6 +237,24 @@ fn binance_trade_response_maps_to_domain_trade() {
     assert_eq!(trades[0].qty, dec!(0.001));
     assert_eq!(trades[0].fee, dec!(0.000001));
     assert_eq!(trades[0].ts_ms, 1700000000001);
+}
+
+#[test]
+fn binance_open_orders_response_maps_to_domain_orders() {
+    let orders = BinanceSpotTestnetAdapter::parse_open_orders_json(
+        r#"[{"symbol":"BTCUSDT","orderId":42,"clientOrderId":"trader-paper-1","price":"10000.5","origQty":"0.001","executedQty":"0.0004","status":"PARTIALLY_FILLED","side":"BUY"}]"#,
+    )
+    .unwrap();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_id, 42);
+    assert_eq!(orders[0].client_order_id, "trader-paper-1");
+    assert_eq!(orders[0].symbol, "BTCUSDT");
+    assert_eq!(orders[0].status, "PARTIALLY_FILLED");
+    assert_eq!(orders[0].side, "BUY");
+    assert_eq!(orders[0].price, dec!(10000.5));
+    assert_eq!(orders[0].orig_qty, dec!(0.001));
+    assert_eq!(orders[0].executed_qty, dec!(0.0004));
 }
 
 #[test]

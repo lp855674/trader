@@ -167,6 +167,42 @@ fn binance_paper_recover_requires_testnet_credentials() {
 }
 
 #[test]
+fn binance_paper_open_orders_requires_testnet_credentials() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .env_remove("BINANCE_TESTNET_API_KEY")
+        .env_remove("BINANCE_TESTNET_SECRET_KEY")
+        .args([
+            "binance-paper-open-orders",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+            "--symbol",
+            "BTCUSDT",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("BINANCE_TESTNET_API_KEY"));
+}
+
+#[test]
+fn binance_paper_cancel_open_orders_requires_explicit_confirmation() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "binance-paper-cancel-open-orders",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+            "--symbol",
+            "BTCUSDT",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--confirm-testnet-cancel"));
+}
+
+#[test]
 fn binance_paper_tiny_order_requires_explicit_confirmation() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

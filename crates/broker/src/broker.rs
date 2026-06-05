@@ -222,6 +222,18 @@ pub struct BinanceTrade {
     pub ts_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BinanceOpenOrder {
+    pub order_id: u64,
+    pub client_order_id: String,
+    pub symbol: String,
+    pub status: String,
+    pub side: String,
+    pub price: Decimal,
+    pub orig_qty: Decimal,
+    pub executed_qty: Decimal,
+}
+
 #[derive(Debug, Clone)]
 pub struct BinanceSpotTestnetAdapter {
     settings: BinanceSpotTestnetSettings,
@@ -347,6 +359,18 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/myTrades", &query)
     }
 
+    pub fn signed_open_orders_request(
+        &self,
+        symbol: &str,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/openOrders", &query)
+    }
+
     pub async fn server_time_ms(&self) -> Result<i64, BrokerError> {
         let body = binance_response_body(
             self.client
@@ -456,10 +480,32 @@ impl BinanceSpotTestnetAdapter {
         Self::parse_trades_json(&body)
     }
 
+    pub async fn open_orders(&self, symbol: &str) -> Result<Vec<BinanceOpenOrder>, BrokerError> {
+        let request = self.signed_open_orders_request(symbol, self.server_time_ms().await?);
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        Self::parse_open_orders_json(&body)
+    }
+
     pub fn parse_server_time_json(input: &str) -> Result<i64, BrokerError> {
         let response = serde_json::from_str::<BinanceServerTimeResponse>(input)
             .map_err(|error| BrokerError::Config(error.to_string()))?;
         Ok(response.server_time)
+    }
+
+    pub fn parse_open_orders_json(input: &str) -> Result<Vec<BinanceOpenOrder>, BrokerError> {
+        let response = serde_json::from_str::<Vec<BinanceOpenOrderResponse>>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        response
+            .into_iter()
+            .map(BinanceOpenOrderResponse::try_into_open_order)
+            .collect()
     }
 
     pub fn parse_trades_json(input: &str) -> Result<Vec<BinanceTrade>, BrokerError> {
@@ -524,6 +570,43 @@ impl BinanceOrderResponse {
 #[serde(rename_all = "camelCase")]
 struct BinanceServerTimeResponse {
     server_time: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinanceOpenOrderResponse {
+    order_id: u64,
+    client_order_id: String,
+    symbol: String,
+    status: String,
+    side: String,
+    price: String,
+    orig_qty: String,
+    executed_qty: String,
+}
+
+impl BinanceOpenOrderResponse {
+    fn try_into_open_order(self) -> Result<BinanceOpenOrder, BrokerError> {
+        Ok(BinanceOpenOrder {
+            order_id: self.order_id,
+            client_order_id: self.client_order_id,
+            symbol: self.symbol,
+            status: self.status,
+            side: self.side,
+            price: self
+                .price
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            orig_qty: self
+                .orig_qty
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            executed_qty: self
+                .executed_qty
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

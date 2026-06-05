@@ -65,6 +65,20 @@ enum Command {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
     },
+    BinancePaperOpenOrders {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+    },
+    BinancePaperCancelOpenOrders {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long)]
+        confirm_testnet_cancel: bool,
+    },
     Replay {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -428,6 +442,57 @@ async fn main() -> Result<()> {
             println!(
                 "binance paper recover ok: scanned={} recovered={} missing={} trades={}",
                 recovered.scanned, recovered.recovered, recovered.missing, recovered.trades
+            );
+        }
+        Command::BinancePaperOpenOrders { config, symbol } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_binance_paper_config(&app_config, "binance paper open orders")?;
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let orders = adapter.open_orders(&symbol).await?;
+            println!(
+                "binance paper open orders ok: symbol={} open_orders={}",
+                symbol,
+                orders.len()
+            );
+            for order in orders {
+                println!(
+                    "open_order: order_id={} client_order_id={} side={} status={} price={} orig_qty={} executed_qty={}",
+                    order.order_id,
+                    order.client_order_id,
+                    order.side,
+                    order.status,
+                    order.price,
+                    order.orig_qty,
+                    order.executed_qty
+                );
+            }
+        }
+        Command::BinancePaperCancelOpenOrders {
+            config,
+            symbol,
+            confirm_testnet_cancel,
+        } => {
+            if !confirm_testnet_cancel {
+                bail!("refusing to cancel Binance testnet orders without --confirm-testnet-cancel");
+            }
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_binance_paper_config(&app_config, "binance paper cancel open orders")?;
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let orders = adapter.open_orders(&symbol).await?;
+            let mut cancelled = 0usize;
+            for order in &orders {
+                adapter
+                    .cancel_binance_order(&symbol, order.order_id)
+                    .await?;
+                cancelled += 1;
+            }
+            println!(
+                "binance paper cancel open orders ok: symbol={} scanned={} cancelled={}",
+                symbol,
+                orders.len(),
+                cancelled
             );
         }
         Command::Replay { config } => {
