@@ -1,0 +1,44 @@
+[runtime]
+mode = "paper"
+run_id = "ibkr-aapl-1d-paper"
+
+[database]
+url = "sqlite://data/ibkr-aapl-1d-paper.sqlite"
+
+[data]
+source = "parquet"
+path = "datasets/ibkr/aapl_1d.parquet"
+
+[strategy]
+name = "moving_average_cross"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[portfolio]
+initial_cash = "100000"
+base_currency = "USD"
+order_qty = "1"
+max_abs_qty = "100"
+
+[risk]
+max_order_notional = "1000"
+min_cash_after_order = "1000"
+max_exposure = "10000"
+max_drawdown = "0.2"
+max_leverage = "1"
+max_margin_used = "0"
+trading_halted = false
+
+[broker]
+kind = "ibkr"
+mode = "paper"
+order_submit_enabled = false
+
+[paper]
+account_id = "ibkr-paper"
+slippage_bps = "5"
+fee_bps = "2"
+
+[live]
+enabled = false

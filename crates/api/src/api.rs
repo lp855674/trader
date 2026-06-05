@@ -693,7 +693,7 @@ fn broker_kind_slug(kind: config::BrokerKind) -> &'static str {
         config::BrokerKind::Futu => "futu",
         config::BrokerKind::Binance => "binance",
         config::BrokerKind::Okx => "okx",
-        config::BrokerKind::InteractiveBrokers => "interactive_brokers",
+        config::BrokerKind::InteractiveBrokers => "ibkr",
     }
 }
 

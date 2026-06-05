@@ -664,6 +664,16 @@ trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.t
 
 清理命令会先查询远端 open orders，逐个撤销成功后按 `run_id + client_order_id` 同步当前配置 SQLite 中匹配订单的 `broker_order_id`、`status` 与 `updated_at_ms`，输出 `local_synced` 作为本地同步行数。
 
+### IBKR 股票 Paper
+
+股票 paper 方向固定为 IBKR。当前新增 IBKR AAPL Parquet 本地 paper runner，用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；该 runner 默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
+```
+
+固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`。真实 IBKR read-only / paper order adapter 仍是后续阶段。
+
 ---
 
 ## 21. Broker Configuration

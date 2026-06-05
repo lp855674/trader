@@ -4,6 +4,9 @@
 datasets/binance/*.csv
 datasets/binance/*.parquet
 !datasets/binance/.gitkeep
+datasets/ibkr/*.csv
+datasets/ibkr/*.parquet
+!datasets/ibkr/.gitkeep
 *.db
 .env
 .DS_Store

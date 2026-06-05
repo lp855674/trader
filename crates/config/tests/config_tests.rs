@@ -266,3 +266,59 @@ fn parses_binance_paper_connection_config_without_secrets() {
     assert_eq!(config.broker.recv_window_ms, Some(5000));
     assert!(config.broker.order_submit_enabled);
 }
+
+#[test]
+fn parses_ibkr_alias_as_interactive_brokers() {
+    let config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "ibkr-aapl-paper"
+
+        [database]
+        url = "sqlite://data/ibkr-aapl-paper.sqlite"
+
+        [data]
+        source = "parquet"
+        path = "datasets/ibkr/aapl_1d.parquet"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000"
+        min_cash_after_order = "1000"
+        max_exposure = "10000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "ibkr"
+        mode = "paper"
+
+        [paper]
+        account_id = "ibkr-paper"
+        slippage_bps = "5"
+        fee_bps = "2"
+
+        [live]
+        enabled = false
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.broker.kind, config::BrokerKind::InteractiveBrokers);
+    assert_eq!(config.broker.mode, config::BrokerMode::Paper);
+    assert_eq!(config.data.source, "parquet");
+}

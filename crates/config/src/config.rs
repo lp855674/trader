@@ -32,6 +32,7 @@ pub enum BrokerKind {
     Futu,
     Binance,
     Okx,
+    #[serde(alias = "ibkr")]
     InteractiveBrokers,
 }
 

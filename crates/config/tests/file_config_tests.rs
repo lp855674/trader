@@ -28,3 +28,17 @@ fn loads_binance_parquet_paper_config_from_file() {
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert!(!config.broker.order_submit_enabled);
 }
+
+#[test]
+fn loads_ibkr_stock_parquet_paper_config_from_file() {
+    let config =
+        AppConfig::from_toml_file("../../configs/paper/ibkr_aapl_1d_parquet.toml").unwrap();
+
+    assert_eq!(config.runtime.mode, RuntimeMode::Paper);
+    assert_eq!(config.runtime.run_id, "ibkr-aapl-1d-paper");
+    assert_eq!(config.data.source, "parquet");
+    assert_eq!(config.data.path, "datasets/ibkr/aapl_1d.parquet");
+    assert_eq!(config.broker.kind, config::BrokerKind::InteractiveBrokers);
+    assert_eq!(config.broker.mode, config::BrokerMode::Paper);
+    assert!(!config.broker.order_submit_enabled);
+}
