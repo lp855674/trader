@@ -618,7 +618,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -L
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1 -Limit 1000
 ```
 
-`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance-paper-runs/{run_id}/` 生成独立 config 和 SQLite，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有追加 `-ConfirmTestnetOrder` 时才会打开 Binance Spot Testnet 策略送单。
+`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有追加 `-ConfirmTestnetOrder` 时才会打开 Binance Spot Testnet 策略送单。
 
 自动策略送单 smoke 可用：
 

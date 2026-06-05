@@ -21,6 +21,9 @@ $runDir = Join-Path $repoRoot "data/binance-paper-runs/$runId"
 $runConfigPath = Join-Path $runDir "config.toml"
 $databasePath = Join-Path $runDir "run.sqlite"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
+$textReportPath = Join-Path $runDir "report.txt"
+$csvReportPath = Join-Path $runDir "report.csv"
+$htmlReportPath = Join-Path $runDir "report.html"
 
 function Invoke-CheckedCargo {
     param([string[]]$CargoArgs)
@@ -84,6 +87,9 @@ try {
     Invoke-CheckedTrader @("migrate", "--config", $runConfigPath)
     Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "text", "--output", $textReportPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "csv", "--output", $csvReportPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "html", "--output", $htmlReportPath)
     Invoke-CheckedTrader @("binance-paper-recover", "--config", $runConfigPath)
     Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $runConfigPath, "--symbol", $Symbol)
 
@@ -94,6 +100,9 @@ try {
         symbol = $Symbol
         interval = $Interval
         limit = $Limit
+        report_text = $textReportPath
+        report_csv = $csvReportPath
+        report_html = $htmlReportPath
         refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
         order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }
     }
