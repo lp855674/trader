@@ -14,8 +14,8 @@
 
 ## 阶段 1：Binance Paper 可审计增强
 
-1. 为 `binance-paper-run.ps1` 增加 `summary.json`，记录 run id、config、database、Parquet 路径、ticker price、order_submit、report 路径、recover/open orders 结果。
-2. 增加 Binance reconciliation CLI：读取 SQLite orders/fills/positions/account_balances 与 Binance account/open orders 做只读对账。
+1. [x] 为 `binance-paper-run.ps1` 增加 `summary.json`，记录 run id、config、database、Parquet 路径、ticker price、order_submit、report 路径、recover/open orders 结果。
+2. [x] 增加 Binance reconciliation CLI：读取 SQLite orders/fills/positions/account_balances 与 Binance account/open orders 做只读对账。
 3. 对账输出必须区分 `matched`、`local_only`、`remote_open`、`cash_delta`、`position_delta`。
 4. 验证：`cargo test -p trader-cli -p paper -p broker`，以及一次 `binance-paper-run.ps1 -Limit 100 -ConfirmTestnetOrder`。
 
@@ -42,4 +42,4 @@
 
 ## 当前下一步
 
-先完成阶段 2：把股票 paper 固定到 IBKR 本地 Parquet runner，并提交配置、脚本、测试和文档。
+先完成 Binance 剩余任务：补齐自动订单生命周期事件，然后再进入 IBKR read-only / paper order adapter。

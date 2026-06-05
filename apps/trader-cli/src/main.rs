@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
-    BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
-    BinanceSpotTestnetSettings, Broker,
+    BinanceAssetBalance, BinanceLimitOrderRequest, BinanceOpenOrder, BinanceOrderSide,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
@@ -66,6 +66,12 @@ enum Command {
         config: String,
     },
     BinancePaperOpenOrders {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+    },
+    BinancePaperReconcile {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
         #[arg(long)]
@@ -136,6 +142,24 @@ struct ReportData {
     sortino: String,
     max_drawdown: String,
     win_rate: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BinancePaperReconciliation {
+    symbol: String,
+    local_orders: usize,
+    local_fills: usize,
+    matched_orders: usize,
+    local_only_orders: usize,
+    remote_open_orders: usize,
+    remote_open_matched: usize,
+    remote_open_unmatched: usize,
+    local_cash: Decimal,
+    remote_cash: Decimal,
+    cash_delta: Decimal,
+    local_base_qty: Decimal,
+    remote_base_total: Decimal,
+    base_delta: Decimal,
 }
 
 #[tokio::main]
@@ -492,6 +516,30 @@ async fn main() -> Result<()> {
                     order.executed_qty
                 );
             }
+        }
+        Command::BinancePaperReconcile { config, symbol } => {
+            let (app_config, db) = load_db(&config).await?;
+            ensure_binance_paper_config(&app_config, "binance paper reconcile")?;
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let report = reconcile_binance_paper(&app_config, &db, &adapter, &symbol).await?;
+            println!(
+                "binance paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} local_cash={} remote_cash={} cash_delta={} local_base_qty={} remote_base_total={} base_delta={}",
+                report.symbol,
+                report.local_orders,
+                report.local_fills,
+                report.matched_orders,
+                report.local_only_orders,
+                report.remote_open_orders,
+                report.remote_open_matched,
+                report.remote_open_unmatched,
+                report.local_cash,
+                report.remote_cash,
+                report.cash_delta,
+                report.local_base_qty,
+                report.remote_base_total,
+                report.base_delta
+            );
         }
         Command::BinancePaperCancelOpenOrders {
             config,
@@ -1043,6 +1091,98 @@ async fn recover_binance_paper_orders(
     Ok(summary)
 }
 
+async fn reconcile_binance_paper(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+    adapter: &BinanceSpotTestnetAdapter,
+    symbol: &str,
+) -> Result<BinancePaperReconciliation> {
+    let run_id = &app_config.runtime.run_id;
+    let exchange_symbol = paper::binance_spot_symbol(symbol)?;
+    let local_orders = db.list_orders(run_id).await?;
+    let local_fills = db.list_fills(run_id).await?;
+    let local_balances = db.list_account_balances(run_id).await?;
+    let local_positions = db.list_positions(run_id).await?;
+    let remote_open_orders = adapter.open_orders(&exchange_symbol).await?;
+    let remote_balances = adapter.account_balances().await?;
+
+    let matched_orders = local_orders
+        .iter()
+        .filter(|order| binance_local_order_matches_remote_open(order, &remote_open_orders))
+        .count();
+    let local_only_orders = local_orders.len() - matched_orders;
+    let remote_open_matched = remote_open_orders
+        .iter()
+        .filter(|remote| {
+            local_orders.iter().any(|local| {
+                local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
+                    || local.client_order_id == remote.client_order_id
+            })
+        })
+        .count();
+    let remote_open_unmatched = remote_open_orders.len() - remote_open_matched;
+    let local_cash = local_balances
+        .iter()
+        .find(|balance| balance.asset == app_config.portfolio.base_currency)
+        .and_then(|balance| Decimal::from_str(&balance.total).ok())
+        .unwrap_or(Decimal::ZERO);
+    let remote_cash = binance_balance_total(&remote_balances, &app_config.portfolio.base_currency);
+    let strategy_symbol = app_config
+        .strategy
+        .symbols
+        .first()
+        .context("strategy must contain at least one symbol")?;
+    let local_base_qty = local_positions
+        .iter()
+        .find(|position| position.symbol == *strategy_symbol)
+        .and_then(|position| Decimal::from_str(&position.qty).ok())
+        .unwrap_or(Decimal::ZERO);
+    let remote_base_total = binance_balance_total(&remote_balances, &binance_base_asset(symbol)?);
+
+    Ok(BinancePaperReconciliation {
+        symbol: exchange_symbol,
+        local_orders: local_orders.len(),
+        local_fills: local_fills.len(),
+        matched_orders,
+        local_only_orders,
+        remote_open_orders: remote_open_orders.len(),
+        remote_open_matched,
+        remote_open_unmatched,
+        local_cash,
+        remote_cash,
+        cash_delta: remote_cash - local_cash,
+        local_base_qty,
+        remote_base_total,
+        base_delta: remote_base_total - local_base_qty,
+    })
+}
+
+fn binance_local_order_matches_remote_open(
+    local: &storage::NewOrder,
+    remote_open_orders: &[BinanceOpenOrder],
+) -> bool {
+    remote_open_orders.iter().any(|remote| {
+        local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
+            || local.client_order_id == remote.client_order_id
+    })
+}
+
+fn binance_balance_total(remote_balances: &[BinanceAssetBalance], asset: &str) -> Decimal {
+    remote_balances
+        .iter()
+        .find(|balance| balance.asset == asset)
+        .map(BinanceAssetBalance::total)
+        .unwrap_or(Decimal::ZERO)
+}
+
+fn binance_base_asset(symbol: &str) -> Result<String> {
+    let exchange_symbol = paper::binance_spot_symbol(symbol)?;
+    exchange_symbol
+        .strip_suffix("USDT")
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Binance quote asset for {symbol}"))
+}
+
 fn binance_filled_qty(trades: &[broker::BinanceTrade], queried_qty: Decimal) -> Decimal {
     let trade_qty = trades
         .iter()
@@ -1139,9 +1279,12 @@ async fn insert_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        binance_accounting_records_from_fills, binance_cancel_outcome, binance_testnet_settings,
+        binance_accounting_records_from_fills, binance_balance_total, binance_base_asset,
+        binance_cancel_outcome, binance_local_order_matches_remote_open, binance_testnet_settings,
         settings_with_broker_initial_cash,
     };
+    use broker::{BinanceAssetBalance, BinanceOpenOrder};
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
 
     #[test]
@@ -1230,6 +1373,77 @@ mod tests {
         assert_eq!(position.qty, "0.002");
         assert_eq!(position.avg_price, "63890.1950");
         assert_eq!(records.snapshot.market_value, "127.7803900");
+    }
+
+    #[test]
+    fn binance_reconcile_matches_local_order_by_client_or_broker_id() {
+        let remote_orders = vec![
+            BinanceOpenOrder {
+                order_id: 42,
+                client_order_id: "client-42".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                status: "NEW".to_string(),
+                side: "BUY".to_string(),
+                price: dec!(100000),
+                orig_qty: dec!(0.001),
+                executed_qty: dec!(0),
+            },
+            BinanceOpenOrder {
+                order_id: 77,
+                client_order_id: "client-77".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                status: "NEW".to_string(),
+                side: "SELL".to_string(),
+                price: dec!(100100),
+                orig_qty: dec!(0.001),
+                executed_qty: dec!(0),
+            },
+        ];
+        let by_client = storage::NewOrder {
+            id: "order-1".to_string(),
+            run_id: "run-1".to_string(),
+            client_order_id: "client-42".to_string(),
+            broker_order_id: None,
+            account_id: "paper".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            side: "BUY".to_string(),
+            order_type: "MARKET".to_string(),
+            price: None,
+            qty: "0.001".to_string(),
+            filled_qty: "0".to_string(),
+            status: "NEW".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let mut by_broker = by_client.clone();
+        by_broker.client_order_id = "other-client".to_string();
+        by_broker.broker_order_id = Some("77".to_string());
+
+        assert!(binance_local_order_matches_remote_open(
+            &by_client,
+            &remote_orders
+        ));
+        assert!(binance_local_order_matches_remote_open(
+            &by_broker,
+            &remote_orders
+        ));
+    }
+
+    #[test]
+    fn binance_reconcile_sums_remote_balances_and_extracts_base_asset() {
+        let balances = vec![BinanceAssetBalance {
+            asset: "BTC".to_string(),
+            free: dec!(0.001),
+            locked: dec!(0.0002),
+        }];
+
+        assert_eq!(binance_balance_total(&balances, "BTC"), dec!(0.0012));
+        assert_eq!(binance_balance_total(&balances, "USDT"), Decimal::ZERO);
+        assert_eq!(binance_base_asset("BTCUSDT").unwrap(), "BTC");
+        assert_eq!(
+            binance_base_asset("CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT").unwrap(),
+            "BTC"
+        );
     }
 
     #[test]

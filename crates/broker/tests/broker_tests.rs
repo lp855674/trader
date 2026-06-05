@@ -258,6 +258,22 @@ fn binance_open_orders_response_maps_to_domain_orders() {
 }
 
 #[test]
+fn binance_account_response_maps_to_asset_balances() {
+    let balances = BinanceSpotTestnetAdapter::parse_account_balances_json(
+        r#"{"balances":[{"asset":"BTC","free":"0.001","locked":"0.0004"},{"asset":"USDT","free":"100.5","locked":"2"}]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(balances.len(), 2);
+    assert_eq!(balances[0].asset, "BTC");
+    assert_eq!(balances[0].free, dec!(0.001));
+    assert_eq!(balances[0].locked, dec!(0.0004));
+    assert_eq!(balances[0].total(), dec!(0.0014));
+    assert_eq!(balances[1].asset, "USDT");
+    assert_eq!(balances[1].total(), dec!(102.5));
+}
+
+#[test]
 fn binance_klines_response_maps_to_bars() {
     let bars = BinanceSpotTestnetAdapter::parse_klines_json(
         r#"[[1700000000000,"10000.1","10010.2","9990.3","10005.4","12.5",1700000059999,"0","0","0","0","0"]]"#,

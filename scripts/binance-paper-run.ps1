@@ -28,6 +28,7 @@ $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $textReportPath = Join-Path $runDir "report.txt"
 $csvReportPath = Join-Path $runDir "report.csv"
 $htmlReportPath = Join-Path $runDir "report.html"
+$summaryPath = Join-Path $runDir "summary.json"
 $tickerPrice = $null
 
 function Invoke-CheckedCargo {
@@ -52,19 +53,47 @@ function Invoke-CheckedTrader {
     }
 }
 
+function Invoke-CapturedTrader {
+    param([string[]]$TraderArgs)
+
+    if (Test-Path $traderExe) {
+        $output = & $traderExe @TraderArgs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "trader $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
+        }
+    } else {
+        $output = cargo @(@("run", "-p", "trader-cli", "--") + $TraderArgs) 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo run -p trader-cli -- $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $output | ForEach-Object { Write-Host $_ }
+    return ($output -join [Environment]::NewLine)
+}
+
 function Invoke-BinancePaperCleanup {
     Write-Host "Running Binance paper cleanup checks"
+    $recoverOutput = ""
+    $openOrdersOutput = ""
 
     try {
-        Invoke-CheckedTrader @("binance-paper-recover", "--config", $runConfigPath)
+        $recoverOutput = Invoke-CapturedTrader @("binance-paper-recover", "--config", $runConfigPath)
     } catch {
         Write-Warning "binance-paper-recover failed during cleanup: $_"
+        $recoverOutput = "failed: $_"
     }
 
     try {
-        Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $runConfigPath, "--symbol", $Symbol)
+        $openOrdersOutput = Invoke-CapturedTrader @("binance-paper-open-orders", "--config", $runConfigPath, "--symbol", $Symbol)
     } catch {
         Write-Warning "binance-paper-open-orders failed during cleanup: $_"
+        $openOrdersOutput = "failed: $_"
+    }
+
+    [pscustomobject]@{
+        recover = $recoverOutput
+        open_orders = $openOrdersOutput
     }
 }
 
@@ -123,7 +152,29 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "text", "--output", $textReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "html", "--output", $htmlReportPath)
-    Invoke-BinancePaperCleanup
+    $cleanup = Invoke-BinancePaperCleanup
+    $reconcileOutput = Invoke-CapturedTrader @("binance-paper-reconcile", "--config", $runConfigPath, "--symbol", $Symbol)
+
+    $summary = [pscustomobject]@{
+        run_id = $runId
+        config = $runConfigPath
+        database = $databaseUrl
+        symbol = $Symbol
+        interval = $Interval
+        limit = $Limit
+        data_path = "datasets/binance/btcusdt_1m.parquet"
+        reports = [pscustomobject]@{
+            text = $textReportPath
+            csv = $csvReportPath
+            html = $htmlReportPath
+        }
+        ticker_price = if ($null -ne $tickerPrice) { $tickerPrice.ToString() } else { "not_checked" }
+        refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
+        order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }
+        cleanup = $cleanup
+        reconciliation = $reconcileOutput
+    }
+    $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
 
     [pscustomobject]@{
         run_id = $runId
@@ -135,6 +186,7 @@ try {
         report_text = $textReportPath
         report_csv = $csvReportPath
         report_html = $htmlReportPath
+        summary = $summaryPath
         ticker_price = if ($null -ne $tickerPrice) { $tickerPrice.ToString() } else { "not_checked" }
         refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
         order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }

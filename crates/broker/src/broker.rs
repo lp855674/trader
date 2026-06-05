@@ -235,6 +235,19 @@ pub struct BinanceOpenOrder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BinanceAssetBalance {
+    pub asset: String,
+    pub free: Decimal,
+    pub locked: Decimal,
+}
+
+impl BinanceAssetBalance {
+    pub fn total(&self) -> Decimal {
+        self.free + self.locked
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BinanceKlineBar {
     pub ts_ms: i64,
     pub open: Decimal,
@@ -510,6 +523,19 @@ impl BinanceSpotTestnetAdapter {
         Self::parse_open_orders_json(&body)
     }
 
+    pub async fn account_balances(&self) -> Result<Vec<BinanceAssetBalance>, BrokerError> {
+        let request = self.signed_account_request(self.server_time_ms().await?);
+        let body = binance_response_body(
+            self.client
+                .get(&request.url)
+                .header("X-MBX-APIKEY", request.api_key)
+                .send()
+                .await?,
+        )
+        .await?;
+        Self::parse_account_balances_json(&body)
+    }
+
     pub async fn klines(
         &self,
         symbol: &str,
@@ -538,6 +564,18 @@ impl BinanceSpotTestnetAdapter {
         response
             .into_iter()
             .map(BinanceOpenOrderResponse::try_into_open_order)
+            .collect()
+    }
+
+    pub fn parse_account_balances_json(
+        input: &str,
+    ) -> Result<Vec<BinanceAssetBalance>, BrokerError> {
+        let response = serde_json::from_str::<BinanceAccountResponse>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        response
+            .balances
+            .into_iter()
+            .map(BinanceBalance::try_into_asset_balance)
             .collect()
     }
 
@@ -770,6 +808,23 @@ struct BinanceAccountResponse {
 struct BinanceBalance {
     asset: String,
     free: String,
+    locked: String,
+}
+
+impl BinanceBalance {
+    fn try_into_asset_balance(self) -> Result<BinanceAssetBalance, BrokerError> {
+        Ok(BinanceAssetBalance {
+            asset: self.asset,
+            free: self
+                .free
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+            locked: self
+                .locked
+                .parse::<Decimal>()
+                .map_err(|error| BrokerError::Config(error.to_string()))?,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

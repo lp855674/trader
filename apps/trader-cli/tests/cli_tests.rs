@@ -186,6 +186,25 @@ fn binance_paper_open_orders_requires_testnet_credentials() {
 }
 
 #[test]
+fn binance_paper_reconcile_requires_testnet_credentials() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .env_remove("BINANCE_TESTNET_API_KEY")
+        .env_remove("BINANCE_TESTNET_SECRET_KEY")
+        .args([
+            "binance-paper-reconcile",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+            "--symbol",
+            "BTCUSDT",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("BINANCE_TESTNET_API_KEY"));
+}
+
+#[test]
 fn binance_paper_cancel_open_orders_requires_explicit_confirmation() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
