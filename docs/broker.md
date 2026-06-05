@@ -603,6 +603,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 
 
 该脚本读取 Binance Spot Testnet 当前 BTCUSDT ticker，生成临时 BTCUSDT bars、临时配置和临时 SQLite，然后打开 `order_submit_enabled = true` 执行 `paper-run`。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
 
+pending order 恢复命令：
+
+```powershell
+trader binance-paper-recover --config configs/paper/binance_testnet.toml
+```
+
+该命令不会提交新订单。它扫描当前 run 的 `SUBMITTED` / `PARTIALLY_FILLED` 本地订单，用 `client_order_id` 调 Binance `origClientOrderId` 查询订单；查到后同步 `myTrades`，更新本地订单执行状态，并刷新 account balance、position 和 portfolio snapshot。
+
 ---
 
 ## 21. Broker Configuration

@@ -61,6 +61,10 @@ enum Command {
         #[arg(long)]
         confirm_testnet_order: bool,
     },
+    BinancePaperRecover {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+    },
     Replay {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -413,6 +417,19 @@ async fn main() -> Result<()> {
                 placed.client_order_id
             );
         }
+        Command::BinancePaperRecover { config } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_binance_paper_config(&app_config, "binance paper recover")?;
+            let (_, db) = load_db(&config).await?;
+            db.migrate().await?;
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
+            let recovered = recover_binance_paper_orders(&app_config, &db, &adapter).await?;
+            println!(
+                "binance paper recover ok: scanned={} recovered={} missing={} trades={}",
+                recovered.scanned, recovered.recovered, recovered.missing, recovered.trades
+            );
+        }
         Command::Replay { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
@@ -704,6 +721,16 @@ fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
     }
 }
 
+fn ensure_binance_paper_config(app_config: &config::AppConfig, command_name: &str) -> Result<()> {
+    if app_config.broker.kind != config::BrokerKind::Binance {
+        bail!("{command_name} requires broker.kind = binance");
+    }
+    if app_config.broker.mode != config::BrokerMode::Paper {
+        bail!("{command_name} requires broker.mode = paper");
+    }
+    Ok(())
+}
+
 fn binance_cancel_outcome(
     final_status: String,
     cancel_error: Option<String>,
@@ -715,6 +742,103 @@ struct BinanceAccountingRecords {
     balance: storage::NewAccountBalance,
     position: Option<storage::NewPosition>,
     snapshot: storage::NewPortfolioSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BinancePaperRecoverSummary {
+    scanned: usize,
+    recovered: usize,
+    missing: usize,
+    trades: usize,
+}
+
+async fn recover_binance_paper_orders(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+    adapter: &BinanceSpotTestnetAdapter,
+) -> Result<BinancePaperRecoverSummary> {
+    let run_id = &app_config.runtime.run_id;
+    let orders = db.list_recoverable_orders(run_id).await?;
+    let mut summary = BinancePaperRecoverSummary {
+        scanned: orders.len(),
+        recovered: 0,
+        missing: 0,
+        trades: 0,
+    };
+
+    for order in orders {
+        let symbol = paper::binance_spot_symbol(&order.symbol)?;
+        let queried = match adapter
+            .query_binance_order_by_client_order_id(&symbol, &order.client_order_id)
+            .await
+        {
+            Ok(order) => order,
+            Err(broker::BrokerError::Rejected(message)) if message.contains("code=-2013") => {
+                summary.missing += 1;
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let trades = adapter.my_trades(&symbol, queried.order_id).await?;
+        let filled_qty = binance_filled_qty(&trades, queried.executed_qty);
+        let ended_at_ms = chrono::Utc::now().timestamp_millis();
+        for trade in &trades {
+            db.insert_fill(storage::NewFill {
+                id: format!("{run_id}-binance-trade-{}", trade.trade_id),
+                order_id: order.id.clone(),
+                run_id: run_id.clone(),
+                symbol: trade.symbol.clone(),
+                side: order.side.clone(),
+                price: trade.price.to_string(),
+                qty: trade.qty.to_string(),
+                fee: trade.fee.to_string(),
+                ts_ms: trade.ts_ms,
+            })
+            .await?;
+        }
+        db.update_order_execution_by_client_order_id(
+            &order.client_order_id,
+            &queried.order_id.to_string(),
+            &queried.status,
+            &filled_qty.to_string(),
+            ended_at_ms,
+        )
+        .await?;
+        if !trades.is_empty() {
+            let account = adapter
+                .account_snapshot(&app_config.paper.account_id)
+                .await?;
+            let all_fills = db.list_fills(run_id).await?;
+            let accounting = binance_accounting_records_from_fills(
+                run_id,
+                &app_config.paper.account_id,
+                &app_config.portfolio.base_currency,
+                account.cash,
+                &all_fills,
+                ended_at_ms,
+            )?;
+            db.upsert_account_balance(accounting.balance).await?;
+            if let Some(position) = accounting.position {
+                db.upsert_position(position).await?;
+            }
+            db.insert_portfolio_snapshot(accounting.snapshot).await?;
+        }
+        summary.recovered += 1;
+        summary.trades += trades.len();
+    }
+
+    Ok(summary)
+}
+
+fn binance_filled_qty(trades: &[broker::BinanceTrade], queried_qty: Decimal) -> Decimal {
+    let trade_qty = trades
+        .iter()
+        .fold(Decimal::ZERO, |total, trade| total + trade.qty);
+    if trade_qty > Decimal::ZERO {
+        trade_qty
+    } else {
+        queried_qty
+    }
 }
 
 fn binance_accounting_records_from_fills(

@@ -404,6 +404,31 @@ impl Db {
         Ok(())
     }
 
+    pub async fn update_order_execution_by_client_order_id(
+        &self,
+        client_order_id: &str,
+        broker_order_id: &str,
+        status: &str,
+        filled_qty: &str,
+        updated_at_ms: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE orders
+            SET broker_order_id = ?, status = ?, filled_qty = ?, updated_at_ms = ?
+            WHERE client_order_id = ?
+            "#,
+        )
+        .bind(broker_order_id)
+        .bind(status)
+        .bind(filled_qty)
+        .bind(updated_at_ms)
+        .bind(client_order_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn insert_fill(&self, fill: NewFill) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
@@ -658,6 +683,79 @@ impl Db {
                 updated_at_ms,
             },
         ))
+    }
+
+    pub async fn list_recoverable_orders(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<NewOrder>, sqlx::Error> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, run_id, client_order_id, broker_order_id, account_id, symbol, side,
+                   order_type, price, qty, filled_qty, status, created_at_ms, updated_at_ms
+            FROM orders
+            WHERE run_id = ? AND status IN ('SUBMITTED', 'PARTIALLY_FILLED')
+            ORDER BY created_at_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    run_id,
+                    client_order_id,
+                    broker_order_id,
+                    account_id,
+                    symbol,
+                    side,
+                    order_type,
+                    price,
+                    qty,
+                    filled_qty,
+                    status,
+                    created_at_ms,
+                    updated_at_ms,
+                )| NewOrder {
+                    id,
+                    run_id,
+                    client_order_id,
+                    broker_order_id,
+                    account_id,
+                    symbol,
+                    side,
+                    order_type,
+                    price,
+                    qty,
+                    filled_qty,
+                    status,
+                    created_at_ms,
+                    updated_at_ms,
+                },
+            )
+            .collect())
     }
 
     pub async fn recover_order_state(

@@ -142,6 +142,41 @@ async fn runtime_records_round_trip() {
     assert_eq!(executed[0].status, "FILLED");
     assert_eq!(executed[0].filled_qty, "1");
     assert_eq!(executed[0].updated_at_ms, 10);
+
+    db.insert_order(NewOrder {
+        id: "order-2".to_string(),
+        run_id: "run-1".to_string(),
+        client_order_id: "client-2".to_string(),
+        broker_order_id: None,
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: "2".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 11,
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+
+    let recoverable = db.list_recoverable_orders("run-1").await.unwrap();
+    assert_eq!(recoverable.len(), 1);
+    assert_eq!(recoverable[0].client_order_id, "client-2");
+
+    db.update_order_execution_by_client_order_id("client-2", "broker-2", "FILLED", "2", 12)
+        .await
+        .unwrap();
+    let recovered = db
+        .get_order_by_client_order_id("client-2")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.broker_order_id.as_deref(), Some("broker-2"));
+    assert_eq!(recovered.status, "FILLED");
+    assert_eq!(recovered.filled_qty, "2");
 }
 
 #[tokio::test]

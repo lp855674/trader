@@ -150,6 +150,23 @@ fn binance_paper_readonly_requires_testnet_credentials() {
 }
 
 #[test]
+fn binance_paper_recover_requires_testnet_credentials() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .env_remove("BINANCE_TESTNET_API_KEY")
+        .env_remove("BINANCE_TESTNET_SECRET_KEY")
+        .args([
+            "binance-paper-recover",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("BINANCE_TESTNET_API_KEY"));
+}
+
+#[test]
 fn binance_paper_tiny_order_requires_explicit_confirmation() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
