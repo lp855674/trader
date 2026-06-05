@@ -42,6 +42,8 @@ function Invoke-CheckedTrader {
 
 try {
     $env:CARGO_BUILD_JOBS = "1"
+    Invoke-CheckedCargo @("build", "-p", "trader-cli")
+
     Write-Host "Binance recover config: $configPath"
     Write-Host "Binance recover database: $databaseUrl"
     Write-Host "Network recovery check: $(-not $SkipNetwork)"

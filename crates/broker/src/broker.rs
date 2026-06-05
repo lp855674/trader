@@ -347,11 +347,22 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/myTrades", &query)
     }
 
+    pub async fn server_time_ms(&self) -> Result<i64, BrokerError> {
+        let body = binance_response_body(
+            self.client
+                .get(format!("{}/v3/time", self.settings.base_url))
+                .send()
+                .await?,
+        )
+        .await?;
+        Self::parse_server_time_json(&body)
+    }
+
     pub async fn place_limit_order(
         &self,
         order: &BinanceLimitOrderRequest,
     ) -> Result<BinanceOrderAck, BrokerError> {
-        let request = self.signed_limit_order_request(order, chrono::Utc::now().timestamp_millis());
+        let request = self.signed_limit_order_request(order, self.server_time_ms().await?);
         let body = binance_response_body(
             self.client
                 .post(&request.url)
@@ -370,11 +381,8 @@ impl BinanceSpotTestnetAdapter {
         symbol: &str,
         order_id: u64,
     ) -> Result<BinanceOrderAck, BrokerError> {
-        let request = self.signed_query_order_request(
-            symbol,
-            order_id,
-            chrono::Utc::now().timestamp_millis(),
-        );
+        let request =
+            self.signed_query_order_request(symbol, order_id, self.server_time_ms().await?);
         let body = binance_response_body(
             self.client
                 .get(&request.url)
@@ -396,7 +404,7 @@ impl BinanceSpotTestnetAdapter {
         let request = self.signed_query_order_by_client_order_id_request(
             symbol,
             client_order_id,
-            chrono::Utc::now().timestamp_millis(),
+            self.server_time_ms().await?,
         );
         let body = binance_response_body(
             self.client
@@ -416,11 +424,8 @@ impl BinanceSpotTestnetAdapter {
         symbol: &str,
         order_id: u64,
     ) -> Result<BinanceOrderAck, BrokerError> {
-        let request = self.signed_cancel_order_request(
-            symbol,
-            order_id,
-            chrono::Utc::now().timestamp_millis(),
-        );
+        let request =
+            self.signed_cancel_order_request(symbol, order_id, self.server_time_ms().await?);
         let body = binance_response_body(
             self.client
                 .delete(&request.url)
@@ -439,8 +444,7 @@ impl BinanceSpotTestnetAdapter {
         symbol: &str,
         order_id: u64,
     ) -> Result<Vec<BinanceTrade>, BrokerError> {
-        let request =
-            self.signed_my_trades_request(symbol, order_id, chrono::Utc::now().timestamp_millis());
+        let request = self.signed_my_trades_request(symbol, order_id, self.server_time_ms().await?);
         let body = binance_response_body(
             self.client
                 .get(&request.url)
@@ -450,6 +454,12 @@ impl BinanceSpotTestnetAdapter {
         )
         .await?;
         Self::parse_trades_json(&body)
+    }
+
+    pub fn parse_server_time_json(input: &str) -> Result<i64, BrokerError> {
+        let response = serde_json::from_str::<BinanceServerTimeResponse>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        Ok(response.server_time)
     }
 
     pub fn parse_trades_json(input: &str) -> Result<Vec<BinanceTrade>, BrokerError> {
@@ -512,6 +522,12 @@ impl BinanceOrderResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct BinanceServerTimeResponse {
+    server_time: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BinanceTradeResponse {
     id: u64,
     order_id: u64,
@@ -567,7 +583,7 @@ impl Broker for BinanceSpotTestnetAdapter {
         &self,
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
-        let request = self.signed_account_request(chrono::Utc::now().timestamp_millis());
+        let request = self.signed_account_request(self.server_time_ms().await?);
         let body = binance_response_body(
             self.client
                 .get(&request.url)

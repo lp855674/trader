@@ -556,6 +556,8 @@ trader binance-paper-readonly --config configs/paper/binance_testnet.toml
 
 `paper-preflight` 会在不访问网络的情况下校验 Binance paper config、Spot Testnet base_url 和凭证环境变量是否存在，并输出 `real_broker_connection=true`。`binance-paper-readonly` 用于实际验证 Spot Testnet 连接与账户读取，不会发送订单。
 
+Binance signed 请求不依赖本机时钟直接签名；adapter 会先读取 Spot Testnet `/v3/time` 的 `serverTime`，再用于 account、order、cancel、myTrades 等 signed endpoint，避免本机时间漂移触发 Binance `code=-1021`。
+
 只读 smoke：
 
 ```powershell

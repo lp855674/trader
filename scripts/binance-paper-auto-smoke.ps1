@@ -18,6 +18,15 @@ $barsPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.csv"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
 
+function Invoke-CheckedCargo {
+    param([string[]]$CargoArgs)
+
+    cargo @CargoArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo $($CargoArgs -join ' ') failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Invoke-CheckedTrader {
     param([string[]]$TraderArgs)
 
@@ -59,6 +68,8 @@ ts_ms,open,high,low,close,volume
     Set-Content -Path $configPath -Value $configText -Encoding UTF8
 
     $env:CARGO_BUILD_JOBS = "1"
+    Invoke-CheckedCargo @("build", "-p", "trader-cli")
+
     Write-Host "Binance auto paper config: $configPath"
     Write-Host "Binance auto paper bars: $barsPath"
     Write-Host "Binance auto paper database: $databaseUrl"

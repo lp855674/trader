@@ -243,6 +243,15 @@ fn binance_error_response_preserves_code_and_message() {
     );
 }
 
+#[test]
+fn binance_server_time_response_maps_to_timestamp_ms() {
+    let timestamp_ms =
+        BinanceSpotTestnetAdapter::parse_server_time_json(r#"{"serverTime":1700000000123}"#)
+            .unwrap();
+
+    assert_eq!(timestamp_ms, 1_700_000_000_123);
+}
+
 fn order() -> OrderRequest {
     OrderRequest {
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
