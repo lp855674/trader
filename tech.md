@@ -234,6 +234,14 @@ trader binance-paper-recover --config configs/paper/binance_testnet.toml
 
 该命令扫描当前 run 的 `SUBMITTED` / `PARTIALLY_FILLED` 本地订单，使用本地 `client_order_id` 调 Binance `origClientOrderId` 查询订单，查到后同步 `myTrades`、更新订单执行状态，并刷新本地 account balance、position 和 portfolio snapshot。该命令不会提交新订单。
 
+恢复 smoke：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-recover-smoke.ps1
+```
+
+该脚本使用临时配置与临时 SQLite，只执行配置、migration 和恢复命令验证；它不会打开 `order_submit_enabled`，不会提交新订单。无网络环境可追加 `-SkipNetwork`。
+
 当前 paper 验证命令：
 
 ```powershell
