@@ -52,6 +52,22 @@ function Invoke-CheckedTrader {
     }
 }
 
+function Invoke-BinancePaperCleanup {
+    Write-Host "Running Binance paper cleanup checks"
+
+    try {
+        Invoke-CheckedTrader @("binance-paper-recover", "--config", $runConfigPath)
+    } catch {
+        Write-Warning "binance-paper-recover failed during cleanup: $_"
+    }
+
+    try {
+        Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $runConfigPath, "--symbol", $Symbol)
+    } catch {
+        Write-Warning "binance-paper-open-orders failed during cleanup: $_"
+    }
+}
+
 try {
     $env:CARGO_BUILD_JOBS = "1"
     Invoke-CheckedCargo @("build", "-p", "trader-cli")
@@ -95,13 +111,19 @@ try {
     Invoke-CheckedTrader @("check-config", "--config", $runConfigPath)
     Invoke-CheckedTrader @("paper-preflight", "--config", $runConfigPath)
     Invoke-CheckedTrader @("migrate", "--config", $runConfigPath)
-    Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
+    try {
+        Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
+    } catch {
+        if ($ConfirmTestnetOrder) {
+            Invoke-BinancePaperCleanup
+        }
+        throw
+    }
     Invoke-CheckedTrader @("report", "--config", $runConfigPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "text", "--output", $textReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "html", "--output", $htmlReportPath)
-    Invoke-CheckedTrader @("binance-paper-recover", "--config", $runConfigPath)
-    Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $runConfigPath, "--symbol", $Symbol)
+    Invoke-BinancePaperCleanup
 
     [pscustomobject]@{
         run_id = $runId
