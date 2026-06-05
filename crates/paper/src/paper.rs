@@ -240,6 +240,12 @@ pub trait BinancePaperOrderClient: Send + Sync {
         order_id: u64,
     ) -> Result<BinanceOrderAck, BrokerError>;
 
+    async fn cancel_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError>;
+
     async fn my_trades(
         &self,
         symbol: &str,
@@ -277,6 +283,14 @@ impl BinancePaperOrderClient for BinanceSpotTestnetAdapter {
         order_id: u64,
     ) -> Result<BinanceOrderAck, BrokerError> {
         self.query_binance_order(symbol, order_id).await
+    }
+
+    async fn cancel_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        self.cancel_binance_order(symbol, order_id).await
     }
 
     async fn my_trades(
@@ -355,6 +369,9 @@ where
             self.client.query_order(&symbol, placed.order_id).await?
         };
         let trades = self.client.my_trades(&symbol, placed.order_id).await?;
+        if trades.is_empty() && binance_order_is_open(&queried.status) {
+            self.client.cancel_order(&symbol, placed.order_id).await?;
+        }
         let (qty, price, fee) = aggregate_binance_trades(&trades)?;
 
         Ok(ExecutedPaperOrder {
@@ -366,6 +383,10 @@ where
             fee,
         })
     }
+}
+
+fn binance_order_is_open(status: &str) -> bool {
+    matches!(status, "NEW" | "PARTIALLY_FILLED" | "PENDING_NEW")
 }
 
 pub fn binance_spot_symbol(symbol: &str) -> anyhow::Result<String> {

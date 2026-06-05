@@ -8,6 +8,10 @@ use paper::{
     PaperRuntime, PaperSettings, binance_spot_symbol,
 };
 use rust_decimal_macros::dec;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use storage::Db;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
@@ -228,6 +232,33 @@ async fn binance_paper_executor_rejects_unfilled_testnet_order() {
 }
 
 #[tokio::test]
+async fn binance_paper_executor_cancels_unfilled_open_testnet_order() {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let executor = BinancePaperOrderExecutor::new(CancellableUnfilledBinanceClient {
+        cancelled: Arc::clone(&cancelled),
+    });
+
+    let error = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "BTCUSDT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(0.001),
+                price: None,
+                account_id: "binance-testnet".to_string(),
+            },
+            dec!(100000),
+            1,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("no fills"));
+    assert!(cancelled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn binance_paper_executor_recovers_existing_order_by_client_order_id() {
     let executor = BinancePaperOrderExecutor::new_with_client_order_prefix(
         RecoveringBinanceClient,
@@ -345,6 +376,14 @@ impl BinancePaperOrderClient for FakeBinanceClient {
         })
     }
 
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        panic!("cancel_order must not be called after filled trades")
+    }
+
     async fn my_trades(
         &self,
         symbol: &str,
@@ -414,6 +453,83 @@ impl BinancePaperOrderClient for UnfilledBinanceClient {
         })
     }
 
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id: 99,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "CANCELED".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn my_trades(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        Ok(Vec::new())
+    }
+}
+
+struct CancellableUnfilledBinanceClient {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl BinancePaperOrderClient for CancellableUnfilledBinanceClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<BinanceOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id: 101,
+            client_order_id: order.client_order_id.clone(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(
+        &self,
+        _symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn cancel_order(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        assert_eq!(symbol, "BTCUSDT");
+        assert_eq!(order_id, 101);
+        self.cancelled.store(true, Ordering::SeqCst);
+        Ok(BinanceOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "CANCELED".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
     async fn my_trades(
         &self,
         _symbol: &str,
@@ -455,6 +571,14 @@ impl BinancePaperOrderClient for RecoveringBinanceClient {
         _order_id: u64,
     ) -> Result<BinanceOrderAck, BrokerError> {
         panic!("query_order must not be called after client id recovery")
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        panic!("cancel_order must not be called after client id recovery")
     }
 
     async fn my_trades(
