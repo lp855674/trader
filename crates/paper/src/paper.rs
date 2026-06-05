@@ -370,7 +370,25 @@ where
         };
         let trades = self.client.my_trades(&symbol, placed.order_id).await?;
         if trades.is_empty() && binance_order_is_open(&queried.status) {
-            self.client.cancel_order(&symbol, placed.order_id).await?;
+            let cancelled = self.client.cancel_order(&symbol, placed.order_id).await?;
+            return Ok(ExecutedPaperOrder {
+                client_order_id,
+                broker_order_id: placed.order_id.to_string(),
+                status: cancelled.status,
+                price: mark_price,
+                qty: Decimal::ZERO,
+                fee: Decimal::ZERO,
+            });
+        }
+        if trades.is_empty() {
+            return Ok(ExecutedPaperOrder {
+                client_order_id,
+                broker_order_id: placed.order_id.to_string(),
+                status: queried.status,
+                price: mark_price,
+                qty: Decimal::ZERO,
+                fee: Decimal::ZERO,
+            });
         }
         let (qty, price, fee) = aggregate_binance_trades(&trades)?;
 
@@ -562,8 +580,6 @@ impl<'a> PaperRunSession<'a> {
                 .executor
                 .execute_order(order.clone(), bar.close, order_number)
                 .await?;
-            order_state.record_fill(fill.qty)?;
-
             self.runtime
                 .db
                 .insert_order(NewOrder {
@@ -583,29 +599,32 @@ impl<'a> PaperRunSession<'a> {
                     updated_at_ms: bar.ts_ms,
                 })
                 .await?;
-            self.runtime
-                .db
-                .insert_fill(NewFill {
-                    id: fill_id,
-                    order_id,
-                    run_id: settings.run_id.clone(),
-                    symbol: order.symbol.clone(),
-                    side: format!("{:?}", order.side).to_uppercase(),
-                    price: fill.price.to_string(),
-                    qty: fill.qty.to_string(),
-                    fee: fill.fee.to_string(),
-                    ts_ms: bar.ts_ms,
-                })
-                .await?;
+            if fill.qty > Decimal::ZERO {
+                order_state.record_fill(fill.qty)?;
+                self.runtime
+                    .db
+                    .insert_fill(NewFill {
+                        id: fill_id,
+                        order_id,
+                        run_id: settings.run_id.clone(),
+                        symbol: order.symbol.clone(),
+                        side: format!("{:?}", order.side).to_uppercase(),
+                        price: fill.price.to_string(),
+                        qty: fill.qty.to_string(),
+                        fee: fill.fee.to_string(),
+                        ts_ms: bar.ts_ms,
+                    })
+                    .await?;
 
-            match order.side {
-                OrderSide::Buy => {
-                    self.account_book
-                        .buy(&order.symbol, fill.qty, fill.price, fill.fee)
-                }
-                OrderSide::Sell => {
-                    self.account_book
-                        .sell(&order.symbol, fill.qty, fill.price, fill.fee)?
+                match order.side {
+                    OrderSide::Buy => {
+                        self.account_book
+                            .buy(&order.symbol, fill.qty, fill.price, fill.fee)
+                    }
+                    OrderSide::Sell => {
+                        self.account_book
+                            .sell(&order.symbol, fill.qty, fill.price, fill.fee)?
+                    }
                 }
             }
             self.orders += 1;

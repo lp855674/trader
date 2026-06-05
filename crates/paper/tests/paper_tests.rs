@@ -170,6 +170,36 @@ async fn paper_runtime_persists_pending_order_before_executor_call() {
     assert_eq!(orders[0].filled_qty, "0");
 }
 
+#[tokio::test]
+async fn paper_runtime_keeps_unfilled_broker_order_without_fill() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new_with_executor(
+        db.clone(),
+        PaperSettings::sample(),
+        Box::new(UnfilledExecutor),
+    )
+    .run_bars(bars)
+    .await
+    .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].client_order_id, "unfilled-client-1");
+    assert_eq!(orders[0].broker_order_id.as_deref(), Some("external-1"));
+    assert_eq!(orders[0].status, "CANCELED");
+    assert_eq!(orders[0].filled_qty, "0");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert!(fills.is_empty());
+}
+
 #[test]
 fn binance_spot_symbol_maps_strategy_symbol_to_exchange_symbol() {
     assert_eq!(
@@ -209,10 +239,10 @@ async fn binance_paper_executor_uses_actual_testnet_trades_as_fill() {
 }
 
 #[tokio::test]
-async fn binance_paper_executor_rejects_unfilled_testnet_order() {
+async fn binance_paper_executor_returns_zero_fill_for_unfilled_testnet_order() {
     let executor = BinancePaperOrderExecutor::new(UnfilledBinanceClient);
 
-    let error = executor
+    let fill = executor
         .execute_order(
             OrderRequest {
                 symbol: "BTCUSDT".to_string(),
@@ -226,9 +256,13 @@ async fn binance_paper_executor_rejects_unfilled_testnet_order() {
             1,
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert!(error.to_string().contains("no fills"));
+    assert_eq!(fill.broker_order_id, "99");
+    assert_eq!(fill.status, "CANCELED");
+    assert_eq!(fill.qty, dec!(0));
+    assert_eq!(fill.price, dec!(100000));
+    assert_eq!(fill.fee, dec!(0));
 }
 
 #[tokio::test]
@@ -238,7 +272,7 @@ async fn binance_paper_executor_cancels_unfilled_open_testnet_order() {
         cancelled: Arc::clone(&cancelled),
     });
 
-    let error = executor
+    let fill = executor
         .execute_order(
             OrderRequest {
                 symbol: "BTCUSDT".to_string(),
@@ -252,9 +286,10 @@ async fn binance_paper_executor_cancels_unfilled_open_testnet_order() {
             1,
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert!(error.to_string().contains("no fills"));
+    assert_eq!(fill.status, "CANCELED");
+    assert_eq!(fill.qty, dec!(0));
     assert!(cancelled.load(Ordering::SeqCst));
 }
 
@@ -327,6 +362,31 @@ impl PaperOrderExecutor for FailingExecutor {
         _order_number: usize,
     ) -> anyhow::Result<ExecutedPaperOrder> {
         anyhow::bail!("broker down")
+    }
+}
+
+struct UnfilledExecutor;
+
+#[async_trait]
+impl PaperOrderExecutor for UnfilledExecutor {
+    fn client_order_id(&self, _run_id: &str, _order_number: usize) -> String {
+        "unfilled-client-1".to_string()
+    }
+
+    async fn execute_order(
+        &self,
+        _order: OrderRequest,
+        mark_price: rust_decimal::Decimal,
+        _order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        Ok(ExecutedPaperOrder {
+            client_order_id: "unfilled-client-1".to_string(),
+            broker_order_id: "external-1".to_string(),
+            status: "CANCELED".to_string(),
+            price: mark_price,
+            qty: dec!(0),
+            fee: dec!(0),
+        })
     }
 }
 

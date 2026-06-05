@@ -189,7 +189,7 @@ Broker fake adapters 现在提供 paper 测试 surface：`place_order`、`query_
 
 REST 也提供 `GET /api/v1/preflight/paper`，用于在 server 运行时检查当前配置是否满足本地 paper 验证条件。本地 simulated paper 返回 `real_broker_connection=false`；Binance Spot Testnet paper 在 testnet base_url 与凭证环境变量检查通过后返回 `real_broker_connection=true`。
 
-Binance testnet adapter 已开始接入。当前支持 `ping`、signed account snapshot，以及手动 tiny limit order -> query -> cancel -> myTrades sync -> local accounting snapshot；也已提供受闸门保护的策略自动 Binance Spot Testnet executor。`[broker] order_submit_enabled` 是策略自动送单闸门，默认 `false`；打开后 `paper-run` 只在 `broker.kind = "binance"`、`broker.mode = "paper"`、Spot Testnet `base_url` 和环境变量凭证都满足时才会提交 testnet limit order。自动 Binance paper run 启动时会读取 Binance account snapshot，并用 USDT cash 覆盖本次 `PaperSettings.initial_cash`。runtime 会在调用 broker executor 前先持久化一条 `SUBMITTED` pending order，写入稳定的 `client_order_id = trader-paper-{run_id_prefix}-{order_number}`；executor 会先用 Binance `origClientOrderId` 查询已存在订单，查到则同步该订单的 `myTrades`，查不到才提交新 testnet order。该 executor 只把 Binance `myTrades` 返回的真实成交写入本地 fill；如果订单没有真实 trades，会先尝试撤销仍 open 的 testnet order，然后 run 失败，不会伪造成交。凭证只从环境变量读取：
+Binance testnet adapter 已开始接入。当前支持 `ping`、signed account snapshot，以及手动 tiny limit order -> query -> cancel -> myTrades sync -> local accounting snapshot；也已提供受闸门保护的策略自动 Binance Spot Testnet executor。`[broker] order_submit_enabled` 是策略自动送单闸门，默认 `false`；打开后 `paper-run` 只在 `broker.kind = "binance"`、`broker.mode = "paper"`、Spot Testnet `base_url` 和环境变量凭证都满足时才会提交 testnet limit order。自动 Binance paper run 启动时会读取 Binance account snapshot，并用 USDT cash 覆盖本次 `PaperSettings.initial_cash`。runtime 会在调用 broker executor 前先持久化一条 `SUBMITTED` pending order，写入稳定的 `client_order_id = trader-paper-{run_id_prefix}-{order_number}`；executor 会先用 Binance `origClientOrderId` 查询已存在订单，查到则同步该订单的 `myTrades`，查不到才提交新 testnet order。该 executor 只把 Binance `myTrades` 返回的真实成交写入本地 fill；如果订单没有真实 trades，会先尝试撤销仍 open 的 testnet order，然后以 0 filled qty 更新订单状态，不写 fill、不更新本地账本，也不会伪造成交。凭证只从环境变量读取：
 
 ```powershell
 $env:BINANCE_TESTNET_API_KEY = "..."
@@ -238,7 +238,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -L
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1 -Limit 1000
 ```
 
-`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。`binance-paper-run.ps1` 开闸送单时禁止同时使用 `-SkipRefresh`，并会读取一次 Spot Testnet ticker price 写入运行输出，避免用旧 Parquet 数据直接送单；如果 testnet paper-run 因无成交或 broker 错误失败，脚本会先 best-effort 执行 recover 与 open order 巡检，再保留原始失败。
+`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。`binance-paper-run.ps1` 开闸送单时禁止同时使用 `-SkipRefresh`，并会读取一次 Spot Testnet ticker price 写入运行输出，避免用旧 Parquet 数据直接送单；如果 testnet paper-run 因 broker 错误失败，脚本会先 best-effort 执行 recover 与 open order 巡检，再保留原始失败。
 
 自动策略送单 smoke：
 
