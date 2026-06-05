@@ -609,6 +609,15 @@ trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1
 ```
 
+真实行情 runner：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100 -RunPaper
+```
+
+默认只拉取真实 klines、生成临时配置、执行 `paper-preflight` 和 migration，不运行策略也不下单。`-RunPaper` 会用真实 klines 执行 paper-run、report 和 open order 巡检，但仍保持 `order_submit_enabled=false`。只有追加 `-ConfirmTestnetOrder` 时才会打开 Binance Spot Testnet 策略送单。
+
 自动策略送单 smoke 可用：
 
 ```powershell

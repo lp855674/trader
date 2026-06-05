@@ -229,6 +229,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps
 
 输出列为 `ts_ms,open,high,low,close,volume`，可直接配置为 `[data] source = "csv"`。
 
+真实行情 runner：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100 -RunPaper
+```
+
+默认只拉取真实 klines、生成临时配置、执行 `paper-preflight` 和 migration。`-RunPaper` 会继续执行 paper-run、report 和 open order 巡检；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。
+
 自动策略送单 smoke：
 
 ```powershell
