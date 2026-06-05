@@ -226,7 +226,7 @@ trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --sy
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
 ```
 
-该脚本会从 Binance Spot Testnet 读取当前 BTCUSDT ticker，生成临时 BTCUSDT bars，创建临时 SQLite 与临时配置，打开 `order_submit_enabled = true` 后执行 `paper-run` 和 `report`。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
+该脚本会从 Binance Spot Testnet 读取当前 BTCUSDT ticker，生成临时 BTCUSDT bars，创建临时 SQLite 与临时配置，打开 `order_submit_enabled = true` 后执行 `paper-run`、`report` 和 BTCUSDT open order 巡检。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
 
 pending order 恢复：
 

@@ -81,6 +81,7 @@ ts_ms,open,high,low,close,volume
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
     Invoke-CheckedTrader @("paper-run", "--config", $configPath)
     Invoke-CheckedTrader @("report", "--config", $configPath)
+    Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $configPath, "--symbol", "BTCUSDT")
 
     [pscustomobject]@{
         config = $configPath
@@ -88,6 +89,7 @@ ts_ms,open,high,low,close,volume
         database = $databaseUrl
         ticker_price = $price
         order_submit = "ran"
+        open_orders_checked = "ok"
     }
 } finally {
     Set-Location $repoRoot

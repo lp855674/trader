@@ -603,7 +603,7 @@ event_store: binance.testnet_order.started / completed
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
 ```
 
-该脚本读取 Binance Spot Testnet 当前 BTCUSDT ticker，生成临时 BTCUSDT bars、临时配置和临时 SQLite，然后打开 `order_submit_enabled = true` 执行 `paper-run`。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
+该脚本读取 Binance Spot Testnet 当前 BTCUSDT ticker，生成临时 BTCUSDT bars、临时配置和临时 SQLite，然后打开 `order_submit_enabled = true` 执行 `paper-run`。完成 report 后会查询 BTCUSDT open orders，确认没有遗留挂单。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
 
 pending order 恢复命令：
 
