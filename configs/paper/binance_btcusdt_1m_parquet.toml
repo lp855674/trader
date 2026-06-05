@@ -1,0 +1,48 @@
+[runtime]
+mode = "paper"
+run_id = "binance-btcusdt-1m-paper"
+
+[database]
+url = "sqlite://data/binance-btcusdt-1m-paper.sqlite"
+
+[data]
+source = "parquet"
+path = "datasets/binance/btcusdt_1m.parquet"
+
+[strategy]
+name = "moving_average_cross"
+symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+fast_window = 2
+slow_window = 3
+
+[portfolio]
+initial_cash = "100000"
+base_currency = "USDT"
+order_qty = "0.001"
+max_abs_qty = "1"
+
+[risk]
+max_order_notional = "200"
+min_cash_after_order = "10"
+max_exposure = "1000"
+max_drawdown = "0.2"
+max_leverage = "1"
+max_margin_used = "0"
+trading_halted = false
+
+[broker]
+kind = "binance"
+mode = "paper"
+base_url = "https://testnet.binance.vision/api"
+api_key_env = "BINANCE_TESTNET_API_KEY"
+secret_key_env = "BINANCE_TESTNET_SECRET_KEY"
+recv_window_ms = 5000
+order_submit_enabled = false
+
+[paper]
+account_id = "binance-testnet"
+slippage_bps = "5"
+fee_bps = "10"
+
+[live]
+enabled = false

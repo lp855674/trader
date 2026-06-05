@@ -600,10 +600,11 @@ event_store: binance.testnet_order.started / completed
 真实 BTCUSDT K 线可通过 Binance Spot Testnet 公共 REST 拉取，默认写成 Parquet：
 
 ```powershell
-trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
+trader binance-paper-klines --config configs/paper/binance_btcusdt_1m_parquet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-refresh-klines.ps1 -Limit 100
 ```
 
-Parquet 使用现有 `data::write_bars_to_parquet` / Polars 写入，字段为 `ts_ms,open,high,low,close,volume`，可直接作为 `[data] source = "parquet"` 的 `path`。CSV 仅作为兼容格式，需显式加 `--format csv`。对应 smoke 默认走 Parquet：
+正式配置 `configs/paper/binance_btcusdt_1m_parquet.toml` 固定使用 `[data] source = "parquet"` 与 `datasets/binance/btcusdt_1m.parquet`；`scripts/binance-refresh-klines.ps1` 只刷新数据并执行 preflight，不运行策略、不下单。Parquet 使用现有 `data::write_bars_to_parquet` / Polars 写入，字段为 `ts_ms,open,high,low,close,volume`。CSV 仅作为兼容格式，需显式加 `--format csv`。对应 smoke 默认走 Parquet：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1

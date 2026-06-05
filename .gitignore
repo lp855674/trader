@@ -1,6 +1,9 @@
 /target
 .worktrees/
 /data/
+datasets/binance/*.csv
+datasets/binance/*.parquet
+!datasets/binance/.gitkeep
 *.db
 .env
 .DS_Store

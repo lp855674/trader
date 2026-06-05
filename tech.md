@@ -223,11 +223,12 @@ trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --sy
 真实 Binance Spot Testnet K 线优先落盘为 Parquet：
 
 ```powershell
-trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
+trader binance-paper-klines --config configs/paper/binance_btcusdt_1m_parquet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-refresh-klines.ps1 -Limit 100
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1
 ```
 
-输出字段为 `ts_ms,open,high,low,close,volume`，通过现有 Polars Parquet writer 写入，可直接配置为 `[data] source = "parquet"`。CSV 仅作为兼容格式，需显式加 `--format csv`。
+正式配置 `configs/paper/binance_btcusdt_1m_parquet.toml` 固定使用 `[data] source = "parquet"` 与 `datasets/binance/btcusdt_1m.parquet`。刷新脚本只维护 Parquet 数据并执行 preflight，不运行策略、不下单。输出字段为 `ts_ms,open,high,low,close,volume`，通过现有 Polars Parquet writer 写入。CSV 仅作为兼容格式，需显式加 `--format csv`。
 
 真实行情 runner：
 
