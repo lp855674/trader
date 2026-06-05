@@ -22,6 +22,7 @@ portfolio.workspace = true
 risk.workspace = true
 rust_decimal.workspace = true
 runtime.workspace = true
+serde_json.workspace = true
 storage.workspace = true
 strategies.workspace = true
 tokio.workspace = true

@@ -2229,6 +2229,7 @@ dependencies = [
  "runtime",
  "rust_decimal",
  "rust_decimal_macros",
+ "serde_json",
  "storage",
  "strategies",
  "tokio",

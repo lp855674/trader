@@ -17,7 +17,8 @@ use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
 use storage::{
-    Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
+    Db, NewAccountBalance, NewEventRecord, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition,
+    NewStrategyRun,
 };
 use strategies::{Strategy, StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 use tokio::sync::mpsc;
@@ -456,6 +457,41 @@ fn aggregate_binance_trades(
     Ok((qty, notional / qty, fee))
 }
 
+fn order_event(
+    run_id: &str,
+    category: &str,
+    order_id: &str,
+    client_order_id: &str,
+    broker_order_id: Option<&str>,
+    order: &OrderRequest,
+    filled_qty: Decimal,
+    status: String,
+    ts_ms: i64,
+) -> NewEventRecord {
+    let payload_json = serde_json::json!({
+        "run_id": run_id,
+        "order_id": order_id,
+        "client_order_id": client_order_id,
+        "broker_order_id": broker_order_id,
+        "account_id": &order.account_id,
+        "symbol": &order.symbol,
+        "side": format!("{:?}", order.side).to_uppercase(),
+        "order_type": format!("{:?}", order.order_type).to_uppercase(),
+        "qty": order.qty.to_string(),
+        "filled_qty": filled_qty.to_string(),
+        "status": status
+    })
+    .to_string();
+
+    NewEventRecord {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        ts_ms,
+        source: run_id.to_string(),
+        category: category.to_string(),
+        payload_json,
+    }
+}
+
 struct PaperRunSession<'a> {
     runtime: &'a PaperRuntime,
     strategy: Box<dyn Strategy + Send>,
@@ -575,6 +611,20 @@ impl<'a> PaperRunSession<'a> {
                     updated_at_ms: bar.ts_ms,
                 })
                 .await?;
+            self.runtime
+                .db
+                .insert_event(order_event(
+                    &settings.run_id,
+                    "paper.order.submitted",
+                    &order_id,
+                    &client_order_id,
+                    None,
+                    &order,
+                    Decimal::ZERO,
+                    format!("{:?}", order_state.status()).to_uppercase(),
+                    bar.ts_ms,
+                ))
+                .await?;
             let fill = self
                 .runtime
                 .executor
@@ -605,7 +655,7 @@ impl<'a> PaperRunSession<'a> {
                     .db
                     .insert_fill(NewFill {
                         id: fill_id,
-                        order_id,
+                        order_id: order_id.clone(),
                         run_id: settings.run_id.clone(),
                         symbol: order.symbol.clone(),
                         side: format!("{:?}", order.side).to_uppercase(),
@@ -626,6 +676,35 @@ impl<'a> PaperRunSession<'a> {
                             .sell(&order.symbol, fill.qty, fill.price, fill.fee)?
                     }
                 }
+                self.runtime
+                    .db
+                    .insert_event(order_event(
+                        &settings.run_id,
+                        "paper.order.filled",
+                        &order_id,
+                        &fill.client_order_id,
+                        Some(&fill.broker_order_id),
+                        &order,
+                        fill.qty,
+                        fill.status.clone(),
+                        bar.ts_ms,
+                    ))
+                    .await?;
+            } else {
+                self.runtime
+                    .db
+                    .insert_event(order_event(
+                        &settings.run_id,
+                        "paper.order.unfilled",
+                        &order_id,
+                        &fill.client_order_id,
+                        Some(&fill.broker_order_id),
+                        &order,
+                        fill.qty,
+                        fill.status.clone(),
+                        bar.ts_ms,
+                    ))
+                    .await?;
             }
             self.orders += 1;
         }

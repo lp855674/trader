@@ -40,6 +40,6 @@
 3. 增加 IBKR recover/open-orders 等价命令。
 4. 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门，默认仍不提交订单。
 
-## 当前下一步
+## 当前状态
 
-先完成 Binance 剩余任务：补齐自动订单生命周期事件，然后再进入 IBKR read-only / paper order adapter。
+Binance summary、只读 reconciliation 和自动订单生命周期事件已经完成。下一步可以进入 Binance 稳定性/长跑验证，确认没有遗留挂单和不可解释对账差异后，再进入 IBKR read-only / paper order adapter。

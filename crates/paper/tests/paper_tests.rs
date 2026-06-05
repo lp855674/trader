@@ -141,6 +141,21 @@ async fn paper_runtime_can_use_injected_order_executor() {
     let fills = db.list_fills("sample-ma-cross").await.unwrap();
     assert_eq!(fills[0].price, "19.5");
     assert_eq!(fills[0].fee, "0.01");
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    let mut categories = events
+        .iter()
+        .map(|event| event.category.as_str())
+        .collect::<Vec<_>>();
+    categories.sort_unstable();
+    assert_eq!(
+        categories,
+        vec!["paper.order.filled", "paper.order.submitted"]
+    );
+    assert!(events.iter().any(|event| {
+        event
+            .payload_json
+            .contains("\"broker_order_id\":\"external-1\"")
+    }));
 }
 
 #[tokio::test]
@@ -198,6 +213,21 @@ async fn paper_runtime_keeps_unfilled_broker_order_without_fill() {
     assert_eq!(orders[0].filled_qty, "0");
     let fills = db.list_fills("sample-ma-cross").await.unwrap();
     assert!(fills.is_empty());
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    let mut categories = events
+        .iter()
+        .map(|event| event.category.as_str())
+        .collect::<Vec<_>>();
+    categories.sort_unstable();
+    assert_eq!(
+        categories,
+        vec!["paper.order.submitted", "paper.order.unfilled"]
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.payload_json.contains("\"status\":\"CANCELED\""))
+    );
 }
 
 #[test]
