@@ -16,7 +16,7 @@ $traderExe = Join-Path $repoRoot "target/debug/trader.exe"
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-binance-paper-klines-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-binance-paper-klines-$id.toml"
-$barsPath = Join-Path $env:TEMP "trader-binance-paper-klines-$id.csv"
+$barsPath = Join-Path $env:TEMP "trader-binance-paper-klines-$id.parquet"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
 
@@ -24,6 +24,7 @@ $template = Get-Content $Config -Raw
 $configText = $template `
     -replace 'run_id = "binance-testnet-readonly"', "run_id = `"binance-paper-klines-$id`"" `
     -replace 'url = "sqlite://data/binance-testnet.sqlite"', "url = `"$databaseUrl`"" `
+    -replace 'source = "csv"', 'source = "parquet"' `
     -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$barsConfigPath`""
 Set-Content -Path $configPath -Value $configText -Encoding UTF8
 
@@ -71,6 +72,8 @@ try {
         $Interval,
         "--limit",
         "$Limit",
+        "--format",
+        "parquet",
         "--output",
         $barsPath
     )

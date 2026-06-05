@@ -220,14 +220,14 @@ trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --sy
 
 策略自动 testnet order 当前复用 `trader paper-run --config ...`，但必须显式把目标配置中的 `[broker] order_submit_enabled = true`。执行前必须确认行情数据价格与 Binance 当前价格保护范围一致；例如 `configs/paper/binance_testnet.toml` 目前仍使用本地样例 CSV 路径，不应直接开闸作为真实 BTCUSDT 行情源。
 
-真实 Binance Spot Testnet K 线可先落盘为现有 CSV schema：
+真实 Binance Spot Testnet K 线优先落盘为 Parquet：
 
 ```powershell
-trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --output datasets/binance/btcusdt_1m.csv
+trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1
 ```
 
-输出列为 `ts_ms,open,high,low,close,volume`，可直接配置为 `[data] source = "csv"`。
+输出字段为 `ts_ms,open,high,low,close,volume`，通过现有 Polars Parquet writer 写入，可直接配置为 `[data] source = "parquet"`。CSV 仅作为兼容格式，需显式加 `--format csv`。
 
 真实行情 runner：
 

@@ -14,7 +14,9 @@ $traderExe = Join-Path $repoRoot "target/debug/trader.exe"
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.toml"
-$barsPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.csv"
+$csvConfigPath = Join-Path $env:TEMP "trader-binance-paper-auto-csv-$id.toml"
+$barsCsvPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.csv"
+$barsPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.parquet"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
 
@@ -56,12 +58,13 @@ ts_ms,open,high,low,close,volume
 1704067200000,$bar1,$bar1,$bar1,$bar1,1
 1704153600000,$bar2,$bar2,$bar2,$bar2,1
 1704240000000,$bar3,$bar3,$bar3,$bar3,1
-"@ | Set-Content -Path $barsPath -Encoding UTF8
+"@ | Set-Content -Path $barsCsvPath -Encoding UTF8
 
     $template = Get-Content $Config -Raw
     $configText = $template `
         -replace 'run_id = "binance-testnet-readonly"', "run_id = `"binance-paper-auto-$id`"" `
         -replace 'url = "sqlite://data/binance-testnet.sqlite"', "url = `"$databaseUrl`"" `
+        -replace 'source = "csv"', 'source = "parquet"' `
         -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$barsConfigPath`"" `
         -replace 'max_order_notional = "50"', 'max_order_notional = "200"' `
         -replace 'order_submit_enabled = false', 'order_submit_enabled = true'
@@ -77,6 +80,11 @@ ts_ms,open,high,low,close,volume
     Write-Host "Generated closes: $bar1, $bar2, $bar3"
 
     Invoke-CheckedTrader @("check-config", "--config", $configPath)
+    $csvConfigText = $configText `
+        -replace 'source = "parquet"', 'source = "csv"' `
+        -replace [regex]::Escape("path = `"$barsConfigPath`""), "path = `"$($barsCsvPath.Replace('\', '/'))`""
+    Set-Content -Path $csvConfigPath -Value $csvConfigText -Encoding UTF8
+    Invoke-CheckedTrader @("import-bars", "--config", $csvConfigPath, "--output-parquet", $barsPath)
     Invoke-CheckedTrader @("paper-preflight", "--config", $configPath)
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
     Invoke-CheckedTrader @("paper-run", "--config", $configPath)
@@ -94,6 +102,8 @@ ts_ms,open,high,low,close,volume
 } finally {
     Set-Location $repoRoot
     Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $csvConfigPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $barsCsvPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $barsPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $databasePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-shm" -Force -ErrorAction SilentlyContinue

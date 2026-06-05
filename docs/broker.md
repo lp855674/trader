@@ -597,13 +597,13 @@ event_store: binance.testnet_order.started / completed
 
 注意：自动策略送单使用 bar close 作为 limit price。执行前必须确认数据源价格与 Binance 当前价格保护范围一致，否则 Binance 会因价格过滤拒单。当前 `configs/paper/binance_testnet.toml` 仍指向本地样例 CSV，不应直接开闸作为 BTCUSDT 实际行情源。
 
-真实 BTCUSDT K 线可通过 Binance Spot Testnet 公共 REST 拉取并写成当前 CSV schema：
+真实 BTCUSDT K 线可通过 Binance Spot Testnet 公共 REST 拉取，默认写成 Parquet：
 
 ```powershell
-trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --output datasets/binance/btcusdt_1m.csv
+trader binance-paper-klines --config configs/paper/binance_testnet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
 ```
 
-输出文件列为 `ts_ms,open,high,low,close,volume`，可直接作为 `[data] source = "csv"` 的 `path`。对应 smoke：
+Parquet 使用现有 `data::write_bars_to_parquet` / Polars 写入，字段为 `ts_ms,open,high,low,close,volume`，可直接作为 `[data] source = "parquet"` 的 `path`。CSV 仅作为兼容格式，需显式加 `--format csv`。对应 smoke 默认走 Parquet：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1

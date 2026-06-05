@@ -88,6 +88,8 @@ enum Command {
         interval: String,
         #[arg(long, default_value_t = 100)]
         limit: u16,
+        #[arg(long, value_enum, default_value_t = KlineOutputFormat::Parquet)]
+        format: KlineOutputFormat,
         #[arg(long)]
         output: String,
     },
@@ -114,6 +116,12 @@ enum ReportFormat {
     Text,
     Csv,
     Html,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum KlineOutputFormat {
+    Parquet,
+    Csv,
 }
 
 struct ReportData {
@@ -529,6 +537,7 @@ async fn main() -> Result<()> {
             symbol,
             interval,
             limit,
+            format,
             output,
         } => {
             if limit == 0 || limit > 1000 {
@@ -539,12 +548,13 @@ async fn main() -> Result<()> {
             let adapter =
                 BinanceSpotTestnetAdapter::try_new(binance_public_testnet_settings(&app_config)?)?;
             let bars = adapter.klines(&symbol, &interval, limit).await?;
-            write_binance_klines_csv(&output, &bars)?;
+            write_binance_klines(&output, &bars, format)?;
             println!(
-                "binance paper klines ok: symbol={} interval={} bars={} output={}",
+                "binance paper klines ok: symbol={} interval={} bars={} format={} output={}",
                 symbol,
                 interval,
                 bars.len(),
+                kline_output_format_slug(format),
                 output
             );
         }
@@ -725,6 +735,13 @@ fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
     }
 }
 
+fn kline_output_format_slug(format: KlineOutputFormat) -> &'static str {
+    match format {
+        KlineOutputFormat::Parquet => "parquet",
+        KlineOutputFormat::Csv => "csv",
+    }
+}
+
 fn binance_testnet_settings(app_config: &config::AppConfig) -> Result<BinanceSpotTestnetSettings> {
     let api_key_env = app_config
         .broker
@@ -871,9 +888,10 @@ fn binance_cancel_outcome(
     (final_status, cancel_error)
 }
 
-fn write_binance_klines_csv(
+fn write_binance_klines(
     output: impl AsRef<Path>,
     bars: &[broker::BinanceKlineBar],
+    format: KlineOutputFormat,
 ) -> Result<()> {
     let output = output.as_ref();
     if let Some(parent) = output.parent() {
@@ -881,6 +899,27 @@ fn write_binance_klines_csv(
             std::fs::create_dir_all(parent)?;
         }
     }
+    match format {
+        KlineOutputFormat::Parquet => {
+            let bars = bars
+                .iter()
+                .map(|bar| {
+                    data::Bar::new(
+                        bar.ts_ms, bar.open, bar.high, bar.low, bar.close, bar.volume,
+                    )
+                })
+                .collect::<Vec<_>>();
+            data::write_bars_to_parquet(output, &bars)?;
+        }
+        KlineOutputFormat::Csv => write_binance_klines_csv(output, bars)?,
+    }
+    Ok(())
+}
+
+fn write_binance_klines_csv(
+    output: impl AsRef<Path>,
+    bars: &[broker::BinanceKlineBar],
+) -> Result<()> {
     let mut file = std::fs::File::create(output)?;
     writeln!(file, "ts_ms,open,high,low,close,volume")?;
     for bar in bars {

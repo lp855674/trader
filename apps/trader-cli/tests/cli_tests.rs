@@ -217,8 +217,10 @@ fn binance_paper_klines_rejects_zero_limit() {
             "1m",
             "--limit",
             "0",
+            "--format",
+            "parquet",
             "--output",
-            "target/tmp/unused-binance-klines.csv",
+            "target/tmp/unused-binance-klines.parquet",
         ])
         .assert()
         .failure()

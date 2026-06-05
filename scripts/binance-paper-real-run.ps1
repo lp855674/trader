@@ -22,7 +22,7 @@ $traderExe = Join-Path $repoRoot "target/debug/trader.exe"
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-binance-paper-real-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-binance-paper-real-$id.toml"
-$barsPath = Join-Path $env:TEMP "trader-binance-paper-real-$id.csv"
+$barsPath = Join-Path $env:TEMP "trader-binance-paper-real-$id.parquet"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
 
@@ -30,6 +30,7 @@ $template = Get-Content $Config -Raw
 $configText = $template `
     -replace 'run_id = "binance-testnet-readonly"', "run_id = `"binance-paper-real-$id`"" `
     -replace 'url = "sqlite://data/binance-testnet.sqlite"', "url = `"$databaseUrl`"" `
+    -replace 'source = "csv"', 'source = "parquet"' `
     -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$barsConfigPath`"" `
     -replace 'max_order_notional = "50"', 'max_order_notional = "200"'
 
@@ -85,6 +86,8 @@ try {
         $Interval,
         "--limit",
         "$Limit",
+        "--format",
+        "parquet",
         "--output",
         $barsPath
     )
