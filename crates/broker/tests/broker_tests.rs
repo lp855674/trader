@@ -258,6 +258,22 @@ fn binance_open_orders_response_maps_to_domain_orders() {
 }
 
 #[test]
+fn binance_klines_response_maps_to_bars() {
+    let bars = BinanceSpotTestnetAdapter::parse_klines_json(
+        r#"[[1700000000000,"10000.1","10010.2","9990.3","10005.4","12.5",1700000059999,"0","0","0","0","0"]]"#,
+    )
+    .unwrap();
+
+    assert_eq!(bars.len(), 1);
+    assert_eq!(bars[0].ts_ms, 1_700_000_000_000);
+    assert_eq!(bars[0].open, dec!(10000.1));
+    assert_eq!(bars[0].high, dec!(10010.2));
+    assert_eq!(bars[0].low, dec!(9990.3));
+    assert_eq!(bars[0].close, dec!(10005.4));
+    assert_eq!(bars[0].volume, dec!(12.5));
+}
+
+#[test]
 fn binance_error_response_preserves_code_and_message() {
     let message = BinanceSpotTestnetAdapter::format_error_body(
         400,

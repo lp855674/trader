@@ -203,6 +203,29 @@ fn binance_paper_cancel_open_orders_requires_explicit_confirmation() {
 }
 
 #[test]
+fn binance_paper_klines_rejects_zero_limit() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "binance-paper-klines",
+            "--config",
+            "configs/paper/binance_testnet.toml",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "1m",
+            "--limit",
+            "0",
+            "--output",
+            "target/tmp/unused-binance-klines.csv",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("limit must be between 1 and 1000"));
+}
+
+#[test]
 fn binance_paper_tiny_order_requires_explicit_confirmation() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

@@ -234,6 +234,16 @@ pub struct BinanceOpenOrder {
     pub executed_qty: Decimal,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BinanceKlineBar {
+    pub ts_ms: i64,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub close: Decimal,
+    pub volume: Decimal,
+}
+
 #[derive(Debug, Clone)]
 pub struct BinanceSpotTestnetAdapter {
     settings: BinanceSpotTestnetSettings,
@@ -371,6 +381,13 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/openOrders", &query)
     }
 
+    pub fn klines_url(&self, symbol: &str, interval: &str, limit: u16) -> String {
+        format!(
+            "{}/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+            self.settings.base_url.trim_end_matches('/')
+        )
+    }
+
     pub async fn server_time_ms(&self) -> Result<i64, BrokerError> {
         let body = binance_response_body(
             self.client
@@ -493,6 +510,22 @@ impl BinanceSpotTestnetAdapter {
         Self::parse_open_orders_json(&body)
     }
 
+    pub async fn klines(
+        &self,
+        symbol: &str,
+        interval: &str,
+        limit: u16,
+    ) -> Result<Vec<BinanceKlineBar>, BrokerError> {
+        let body = binance_response_body(
+            self.client
+                .get(self.klines_url(symbol, interval, limit))
+                .send()
+                .await?,
+        )
+        .await?;
+        Self::parse_klines_json(&body)
+    }
+
     pub fn parse_server_time_json(input: &str) -> Result<i64, BrokerError> {
         let response = serde_json::from_str::<BinanceServerTimeResponse>(input)
             .map_err(|error| BrokerError::Config(error.to_string()))?;
@@ -506,6 +539,14 @@ impl BinanceSpotTestnetAdapter {
             .into_iter()
             .map(BinanceOpenOrderResponse::try_into_open_order)
             .collect()
+    }
+
+    pub fn parse_klines_json(input: &str) -> Result<Vec<BinanceKlineBar>, BrokerError> {
+        let rows = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        rows.into_iter()
+            .map(Self::parse_kline_row)
+            .collect::<Result<Vec<_>, _>>()
     }
 
     pub fn parse_trades_json(input: &str) -> Result<Vec<BinanceTrade>, BrokerError> {
@@ -536,6 +577,22 @@ impl BinanceSpotTestnetAdapter {
             ),
             api_key: self.settings.api_key.clone(),
         }
+    }
+
+    fn parse_kline_row(row: Vec<serde_json::Value>) -> Result<BinanceKlineBar, BrokerError> {
+        if row.len() < 6 {
+            return Err(BrokerError::Config(
+                "Binance kline row has fewer than 6 columns".to_string(),
+            ));
+        }
+        Ok(BinanceKlineBar {
+            ts_ms: json_i64(&row[0], "open_time")?,
+            open: json_decimal(&row[1], "open")?,
+            high: json_decimal(&row[2], "high")?,
+            low: json_decimal(&row[3], "low")?,
+            close: json_decimal(&row[4], "close")?,
+            volume: json_decimal(&row[5], "volume")?,
+        })
     }
 }
 
@@ -730,6 +787,20 @@ async fn binance_response_body(response: reqwest::Response) -> Result<String, Br
         ));
     }
     Ok(body)
+}
+
+fn json_i64(value: &serde_json::Value, field: &str) -> Result<i64, BrokerError> {
+    value
+        .as_i64()
+        .ok_or_else(|| BrokerError::Config(format!("Binance kline {field} is not an integer")))
+}
+
+fn json_decimal(value: &serde_json::Value, field: &str) -> Result<Decimal, BrokerError> {
+    let raw = value
+        .as_str()
+        .ok_or_else(|| BrokerError::Config(format!("Binance kline {field} is not a string")))?;
+    raw.parse::<Decimal>()
+        .map_err(|error| BrokerError::Config(error.to_string()))
 }
 
 fn hmac_sha256_hex(secret_key: &str, payload: &str) -> String {

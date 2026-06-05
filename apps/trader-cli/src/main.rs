@@ -9,7 +9,7 @@ use metrics::{equity_returns, paper_summary};
 use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
-use std::str::FromStr;
+use std::{io::Write, path::Path, str::FromStr};
 
 #[derive(Parser)]
 #[command(name = "trader")]
@@ -78,6 +78,18 @@ enum Command {
         symbol: String,
         #[arg(long)]
         confirm_testnet_cancel: bool,
+    },
+    BinancePaperKlines {
+        #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long, default_value = "1m")]
+        interval: String,
+        #[arg(long, default_value_t = 100)]
+        limit: u16,
+        #[arg(long)]
+        output: String,
     },
     Replay {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -512,6 +524,30 @@ async fn main() -> Result<()> {
                 local_synced
             );
         }
+        Command::BinancePaperKlines {
+            config,
+            symbol,
+            interval,
+            limit,
+            output,
+        } => {
+            if limit == 0 || limit > 1000 {
+                bail!("limit must be between 1 and 1000");
+            }
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_binance_paper_config(&app_config, "binance paper klines")?;
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_public_testnet_settings(&app_config)?)?;
+            let bars = adapter.klines(&symbol, &interval, limit).await?;
+            write_binance_klines_csv(&output, &bars)?;
+            println!(
+                "binance paper klines ok: symbol={} interval={} bars={} output={}",
+                symbol,
+                interval,
+                bars.len(),
+                output
+            );
+        }
         Command::Replay { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
@@ -717,6 +753,21 @@ fn binance_testnet_settings(app_config: &config::AppConfig) -> Result<BinanceSpo
     })
 }
 
+fn binance_public_testnet_settings(
+    app_config: &config::AppConfig,
+) -> Result<BinanceSpotTestnetSettings> {
+    Ok(BinanceSpotTestnetSettings {
+        base_url: app_config
+            .broker
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://testnet.binance.vision/api".to_string()),
+        api_key: String::new(),
+        secret_key: String::new(),
+        recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
+    })
+}
+
 fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<bool> {
     match app_config.broker.kind {
         config::BrokerKind::Simulated => Ok(false),
@@ -818,6 +869,28 @@ fn binance_cancel_outcome(
     cancel_error: Option<String>,
 ) -> (String, Option<String>) {
     (final_status, cancel_error)
+}
+
+fn write_binance_klines_csv(
+    output: impl AsRef<Path>,
+    bars: &[broker::BinanceKlineBar],
+) -> Result<()> {
+    let output = output.as_ref();
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut file = std::fs::File::create(output)?;
+    writeln!(file, "ts_ms,open,high,low,close,volume")?;
+    for bar in bars {
+        writeln!(
+            file,
+            "{},{},{},{},{},{}",
+            bar.ts_ms, bar.open, bar.high, bar.low, bar.close, bar.volume
+        )?;
+    }
+    Ok(())
 }
 
 struct BinanceAccountingRecords {
