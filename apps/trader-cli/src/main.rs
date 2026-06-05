@@ -476,23 +476,35 @@ async fn main() -> Result<()> {
             if !confirm_testnet_cancel {
                 bail!("refusing to cancel Binance testnet orders without --confirm-testnet-cancel");
             }
-            let app_config = config::AppConfig::from_toml_file(&config)?;
+            let (app_config, db) = load_db(&config).await?;
             ensure_binance_paper_config(&app_config, "binance paper cancel open orders")?;
+            db.migrate().await?;
             let adapter =
                 BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(&app_config)?)?;
             let orders = adapter.open_orders(&symbol).await?;
             let mut cancelled = 0usize;
+            let mut local_synced = 0u64;
             for order in &orders {
-                adapter
+                let cancelled_order = adapter
                     .cancel_binance_order(&symbol, order.order_id)
                     .await?;
                 cancelled += 1;
+                local_synced += db
+                    .update_order_status_by_client_order_id(
+                        &app_config.runtime.run_id,
+                        &order.client_order_id,
+                        &cancelled_order.order_id.to_string(),
+                        &cancelled_order.status,
+                        chrono::Utc::now().timestamp_millis(),
+                    )
+                    .await?;
             }
             println!(
-                "binance paper cancel open orders ok: symbol={} scanned={} cancelled={}",
+                "binance paper cancel open orders ok: symbol={} scanned={} cancelled={} local_synced={}",
                 symbol,
                 orders.len(),
-                cancelled
+                cancelled,
+                local_synced
             );
         }
         Command::Replay { config } => {

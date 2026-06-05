@@ -379,6 +379,31 @@ impl Db {
         Ok(())
     }
 
+    pub async fn update_order_status_by_client_order_id(
+        &self,
+        run_id: &str,
+        client_order_id: &str,
+        broker_order_id: &str,
+        status: &str,
+        updated_at_ms: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE orders
+            SET broker_order_id = ?, status = ?, updated_at_ms = ?
+            WHERE run_id = ? AND client_order_id = ?
+            "#,
+        )
+        .bind(broker_order_id)
+        .bind(status)
+        .bind(updated_at_ms)
+        .bind(run_id)
+        .bind(client_order_id)
+        .execute(self.pool())
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn update_order_execution_by_broker_id(
         &self,
         run_id: &str,

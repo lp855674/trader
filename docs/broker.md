@@ -639,6 +639,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-open-orders-smo
 trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.toml --symbol BTCUSDT --confirm-testnet-cancel
 ```
 
+清理命令会先查询远端 open orders，逐个撤销成功后按 `run_id + client_order_id` 同步当前配置 SQLite 中匹配订单的 `broker_order_id`、`status` 与 `updated_at_ms`，输出 `local_synced` 作为本地同步行数。
+
 ---
 
 ## 21. Broker Configuration

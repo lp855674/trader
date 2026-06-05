@@ -177,6 +177,20 @@ async fn runtime_records_round_trip() {
     assert_eq!(recovered.broker_order_id.as_deref(), Some("broker-2"));
     assert_eq!(recovered.status, "FILLED");
     assert_eq!(recovered.filled_qty, "2");
+
+    let updated = db
+        .update_order_status_by_client_order_id("run-1", "client-2", "broker-2", "CANCELLED", 13)
+        .await
+        .unwrap();
+    assert_eq!(updated, 1);
+    let cancelled = db
+        .get_order_by_client_order_id("client-2")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cancelled.broker_order_id.as_deref(), Some("broker-2"));
+    assert_eq!(cancelled.status, "CANCELLED");
+    assert_eq!(cancelled.updated_at_ms, 13);
 }
 
 #[tokio::test]
