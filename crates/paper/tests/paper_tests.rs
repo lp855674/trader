@@ -10,7 +10,7 @@ use paper::{
 use rust_decimal_macros::dec;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use storage::Db;
 use trader_core::{OrderRequest, OrderSide, OrderType};
@@ -324,6 +324,34 @@ async fn binance_paper_executor_cancels_unfilled_open_testnet_order() {
 }
 
 #[tokio::test]
+async fn binance_paper_executor_recovers_trade_when_cancel_races_with_fill() {
+    let executor = BinancePaperOrderExecutor::new(CancelRaceFilledBinanceClient {
+        query_calls: AtomicUsize::new(0),
+        trade_calls: AtomicUsize::new(0),
+    });
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "BTCUSDT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(0.001),
+                price: None,
+                account_id: "binance-testnet".to_string(),
+            },
+            dec!(100000),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.status, "FILLED");
+    assert_eq!(fill.qty, dec!(0.001));
+    assert_eq!(fill.price, dec!(100000));
+}
+
+#[tokio::test]
 async fn binance_paper_executor_recovers_existing_order_by_client_order_id() {
     let executor = BinancePaperOrderExecutor::new_with_client_order_prefix(
         RecoveringBinanceClient,
@@ -626,6 +654,86 @@ impl BinancePaperOrderClient for CancellableUnfilledBinanceClient {
         _order_id: u64,
     ) -> Result<Vec<BinanceTrade>, BrokerError> {
         Ok(Vec::new())
+    }
+}
+
+struct CancelRaceFilledBinanceClient {
+    query_calls: AtomicUsize,
+    trade_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl BinancePaperOrderClient for CancelRaceFilledBinanceClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<BinanceOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &BinanceLimitOrderRequest,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Ok(BinanceOrderAck {
+            order_id: 202,
+            client_order_id: order.client_order_id.clone(),
+            status: "NEW".to_string(),
+            executed_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(
+        &self,
+        _symbol: &str,
+        order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        let status = if self.query_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            "NEW"
+        } else {
+            "FILLED"
+        };
+        Ok(BinanceOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: status.to_string(),
+            executed_qty: if status == "FILLED" {
+                dec!(0.001)
+            } else {
+                dec!(0)
+            },
+        })
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: u64,
+    ) -> Result<BinanceOrderAck, BrokerError> {
+        Err(BrokerError::Rejected(
+            "Binance API error 400 code=-2011 msg=Unknown order sent.".to_string(),
+        ))
+    }
+
+    async fn my_trades(
+        &self,
+        symbol: &str,
+        order_id: u64,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        if self.trade_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(vec![BinanceTrade {
+            trade_id: 202,
+            order_id,
+            symbol: symbol.to_string(),
+            price: dec!(100000),
+            qty: dec!(0.001),
+            fee: dec!(0.000001),
+            fee_asset: "BTC".to_string(),
+            ts_ms: 1,
+        }])
     }
 }
 

@@ -369,23 +369,28 @@ where
         } else {
             self.client.query_order(&symbol, placed.order_id).await?
         };
-        let trades = self.client.my_trades(&symbol, placed.order_id).await?;
+        let mut status = queried.status.clone();
+        let mut trades = self.client.my_trades(&symbol, placed.order_id).await?;
         if trades.is_empty() && binance_order_is_open(&queried.status) {
-            let cancelled = self.client.cancel_order(&symbol, placed.order_id).await?;
-            return Ok(ExecutedPaperOrder {
-                client_order_id,
-                broker_order_id: placed.order_id.to_string(),
-                status: cancelled.status,
-                price: mark_price,
-                qty: Decimal::ZERO,
-                fee: Decimal::ZERO,
-            });
+            match self.client.cancel_order(&symbol, placed.order_id).await {
+                Ok(cancelled) => {
+                    status = cancelled.status;
+                }
+                Err(BrokerError::Rejected(message))
+                    if binance_cancel_unknown_order_message(&message) =>
+                {
+                    let refreshed = self.client.query_order(&symbol, placed.order_id).await?;
+                    status = refreshed.status;
+                    trades = self.client.my_trades(&symbol, placed.order_id).await?;
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
         if trades.is_empty() {
             return Ok(ExecutedPaperOrder {
                 client_order_id,
                 broker_order_id: placed.order_id.to_string(),
-                status: queried.status,
+                status,
                 price: mark_price,
                 qty: Decimal::ZERO,
                 fee: Decimal::ZERO,
@@ -396,7 +401,7 @@ where
         Ok(ExecutedPaperOrder {
             client_order_id,
             broker_order_id: placed.order_id.to_string(),
-            status: queried.status,
+            status,
             price,
             qty,
             fee,
@@ -406,6 +411,10 @@ where
 
 fn binance_order_is_open(status: &str) -> bool {
     matches!(status, "NEW" | "PARTIALLY_FILLED" | "PENDING_NEW")
+}
+
+fn binance_cancel_unknown_order_message(message: &str) -> bool {
+    message.contains("code=-2011") || message.contains("Unknown order sent")
 }
 
 pub fn binance_spot_symbol(symbol: &str) -> anyhow::Result<String> {
