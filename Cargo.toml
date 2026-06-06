@@ -48,6 +48,7 @@ execution = { path = "crates/execution" }
 futures = "0.3"
 hex = "0.4"
 hmac = "0.12"
+ibapi = "3"
 metrics = { path = "crates/metrics" }
 market_rules = { path = "crates/market_rules" }
 oms = { path = "crates/oms" }
