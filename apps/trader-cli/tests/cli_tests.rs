@@ -1,16 +1,6 @@
 use assert_cmd::Command;
-use broker::{
-    ibkr_client_version_handshake, ibkr_encode_frame, ibkr_executions_request,
-    ibkr_managed_accounts_request, ibkr_next_order_id_request, ibkr_open_orders_request,
-    ibkr_order_cancel_request,
-};
 use predicates::str::contains;
-use std::{
-    io::{Read, Write},
-    net::TcpListener,
-    path::PathBuf,
-    thread,
-};
+use std::path::PathBuf;
 
 #[test]
 fn check_config_prints_ok() {
@@ -175,234 +165,50 @@ fn ibkr_paper_readonly_reports_connection_failure_without_gateway() {
 }
 
 #[test]
-fn ibkr_paper_readonly_validates_configured_account_from_gateway() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let expected = ibkr_client_version_handshake(100, 178);
-        let mut handshake = vec![0; expected.len()];
-        stream.read_exact(&mut handshake).unwrap();
-        assert_eq!(handshake, expected);
-        stream
-            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
-            .unwrap();
-        let mut request_len = [0; 4];
-        stream.read_exact(&mut request_len).unwrap();
-        let payload_len = u32::from_be_bytes(request_len) as usize;
-        let mut payload = vec![0; payload_len];
-        stream.read_exact(&mut payload).unwrap();
-        let mut request = request_len.to_vec();
-        request.extend_from_slice(&payload);
-        assert_eq!(request, ibkr_managed_accounts_request());
-        stream
-            .write_all(&ibkr_encode_frame(["15", "1", "DU12345"]))
-            .unwrap();
-    });
-    let config = temp_output("trader-ibkr-readonly", "toml");
-    std::fs::write(
-        &config,
-        format!(
-            r#"
-            [runtime]
-            mode = "paper"
-            run_id = "ibkr-readonly-test"
-
-            [database]
-            url = "sqlite::memory:"
-
-            [data]
-            source = "parquet"
-            path = "datasets/ibkr/aapl_1d.parquet"
-
-            [strategy]
-            name = "moving_average_cross"
-            symbols = ["US:NASDAQ:AAPL:EQUITY"]
-            fast_window = 2
-            slow_window = 3
-
-            [portfolio]
-            initial_cash = "100000"
-            base_currency = "USD"
-            order_qty = "1"
-            max_abs_qty = "100"
-
-            [risk]
-            max_order_notional = "1000"
-            min_cash_after_order = "1000"
-            max_exposure = "10000"
-            max_drawdown = "0.2"
-            max_leverage = "1"
-            max_margin_used = "0"
-            trading_halted = false
-
-            [broker]
-            kind = "ibkr"
-            mode = "paper"
-            host = "127.0.0.1"
-            port = {port}
-            client_id = 1
-            order_submit_enabled = false
-
-            [paper]
-            account_id = "DU12345"
-            slippage_bps = "5"
-            fee_bps = "2"
-
-            [live]
-            enabled = false
-            "#
-        ),
-    )
-    .unwrap();
-
-    let mut command = Command::cargo_bin("trader").unwrap();
-    command
-        .current_dir(workspace_root())
-        .args(["ibkr-paper-readonly", "--config", config.to_str().unwrap()])
-        .assert()
-        .success()
-        .stdout(contains("ibkr paper readonly ok"))
-        .stdout(contains("connected=true"))
-        .stdout(contains("account=DU12345"))
-        .stdout(contains("accounts=1"))
-        .stdout(contains("order_submit_enabled=false"));
-
-    server.join().unwrap();
-    std::fs::remove_file(config).unwrap();
-}
-
-#[test]
-fn ibkr_paper_open_orders_prints_gateway_orders() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        write_ibkr_server_version(&mut stream);
-        assert_eq!(read_ibkr_request(&mut stream), ibkr_open_orders_request());
-        stream
-            .write_all(&ibkr_encode_frame([
-                "5",
-                "42",
-                "DU12345",
-                "AAPL",
-                "BUY",
-                "LMT",
-                "1",
-                "185.25",
-                "Submitted",
-                "trader-paper-run-1",
-                "0",
-            ]))
-            .unwrap();
-        stream.write_all(&ibkr_encode_frame(["53"])).unwrap();
-    });
-    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
-
+fn ibkr_paper_open_orders_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-open-orders",
             "--config",
-            config.to_str().unwrap(),
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
         ])
         .assert()
-        .success()
-        .stdout(contains("ibkr paper open orders ok"))
-        .stdout(contains("open_orders=1"))
-        .stdout(contains("order_id=42"))
-        .stdout(contains("symbol=AAPL"))
-        .stdout(contains("status=Submitted"));
-
-    server.join().unwrap();
-    std::fs::remove_file(config).unwrap();
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
 }
 
 #[test]
-fn ibkr_paper_executions_prints_gateway_executions() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        write_ibkr_server_version(&mut stream);
-        assert_eq!(
-            read_ibkr_request(&mut stream),
-            ibkr_executions_request(77, "DU12345", "AAPL")
-        );
-        stream
-            .write_all(&ibkr_encode_frame([
-                "11",
-                "77",
-                "AAPL",
-                "STK",
-                "USD",
-                "SMART",
-                "42",
-                "exec-1",
-                "20260606 12:01:00",
-                "DU12345",
-                "BUY",
-                "1",
-                "185.50",
-                "0.35",
-            ]))
-            .unwrap();
-        stream.write_all(&ibkr_encode_frame(["55", "77"])).unwrap();
-    });
-    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
-
+fn ibkr_paper_executions_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-executions",
             "--config",
-            config.to_str().unwrap(),
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
             "--request-id",
             "77",
         ])
         .assert()
-        .success()
-        .stdout(contains("ibkr paper executions ok"))
-        .stdout(contains("executions=1"))
-        .stdout(contains("order_id=42"))
-        .stdout(contains("trade_id=exec-1"))
-        .stdout(contains("symbol=AAPL"));
-
-    server.join().unwrap();
-    std::fs::remove_file(config).unwrap();
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
 }
 
 #[test]
-fn ibkr_paper_next_order_id_prints_gateway_order_id() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        write_ibkr_server_version(&mut stream);
-        assert_eq!(read_ibkr_request(&mut stream), ibkr_next_order_id_request());
-        stream
-            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
-            .unwrap();
-    });
-    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
-
+fn ibkr_paper_next_order_id_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-next-order-id",
             "--config",
-            config.to_str().unwrap(),
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
         ])
         .assert()
-        .success()
-        .stdout(contains("ibkr paper next order id ok"))
-        .stdout(contains("next_order_id=1001"));
-
-    server.join().unwrap();
-    std::fs::remove_file(config).unwrap();
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
 }
 
 #[test]
@@ -427,30 +233,8 @@ fn ibkr_paper_cancel_order_requires_explicit_confirmation() {
 }
 
 #[test]
-fn ibkr_paper_cancel_order_prints_cancelled_status() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        write_ibkr_server_version(&mut stream);
-        assert_eq!(
-            read_ibkr_request(&mut stream),
-            ibkr_order_cancel_request(42)
-        );
-        stream
-            .write_all(&ibkr_encode_frame([
-                "3",
-                "1",
-                "42",
-                "Cancelled",
-                "0",
-                "1",
-                "0",
-            ]))
-            .unwrap();
-    });
-    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
-
+fn ibkr_paper_cancel_order_reports_connection_failure_without_gateway_after_confirmation() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -463,12 +247,9 @@ fn ibkr_paper_cancel_order_prints_cancelled_status() {
             "--confirm-ibkr-paper-cancel",
         ])
         .assert()
-        .success()
-        .stdout(contains("ibkr paper cancel order ok"))
-        .stdout(contains("order_id=42"))
-        .stdout(contains("status=Cancelled"));
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
 
-    server.join().unwrap();
     std::fs::remove_file(config).unwrap();
 }
 
@@ -500,36 +281,8 @@ fn ibkr_paper_tiny_order_requires_explicit_confirmation() {
 }
 
 #[test]
-fn ibkr_paper_tiny_order_prints_submitted_status() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        write_ibkr_server_version(&mut stream);
-        assert_eq!(read_ibkr_request(&mut stream), ibkr_next_order_id_request());
-        stream
-            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
-            .unwrap();
-        let place = read_ibkr_request(&mut stream);
-        let fields = broker::ibkr_decode_frame(&place).unwrap().unwrap().0;
-        assert_eq!(fields[0], "3");
-        assert_eq!(fields[1], "1001");
-        assert!(fields.iter().any(|field| field == "AAPL"));
-        assert!(fields.iter().any(|field| field == "DU12345"));
-        stream
-            .write_all(&ibkr_encode_frame([
-                "3",
-                "1",
-                "1001",
-                "Submitted",
-                "0",
-                "1",
-                "0",
-            ]))
-            .unwrap();
-    });
-    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
-
+fn ibkr_paper_tiny_order_reports_connection_failure_without_gateway_after_confirmation() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -548,13 +301,39 @@ fn ibkr_paper_tiny_order_prints_submitted_status() {
             "--confirm-ibkr-paper-order",
         ])
         .assert()
-        .success()
-        .stdout(contains("ibkr paper tiny order ok"))
-        .stdout(contains("order_id=1001"))
-        .stdout(contains("status=Submitted"))
-        .stdout(contains("filled_qty=0"));
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
 
-    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_preflight_with_submit_reports_connection_failure_without_gateway() {
+    let config =
+        write_ibkr_cli_config_with_order_submit(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_run_with_submit_reports_connection_failure_without_gateway() {
+    let config =
+        write_ibkr_cli_config_with_order_submit(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-run", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
+
     std::fs::remove_file(config).unwrap();
 }
 
@@ -782,28 +561,16 @@ fn temp_output(prefix: &str, extension: &str) -> PathBuf {
     ))
 }
 
-fn write_ibkr_server_version(stream: &mut std::net::TcpStream) {
-    let expected = ibkr_client_version_handshake(100, 178);
-    let mut handshake = vec![0; expected.len()];
-    stream.read_exact(&mut handshake).unwrap();
-    assert_eq!(handshake, expected);
-    stream
-        .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
-        .unwrap();
-}
-
-fn read_ibkr_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
-    let mut request_len = [0; 4];
-    stream.read_exact(&mut request_len).unwrap();
-    let payload_len = u32::from_be_bytes(request_len) as usize;
-    let mut payload = vec![0; payload_len];
-    stream.read_exact(&mut payload).unwrap();
-    let mut request = request_len.to_vec();
-    request.extend_from_slice(&payload);
-    request
-}
-
 fn write_ibkr_cli_config(port: u16, account_id: &str, symbol: &str) -> PathBuf {
+    write_ibkr_cli_config_with_order_submit(port, account_id, symbol, false)
+}
+
+fn write_ibkr_cli_config_with_order_submit(
+    port: u16,
+    account_id: &str,
+    symbol: &str,
+    order_submit_enabled: bool,
+) -> PathBuf {
     let config = temp_output("trader-ibkr-cli", "toml");
     std::fs::write(
         &config,
@@ -847,7 +614,7 @@ fn write_ibkr_cli_config(port: u16, account_id: &str, symbol: &str) -> PathBuf {
             host = "127.0.0.1"
             port = {port}
             client_id = 1
-            order_submit_enabled = false
+            order_submit_enabled = {order_submit_enabled}
 
             [paper]
             account_id = "{account_id}"

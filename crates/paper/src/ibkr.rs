@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use broker::{BrokerError, IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrTrade};
+use broker::{
+    BrokerError, IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrPaperGatewayAdapter,
+    IbkrTrade,
+};
 use rust_decimal::Decimal;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
@@ -23,6 +26,89 @@ pub trait IbkrPaperOrderClient: Send + Sync {
     async fn cancel_order(&self, symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError>;
 
     async fn executions(&self, symbol: &str, order_id: i64) -> Result<Vec<IbkrTrade>, BrokerError>;
+}
+
+pub struct IbkrPaperGatewayOrderClient {
+    adapter: IbkrPaperGatewayAdapter,
+    account_id: String,
+}
+
+impl IbkrPaperGatewayOrderClient {
+    pub fn new(adapter: IbkrPaperGatewayAdapter, account_id: impl Into<String>) -> Self {
+        Self {
+            adapter,
+            account_id: account_id.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl IbkrPaperOrderClient for IbkrPaperGatewayOrderClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(self
+            .adapter
+            .open_orders()
+            .await?
+            .into_iter()
+            .find(|order| order.symbol == symbol && order.client_order_id == client_order_id)
+            .map(open_order_ack))
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        self.adapter
+            .place_limit_order(&self.account_id, order)
+            .await
+    }
+
+    async fn query_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        self.adapter
+            .open_orders()
+            .await?
+            .into_iter()
+            .find(|order| order.order_id == order_id)
+            .map(open_order_ack)
+            .ok_or_else(|| BrokerError::OrderNotFound(order_id.to_string()))
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        let status = self.adapter.cancel_ibkr_order(order_id).await?;
+        Ok(IbkrOrderAck {
+            order_id: status.order_id,
+            client_order_id: String::new(),
+            status: status.status,
+            filled_qty: status.filled_qty,
+        })
+    }
+
+    async fn executions(&self, symbol: &str, order_id: i64) -> Result<Vec<IbkrTrade>, BrokerError> {
+        Ok(self
+            .adapter
+            .executions(1, &self.account_id, symbol)
+            .await?
+            .into_iter()
+            .filter(|execution| execution.order_id == order_id)
+            .map(|execution| IbkrTrade {
+                trade_id: execution.trade_id,
+                order_id: execution.order_id,
+                symbol: execution.symbol,
+                price: execution.price,
+                qty: execution.qty,
+                fee: execution.fee,
+                ts_ms: 0,
+            })
+            .collect())
+    }
 }
 
 pub struct IbkrPaperOrderExecutor<Client> {
@@ -89,7 +175,11 @@ where
         let queried = if ibkr_order_is_terminal(&placed.status) {
             placed.clone()
         } else {
-            self.client.query_order(&symbol, placed.order_id).await?
+            match self.client.query_order(&symbol, placed.order_id).await {
+                Ok(order) => order,
+                Err(BrokerError::OrderNotFound(_)) => placed.clone(),
+                Err(error) => return Err(error.into()),
+            }
         };
         let mut status = queried.status.clone();
         let trades = self.client.executions(&symbol, placed.order_id).await?;
@@ -182,4 +272,13 @@ fn aggregate_ibkr_trades(trades: &[IbkrTrade]) -> anyhow::Result<(Decimal, Decim
         anyhow::bail!("IBKR paper order has no executions");
     }
     Ok((qty, notional / qty, fee))
+}
+
+fn open_order_ack(order: broker::IbkrOpenOrder) -> IbkrOrderAck {
+    IbkrOrderAck {
+        order_id: order.order_id,
+        client_order_id: order.client_order_id,
+        status: order.status,
+        filled_qty: order.filled_qty,
+    }
 }

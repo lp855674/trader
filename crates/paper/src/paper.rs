@@ -4,7 +4,9 @@ pub mod binance;
 pub mod ibkr;
 
 pub use binance::{BinancePaperOrderClient, BinancePaperOrderExecutor, binance_spot_symbol};
-pub use ibkr::{IbkrPaperOrderClient, IbkrPaperOrderExecutor, ibkr_stock_symbol};
+pub use ibkr::{
+    IbkrPaperGatewayOrderClient, IbkrPaperOrderClient, IbkrPaperOrderExecutor, ibkr_stock_symbol,
+};
 
 use accounting::AccountBook;
 use async_trait::async_trait;

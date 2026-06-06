@@ -13,10 +13,13 @@ use axum::{
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
     BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, BrokerAccountSnapshot,
-    BrokerKind, BrokerStatus, FakeBrokerAdapter,
+    BrokerKind, BrokerStatus, FakeBrokerAdapter, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
 use metrics::{MetricsSummary, equity_returns, paper_summary};
-use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
+use paper::{
+    BinancePaperOrderExecutor, IbkrPaperGatewayOrderClient, IbkrPaperOrderExecutor, PaperRuntime,
+    PaperSettings,
+};
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
@@ -146,7 +149,7 @@ async fn paper_preflight(
             "paper preflight requires broker.mode = paper"
         )));
     }
-    let real_broker_connection = paper_real_broker_connection_ready(&app_config)?;
+    let real_broker_connection = paper_real_broker_connection_ready(&app_config).await?;
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     Ok(Json(PaperPreflightResponse {
         status: "ok",
@@ -704,7 +707,9 @@ fn broker_mode_slug(mode: config::BrokerMode) -> &'static str {
     }
 }
 
-fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<bool, ApiError> {
+async fn paper_real_broker_connection_ready(
+    app_config: &config::AppConfig,
+) -> Result<bool, ApiError> {
     match app_config.broker.kind {
         config::BrokerKind::Simulated => Ok(false),
         config::BrokerKind::Binance => {
@@ -737,12 +742,17 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
             Ok(true)
         }
         config::BrokerKind::InteractiveBrokers => {
-            if app_config.broker.order_submit_enabled {
-                return Err(ApiError(anyhow::anyhow!(
-                    "IBKR paper order submit is not implemented; run ibkr-paper-readonly first and keep order_submit_enabled=false"
-                )));
+            if !app_config.broker.order_submit_enabled {
+                return Ok(false);
             }
-            Ok(false)
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)
+                    .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            adapter
+                .validate_paper_account(&app_config.paper.account_id)
+                .await
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            Ok(true)
         }
         config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
     }
@@ -783,12 +793,28 @@ async fn paper_runtime(
                 )),
             ))
         }
-        config::BrokerKind::Simulated
-        | config::BrokerKind::Futu
-        | config::BrokerKind::Okx
-        | config::BrokerKind::InteractiveBrokers => Err(ApiError(anyhow::anyhow!(
-            "paper-run broker order submit only supports Binance Spot Testnet in this phase"
-        ))),
+        config::BrokerKind::InteractiveBrokers => {
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)
+                    .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            adapter
+                .validate_paper_account(&app_config.paper.account_id)
+                .await
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            Ok(PaperRuntime::new_with_executor(
+                db,
+                settings,
+                Box::new(IbkrPaperOrderExecutor::new_with_client_order_prefix(
+                    IbkrPaperGatewayOrderClient::new(adapter, app_config.paper.account_id.clone()),
+                    app_config.runtime.run_id.clone(),
+                )),
+            ))
+        }
+        config::BrokerKind::Simulated | config::BrokerKind::Futu | config::BrokerKind::Okx => {
+            Err(ApiError(anyhow::anyhow!(
+                "paper-run broker order submit only supports Binance Spot Testnet and IBKR paper in this phase"
+            )))
+        }
     }
 }
 
@@ -833,6 +859,21 @@ fn binance_testnet_settings(
         api_key,
         secret_key,
         recv_window_ms: app_config.broker.recv_window_ms.unwrap_or(5000),
+    })
+}
+
+fn ibkr_paper_gateway_settings(
+    app_config: &config::AppConfig,
+) -> Result<IbkrPaperGatewaySettings, ApiError> {
+    Ok(IbkrPaperGatewaySettings {
+        host: app_config
+            .broker
+            .host
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string()),
+        port: app_config.broker.port.unwrap_or(7497),
+        client_id: app_config.broker.client_id.unwrap_or(1),
+        connect_timeout: std::time::Duration::from_secs(2),
     })
 }
 
