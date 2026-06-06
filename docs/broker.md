@@ -697,9 +697,13 @@ IBKR read-only preflight：
 
 ```powershell
 trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
+trader ibkr-paper-open-orders --config configs/paper/ibkr_aapl_1d_parquet.toml
+trader ibkr-paper-executions --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 ```
 
 该命令通过 `broker::IbkrPaperGatewayAdapter` 连接本机 TWS / IB Gateway，完成 server version 握手，然后发送 managed accounts 只读请求并校验 `[paper] account_id` 是否在 Gateway 返回账号列表中。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 用于 TWS API socket session。`[paper] account_id` 必须改为 TWS / Gateway 返回的真实 paper account id（通常是 `DU...`）；配置中的 `DU000000` 只是结构化占位，不是可用账号。
+
+`ibkr-paper-open-orders` 发送只读 open orders 请求并输出远端 open order 数量和首条订单关键字段。`ibkr-paper-executions` 使用 `[paper] account_id` 和策略 symbol 发送 executions 查询并输出成交数量和首条成交关键字段；可用 `--symbol AAPL` 覆盖策略 symbol。这两个命令只读取 Gateway 数据，不写 SQLite，不提交或撤销订单。
 
 真实 IBKR paper order adapter 完成前，`order_submit_enabled` 必须保持 `false`。如果误设为 `true`，`paper-preflight` 和 `paper-run` 都会拒绝继续，避免把本地股票 paper runner 误当成真实 IBKR paper 下单能力。
 
@@ -722,9 +726,11 @@ client version handshake: API\0 + length-prefixed v{min}..{max}
 message frame: 4-byte big-endian length + NUL-separated fields
 server version parse: server_version + connection_time
 managed accounts: request id 17, response id 15
+open orders: request id 5, open order response id 5, end id 53
+executions: request id 7, execution response id 11, end id 55
 ```
 
-这一步已接入 socket session，完成 TWS / Gateway server version 握手和 managed accounts 读取；仍不发送真实下单消息。下一步继续实现 open orders / executions 读取。
+这一步已接入 socket session，完成 TWS / Gateway server version 握手、managed accounts 读取、open orders 读取和 executions 读取；仍不发送真实下单消息。下一步继续实现 IBKR order submit/cancel/query 的真实 Gateway adapter，并在 CLI runner 中加显式确认闸门。
 
 ---
 

@@ -46,6 +46,32 @@ pub struct IbkrTrade {
     pub ts_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrOpenOrder {
+    pub order_id: i64,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub quantity: Decimal,
+    pub limit_price: Option<Decimal>,
+    pub status: String,
+    pub client_order_id: String,
+    pub filled_qty: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrExecution {
+    pub request_id: i64,
+    pub order_id: i64,
+    pub trade_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub qty: Decimal,
+    pub price: Decimal,
+    pub fee: Decimal,
+}
+
 #[derive(Debug, Clone)]
 pub struct IbkrPaperGatewaySettings {
     pub host: String,
@@ -93,21 +119,12 @@ impl IbkrPaperGatewayAdapter {
     pub async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
         let (mut stream, _version) = self.open_session().await?;
         let address = format!("{}:{}", self.settings.host, self.settings.port);
-        timeout(
-            self.settings.connect_timeout,
-            stream.write_all(&ibkr_managed_accounts_request()),
+        self.write_request(
+            &mut stream,
+            &ibkr_managed_accounts_request(),
+            "managed accounts",
         )
-        .await
-        .map_err(|_| {
-            BrokerError::Connection(format!(
-                "IBKR paper gateway managed accounts request timed out at {address}"
-            ))
-        })?
-        .map_err(|error| {
-            BrokerError::Connection(format!(
-                "failed to write IBKR paper gateway managed accounts request at {address}: {error}"
-            ))
-        })?;
+        .await?;
 
         loop {
             let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
@@ -119,6 +136,63 @@ impl IbkrPaperGatewayAdapter {
                 })??;
             if let Some(accounts) = ibkr_parse_managed_accounts_frame_if_present(&frame)? {
                 return Ok(accounts);
+            }
+        }
+    }
+
+    pub async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        self.write_request(&mut stream, &ibkr_open_orders_request(), "open orders")
+            .await?;
+        let mut orders = Vec::new();
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway open orders response timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "53")? {
+                return Ok(orders);
+            }
+            if ibkr_frame_message_id_is(&frame, "5")? {
+                orders.push(ibkr_parse_open_order_frame(&frame)?);
+            }
+        }
+    }
+
+    pub async fn executions(
+        &self,
+        request_id: i64,
+        account_id: &str,
+        symbol: &str,
+    ) -> Result<Vec<IbkrExecution>, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        self.write_request(
+            &mut stream,
+            &ibkr_executions_request(request_id, account_id, symbol),
+            "executions",
+        )
+        .await?;
+        let mut executions = Vec::new();
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway executions response timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "55")? {
+                return Ok(executions);
+            }
+            if ibkr_frame_message_id_is(&frame, "11")? {
+                executions.push(ibkr_parse_execution_frame(&frame)?);
             }
         }
     }
@@ -183,6 +257,27 @@ impl IbkrPaperGatewayAdapter {
             .map_err(|error| {
                 BrokerError::Connection(format!(
                     "unable to connect to IBKR paper gateway at {address}: {error}"
+                ))
+            })
+    }
+
+    async fn write_request(
+        &self,
+        stream: &mut TcpStream,
+        request: &[u8],
+        request_name: &str,
+    ) -> Result<(), BrokerError> {
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        timeout(self.settings.connect_timeout, stream.write_all(request))
+            .await
+            .map_err(|_| {
+                BrokerError::Connection(format!(
+                    "IBKR paper gateway {request_name} request timed out at {address}"
+                ))
+            })?
+            .map_err(|error| {
+                BrokerError::Connection(format!(
+                    "failed to write IBKR paper gateway {request_name} request at {address}: {error}"
                 ))
             })
     }
@@ -268,15 +363,17 @@ pub fn ibkr_decode_frame(input: &[u8]) -> Result<Option<(Vec<String>, usize)>, B
         return Ok(None);
     }
     let payload = &input[4..frame_len];
-    let fields = payload
+    let mut fields = payload
         .split(|byte| *byte == 0)
-        .filter(|field| !field.is_empty())
         .map(|field| {
             std::str::from_utf8(field)
                 .map(str::to_string)
                 .map_err(|error| BrokerError::Config(format!("invalid IBKR UTF-8 field: {error}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if fields.last().is_some_and(String::is_empty) {
+        fields.pop();
+    }
     Ok(Some((fields, frame_len)))
 }
 
@@ -291,6 +388,25 @@ pub fn ibkr_client_version_handshake(min_version: u16, max_version: u16) -> Vec<
 
 pub fn ibkr_managed_accounts_request() -> Vec<u8> {
     ibkr_encode_frame(["17", "1"])
+}
+
+pub fn ibkr_open_orders_request() -> Vec<u8> {
+    ibkr_encode_frame(["5", "1"])
+}
+
+pub fn ibkr_executions_request(request_id: i64, account_id: &str, symbol: &str) -> Vec<u8> {
+    ibkr_encode_frame([
+        "7",
+        "3",
+        &request_id.to_string(),
+        account_id,
+        "",
+        symbol,
+        "",
+        "",
+        "",
+        "",
+    ])
 }
 
 pub fn ibkr_parse_server_version(frame: &[u8]) -> Result<IbkrServerVersion, BrokerError> {
@@ -346,4 +462,99 @@ fn ibkr_parse_managed_accounts_frame_if_present(
         ));
     }
     Ok(Some(accounts))
+}
+
+fn ibkr_frame_message_id_is(frame: &[u8], message_id: &str) -> Result<bool, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config("incomplete IBKR frame".to_string()));
+    };
+    Ok(fields.first().map(String::as_str) == Some(message_id))
+}
+
+pub fn ibkr_parse_open_order_frame(frame: &[u8]) -> Result<IbkrOpenOrder, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config(
+            "incomplete IBKR open order frame".to_string(),
+        ));
+    };
+    if fields.first().map(String::as_str) != Some("5") {
+        return Err(BrokerError::Config(
+            "IBKR frame is not an open order response".to_string(),
+        ));
+    }
+    Ok(IbkrOpenOrder {
+        order_id: parse_i64_field(&fields, 1, "IBKR open order id")?,
+        account_id: string_field(&fields, 2, "IBKR open order account")?,
+        symbol: string_field(&fields, 3, "IBKR open order symbol")?,
+        side: string_field(&fields, 4, "IBKR open order side")?,
+        order_type: string_field(&fields, 5, "IBKR open order type")?,
+        quantity: parse_decimal_field(&fields, 6, "IBKR open order quantity")?,
+        limit_price: optional_decimal_field(&fields, 7, "IBKR open order limit price")?,
+        status: string_field(&fields, 8, "IBKR open order status")?,
+        client_order_id: string_field(&fields, 9, "IBKR open order client order id")?,
+        filled_qty: parse_decimal_field(&fields, 10, "IBKR open order filled quantity")?,
+    })
+}
+
+pub fn ibkr_parse_execution_frame(frame: &[u8]) -> Result<IbkrExecution, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config(
+            "incomplete IBKR execution frame".to_string(),
+        ));
+    };
+    if fields.first().map(String::as_str) != Some("11") {
+        return Err(BrokerError::Config(
+            "IBKR frame is not an execution response".to_string(),
+        ));
+    }
+    Ok(IbkrExecution {
+        request_id: parse_i64_field(&fields, 1, "IBKR execution request id")?,
+        symbol: string_field(&fields, 2, "IBKR execution symbol")?,
+        order_id: parse_i64_field(&fields, 6, "IBKR execution order id")?,
+        trade_id: string_field(&fields, 7, "IBKR execution id")?,
+        side: string_field(&fields, 10, "IBKR execution side")?,
+        qty: parse_decimal_field(&fields, 11, "IBKR execution quantity")?,
+        price: parse_decimal_field(&fields, 12, "IBKR execution price")?,
+        fee: optional_decimal_field(&fields, 13, "IBKR execution fee")?.unwrap_or(Decimal::ZERO),
+    })
+}
+
+fn string_field(fields: &[String], index: usize, name: &str) -> Result<String, BrokerError> {
+    fields
+        .get(index)
+        .cloned()
+        .ok_or_else(|| BrokerError::Config(format!("missing {name}")))
+}
+
+fn parse_i64_field(fields: &[String], index: usize, name: &str) -> Result<i64, BrokerError> {
+    string_field(fields, index, name)?
+        .parse::<i64>()
+        .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
+}
+
+fn parse_decimal_field(
+    fields: &[String],
+    index: usize,
+    name: &str,
+) -> Result<Decimal, BrokerError> {
+    string_field(fields, index, name)?
+        .parse::<Decimal>()
+        .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
+}
+
+fn optional_decimal_field(
+    fields: &[String],
+    index: usize,
+    name: &str,
+) -> Result<Option<Decimal>, BrokerError> {
+    let Some(value) = fields.get(index) else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse::<Decimal>()
+        .map(Some)
+        .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
 }

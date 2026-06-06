@@ -52,6 +52,18 @@ enum Command {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
         config: String,
     },
+    IbkrPaperOpenOrders {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+    },
+    IbkrPaperExecutions {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long, default_value_t = 1)]
+        request_id: i64,
+        #[arg(long)]
+        symbol: Option<String>,
+    },
     BinancePaperTinyOrder {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
@@ -308,6 +320,66 @@ async fn main() -> Result<()> {
                 app_config.paper.account_id,
                 accounts.len(),
                 app_config.broker.order_submit_enabled
+            );
+        }
+        Command::IbkrPaperOpenOrders { config } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper open orders")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let orders = adapter.open_orders().await?;
+            let first_order = orders.first();
+            println!(
+                "ibkr paper open orders ok: open_orders={} order_id={} symbol={} status={}",
+                orders.len(),
+                first_order
+                    .map(|order| order.order_id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                first_order
+                    .map(|order| order.symbol.as_str())
+                    .unwrap_or("none"),
+                first_order
+                    .map(|order| order.status.as_str())
+                    .unwrap_or("none")
+            );
+        }
+        Command::IbkrPaperExecutions {
+            config,
+            request_id,
+            symbol,
+        } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper executions")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let symbol = symbol
+                .as_deref()
+                .map(paper::ibkr_stock_symbol)
+                .unwrap_or_else(|| {
+                    let configured_symbol = app_config
+                        .strategy
+                        .symbols
+                        .first()
+                        .map(String::as_str)
+                        .unwrap_or("AAPL");
+                    paper::ibkr_stock_symbol(configured_symbol)
+                })?;
+            let executions = adapter
+                .executions(request_id, &app_config.paper.account_id, &symbol)
+                .await?;
+            let first_execution = executions.first();
+            println!(
+                "ibkr paper executions ok: request_id={} account={} symbol={} executions={} order_id={} trade_id={}",
+                request_id,
+                app_config.paper.account_id,
+                symbol,
+                executions.len(),
+                first_execution
+                    .map(|execution| execution.order_id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                first_execution
+                    .map(|execution| execution.trade_id.as_str())
+                    .unwrap_or("none")
             );
         }
         Command::BinancePaperTinyOrder {

@@ -1,5 +1,8 @@
 use assert_cmd::Command;
-use broker::{ibkr_client_version_handshake, ibkr_encode_frame, ibkr_managed_accounts_request};
+use broker::{
+    ibkr_client_version_handshake, ibkr_encode_frame, ibkr_executions_request,
+    ibkr_managed_accounts_request, ibkr_open_orders_request,
+};
 use predicates::str::contains;
 use std::{
     io::{Read, Write},
@@ -269,6 +272,108 @@ fn ibkr_paper_readonly_validates_configured_account_from_gateway() {
 }
 
 #[test]
+fn ibkr_paper_open_orders_prints_gateway_orders() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        write_ibkr_server_version(&mut stream);
+        assert_eq!(read_ibkr_request(&mut stream), ibkr_open_orders_request());
+        stream
+            .write_all(&ibkr_encode_frame([
+                "5",
+                "42",
+                "DU12345",
+                "AAPL",
+                "BUY",
+                "LMT",
+                "1",
+                "185.25",
+                "Submitted",
+                "trader-paper-run-1",
+                "0",
+            ]))
+            .unwrap();
+        stream.write_all(&ibkr_encode_frame(["53"])).unwrap();
+    });
+    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-open-orders",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper open orders ok"))
+        .stdout(contains("open_orders=1"))
+        .stdout(contains("order_id=42"))
+        .stdout(contains("symbol=AAPL"))
+        .stdout(contains("status=Submitted"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_executions_prints_gateway_executions() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        write_ibkr_server_version(&mut stream);
+        assert_eq!(
+            read_ibkr_request(&mut stream),
+            ibkr_executions_request(77, "DU12345", "AAPL")
+        );
+        stream
+            .write_all(&ibkr_encode_frame([
+                "11",
+                "77",
+                "AAPL",
+                "STK",
+                "USD",
+                "SMART",
+                "42",
+                "exec-1",
+                "20260606 12:01:00",
+                "DU12345",
+                "BUY",
+                "1",
+                "185.50",
+                "0.35",
+            ]))
+            .unwrap();
+        stream.write_all(&ibkr_encode_frame(["55", "77"])).unwrap();
+    });
+    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-executions",
+            "--config",
+            config.to_str().unwrap(),
+            "--request-id",
+            "77",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper executions ok"))
+        .stdout(contains("executions=1"))
+        .stdout(contains("order_id=42"))
+        .stdout(contains("trade_id=exec-1"))
+        .stdout(contains("symbol=AAPL"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn binance_paper_recover_requires_testnet_credentials() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -490,6 +595,87 @@ fn temp_output(prefix: &str, extension: &str) -> PathBuf {
             .as_nanos(),
         extension
     ))
+}
+
+fn write_ibkr_server_version(stream: &mut std::net::TcpStream) {
+    let expected = ibkr_client_version_handshake(100, 178);
+    let mut handshake = vec![0; expected.len()];
+    stream.read_exact(&mut handshake).unwrap();
+    assert_eq!(handshake, expected);
+    stream
+        .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+        .unwrap();
+}
+
+fn read_ibkr_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+    let mut request_len = [0; 4];
+    stream.read_exact(&mut request_len).unwrap();
+    let payload_len = u32::from_be_bytes(request_len) as usize;
+    let mut payload = vec![0; payload_len];
+    stream.read_exact(&mut payload).unwrap();
+    let mut request = request_len.to_vec();
+    request.extend_from_slice(&payload);
+    request
+}
+
+fn write_ibkr_cli_config(port: u16, account_id: &str, symbol: &str) -> PathBuf {
+    let config = temp_output("trader-ibkr-cli", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "ibkr-cli-test"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "parquet"
+            path = "datasets/ibkr/aapl_1d.parquet"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["{symbol}"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000"
+            min_cash_after_order = "1000"
+            max_exposure = "10000"
+            max_drawdown = "0.2"
+            max_leverage = "1"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "ibkr"
+            mode = "paper"
+            host = "127.0.0.1"
+            port = {port}
+            client_id = 1
+            order_submit_enabled = false
+
+            [paper]
+            account_id = "{account_id}"
+            slippage_bps = "5"
+            fee_bps = "2"
+
+            [live]
+            enabled = false
+            "#
+        ),
+    )
+    .unwrap();
+    config
 }
 
 fn workspace_root() -> &'static str {
