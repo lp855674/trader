@@ -5,9 +5,11 @@ use hmac::{Hmac, Mac};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use thiserror::Error;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 use uuid::Uuid;
 
@@ -19,6 +21,8 @@ pub enum BrokerError {
     OrderNotFound(String),
     #[error("broker configuration error: {0}")]
     Config(String),
+    #[error("broker connection error: {0}")]
+    Connection(String),
     #[error("broker http error: {0}")]
     Http(#[from] reqwest::Error),
 }
@@ -295,6 +299,19 @@ pub struct BinanceKlineBar {
 pub struct BinanceSpotTestnetAdapter {
     settings: BinanceSpotTestnetSettings,
     client: reqwest::Client,
+}
+
+#[derive(Debug, Clone)]
+pub struct IbkrPaperGatewaySettings {
+    pub host: String,
+    pub port: u16,
+    pub client_id: u32,
+    pub connect_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct IbkrPaperGatewayAdapter {
+    settings: IbkrPaperGatewaySettings,
 }
 
 impl FakeBrokerAdapter {
@@ -668,6 +685,38 @@ impl BinanceSpotTestnetAdapter {
     }
 }
 
+impl IbkrPaperGatewayAdapter {
+    pub fn try_new(settings: IbkrPaperGatewaySettings) -> Result<Self, BrokerError> {
+        if settings.port == 7496 {
+            return Err(BrokerError::Config(
+                "IBKR paper adapter requires a paper port; got common live port 7496".to_string(),
+            ));
+        }
+        Ok(Self { settings })
+    }
+
+    pub fn settings(&self) -> &IbkrPaperGatewaySettings {
+        &self.settings
+    }
+
+    pub async fn connect_probe(&self) -> Result<(), BrokerError> {
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        timeout(self.settings.connect_timeout, TcpStream::connect(&address))
+            .await
+            .map_err(|_| {
+                BrokerError::Connection(format!(
+                    "unable to connect to IBKR paper gateway at {address}: timeout"
+                ))
+            })?
+            .map_err(|error| {
+                BrokerError::Connection(format!(
+                    "unable to connect to IBKR paper gateway at {address}: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BinanceOrderResponse {
@@ -830,6 +879,48 @@ impl Broker for BinanceSpotTestnetAdapter {
             .await?
             .error_for_status()?;
         Ok(fake_status(BrokerKind::Binance))
+    }
+}
+
+#[async_trait]
+impl Broker for IbkrPaperGatewayAdapter {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "IBKR paper order submit is not implemented".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Err(BrokerError::Rejected(format!(
+            "IBKR paper account snapshot is not implemented for {account_id}"
+        )))
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        self.connect_probe().await?;
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: false,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
     }
 }
 

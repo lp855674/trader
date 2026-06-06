@@ -2,7 +2,8 @@ use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
     BinanceAssetBalance, BinanceLimitOrderRequest, BinanceOpenOrder, BinanceOrderSide,
-    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
@@ -10,8 +11,6 @@ use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
 use std::{io::Write, path::Path, str::FromStr, time::Duration};
-use tokio::net::TcpStream;
-use tokio::time::timeout;
 
 #[derive(Parser)]
 #[command(name = "trader")]
@@ -168,14 +167,6 @@ struct BinancePaperReconciliation {
     base_delta: Decimal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct IbkrPaperReadonlyStatus {
-    host: String,
-    port: u16,
-    client_id: u32,
-    connected: bool,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -303,12 +294,15 @@ async fn main() -> Result<()> {
         Command::IbkrPaperReadonly { config } => {
             let app_config = config::AppConfig::from_toml_file(&config)?;
             ensure_ibkr_paper_config(&app_config, "ibkr paper readonly")?;
-            let status = ibkr_paper_readonly_probe(&app_config).await?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let status = adapter.status().await?;
+            let settings = adapter.settings();
             println!(
                 "ibkr paper readonly ok: host={} port={} client_id={} connected={} order_submit_enabled={}",
-                status.host,
-                status.port,
-                status.client_id,
+                settings.host,
+                settings.port,
+                settings.client_id,
                 status.connected,
                 app_config.broker.order_submit_enabled
             );
@@ -860,28 +854,16 @@ fn binance_public_testnet_settings(
     })
 }
 
-async fn ibkr_paper_readonly_probe(
-    app_config: &config::AppConfig,
-) -> Result<IbkrPaperReadonlyStatus> {
-    let host = app_config
-        .broker
-        .host
-        .clone()
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = app_config.broker.port.unwrap_or(7497);
-    let client_id = app_config.broker.client_id.unwrap_or(1);
-    let address = format!("{host}:{port}");
-
-    timeout(Duration::from_secs(2), TcpStream::connect(&address))
-        .await
-        .with_context(|| format!("unable to connect to IBKR paper gateway at {address}: timeout"))?
-        .with_context(|| format!("unable to connect to IBKR paper gateway at {address}"))?;
-
-    Ok(IbkrPaperReadonlyStatus {
-        host,
-        port,
-        client_id,
-        connected: true,
+fn ibkr_paper_gateway_settings(app_config: &config::AppConfig) -> Result<IbkrPaperGatewaySettings> {
+    Ok(IbkrPaperGatewaySettings {
+        host: app_config
+            .broker
+            .host
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string()),
+        port: app_config.broker.port.unwrap_or(7497),
+        client_id: app_config.broker.client_id.unwrap_or(1),
+        connect_timeout: Duration::from_secs(2),
     })
 }
 

@@ -699,7 +699,7 @@ IBKR read-only preflight：
 trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 ```
 
-该命令只做本机 TWS / IB Gateway TCP 连接探测，不做 IBKR API 握手、不读取账号、不提交订单。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 当前只是配置边界，供后续正式 IBKR API client 使用。
+该命令通过 `broker::IbkrPaperGatewayAdapter` 做本机 TWS / IB Gateway TCP 连接探测，不做 IBKR API 握手、不读取账号、不提交订单。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 当前只是配置边界，供后续正式 IBKR API client 使用。
 
 真实 IBKR paper order adapter 完成前，`order_submit_enabled` 必须保持 `false`。如果误设为 `true`，`paper-preflight` 和 `paper-run` 都会拒绝继续，避免把本地股票 paper runner 误当成真实 IBKR paper 下单能力。
 

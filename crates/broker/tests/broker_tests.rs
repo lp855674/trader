@@ -1,9 +1,12 @@
 use broker::{
     BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
     BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
-    MockBroker, SimulatedBrokerSettings, simulate_market_fill,
+    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, MockBroker, SimulatedBrokerSettings,
+    simulate_market_fill,
 };
 use rust_decimal_macros::dec;
+use std::time::Duration;
+use tokio::net::TcpListener;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[tokio::test]
@@ -309,6 +312,45 @@ fn binance_server_time_response_maps_to_timestamp_ms() {
             .unwrap();
 
     assert_eq!(timestamp_ms, 1_700_000_000_123);
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_reports_connected_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let _ = listener.accept().await;
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let status = adapter.status().await.unwrap();
+
+    assert_eq!(status.kind, BrokerKind::InteractiveBrokers);
+    assert!(status.connected);
+    assert!(status.capabilities.market_data);
+    assert!(!status.capabilities.order_submit);
+    assert!(status.capabilities.paper_trading);
+    assert!(!status.capabilities.live_trading);
+    accept_task.await.unwrap();
+}
+
+#[test]
+fn ibkr_paper_gateway_adapter_rejects_common_live_port() {
+    let error = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port: 7496,
+        client_id: 1,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("paper port"));
 }
 
 fn order() -> OrderRequest {
