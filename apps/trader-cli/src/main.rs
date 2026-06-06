@@ -296,14 +296,17 @@ async fn main() -> Result<()> {
             ensure_ibkr_paper_config(&app_config, "ibkr paper readonly")?;
             let adapter =
                 IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
-            let status = adapter.status().await?;
+            let accounts = adapter
+                .validate_paper_account(&app_config.paper.account_id)
+                .await?;
             let settings = adapter.settings();
             println!(
-                "ibkr paper readonly ok: host={} port={} client_id={} connected={} order_submit_enabled={}",
+                "ibkr paper readonly ok: host={} port={} client_id={} connected=true account={} accounts={} order_submit_enabled={}",
                 settings.host,
                 settings.port,
                 settings.client_id,
-                status.connected,
+                app_config.paper.account_id,
+                accounts.len(),
                 app_config.broker.order_submit_enabled
             );
         }

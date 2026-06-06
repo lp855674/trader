@@ -3,7 +3,8 @@ use broker::{
     BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
     IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker,
     SimulatedBrokerSettings, ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame,
-    ibkr_parse_server_version, simulate_market_fill,
+    ibkr_managed_accounts_request, ibkr_parse_managed_accounts_frame, ibkr_parse_server_version,
+    simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::time::Duration;
@@ -434,6 +435,96 @@ fn ibkr_server_version_frame_maps_to_connection_metadata() {
             connection_time: "20260606 12:00:00 CST".to_string(),
         }
     );
+}
+
+#[test]
+fn ibkr_managed_accounts_message_uses_request_id_and_maps_account_list() {
+    let request = ibkr_managed_accounts_request();
+    let decoded = ibkr_decode_frame(&request).unwrap().unwrap().0;
+    assert_eq!(decoded, vec!["17".to_string(), "1".to_string()]);
+
+    let response = ibkr_encode_frame(["15", "1", "DU12345,DU67890"]);
+    let accounts = ibkr_parse_managed_accounts_frame(&response).unwrap();
+
+    assert_eq!(accounts, vec!["DU12345".to_string(), "DU67890".to_string()]);
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_reads_managed_accounts() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).await.unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).await.unwrap();
+        let mut request = request_len.to_vec();
+        request.extend_from_slice(&payload);
+        assert_eq!(request, ibkr_managed_accounts_request());
+        stream
+            .write_all(&ibkr_encode_frame(["15", "1", "DU12345,DU67890"]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let accounts = adapter.managed_accounts().await.unwrap();
+
+    assert_eq!(accounts, vec!["DU12345".to_string(), "DU67890".to_string()]);
+    accept_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_rejects_unreturned_account_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).await.unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["15", "1", "DU12345"]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let error = adapter.validate_paper_account("DU99999").await.unwrap_err();
+
+    assert!(error.to_string().contains("DU99999"));
+    assert!(error.to_string().contains("was not returned"));
+    accept_task.await.unwrap();
 }
 
 fn order() -> OrderRequest {

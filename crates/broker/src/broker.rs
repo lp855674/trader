@@ -5,7 +5,8 @@ pub mod ibkr;
 pub use ibkr::{
     IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrPaperGatewayAdapter,
     IbkrPaperGatewaySettings, IbkrServerVersion, IbkrTrade, ibkr_client_version_handshake,
-    ibkr_decode_frame, ibkr_encode_frame, ibkr_parse_server_version,
+    ibkr_decode_frame, ibkr_encode_frame, ibkr_managed_accounts_request,
+    ibkr_parse_managed_accounts_frame, ibkr_parse_server_version,
 };
 
 use async_trait::async_trait;

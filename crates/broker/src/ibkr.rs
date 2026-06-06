@@ -86,6 +86,64 @@ impl IbkrPaperGatewayAdapter {
     }
 
     pub async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
+        let (_stream, version) = self.open_session().await?;
+        Ok(version)
+    }
+
+    pub async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        timeout(
+            self.settings.connect_timeout,
+            stream.write_all(&ibkr_managed_accounts_request()),
+        )
+        .await
+        .map_err(|_| {
+            BrokerError::Connection(format!(
+                "IBKR paper gateway managed accounts request timed out at {address}"
+            ))
+        })?
+        .map_err(|error| {
+            BrokerError::Connection(format!(
+                "failed to write IBKR paper gateway managed accounts request at {address}: {error}"
+            ))
+        })?;
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway managed accounts response timed out at {address}"
+                    ))
+                })??;
+            if let Some(accounts) = ibkr_parse_managed_accounts_frame_if_present(&frame)? {
+                return Ok(accounts);
+            }
+        }
+    }
+
+    pub async fn validate_paper_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<String>, BrokerError> {
+        let trimmed = account_id.trim();
+        if trimmed.is_empty() || trimmed == "ibkr-paper" {
+            return Err(BrokerError::Config(
+                "configured IBKR paper account id must be a real TWS / Gateway paper account id, usually DU...".to_string(),
+            ));
+        }
+        let accounts = self.managed_accounts().await?;
+        if accounts.iter().any(|account| account == trimmed) {
+            return Ok(accounts);
+        }
+        Err(BrokerError::Config(format!(
+            "configured IBKR paper account id {trimmed} was not returned by TWS / Gateway; returned accounts: {}",
+            accounts.join(",")
+        )))
+    }
+
+    async fn open_session(&self) -> Result<(TcpStream, IbkrServerVersion), BrokerError> {
         let address = format!("{}:{}", self.settings.host, self.settings.port);
         let mut stream = self.connect_socket(&address).await?;
         timeout(
@@ -110,7 +168,8 @@ impl IbkrPaperGatewayAdapter {
                     "IBKR paper gateway server version timed out at {address}"
                 ))
             })??;
-        ibkr_parse_server_version(&frame)
+        let version = ibkr_parse_server_version(&frame)?;
+        Ok((stream, version))
     }
 
     async fn connect_socket(&self, address: &str) -> Result<TcpStream, BrokerError> {
@@ -230,6 +289,10 @@ pub fn ibkr_client_version_handshake(min_version: u16, max_version: u16) -> Vec<
     frame
 }
 
+pub fn ibkr_managed_accounts_request() -> Vec<u8> {
+    ibkr_encode_frame(["17", "1"])
+}
+
 pub fn ibkr_parse_server_version(frame: &[u8]) -> Result<IbkrServerVersion, BrokerError> {
     let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
         return Err(BrokerError::Config(
@@ -249,4 +312,38 @@ pub fn ibkr_parse_server_version(frame: &[u8]) -> Result<IbkrServerVersion, Brok
         server_version,
         connection_time,
     })
+}
+
+pub fn ibkr_parse_managed_accounts_frame(frame: &[u8]) -> Result<Vec<String>, BrokerError> {
+    ibkr_parse_managed_accounts_frame_if_present(frame)?.ok_or_else(|| {
+        BrokerError::Config("IBKR frame is not a managed accounts response".to_string())
+    })
+}
+
+fn ibkr_parse_managed_accounts_frame_if_present(
+    frame: &[u8],
+) -> Result<Option<Vec<String>>, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config(
+            "incomplete IBKR managed accounts frame".to_string(),
+        ));
+    };
+    if fields.first().map(String::as_str) != Some("15") {
+        return Ok(None);
+    }
+    let account_list = fields
+        .last()
+        .ok_or_else(|| BrokerError::Config("missing IBKR managed accounts list".to_string()))?;
+    let accounts = account_list
+        .split(',')
+        .map(str::trim)
+        .filter(|account| !account.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if accounts.is_empty() {
+        return Err(BrokerError::Config(
+            "IBKR managed accounts response contained no accounts".to_string(),
+        ));
+    }
+    Ok(Some(accounts))
 }

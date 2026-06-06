@@ -1,6 +1,12 @@
 use assert_cmd::Command;
+use broker::{ibkr_client_version_handshake, ibkr_encode_frame, ibkr_managed_accounts_request};
 use predicates::str::contains;
-use std::path::PathBuf;
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    path::PathBuf,
+    thread,
+};
 
 #[test]
 fn check_config_prints_ok() {
@@ -162,6 +168,104 @@ fn ibkr_paper_readonly_reports_connection_failure_without_gateway() {
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+}
+
+#[test]
+fn ibkr_paper_readonly_validates_configured_account_from_gateway() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).unwrap();
+        assert_eq!(handshake, expected);
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).unwrap();
+        let mut request = request_len.to_vec();
+        request.extend_from_slice(&payload);
+        assert_eq!(request, ibkr_managed_accounts_request());
+        stream
+            .write_all(&ibkr_encode_frame(["15", "1", "DU12345"]))
+            .unwrap();
+    });
+    let config = temp_output("trader-ibkr-readonly", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "ibkr-readonly-test"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "parquet"
+            path = "datasets/ibkr/aapl_1d.parquet"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000"
+            min_cash_after_order = "1000"
+            max_exposure = "10000"
+            max_drawdown = "0.2"
+            max_leverage = "1"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "ibkr"
+            mode = "paper"
+            host = "127.0.0.1"
+            port = {port}
+            client_id = 1
+            order_submit_enabled = false
+
+            [paper]
+            account_id = "DU12345"
+            slippage_bps = "5"
+            fee_bps = "2"
+
+            [live]
+            enabled = false
+            "#
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["ibkr-paper-readonly", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper readonly ok"))
+        .stdout(contains("connected=true"))
+        .stdout(contains("account=DU12345"))
+        .stdout(contains("accounts=1"))
+        .stdout(contains("order_submit_enabled=false"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]

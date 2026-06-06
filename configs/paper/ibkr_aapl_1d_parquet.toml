@@ -39,7 +39,7 @@ client_id = 1
 order_submit_enabled = false
 
 [paper]
-account_id = "ibkr-paper"
+account_id = "DU000000"
 slippage_bps = "5"
 fee_bps = "2"
 
