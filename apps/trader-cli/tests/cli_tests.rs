@@ -473,6 +473,92 @@ fn ibkr_paper_cancel_order_prints_cancelled_status() {
 }
 
 #[test]
+fn ibkr_paper_tiny_order_requires_explicit_confirmation() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-tiny-order",
+            "--config",
+            config.to_str().unwrap(),
+            "--symbol",
+            "AAPL",
+            "--side",
+            "buy",
+            "--qty",
+            "1",
+            "--price",
+            "185.25",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--confirm-ibkr-paper-order"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_tiny_order_prints_submitted_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        write_ibkr_server_version(&mut stream);
+        assert_eq!(read_ibkr_request(&mut stream), ibkr_next_order_id_request());
+        stream
+            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
+            .unwrap();
+        let place = read_ibkr_request(&mut stream);
+        let fields = broker::ibkr_decode_frame(&place).unwrap().unwrap().0;
+        assert_eq!(fields[0], "3");
+        assert_eq!(fields[1], "1001");
+        assert!(fields.iter().any(|field| field == "AAPL"));
+        assert!(fields.iter().any(|field| field == "DU12345"));
+        stream
+            .write_all(&ibkr_encode_frame([
+                "3",
+                "1",
+                "1001",
+                "Submitted",
+                "0",
+                "1",
+                "0",
+            ]))
+            .unwrap();
+    });
+    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-tiny-order",
+            "--config",
+            config.to_str().unwrap(),
+            "--symbol",
+            "AAPL",
+            "--side",
+            "buy",
+            "--qty",
+            "1",
+            "--price",
+            "185.25",
+            "--confirm-ibkr-paper-order",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper tiny order ok"))
+        .stdout(contains("order_id=1001"))
+        .stdout(contains("status=Submitted"))
+        .stdout(contains("filled_qty=0"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn binance_paper_recover_requires_testnet_credentials() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

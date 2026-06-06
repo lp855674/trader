@@ -314,15 +314,16 @@ trader ibkr-paper-open-orders --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-executions --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 trader ibkr-paper-next-order-id --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-cancel-order --config configs/paper/ibkr_aapl_1d_parquet.toml --order-id 42 --confirm-ibkr-paper-cancel
+trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --symbol AAPL --side buy --qty 1 --price 185.25 --confirm-ibkr-paper-order
 ```
 
 该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 用于 TWS API socket session。当前命令通过 `broker::IbkrPaperGatewayAdapter` 做 server version 握手，发送 managed accounts 只读请求，并校验 `[paper] account_id` 是否在 Gateway 返回账号列表中；`[paper] account_id` 必须改为真实 IBKR paper account id（通常是 `DU...`），当前配置中的 `DU000000` 只是结构化占位。命令不提交订单。`paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时会拒绝启动；真实 IBKR paper order adapter 完成前必须保持 `false`。
 
-`ibkr-paper-open-orders`、`ibkr-paper-executions` 和 `ibkr-paper-next-order-id` 已接入同一 Gateway socket codec，分别读取远端 open orders、executions 和 next valid order id，并输出关键字段；这些命令都是只读命令，不写 SQLite，也不提交、撤销订单。`ibkr-paper-cancel-order` 是受确认保护的真实 paper 撤单命令，必须显式传 `--confirm-ibkr-paper-cancel`，不提交新订单、不写 SQLite。
+`ibkr-paper-open-orders`、`ibkr-paper-executions` 和 `ibkr-paper-next-order-id` 已接入同一 Gateway socket codec，分别读取远端 open orders、executions 和 next valid order id，并输出关键字段；这些命令都是只读命令，不写 SQLite，也不提交、撤销订单。`ibkr-paper-cancel-order` 是受确认保护的真实 paper 撤单命令，必须显式传 `--confirm-ibkr-paper-cancel`，不提交新订单、不写 SQLite。`ibkr-paper-tiny-order` 是受确认保护的手动 tiny LMT paper order 命令，先取 next valid order id，再发送 place order，并等待 `orderStatus`；该命令不写 SQLite，也未接入 `paper-run` 自动执行。
 
 IBKR paper order adapter 已建立测试边界：`IbkrPaperOrderClient` 覆盖按 client order id 查询、提交 limit order、查询订单、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。当前该 executor 仅通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未在 CLI runner 中开闸。
 
-IBKR TWS API wire codec 已进入 `broker` crate：支持 V100+ client version handshake payload、4-byte big-endian 长度前缀 frame、NUL 分隔字段解码、server version / connection time 解析、managed accounts 请求和账号列表解析、open orders 请求和解析、executions 请求和解析、next valid order id 读取、cancel order 请求和 orderStatus 解析，并已接入真实 socket session 完成 server version 握手、账号校验、只读订单/成交读取和受确认保护的 paper 撤单。当前仍未发送真实下单消息。
+IBKR TWS API wire codec 已进入 `broker` crate：支持 V100+ client version handshake payload、4-byte big-endian 长度前缀 frame、NUL 分隔字段解码、server version / connection time 解析、managed accounts 请求和账号列表解析、open orders 请求和解析、executions 请求和解析、next valid order id 读取、cancel order 请求和 orderStatus 解析、tiny stock LMT place order 请求和 orderStatus 确认，并已接入真实 socket session 完成 server version 握手、账号校验、只读订单/成交读取、受确认保护的 paper 撤单和受确认保护的 tiny paper order。当前仍未把 IBKR submit 接入自动 `paper-run`。
 
 当前 paper 验证命令：
 

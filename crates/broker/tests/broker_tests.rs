@@ -1,12 +1,13 @@
 use broker::{
     BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
     BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
-    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker,
-    SimulatedBrokerSettings, ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame,
-    ibkr_executions_request, ibkr_managed_accounts_request, ibkr_next_order_id_request,
-    ibkr_open_orders_request, ibkr_order_cancel_request, ibkr_parse_execution_frame,
-    ibkr_parse_managed_accounts_frame, ibkr_parse_next_valid_id_frame, ibkr_parse_open_order_frame,
-    ibkr_parse_order_status_frame, ibkr_parse_server_version, simulate_market_fill,
+    IbkrLimitOrderRequest, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion,
+    MockBroker, SimulatedBrokerSettings, ibkr_client_version_handshake, ibkr_decode_frame,
+    ibkr_encode_frame, ibkr_executions_request, ibkr_managed_accounts_request,
+    ibkr_next_order_id_request, ibkr_open_orders_request, ibkr_order_cancel_request,
+    ibkr_parse_execution_frame, ibkr_parse_managed_accounts_frame, ibkr_parse_next_valid_id_frame,
+    ibkr_parse_open_order_frame, ibkr_parse_order_status_frame, ibkr_parse_server_version,
+    ibkr_place_limit_order_request, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::time::Duration;
@@ -566,6 +567,35 @@ fn ibkr_cancel_message_uses_order_id_and_maps_order_status_frame() {
     assert_eq!(status.avg_fill_price, dec!(0));
 }
 
+#[test]
+fn ibkr_place_limit_order_message_contains_stock_contract_and_order_fields() {
+    let order = IbkrLimitOrderRequest {
+        symbol: "AAPL".to_string(),
+        side: broker::IbkrOrderSide::Buy,
+        quantity: dec!(1),
+        price: dec!(185.25),
+        client_order_id: "trader-paper-run-1".to_string(),
+    };
+
+    let frame = ibkr_place_limit_order_request(1001, "DU12345", &order).unwrap();
+    let fields = ibkr_decode_frame(&frame).unwrap().unwrap().0;
+
+    assert_eq!(fields[0], "3");
+    assert_eq!(fields[1], "1001");
+    assert_eq!(fields[3], "AAPL");
+    assert_eq!(fields[4], "STK");
+    assert_eq!(fields[10], "SMART");
+    assert_eq!(fields[13], "USD");
+    assert!(
+        fields
+            .windows(4)
+            .any(|window| window == ["BUY", "1", "LMT", "185.25"])
+    );
+    assert!(fields.iter().any(|field| field == "DU12345"));
+    assert!(fields.iter().any(|field| field == "trader-paper-run-1"));
+    assert_eq!(fields.last().map(String::as_str), Some("1"));
+}
+
 #[tokio::test]
 async fn ibkr_paper_gateway_adapter_reads_managed_accounts() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -848,6 +878,82 @@ async fn ibkr_paper_gateway_adapter_cancels_order_and_reads_status() {
 
     assert_eq!(status.order_id, 42);
     assert_eq!(status.status, "Cancelled");
+    accept_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_places_limit_order_and_reads_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).await.unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).await.unwrap();
+        let mut request = request_len.to_vec();
+        request.extend_from_slice(&payload);
+        assert_eq!(request, ibkr_next_order_id_request());
+        stream
+            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
+            .await
+            .unwrap();
+
+        let mut place_len = [0; 4];
+        stream.read_exact(&mut place_len).await.unwrap();
+        let place_payload_len = u32::from_be_bytes(place_len) as usize;
+        let mut place_payload = vec![0; place_payload_len];
+        stream.read_exact(&mut place_payload).await.unwrap();
+        let mut place = place_len.to_vec();
+        place.extend_from_slice(&place_payload);
+        let fields = ibkr_decode_frame(&place).unwrap().unwrap().0;
+        assert_eq!(fields[0], "3");
+        assert_eq!(fields[1], "1001");
+        assert!(fields.iter().any(|field| field == "AAPL"));
+        assert!(fields.iter().any(|field| field == "DU12345"));
+        assert!(fields.iter().any(|field| field == "trader-paper-run-1"));
+        stream
+            .write_all(&ibkr_encode_frame([
+                "3",
+                "1",
+                "1001",
+                "Submitted",
+                "0",
+                "1",
+                "0",
+            ]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+    let order = IbkrLimitOrderRequest {
+        symbol: "AAPL".to_string(),
+        side: broker::IbkrOrderSide::Buy,
+        quantity: dec!(1),
+        price: dec!(185.25),
+        client_order_id: "trader-paper-run-1".to_string(),
+    };
+
+    let ack = adapter.place_limit_order("DU12345", &order).await.unwrap();
+
+    assert_eq!(ack.order_id, 1001);
+    assert_eq!(ack.status, "Submitted");
+    assert_eq!(ack.client_order_id, "trader-paper-run-1");
+    assert_eq!(ack.filled_qty, dec!(0));
     accept_task.await.unwrap();
 }
 

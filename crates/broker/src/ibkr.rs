@@ -253,6 +253,53 @@ impl IbkrPaperGatewayAdapter {
         }
     }
 
+    pub async fn place_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        self.write_request(&mut stream, &ibkr_next_order_id_request(), "next order id")
+            .await?;
+        let order_id = loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway next order id response timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "9")? {
+                break ibkr_parse_next_valid_id_frame(&frame)?;
+            }
+        };
+        let request = ibkr_place_limit_order_request(order_id, account_id, order)?;
+        self.write_request(&mut stream, &request, "place limit order")
+            .await?;
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway place order status timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "3")? {
+                let status = ibkr_parse_order_status_frame(&frame)?;
+                if status.order_id == order_id {
+                    return Ok(IbkrOrderAck {
+                        order_id,
+                        client_order_id: order.client_order_id.clone(),
+                        status: status.status,
+                        filled_qty: status.filled_qty,
+                    });
+                }
+            }
+        }
+    }
+
     pub async fn validate_paper_account(
         &self,
         account_id: &str,
@@ -473,6 +520,71 @@ pub fn ibkr_order_cancel_request(order_id: i64) -> Vec<u8> {
     ibkr_encode_frame(["4", "1", &order_id.to_string()])
 }
 
+pub fn ibkr_place_limit_order_request(
+    order_id: i64,
+    account_id: &str,
+    order: &IbkrLimitOrderRequest,
+) -> Result<Vec<u8>, BrokerError> {
+    if order_id <= 0 {
+        return Err(BrokerError::Config(
+            "IBKR order id must be positive".to_string(),
+        ));
+    }
+    if account_id.trim().is_empty() {
+        return Err(BrokerError::Config(
+            "IBKR account id must not be empty".to_string(),
+        ));
+    }
+    if order.symbol.trim().is_empty() {
+        return Err(BrokerError::Config(
+            "IBKR order symbol must not be empty".to_string(),
+        ));
+    }
+    if order.quantity <= Decimal::ZERO {
+        return Err(BrokerError::Config(
+            "IBKR order quantity must be positive".to_string(),
+        ));
+    }
+    if order.price <= Decimal::ZERO {
+        return Err(BrokerError::Config(
+            "IBKR limit price must be positive".to_string(),
+        ));
+    }
+
+    Ok(ibkr_encode_frame([
+        "3",
+        &order_id.to_string(),
+        "0",
+        &order.symbol,
+        "STK",
+        "",
+        "0",
+        "",
+        "",
+        "",
+        "SMART",
+        "",
+        "",
+        "USD",
+        "",
+        "",
+        "",
+        "",
+        ibkr_order_side_value(order.side),
+        &order.quantity.to_string(),
+        "LMT",
+        &order.price.to_string(),
+        "",
+        "DAY",
+        "",
+        account_id,
+        "",
+        "0",
+        &order.client_order_id,
+        "1",
+    ]))
+}
+
 pub fn ibkr_parse_server_version(frame: &[u8]) -> Result<IbkrServerVersion, BrokerError> {
     let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
         return Err(BrokerError::Config(
@@ -655,4 +767,11 @@ fn optional_decimal_field(
         .parse::<Decimal>()
         .map(Some)
         .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
+}
+
+fn ibkr_order_side_value(side: IbkrOrderSide) -> &'static str {
+    match side {
+        IbkrOrderSide::Buy => "BUY",
+        IbkrOrderSide::Sell => "SELL",
+    }
 }

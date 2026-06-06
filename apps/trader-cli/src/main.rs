@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
     BinanceAssetBalance, BinanceLimitOrderRequest, BinanceOpenOrder, BinanceOrderSide,
-    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, IbkrPaperGatewayAdapter,
-    IbkrPaperGatewaySettings,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, IbkrLimitOrderRequest,
+    IbkrOrderSide, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
@@ -75,6 +75,20 @@ enum Command {
         order_id: i64,
         #[arg(long)]
         confirm_ibkr_paper_cancel: bool,
+    },
+    IbkrPaperTinyOrder {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long)]
+        side: String,
+        #[arg(long)]
+        qty: String,
+        #[arg(long)]
+        price: String,
+        #[arg(long)]
+        confirm_ibkr_paper_order: bool,
     },
     BinancePaperTinyOrder {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
@@ -422,6 +436,44 @@ async fn main() -> Result<()> {
                 status.filled_qty,
                 status.remaining_qty,
                 status.avg_fill_price
+            );
+        }
+        Command::IbkrPaperTinyOrder {
+            config,
+            symbol,
+            side,
+            qty,
+            price,
+            confirm_ibkr_paper_order,
+        } => {
+            if !confirm_ibkr_paper_order {
+                bail!("refusing to submit IBKR paper order without --confirm-ibkr-paper-order");
+            }
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper tiny order")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let client_order_id = format!(
+                "trader-{}",
+                uuid::Uuid::new_v4()
+                    .simple()
+                    .to_string()
+                    .get(..24)
+                    .unwrap_or("ibkrorder")
+            );
+            let order = IbkrLimitOrderRequest {
+                symbol: paper::ibkr_stock_symbol(&symbol)?,
+                side: ibkr_order_side(&side)?,
+                quantity: Decimal::from_str(&qty)?,
+                price: Decimal::from_str(&price)?,
+                client_order_id,
+            };
+            let ack = adapter
+                .place_limit_order(&app_config.paper.account_id, &order)
+                .await?;
+            println!(
+                "ibkr paper tiny order ok: symbol={} order_id={} status={} filled_qty={} client_order_id={}",
+                order.symbol, ack.order_id, ack.status, ack.filled_qty, ack.client_order_id
             );
         }
         Command::BinancePaperTinyOrder {
@@ -1073,6 +1125,14 @@ fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
         "buy" => Ok(BinanceOrderSide::Buy),
         "sell" => Ok(BinanceOrderSide::Sell),
         other => bail!("unsupported Binance order side {other}; expected buy or sell"),
+    }
+}
+
+fn ibkr_order_side(input: &str) -> Result<IbkrOrderSide> {
+    match input.to_ascii_lowercase().as_str() {
+        "buy" => Ok(IbkrOrderSide::Buy),
+        "sell" => Ok(IbkrOrderSide::Sell),
+        other => bail!("unsupported IBKR order side {other}; expected buy or sell"),
     }
 }
 
