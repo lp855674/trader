@@ -353,7 +353,7 @@ impl IbkrPaperGatewayAdapter {
                 "unable to connect to IBKR paper gateway at {address}: timeout"
             ))
         })?
-        .map_err(map_ibapi_error)
+        .map_err(|error| map_ibapi_connect_error(&address, error))
     }
 
     fn address(&self) -> String {
@@ -533,4 +533,10 @@ fn order_id_i32(order_id: i64) -> Result<i32, BrokerError> {
 
 fn map_ibapi_error(error: ibapi::Error) -> BrokerError {
     BrokerError::Connection(format!("IBKR API error: {error}"))
+}
+
+fn map_ibapi_connect_error(address: &str, error: ibapi::Error) -> BrokerError {
+    BrokerError::Connection(format!(
+        "unable to connect to IBKR paper gateway at {address}: IBKR API error: {error}"
+    ))
 }

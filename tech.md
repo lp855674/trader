@@ -329,6 +329,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iteratio
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU12345 -ConfirmIbkrPaperOrder
 ```
 
+本地 paper readiness 门禁用于账号未就绪时的无网络回归检查：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\paper-readiness.ps1
+```
+
+默认会跑 cargo 格式/检查/测试、Binance 无网络 smoke，以及 IBKR 本地 test plan + dry-run soak；不会连接真实 Gateway，也不会下单。可用 `-SkipCargo`、`-SkipBinance`、`-SkipIbkr` 缩小范围。
+
 IBKR read-only preflight 当前提供 Gateway 握手与账号校验，底层通过 Rust 开源 crate `ibapi` 连接 TWS / IB Gateway；项目内部仍保留 `Decimal` 领域类型，只在 adapter 边界和 `ibapi` 的 f64 订单字段做显式转换：
 
 ```powershell

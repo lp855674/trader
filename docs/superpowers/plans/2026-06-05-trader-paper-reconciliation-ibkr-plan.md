@@ -45,9 +45,10 @@
 7. [x] 增加 IBKR recover/reconciliation/open-orders 等价命令：open-orders / executions / reconciliation / recover 已完成。
 8. [x] 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门：默认本地 dry-run；开闸时要求真实 `-AccountId DU...` 并打开临时 config 的 `order_submit_enabled = true`。
 9. [x] 增加 IBKR soak 脚本：默认本地多轮 dry-run；开闸后多轮执行真实 Gateway paper runner 并汇总 summary / reconcile / recover。
+10. [x] 增加本地 paper readiness 门禁：账号未就绪时跑 cargo 检查、Binance 无网络 smoke 和 IBKR 本地 dry-run soak。
 
 ## 当前状态
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / reconciliation / recover / next valid order id、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入、runner 的 `-ConfirmIbkrPaperOrder` 闸门，以及 IBKR soak 脚本已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。
+IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / reconciliation / recover / next valid order id、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入、runner 的 `-ConfirmIbkrPaperOrder` 闸门、IBKR soak 脚本，以及本地 paper readiness 门禁已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。
