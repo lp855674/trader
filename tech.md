@@ -314,6 +314,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId
 
 `-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，执行 `paper-preflight` 时连接 TWS / IB Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
 
+完整测试步骤脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1
+```
+
+该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。
+
 IBKR read-only preflight 当前提供 Gateway 握手与账号校验，底层通过 Rust 开源 crate `ibapi` 连接 TWS / IB Gateway；项目内部仍保留 `Decimal` 领域类型，只在 adapter 边界和 `ibapi` 的 f64 订单字段做显式转换：
 
 ```powershell
