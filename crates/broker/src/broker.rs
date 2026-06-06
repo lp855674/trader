@@ -4,10 +4,12 @@ pub mod ibkr;
 
 pub use ibkr::{
     IbkrExecution, IbkrLimitOrderRequest, IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide,
-    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, IbkrTrade,
-    ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame, ibkr_executions_request,
-    ibkr_managed_accounts_request, ibkr_open_orders_request, ibkr_parse_execution_frame,
-    ibkr_parse_managed_accounts_frame, ibkr_parse_open_order_frame, ibkr_parse_server_version,
+    IbkrOrderStatus, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion,
+    IbkrTrade, ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame,
+    ibkr_executions_request, ibkr_managed_accounts_request, ibkr_next_order_id_request,
+    ibkr_open_orders_request, ibkr_order_cancel_request, ibkr_parse_execution_frame,
+    ibkr_parse_managed_accounts_frame, ibkr_parse_next_valid_id_frame, ibkr_parse_open_order_frame,
+    ibkr_parse_order_status_frame, ibkr_parse_server_version,
 };
 
 use async_trait::async_trait;

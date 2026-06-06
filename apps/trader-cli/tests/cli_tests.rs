@@ -1,7 +1,8 @@
 use assert_cmd::Command;
 use broker::{
     ibkr_client_version_handshake, ibkr_encode_frame, ibkr_executions_request,
-    ibkr_managed_accounts_request, ibkr_open_orders_request,
+    ibkr_managed_accounts_request, ibkr_next_order_id_request, ibkr_open_orders_request,
+    ibkr_order_cancel_request,
 };
 use predicates::str::contains;
 use std::{
@@ -368,6 +369,104 @@ fn ibkr_paper_executions_prints_gateway_executions() {
         .stdout(contains("order_id=42"))
         .stdout(contains("trade_id=exec-1"))
         .stdout(contains("symbol=AAPL"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_next_order_id_prints_gateway_order_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        write_ibkr_server_version(&mut stream);
+        assert_eq!(read_ibkr_request(&mut stream), ibkr_next_order_id_request());
+        stream
+            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
+            .unwrap();
+    });
+    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-next-order-id",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper next order id ok"))
+        .stdout(contains("next_order_id=1001"));
+
+    server.join().unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_cancel_order_requires_explicit_confirmation() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-cancel-order",
+            "--config",
+            config.to_str().unwrap(),
+            "--order-id",
+            "42",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--confirm-ibkr-paper-cancel"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_cancel_order_prints_cancelled_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        write_ibkr_server_version(&mut stream);
+        assert_eq!(
+            read_ibkr_request(&mut stream),
+            ibkr_order_cancel_request(42)
+        );
+        stream
+            .write_all(&ibkr_encode_frame([
+                "3",
+                "1",
+                "42",
+                "Cancelled",
+                "0",
+                "1",
+                "0",
+            ]))
+            .unwrap();
+    });
+    let config = write_ibkr_cli_config(port, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-cancel-order",
+            "--config",
+            config.to_str().unwrap(),
+            "--order-id",
+            "42",
+            "--confirm-ibkr-paper-cancel",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper cancel order ok"))
+        .stdout(contains("order_id=42"))
+        .stdout(contains("status=Cancelled"));
 
     server.join().unwrap();
     std::fs::remove_file(config).unwrap();

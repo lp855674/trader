@@ -49,4 +49,4 @@
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、IBKR TWS API wire codec、真实 socket server version 握手、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions 只读读取、IBKR paper order client trait 和测试 executor 已完成。下一步实现真实 IBKR order submit / query / cancel adapter，并在 runner 中加显式确认闸门；在真实 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。
+IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、IBKR TWS API wire codec、真实 socket server version 握手、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / next valid order id 只读读取、受确认保护的 paper cancel、IBKR paper order client trait 和测试 executor 已完成。下一步实现真实 IBKR place order adapter，并在 runner 中加显式确认闸门；在真实 submit adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。

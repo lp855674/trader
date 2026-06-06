@@ -64,6 +64,18 @@ enum Command {
         #[arg(long)]
         symbol: Option<String>,
     },
+    IbkrPaperNextOrderId {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+    },
+    IbkrPaperCancelOrder {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long)]
+        order_id: i64,
+        #[arg(long)]
+        confirm_ibkr_paper_cancel: bool,
+    },
     BinancePaperTinyOrder {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
@@ -380,6 +392,36 @@ async fn main() -> Result<()> {
                 first_execution
                     .map(|execution| execution.trade_id.as_str())
                     .unwrap_or("none")
+            );
+        }
+        Command::IbkrPaperNextOrderId { config } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper next order id")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let order_id = adapter.next_order_id().await?;
+            println!("ibkr paper next order id ok: next_order_id={order_id}");
+        }
+        Command::IbkrPaperCancelOrder {
+            config,
+            order_id,
+            confirm_ibkr_paper_cancel,
+        } => {
+            if !confirm_ibkr_paper_cancel {
+                bail!("refusing to cancel IBKR paper order without --confirm-ibkr-paper-cancel");
+            }
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper cancel order")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let status = adapter.cancel_ibkr_order(order_id).await?;
+            println!(
+                "ibkr paper cancel order ok: order_id={} status={} filled_qty={} remaining_qty={} avg_fill_price={}",
+                status.order_id,
+                status.status,
+                status.filled_qty,
+                status.remaining_qty,
+                status.avg_fill_price
             );
         }
         Command::BinancePaperTinyOrder {

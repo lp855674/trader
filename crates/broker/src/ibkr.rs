@@ -72,6 +72,15 @@ pub struct IbkrExecution {
     pub fee: Decimal,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrOrderStatus {
+    pub order_id: i64,
+    pub status: String,
+    pub filled_qty: Decimal,
+    pub remaining_qty: Decimal,
+    pub avg_fill_price: Decimal,
+}
+
 #[derive(Debug, Clone)]
 pub struct IbkrPaperGatewaySettings {
     pub host: String,
@@ -193,6 +202,53 @@ impl IbkrPaperGatewayAdapter {
             }
             if ibkr_frame_message_id_is(&frame, "11")? {
                 executions.push(ibkr_parse_execution_frame(&frame)?);
+            }
+        }
+    }
+
+    pub async fn next_order_id(&self) -> Result<i64, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        self.write_request(&mut stream, &ibkr_next_order_id_request(), "next order id")
+            .await?;
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway next order id response timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "9")? {
+                return ibkr_parse_next_valid_id_frame(&frame);
+            }
+        }
+    }
+
+    pub async fn cancel_ibkr_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
+        let (mut stream, _version) = self.open_session().await?;
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        self.write_request(
+            &mut stream,
+            &ibkr_order_cancel_request(order_id),
+            "cancel order",
+        )
+        .await?;
+
+        loop {
+            let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+                .await
+                .map_err(|_| {
+                    BrokerError::Connection(format!(
+                        "IBKR paper gateway order status response timed out at {address}"
+                    ))
+                })??;
+            if ibkr_frame_message_id_is(&frame, "3")? {
+                let status = ibkr_parse_order_status_frame(&frame)?;
+                if status.order_id == order_id {
+                    return Ok(status);
+                }
             }
         }
     }
@@ -409,6 +465,14 @@ pub fn ibkr_executions_request(request_id: i64, account_id: &str, symbol: &str) 
     ])
 }
 
+pub fn ibkr_next_order_id_request() -> Vec<u8> {
+    ibkr_encode_frame(["8", "1", "1"])
+}
+
+pub fn ibkr_order_cancel_request(order_id: i64) -> Vec<u8> {
+    ibkr_encode_frame(["4", "1", &order_id.to_string()])
+}
+
 pub fn ibkr_parse_server_version(frame: &[u8]) -> Result<IbkrServerVersion, BrokerError> {
     let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
         return Err(BrokerError::Config(
@@ -516,6 +580,40 @@ pub fn ibkr_parse_execution_frame(frame: &[u8]) -> Result<IbkrExecution, BrokerE
         qty: parse_decimal_field(&fields, 11, "IBKR execution quantity")?,
         price: parse_decimal_field(&fields, 12, "IBKR execution price")?,
         fee: optional_decimal_field(&fields, 13, "IBKR execution fee")?.unwrap_or(Decimal::ZERO),
+    })
+}
+
+pub fn ibkr_parse_next_valid_id_frame(frame: &[u8]) -> Result<i64, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config(
+            "incomplete IBKR next valid id frame".to_string(),
+        ));
+    };
+    if fields.first().map(String::as_str) != Some("9") {
+        return Err(BrokerError::Config(
+            "IBKR frame is not a next valid id response".to_string(),
+        ));
+    }
+    parse_i64_field(&fields, 2, "IBKR next valid order id")
+}
+
+pub fn ibkr_parse_order_status_frame(frame: &[u8]) -> Result<IbkrOrderStatus, BrokerError> {
+    let Some((fields, _consumed)) = ibkr_decode_frame(frame)? else {
+        return Err(BrokerError::Config(
+            "incomplete IBKR order status frame".to_string(),
+        ));
+    };
+    if fields.first().map(String::as_str) != Some("3") {
+        return Err(BrokerError::Config(
+            "IBKR frame is not an order status response".to_string(),
+        ));
+    }
+    Ok(IbkrOrderStatus {
+        order_id: parse_i64_field(&fields, 2, "IBKR order status order id")?,
+        status: string_field(&fields, 3, "IBKR order status")?,
+        filled_qty: parse_decimal_field(&fields, 4, "IBKR order status filled quantity")?,
+        remaining_qty: parse_decimal_field(&fields, 5, "IBKR order status remaining quantity")?,
+        avg_fill_price: parse_decimal_field(&fields, 6, "IBKR order status average fill price")?,
     })
 }
 

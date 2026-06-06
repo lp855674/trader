@@ -3,9 +3,10 @@ use broker::{
     BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
     IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker,
     SimulatedBrokerSettings, ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame,
-    ibkr_executions_request, ibkr_managed_accounts_request, ibkr_open_orders_request,
-    ibkr_parse_execution_frame, ibkr_parse_managed_accounts_frame, ibkr_parse_open_order_frame,
-    ibkr_parse_server_version, simulate_market_fill,
+    ibkr_executions_request, ibkr_managed_accounts_request, ibkr_next_order_id_request,
+    ibkr_open_orders_request, ibkr_order_cancel_request, ibkr_parse_execution_frame,
+    ibkr_parse_managed_accounts_frame, ibkr_parse_next_valid_id_frame, ibkr_parse_open_order_frame,
+    ibkr_parse_order_status_frame, ibkr_parse_server_version, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::time::Duration;
@@ -531,6 +532,40 @@ fn ibkr_executions_message_uses_request_id_and_maps_execution_frame() {
     assert_eq!(execution.fee, dec!(0.35));
 }
 
+#[test]
+fn ibkr_next_order_id_message_maps_next_valid_id_frame() {
+    let request = ibkr_next_order_id_request();
+    let decoded = ibkr_decode_frame(&request).unwrap().unwrap().0;
+    assert_eq!(
+        decoded,
+        vec!["8".to_string(), "1".to_string(), "1".to_string()]
+    );
+
+    let response = ibkr_encode_frame(["9", "1", "1001"]);
+    let order_id = ibkr_parse_next_valid_id_frame(&response).unwrap();
+
+    assert_eq!(order_id, 1001);
+}
+
+#[test]
+fn ibkr_cancel_message_uses_order_id_and_maps_order_status_frame() {
+    let request = ibkr_order_cancel_request(42);
+    let decoded = ibkr_decode_frame(&request).unwrap().unwrap().0;
+    assert_eq!(
+        decoded,
+        vec!["4".to_string(), "1".to_string(), "42".to_string()]
+    );
+
+    let response = ibkr_encode_frame(["3", "1", "42", "Cancelled", "0", "1", "0"]);
+    let status = ibkr_parse_order_status_frame(&response).unwrap();
+
+    assert_eq!(status.order_id, 42);
+    assert_eq!(status.status, "Cancelled");
+    assert_eq!(status.filled_qty, dec!(0));
+    assert_eq!(status.remaining_qty, dec!(1));
+    assert_eq!(status.avg_fill_price, dec!(0));
+}
+
 #[tokio::test]
 async fn ibkr_paper_gateway_adapter_reads_managed_accounts() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -724,6 +759,95 @@ async fn ibkr_paper_gateway_adapter_reads_executions_until_end() {
     assert_eq!(executions[0].request_id, 77);
     assert_eq!(executions[0].order_id, 42);
     assert_eq!(executions[0].trade_id, "exec-1");
+    accept_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_reads_next_order_id() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).await.unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).await.unwrap();
+        let mut request = request_len.to_vec();
+        request.extend_from_slice(&payload);
+        assert_eq!(request, ibkr_next_order_id_request());
+        stream
+            .write_all(&ibkr_encode_frame(["9", "1", "1001"]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let order_id = adapter.next_order_id().await.unwrap();
+
+    assert_eq!(order_id, 1001);
+    accept_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_cancels_order_and_reads_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+        let mut request_len = [0; 4];
+        stream.read_exact(&mut request_len).await.unwrap();
+        let payload_len = u32::from_be_bytes(request_len) as usize;
+        let mut payload = vec![0; payload_len];
+        stream.read_exact(&mut payload).await.unwrap();
+        let mut request = request_len.to_vec();
+        request.extend_from_slice(&payload);
+        assert_eq!(request, ibkr_order_cancel_request(42));
+        stream
+            .write_all(&ibkr_encode_frame([
+                "3",
+                "1",
+                "42",
+                "Cancelled",
+                "0",
+                "1",
+                "0",
+            ]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let status = adapter.cancel_ibkr_order(42).await.unwrap();
+
+    assert_eq!(status.order_id, 42);
+    assert_eq!(status.status, "Cancelled");
     accept_task.await.unwrap();
 }
 
