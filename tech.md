@@ -322,6 +322,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1
 
 该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。
 
+多轮 soak 验证用于连续跑多次 runner，检查稳定性和每轮 `summary.json`。默认不连接 Gateway、不下单：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -SkipRefresh
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU12345 -ConfirmIbkrPaperOrder
+```
+
 IBKR read-only preflight 当前提供 Gateway 握手与账号校验，底层通过 Rust 开源 crate `ibapi` 连接 TWS / IB Gateway；项目内部仍保留 `Decimal` 领域类型，只在 adapter 边界和 `ibapi` 的 f64 订单字段做显式转换：
 
 ```powershell

@@ -97,6 +97,10 @@ function Write-TestPlan {
     Write-Host ""
     Write-Host "Automatic paper-run order path. This enables order_submit_enabled only in a generated run config:"
     Write-Host "powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DU... -ConfirmAutoRun"
+    Write-Host ""
+    Write-Host "Multi-iteration soak. Default is local-only; add AccountId and confirmation after Gateway is ready:"
+    Write-Host "powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -SkipRefresh"
+    Write-Host "powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU... -ConfirmIbkrPaperOrder"
 
     Write-Section "Expected Results"
     Write-Host "DryRun: order_submit=disabled, reports and summary are generated under data/ibkr-paper-runs/."
