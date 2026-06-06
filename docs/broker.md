@@ -699,7 +699,7 @@ IBKR read-only preflight：
 trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 ```
 
-该命令通过 `broker::IbkrPaperGatewayAdapter` 做本机 TWS / IB Gateway TCP 连接探测，不做 IBKR API 握手、不读取账号、不提交订单。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 当前只是配置边界，供后续正式 IBKR API client 使用。
+该命令通过 `broker::IbkrPaperGatewayAdapter` 连接本机 TWS / IB Gateway 并完成 server version 握手，不读取账号、不提交订单。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 用于 TWS API socket session。`[paper] account_id` 在真实 IBKR 联调前应改为 TWS / Gateway 返回的 paper account id（通常是 `DU...`）；当前 `ibkr-paper` 只是本地 runner 占位。
 
 真实 IBKR paper order adapter 完成前，`order_submit_enabled` 必须保持 `false`。如果误设为 `true`，`paper-preflight` 和 `paper-run` 都会拒绝继续，避免把本地股票 paper runner 误当成真实 IBKR paper 下单能力。
 
@@ -723,7 +723,7 @@ message frame: 4-byte big-endian length + NUL-separated fields
 server version parse: server_version + connection_time
 ```
 
-这一步只建立协议消息基础，不发送真实下单消息。下一步需要把 codec 接入 socket session，完成 TWS / Gateway server version 握手，再继续实现 account / open orders / executions 读取。
+这一步已接入 socket session 并完成 TWS / Gateway server version 握手，但仍不发送真实下单消息。下一步继续实现 account / open orders / executions 读取。
 
 ---
 

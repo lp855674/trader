@@ -312,11 +312,11 @@ IBKR read-only preflight 当前提供 TCP 连接探测：
 trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 ```
 
-该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 只作为后续 IBKR API 握手和下单 adapter 的配置边界保留。当前命令通过 `broker::IbkrPaperGatewayAdapter` 做 TCP readiness，不做 IBKR 协议握手、不读取账号、不提交订单。`paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时会拒绝启动；真实 IBKR paper order adapter 完成前必须保持 `false`。
+该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 用于 TWS API socket session。当前命令通过 `broker::IbkrPaperGatewayAdapter` 做 server version 握手，不读取账号、不提交订单。`[paper] account_id` 在真实 IBKR 联调前应改为 TWS / Gateway 返回的 paper account id（通常是 `DU...`），当前 `ibkr-paper` 只是本地 runner 占位。`paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时会拒绝启动；真实 IBKR paper order adapter 完成前必须保持 `false`。
 
 IBKR paper order adapter 已建立测试边界：`IbkrPaperOrderClient` 覆盖按 client order id 查询、提交 limit order、查询订单、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。当前该 executor 仅通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未在 CLI runner 中开闸。
 
-IBKR TWS API wire codec 已进入 `broker` crate：支持 V100+ client version handshake payload、4-byte big-endian 长度前缀 frame、NUL 分隔字段解码、server version / connection time 解析。当前仍未发送真实下单消息，下一步是把 codec 接入真实 socket session，完成 TWS / Gateway server version 握手。
+IBKR TWS API wire codec 已进入 `broker` crate：支持 V100+ client version handshake payload、4-byte big-endian 长度前缀 frame、NUL 分隔字段解码、server version / connection time 解析，并已接入真实 socket session 完成 server version 握手。当前仍未读取账号列表、open orders、executions，也未发送真实下单消息。
 
 当前 paper 验证命令：
 

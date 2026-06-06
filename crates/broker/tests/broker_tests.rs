@@ -7,6 +7,7 @@ use broker::{
 };
 use rust_decimal_macros::dec;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
@@ -320,7 +321,15 @@ async fn ibkr_paper_gateway_adapter_reports_connected_status() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let accept_task = tokio::spawn(async move {
-        let _ = listener.accept().await;
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        assert_eq!(handshake, expected);
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
     });
     let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
         host: "127.0.0.1".to_string(),
@@ -338,6 +347,40 @@ async fn ibkr_paper_gateway_adapter_reports_connected_status() {
     assert!(!status.capabilities.order_submit);
     assert!(status.capabilities.paper_trading);
     assert!(!status.capabilities.live_trading);
+    accept_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_reads_server_version_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accept_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = ibkr_client_version_handshake(100, 178);
+        let mut handshake = vec![0; expected.len()];
+        stream.read_exact(&mut handshake).await.unwrap();
+        stream
+            .write_all(&ibkr_encode_frame(["178", "20260606 12:00:00 CST"]))
+            .await
+            .unwrap();
+    });
+    let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
+        host: "127.0.0.1".to_string(),
+        port,
+        client_id: 7,
+        connect_timeout: Duration::from_secs(1),
+    })
+    .unwrap();
+
+    let version = adapter.connect_and_handshake().await.unwrap();
+
+    assert_eq!(
+        version,
+        IbkrServerVersion {
+            server_version: 178,
+            connection_time: "20260606 12:00:00 CST".to_string(),
+        }
+    );
     accept_task.await.unwrap();
 }
 

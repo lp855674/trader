@@ -39,12 +39,14 @@
 1. [x] 抽象 IBKR order client，先用测试 client 覆盖 place/query/cancel/fills。
 2. [x] 增加 `broker::IbkrPaperGatewayAdapter` 作为真实 TWS / Gateway TCP readiness 边界。
 3. [x] 增加 IBKR TWS API wire codec：V100+ client version handshake、长度前缀 frame、server version 解析。
-4. 接入 PaperRuntime executor：只写真实 IBKR paper fills；未成交不伪造成交。
-5. 增加 IBKR recover/open-orders 等价命令。
-6. 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门，默认仍不提交订单。
+4. [x] 接入真实 socket session，完成 TWS / Gateway server version 握手。
+5. 读取并校验 IBKR paper account id，`[paper] account_id` 必须匹配 TWS / Gateway 返回账号。
+6. 接入 PaperRuntime executor：只写真实 IBKR paper fills；未成交不伪造成交。
+7. 增加 IBKR recover/open-orders 等价命令。
+8. 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门，默认仍不提交订单。
 
 ## 当前状态
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner、read-only TCP preflight、`broker::IbkrPaperGatewayAdapter`、IBKR TWS API wire codec、IBKR paper order client trait 和测试 executor 已完成。下一步把 wire codec 接到真实 socket session，完成 server version 握手；在真实 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。
+IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、IBKR TWS API wire codec、真实 socket server version 握手、IBKR paper order client trait 和测试 executor 已完成。下一步读取并校验 IBKR paper account id；在真实 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。

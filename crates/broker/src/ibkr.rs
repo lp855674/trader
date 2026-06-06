@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use trader_core::OrderRequest;
@@ -80,7 +81,40 @@ impl IbkrPaperGatewayAdapter {
 
     pub async fn connect_probe(&self) -> Result<(), BrokerError> {
         let address = format!("{}:{}", self.settings.host, self.settings.port);
-        timeout(self.settings.connect_timeout, TcpStream::connect(&address))
+        self.connect_socket(&address).await?;
+        Ok(())
+    }
+
+    pub async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
+        let address = format!("{}:{}", self.settings.host, self.settings.port);
+        let mut stream = self.connect_socket(&address).await?;
+        timeout(
+            self.settings.connect_timeout,
+            stream.write_all(&ibkr_client_version_handshake(100, 178)),
+        )
+        .await
+        .map_err(|_| {
+            BrokerError::Connection(format!(
+                "IBKR paper gateway handshake timed out at {address}"
+            ))
+        })?
+        .map_err(|error| {
+            BrokerError::Connection(format!(
+                "failed to write IBKR paper gateway handshake at {address}: {error}"
+            ))
+        })?;
+        let frame = timeout(self.settings.connect_timeout, read_ibkr_frame(&mut stream))
+            .await
+            .map_err(|_| {
+                BrokerError::Connection(format!(
+                    "IBKR paper gateway server version timed out at {address}"
+                ))
+            })??;
+        ibkr_parse_server_version(&frame)
+    }
+
+    async fn connect_socket(&self, address: &str) -> Result<TcpStream, BrokerError> {
+        timeout(self.settings.connect_timeout, TcpStream::connect(address))
             .await
             .map_err(|_| {
                 BrokerError::Connection(format!(
@@ -91,8 +125,7 @@ impl IbkrPaperGatewayAdapter {
                 BrokerError::Connection(format!(
                     "unable to connect to IBKR paper gateway at {address}: {error}"
                 ))
-            })?;
-        Ok(())
+            })
     }
 }
 
@@ -122,7 +155,7 @@ impl Broker for IbkrPaperGatewayAdapter {
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
-        self.connect_probe().await?;
+        self.connect_and_handshake().await?;
         Ok(BrokerStatus {
             kind: BrokerKind::InteractiveBrokers,
             connected: true,
@@ -136,6 +169,22 @@ impl Broker for IbkrPaperGatewayAdapter {
             },
         })
     }
+}
+
+async fn read_ibkr_frame(stream: &mut TcpStream) -> Result<Vec<u8>, BrokerError> {
+    let mut length = [0; 4];
+    stream.read_exact(&mut length).await.map_err(|error| {
+        BrokerError::Connection(format!("failed to read IBKR frame length: {error}"))
+    })?;
+    let payload_len = u32::from_be_bytes(length) as usize;
+    let mut frame = Vec::with_capacity(4 + payload_len);
+    frame.extend_from_slice(&length);
+    let mut payload = vec![0; payload_len];
+    stream.read_exact(&mut payload).await.map_err(|error| {
+        BrokerError::Connection(format!("failed to read IBKR frame payload: {error}"))
+    })?;
+    frame.extend_from_slice(&payload);
+    Ok(frame)
 }
 
 pub fn ibkr_encode_frame(fields: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<u8> {
