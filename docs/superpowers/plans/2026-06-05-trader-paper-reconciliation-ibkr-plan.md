@@ -18,7 +18,7 @@
 2. [x] 增加 Binance reconciliation CLI：读取 SQLite orders/fills/positions/account_balances 与 Binance account/open orders 做只读对账。
 3. 对账输出必须区分 `matched`、`local_only`、`remote_open`、`cash_delta`、`position_delta`。
 4. [x] 增加 Binance soak 脚本，多轮执行固定 runner 并汇总每轮 transcript、summary、open-orders 和 reconciliation。
-5. 验证：`cargo test -p trader-cli -p paper -p broker`，以及一次 `binance-paper-run.ps1 -Limit 100 -ConfirmTestnetOrder`。
+5. [x] 验证：`cargo test -p trader-cli -p paper -p broker`，一次 `binance-paper-run.ps1 -Limit 100 -ConfirmTestnetOrder`，以及一次 `binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder`。
 
 ## 阶段 2：IBKR 股票 Paper 本地闭环
 
@@ -43,4 +43,4 @@
 
 ## 当前状态
 
-Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。下一步是用 soak 做多轮 Binance paper 验证，确认没有遗留挂单和不可解释对账差异后，再进入 IBKR read-only / paper order adapter。
+Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。下一步进入 IBKR read-only / paper order adapter。
