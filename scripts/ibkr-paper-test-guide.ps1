@@ -102,6 +102,7 @@ function Write-TestPlan {
     Write-Host "DryRun: order_submit=disabled, reports and summary are generated under data/ibkr-paper-runs/."
     Write-Host "ReadOnly: ibkr-paper-readonly prints connected=true and account=<your DU account>."
     Write-Host "ReadOnly also runs ibkr-paper-reconcile and prints local/remote order and execution match counts."
+    Write-Host "ReadOnly also runs ibkr-paper-recover, which only updates local recoverable orders if any exist."
     Write-Host "TinyOrder: ibkr-paper-tiny-order prints order_id and status from Gateway."
     Write-Host "AutoRun: paper-preflight prints real_broker_connection=true, runner summary has order_submit=enabled."
 
@@ -131,6 +132,7 @@ function Invoke-ReadOnly {
     Invoke-CheckedTrader @("ibkr-paper-open-orders", "--config", $config)
     Invoke-CheckedTrader @("ibkr-paper-executions", "--config", $config, "--request-id", "1")
     Invoke-CheckedTrader @("ibkr-paper-reconcile", "--config", $config, "--request-id", "1")
+    Invoke-CheckedTrader @("ibkr-paper-recover", "--config", $config, "--request-id", "1")
     Invoke-CheckedTrader @("ibkr-paper-next-order-id", "--config", $config)
 }
 

@@ -214,6 +214,20 @@ fn ibkr_paper_reconcile_reports_connection_failure_without_gateway() {
 }
 
 #[test]
+fn ibkr_paper_recover_succeeds_with_no_recoverable_orders() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["ibkr-paper-recover", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("ibkr paper recover ok: scanned=0"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn ibkr_paper_next_order_id_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

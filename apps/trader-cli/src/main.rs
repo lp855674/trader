@@ -101,6 +101,12 @@ enum Command {
         #[arg(long)]
         confirm_ibkr_paper_order: bool,
     },
+    IbkrPaperRecover {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long, default_value_t = 1)]
+        request_id: i64,
+    },
     BinancePaperTinyOrder {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
@@ -545,6 +551,24 @@ async fn main() -> Result<()> {
             println!(
                 "ibkr paper tiny order ok: symbol={} order_id={} status={} filled_qty={} client_order_id={}",
                 order.symbol, ack.order_id, ack.status, ack.filled_qty, ack.client_order_id
+            );
+        }
+        Command::IbkrPaperRecover { config, request_id } => {
+            let (app_config, db) = load_db(&config).await?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper recover")?;
+            db.migrate().await?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let recovered =
+                recover_ibkr_paper_orders(&app_config, &db, &adapter, request_id).await?;
+            println!(
+                "ibkr paper recover ok: scanned={} recovered={} missing={} remaining={} trades={} run_status_updated={}",
+                recovered.scanned,
+                recovered.recovered,
+                recovered.missing,
+                recovered.remaining,
+                recovered.trades,
+                recovered.run_status_updated
             );
         }
         Command::BinancePaperTinyOrder {
@@ -1311,6 +1335,16 @@ struct BinancePaperRecoverSummary {
     run_status_updated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IbkrPaperRecoverSummary {
+    scanned: usize,
+    recovered: usize,
+    missing: usize,
+    remaining: usize,
+    trades: usize,
+    run_status_updated: bool,
+}
+
 async fn recover_binance_paper_orders(
     app_config: &config::AppConfig,
     db: &storage::Db,
@@ -1386,6 +1420,106 @@ async fn recover_binance_paper_orders(
         }
         summary.recovered += 1;
         summary.trades += trades.len();
+    }
+
+    summary.remaining = db.list_recoverable_orders(run_id).await?.len();
+    if summary.scanned > 0 && summary.missing == 0 && summary.remaining == 0 {
+        if let Some(run) = db.get_strategy_run(run_id).await? {
+            if run.status != "completed" {
+                db.update_strategy_run_status(
+                    run_id,
+                    "recovered",
+                    Some(chrono::Utc::now().timestamp_millis()),
+                    None,
+                )
+                .await?;
+                summary.run_status_updated = true;
+            }
+        }
+    }
+    Ok(summary)
+}
+
+async fn recover_ibkr_paper_orders(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+    adapter: &IbkrPaperGatewayAdapter,
+    request_id: i64,
+) -> Result<IbkrPaperRecoverSummary> {
+    let run_id = &app_config.runtime.run_id;
+    let orders = db.list_recoverable_orders(run_id).await?;
+    let mut summary = IbkrPaperRecoverSummary {
+        scanned: orders.len(),
+        recovered: 0,
+        missing: 0,
+        remaining: 0,
+        trades: 0,
+        run_status_updated: false,
+    };
+    if orders.is_empty() {
+        return Ok(summary);
+    }
+
+    let open_orders = adapter.open_orders().await?;
+    for order in orders {
+        let symbol = paper::ibkr_stock_symbol(&order.symbol)?;
+        let open_order = open_orders
+            .iter()
+            .find(|remote| ibkr_local_order_matches_single_remote_open(&order, remote));
+        let broker_order_id = order
+            .broker_order_id
+            .clone()
+            .or_else(|| open_order.map(|remote| remote.order_id.to_string()));
+        let executions = adapter
+            .executions(request_id, &app_config.paper.account_id, &symbol)
+            .await?;
+        let matched_executions = broker_order_id
+            .as_deref()
+            .map(|broker_order_id| {
+                executions
+                    .iter()
+                    .filter(|execution| execution.order_id.to_string() == broker_order_id)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if open_order.is_none() && matched_executions.is_empty() {
+            summary.missing += 1;
+            continue;
+        }
+
+        let filled_qty = matched_executions
+            .iter()
+            .fold(Decimal::ZERO, |total, execution| total + execution.qty);
+        let status = ibkr_recovered_order_status(&order, open_order, filled_qty)?;
+        let ended_at_ms = chrono::Utc::now().timestamp_millis();
+        for execution in &matched_executions {
+            db.insert_fill(storage::NewFill {
+                id: format!("{run_id}-ibkr-trade-{}", execution.trade_id),
+                order_id: order.id.clone(),
+                run_id: run_id.clone(),
+                symbol: execution.symbol.clone(),
+                side: execution.side.clone(),
+                price: execution.price.to_string(),
+                qty: execution.qty.to_string(),
+                fee: execution.fee.to_string(),
+                ts_ms: ended_at_ms,
+            })
+            .await?;
+        }
+        if let Some(broker_order_id) = broker_order_id {
+            db.update_order_execution_by_client_order_id(
+                &order.client_order_id,
+                &broker_order_id,
+                &status,
+                &filled_qty.to_string(),
+                ended_at_ms,
+            )
+            .await?;
+        }
+        summary.recovered += 1;
+        summary.trades += matched_executions.len();
     }
 
     summary.remaining = db.list_recoverable_orders(run_id).await?.len();
@@ -1552,11 +1686,35 @@ fn ibkr_local_order_matches_remote_open(
     local: &storage::NewOrder,
     remote_open_orders: &[IbkrOpenOrder],
 ) -> bool {
-    remote_open_orders.iter().any(|remote| {
-        local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
-            || (!remote.client_order_id.is_empty()
-                && local.client_order_id == remote.client_order_id)
-    })
+    remote_open_orders
+        .iter()
+        .any(|remote| ibkr_local_order_matches_single_remote_open(local, remote))
+}
+
+fn ibkr_local_order_matches_single_remote_open(
+    local: &storage::NewOrder,
+    remote: &IbkrOpenOrder,
+) -> bool {
+    local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
+        || (!remote.client_order_id.is_empty() && local.client_order_id == remote.client_order_id)
+}
+
+fn ibkr_recovered_order_status(
+    local: &storage::NewOrder,
+    open_order: Option<&IbkrOpenOrder>,
+    filled_qty: Decimal,
+) -> Result<String> {
+    if let Some(open_order) = open_order {
+        return Ok(open_order.status.clone());
+    }
+    let order_qty = Decimal::from_str(&local.qty)?;
+    if filled_qty >= order_qty {
+        Ok("FILLED".to_string())
+    } else if filled_qty > Decimal::ZERO {
+        Ok("PARTIALLY_FILLED".to_string())
+    } else {
+        Ok(local.status.clone())
+    }
 }
 
 fn ibkr_execution_matches_local(
@@ -1687,7 +1845,7 @@ mod tests {
         binance_accounting_records_from_fills, binance_balance_total, binance_base_asset,
         binance_cancel_outcome, binance_local_order_matches_remote_open, binance_testnet_settings,
         ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
-        settings_with_broker_initial_cash,
+        ibkr_recovered_order_status, settings_with_broker_initial_cash,
     };
     use broker::{BinanceAssetBalance, BinanceOpenOrder, IbkrExecution, IbkrOpenOrder};
     use rust_decimal::Decimal;
@@ -1928,6 +2086,38 @@ mod tests {
             &[sample_order("other-client", None)],
             &[by_fill]
         ));
+    }
+
+    #[test]
+    fn ibkr_recover_prefers_open_order_status() {
+        let local = sample_order("client-42", None);
+        let remote = IbkrOpenOrder {
+            order_id: 42,
+            account_id: "DU12345".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "BUY".to_string(),
+            order_type: "LMT".to_string(),
+            quantity: dec!(1),
+            limit_price: Some(dec!(185.25)),
+            status: "Submitted".to_string(),
+            client_order_id: "client-42".to_string(),
+            filled_qty: Decimal::ZERO,
+        };
+
+        let status = ibkr_recovered_order_status(&local, Some(&remote), Decimal::ZERO).unwrap();
+
+        assert_eq!(status, "Submitted");
+    }
+
+    #[test]
+    fn ibkr_recover_marks_execution_only_order_by_filled_qty() {
+        let local = sample_order("client-42", Some("42"));
+
+        let partial = ibkr_recovered_order_status(&local, None, dec!(0.5)).unwrap();
+        let filled = ibkr_recovered_order_status(&local, None, dec!(1)).unwrap();
+
+        assert_eq!(partial, "PARTIALLY_FILLED");
+        assert_eq!(filled, "FILLED");
     }
 
     #[test]

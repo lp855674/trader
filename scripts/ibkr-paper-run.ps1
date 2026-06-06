@@ -82,6 +82,7 @@ function Invoke-IbkrPaperGatewayChecks {
     $openOrdersOutput = ""
     $executionsOutput = ""
     $reconcileOutput = ""
+    $recoverOutput = ""
 
     try {
         $readonlyOutput = Invoke-CapturedTrader @("ibkr-paper-readonly", "--config", $runConfigPath)
@@ -111,11 +112,19 @@ function Invoke-IbkrPaperGatewayChecks {
         $reconcileOutput = "failed: $_"
     }
 
+    try {
+        $recoverOutput = Invoke-CapturedTrader @("ibkr-paper-recover", "--config", $runConfigPath, "--request-id", "1")
+    } catch {
+        Write-Warning "ibkr-paper-recover failed during checks: $_"
+        $recoverOutput = "failed: $_"
+    }
+
     [pscustomobject]@{
         readonly = $readonlyOutput
         open_orders = $openOrdersOutput
         executions = $executionsOutput
         reconciliation = $reconcileOutput
+        recover = $recoverOutput
     }
 }
 

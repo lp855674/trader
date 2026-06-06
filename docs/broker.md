@@ -716,6 +716,7 @@ trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-open-orders --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-executions --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 trader ibkr-paper-reconcile --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
+trader ibkr-paper-recover --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 trader ibkr-paper-next-order-id --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-cancel-order --config configs/paper/ibkr_aapl_1d_parquet.toml --order-id 42 --confirm-ibkr-paper-cancel
 trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --symbol AAPL --side buy --qty 1 --price 185.25 --confirm-ibkr-paper-order
@@ -723,7 +724,7 @@ trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --
 
 该命令通过 `broker::IbkrPaperGatewayAdapter` 连接本机 TWS / IB Gateway，完成 server version 握手，然后发送 managed accounts 只读请求并校验 `[paper] account_id` 是否在 Gateway 返回账号列表中。默认 paper 端口为 `7497`；如果本机没有启动 TWS / Gateway，命令会以 `unable to connect to IBKR paper gateway` 失败。`client_id` 用于 TWS API socket session。`[paper] account_id` 必须改为 TWS / Gateway 返回的真实 paper account id（通常是 `DU...`）；配置中的 `DU000000` 只是结构化占位，不是可用账号。
 
-`ibkr-paper-open-orders` 发送只读 open orders 请求并输出远端 open order 数量和首条订单关键字段。`ibkr-paper-executions` 使用 `[paper] account_id` 和策略 symbol 发送 executions 查询并输出成交数量和首条成交关键字段；可用 `--symbol AAPL` 覆盖策略 symbol。`ibkr-paper-reconcile` 读取本地 SQLite orders/fills，再读取 Gateway open orders/executions，输出本地/远端订单与成交匹配计数，不修改数据库。`ibkr-paper-next-order-id` 读取 Gateway 返回的 next valid order id，为后续真实下单 adapter 做前置验证。这些命令只读取 Gateway 数据，不写 SQLite，不提交或撤销订单。
+`ibkr-paper-open-orders` 发送只读 open orders 请求并输出远端 open order 数量和首条订单关键字段。`ibkr-paper-executions` 使用 `[paper] account_id` 和策略 symbol 发送 executions 查询并输出成交数量和首条成交关键字段；可用 `--symbol AAPL` 覆盖策略 symbol。`ibkr-paper-reconcile` 读取本地 SQLite orders/fills，再读取 Gateway open orders/executions，输出本地/远端订单与成交匹配计数，不修改数据库。`ibkr-paper-recover` 读取本地 recoverable orders，再按 Gateway open orders / executions 回写本地订单状态、broker order id 和真实 fills；它不伪造成交，也不更新账户余额。`ibkr-paper-next-order-id` 读取 Gateway 返回的 next valid order id，为后续真实下单 adapter 做前置验证。除 recover 会写 SQLite 外，这些命令只读取 Gateway 数据，不提交或撤销订单。
 
 `ibkr-paper-cancel-order` 会向 TWS / IB Gateway 发送真实 paper cancel 请求，必须显式传 `--confirm-ibkr-paper-cancel`，并只输出 Gateway 返回的 `orderStatus`。该命令不提交新订单，不写 SQLite。
 
@@ -749,6 +750,7 @@ managed accounts
 open orders
 executions
 reconcile
+recover
 next valid order id
 cancel order
 tiny stock LMT place order

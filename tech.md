@@ -329,6 +329,7 @@ trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-open-orders --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-executions --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 trader ibkr-paper-reconcile --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
+trader ibkr-paper-recover --config configs/paper/ibkr_aapl_1d_parquet.toml --request-id 1
 trader ibkr-paper-next-order-id --config configs/paper/ibkr_aapl_1d_parquet.toml
 trader ibkr-paper-cancel-order --config configs/paper/ibkr_aapl_1d_parquet.toml --order-id 42 --confirm-ibkr-paper-cancel
 trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --symbol AAPL --side buy --qty 1 --price 185.25 --confirm-ibkr-paper-order
@@ -336,7 +337,7 @@ trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --
 
 该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 用于 TWS API socket session。当前命令通过 `broker::IbkrPaperGatewayAdapter` 调用 `ibapi::Client` 做 server version 握手，发送 managed accounts 只读请求，并校验 `[paper] account_id` 是否在 Gateway 返回账号列表中；`[paper] account_id` 必须改为真实 IBKR paper account id（通常是 `DU...`），当前配置中的 `DU000000` 只是结构化占位。只读命令不提交订单。`paper-preflight` 在 IBKR `order_submit_enabled = true` 时会实际连接 Gateway 并校验账号，通过后输出 `real_broker_connection=true`。
 
-`ibkr-paper-open-orders`、`ibkr-paper-executions`、`ibkr-paper-reconcile` 和 `ibkr-paper-next-order-id` 已接入同一 `ibapi` adapter，分别读取远端 open orders、executions、本地/远端订单成交匹配计数和 next valid order id，并输出关键字段；这些命令都是只读命令，不写 SQLite，也不提交、撤销订单。`ibkr-paper-cancel-order` 是受确认保护的真实 paper 撤单命令，必须显式传 `--confirm-ibkr-paper-cancel`，不提交新订单、不写 SQLite。`ibkr-paper-tiny-order` 是受确认保护的手动 tiny LMT paper order 命令，先取 next valid order id，再发送 place order，并等待 order status / open order 回报；该手动命令不写 SQLite，策略自动执行由下方 `IbkrPaperOrderExecutor` 处理。
+`ibkr-paper-open-orders`、`ibkr-paper-executions`、`ibkr-paper-reconcile`、`ibkr-paper-recover` 和 `ibkr-paper-next-order-id` 已接入同一 `ibapi` adapter，分别读取远端 open orders、executions、本地/远端订单成交匹配计数、按真实 Gateway 回报恢复本地 recoverable orders，以及 next valid order id。`ibkr-paper-recover` 会写 SQLite；其他只读命令不写 SQLite，也不提交、撤销订单。`ibkr-paper-cancel-order` 是受确认保护的真实 paper 撤单命令，必须显式传 `--confirm-ibkr-paper-cancel`，不提交新订单、不写 SQLite。`ibkr-paper-tiny-order` 是受确认保护的手动 tiny LMT paper order 命令，先取 next valid order id，再发送 place order，并等待 order status / open order 回报；该手动命令不写 SQLite，策略自动执行由下方 `IbkrPaperOrderExecutor` 处理。
 
 IBKR paper order adapter 已接入真实 Gateway client wrapper：`IbkrPaperGatewayOrderClient` 通过 `IbkrPaperGatewayAdapter` 查询 open orders、提交 limit order、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。CLI 与 REST 的 `paper-run` 在 `[broker] kind = "ibkr"`、`mode = "paper"`、`order_submit_enabled = true` 且账号校验通过后，会注入该 executor 执行股票 paper order。
 
