@@ -38,15 +38,15 @@
 
 1. [x] 抽象 IBKR order client，先用测试 client 覆盖 place/query/cancel/fills。
 2. [x] 增加 `broker::IbkrPaperGatewayAdapter` 作为真实 TWS / Gateway TCP readiness 边界。
-3. [x] 增加 IBKR TWS API wire codec：V100+ client version handshake、长度前缀 frame、server version 解析。
+3. [x] 迁移到 Rust 开源 crate `ibapi`，不再维护项目内手写 TWS API wire codec。
 4. [x] 接入真实 socket session，完成 TWS / Gateway server version 握手。
 5. [x] 读取并校验 IBKR paper account id，`[paper] account_id` 必须匹配 TWS / Gateway 返回账号。
 6. [x] 接入 PaperRuntime executor：CLI 与 REST `paper-run` 已在 `order_submit_enabled = true` 时注入 `IbkrPaperOrderExecutor`。
-7. [~] 增加 IBKR recover/open-orders 等价命令：open-orders / executions 只读命令已完成，recover 尚未完成。
+7. [~] 增加 IBKR recover/reconciliation/open-orders 等价命令：open-orders / executions / reconciliation 只读命令已完成，recover 尚未完成。
 8. [x] 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门：默认本地 dry-run；开闸时要求真实 `-AccountId DU...` 并打开临时 config 的 `order_submit_enabled = true`。
 
 ## 当前状态
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / next valid order id 只读读取、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入，以及 runner 的 `-ConfirmIbkrPaperOrder` 闸门已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。
+IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / reconciliation / next valid order id 只读读取、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入，以及 runner 的 `-ConfirmIbkrPaperOrder` 闸门已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。

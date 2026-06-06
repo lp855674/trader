@@ -3,7 +3,7 @@ use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
     BinanceAssetBalance, BinanceLimitOrderRequest, BinanceOpenOrder, BinanceOrderSide,
     BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, IbkrLimitOrderRequest,
-    IbkrOrderSide, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
+    IbkrOpenOrder, IbkrOrderSide, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use metrics::{equity_returns, paper_summary};
@@ -66,6 +66,14 @@ enum Command {
         request_id: i64,
         #[arg(long)]
         symbol: Option<String>,
+    },
+    IbkrPaperReconcile {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long, default_value_t = 1)]
+        request_id: i64,
     },
     IbkrPaperNextOrderId {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
@@ -206,6 +214,24 @@ struct BinancePaperReconciliation {
     local_base_qty: Decimal,
     remote_base_total: Decimal,
     base_delta: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IbkrPaperReconciliation {
+    symbol: String,
+    local_orders: usize,
+    local_fills: usize,
+    matched_orders: usize,
+    local_only_orders: usize,
+    remote_open_orders: usize,
+    remote_open_matched: usize,
+    remote_open_unmatched: usize,
+    remote_executions: usize,
+    remote_execution_matched: usize,
+    remote_execution_unmatched: usize,
+    local_fill_qty: Decimal,
+    remote_execution_qty: Decimal,
+    qty_delta: Decimal,
 }
 
 #[tokio::main]
@@ -409,6 +435,48 @@ async fn main() -> Result<()> {
                 first_execution
                     .map(|execution| execution.trade_id.as_str())
                     .unwrap_or("none")
+            );
+        }
+        Command::IbkrPaperReconcile {
+            config,
+            symbol,
+            request_id,
+        } => {
+            let (app_config, db) = load_db(&config).await?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper reconcile")?;
+            db.migrate().await?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            let symbol = symbol
+                .as_deref()
+                .map(paper::ibkr_stock_symbol)
+                .unwrap_or_else(|| {
+                    let configured_symbol = app_config
+                        .strategy
+                        .symbols
+                        .first()
+                        .map(String::as_str)
+                        .unwrap_or("AAPL");
+                    paper::ibkr_stock_symbol(configured_symbol)
+                })?;
+            let report =
+                reconcile_ibkr_paper(&app_config, &db, &adapter, request_id, &symbol).await?;
+            println!(
+                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_unmatched={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
+                report.symbol,
+                report.local_orders,
+                report.local_fills,
+                report.matched_orders,
+                report.local_only_orders,
+                report.remote_open_orders,
+                report.remote_open_matched,
+                report.remote_open_unmatched,
+                report.remote_executions,
+                report.remote_execution_matched,
+                report.remote_execution_unmatched,
+                report.local_fill_qty,
+                report.remote_execution_qty,
+                report.qty_delta
             );
         }
         Command::IbkrPaperNextOrderId { config } => {
@@ -1414,6 +1482,96 @@ fn binance_local_order_matches_remote_open(
     })
 }
 
+async fn reconcile_ibkr_paper(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+    adapter: &IbkrPaperGatewayAdapter,
+    request_id: i64,
+    symbol: &str,
+) -> Result<IbkrPaperReconciliation> {
+    let run_id = &app_config.runtime.run_id;
+    let local_orders = db.list_orders(run_id).await?;
+    let local_fills = db.list_fills(run_id).await?;
+    let remote_open_orders = adapter.open_orders().await?;
+    let remote_executions = adapter
+        .executions(request_id, &app_config.paper.account_id, symbol)
+        .await?;
+
+    let matched_orders = local_orders
+        .iter()
+        .filter(|order| ibkr_local_order_matches_remote_open(order, &remote_open_orders))
+        .count();
+    let remote_open_matched = remote_open_orders
+        .iter()
+        .filter(|remote| {
+            local_orders.iter().any(|local| {
+                local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
+                    || (!remote.client_order_id.is_empty()
+                        && local.client_order_id == remote.client_order_id)
+            })
+        })
+        .count();
+    let remote_execution_matched = remote_executions
+        .iter()
+        .filter(|execution| ibkr_execution_matches_local(execution, &local_orders, &local_fills))
+        .count();
+    let local_fill_qty = local_fills
+        .iter()
+        .filter(|fill| {
+            matches!(
+                paper::ibkr_stock_symbol(&fill.symbol).as_deref(),
+                Ok(fill_symbol) if fill_symbol == symbol
+            )
+        })
+        .try_fold(Decimal::ZERO, |total, fill| {
+            Decimal::from_str(&fill.qty).map(|qty| total + qty)
+        })?;
+    let remote_execution_qty = remote_executions
+        .iter()
+        .fold(Decimal::ZERO, |total, execution| total + execution.qty);
+
+    Ok(IbkrPaperReconciliation {
+        symbol: symbol.to_string(),
+        local_orders: local_orders.len(),
+        local_fills: local_fills.len(),
+        matched_orders,
+        local_only_orders: local_orders.len() - matched_orders,
+        remote_open_orders: remote_open_orders.len(),
+        remote_open_matched,
+        remote_open_unmatched: remote_open_orders.len() - remote_open_matched,
+        remote_executions: remote_executions.len(),
+        remote_execution_matched,
+        remote_execution_unmatched: remote_executions.len() - remote_execution_matched,
+        local_fill_qty,
+        remote_execution_qty,
+        qty_delta: remote_execution_qty - local_fill_qty,
+    })
+}
+
+fn ibkr_local_order_matches_remote_open(
+    local: &storage::NewOrder,
+    remote_open_orders: &[IbkrOpenOrder],
+) -> bool {
+    remote_open_orders.iter().any(|remote| {
+        local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
+            || (!remote.client_order_id.is_empty()
+                && local.client_order_id == remote.client_order_id)
+    })
+}
+
+fn ibkr_execution_matches_local(
+    execution: &broker::IbkrExecution,
+    local_orders: &[storage::NewOrder],
+    local_fills: &[storage::NewFill],
+) -> bool {
+    local_orders
+        .iter()
+        .any(|local| local.broker_order_id.as_deref() == Some(&execution.order_id.to_string()))
+        || local_fills
+            .iter()
+            .any(|fill| fill.id.ends_with(&execution.trade_id))
+}
+
 fn binance_balance_total(remote_balances: &[BinanceAssetBalance], asset: &str) -> Decimal {
     remote_balances
         .iter()
@@ -1528,9 +1686,10 @@ mod tests {
     use super::{
         binance_accounting_records_from_fills, binance_balance_total, binance_base_asset,
         binance_cancel_outcome, binance_local_order_matches_remote_open, binance_testnet_settings,
+        ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
         settings_with_broker_initial_cash,
     };
-    use broker::{BinanceAssetBalance, BinanceOpenOrder};
+    use broker::{BinanceAssetBalance, BinanceOpenOrder, IbkrExecution, IbkrOpenOrder};
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
 
@@ -1694,6 +1853,84 @@ mod tests {
     }
 
     #[test]
+    fn ibkr_reconcile_matches_local_order_by_client_or_broker_id() {
+        let remote_orders = vec![
+            IbkrOpenOrder {
+                order_id: 42,
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BUY".to_string(),
+                order_type: "LMT".to_string(),
+                quantity: dec!(1),
+                limit_price: Some(dec!(185.25)),
+                status: "Submitted".to_string(),
+                client_order_id: "client-42".to_string(),
+                filled_qty: Decimal::ZERO,
+            },
+            IbkrOpenOrder {
+                order_id: 77,
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "SELL".to_string(),
+                order_type: "LMT".to_string(),
+                quantity: dec!(1),
+                limit_price: Some(dec!(186)),
+                status: "Submitted".to_string(),
+                client_order_id: String::new(),
+                filled_qty: Decimal::ZERO,
+            },
+        ];
+        let by_client = sample_order("client-42", None);
+        let by_broker = sample_order("other-client", Some("77"));
+
+        assert!(ibkr_local_order_matches_remote_open(
+            &by_client,
+            &remote_orders
+        ));
+        assert!(ibkr_local_order_matches_remote_open(
+            &by_broker,
+            &remote_orders
+        ));
+    }
+
+    #[test]
+    fn ibkr_reconcile_matches_execution_by_order_or_fill_id() {
+        let execution = IbkrExecution {
+            request_id: 1,
+            order_id: 42,
+            trade_id: "exec-42".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "BUY".to_string(),
+            qty: dec!(1),
+            price: dec!(185.25),
+            fee: dec!(0.35),
+        };
+        let by_broker_order = sample_order("client-42", Some("42"));
+        let by_fill = storage::NewFill {
+            id: "run-1-ibkr-trade-exec-42".to_string(),
+            order_id: "order-2".to_string(),
+            run_id: "run-1".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "BUY".to_string(),
+            price: "185.25".to_string(),
+            qty: "1".to_string(),
+            fee: "0.35".to_string(),
+            ts_ms: 10,
+        };
+
+        assert!(ibkr_execution_matches_local(
+            &execution,
+            &[by_broker_order],
+            &[]
+        ));
+        assert!(ibkr_execution_matches_local(
+            &execution,
+            &[sample_order("other-client", None)],
+            &[by_fill]
+        ));
+    }
+
+    #[test]
     fn binance_submit_requires_testnet_credentials() {
         unsafe {
             std::env::remove_var("BINANCE_TESTNET_API_KEY");
@@ -1768,6 +2005,25 @@ mod tests {
             "#,
         )
         .unwrap()
+    }
+
+    fn sample_order(client_order_id: &str, broker_order_id: Option<&str>) -> storage::NewOrder {
+        storage::NewOrder {
+            id: "order-1".to_string(),
+            run_id: "run-1".to_string(),
+            client_order_id: client_order_id.to_string(),
+            broker_order_id: broker_order_id.map(str::to_string),
+            account_id: "DU12345".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: "BUY".to_string(),
+            order_type: "LIMIT".to_string(),
+            price: Some("185.25".to_string()),
+            qty: "1".to_string(),
+            filled_qty: "0".to_string(),
+            status: "SUBMITTED".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }
     }
 }
 

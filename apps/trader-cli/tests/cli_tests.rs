@@ -197,6 +197,23 @@ fn ibkr_paper_executions_reports_connection_failure_without_gateway() {
 }
 
 #[test]
+fn ibkr_paper_reconcile_reports_connection_failure_without_gateway() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-reconcile",
+            "--config",
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            "--request-id",
+            "77",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
+}
+
+#[test]
 fn ibkr_paper_next_order_id_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
