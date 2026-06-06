@@ -10,7 +10,7 @@
 - 不提交 secrets，不把生成的 Parquet、SQLite、report 产物纳入 git。
 - Binance 仅用于 crypto；IBKR 用于股票 paper。
 - Paper 数据优先 Parquet；CSV 只作为导入兼容输入。
-- 真实 IBKR 下单 adapter 未完成前，`order_submit_enabled` 必须保持 `false`。
+- 真实 IBKR 下单必须通过 `order_submit_enabled` 与脚本确认参数双闸门；默认 runner 必须保持不下单。
 
 ## 阶段 1：Binance Paper 可审计增强
 
@@ -31,7 +31,7 @@
 
 1. [x] 增加 IBKR 连接配置边界：host、port、client id。
 2. [x] 新增 `trader ibkr-paper-readonly`，先只做本地 TWS / Gateway TCP 连接探测。
-3. [x] `paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时拒绝启动；真实 IBKR order adapter 完成前不允许开闸。
+3. [x] `paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时实际连接 Gateway 并校验 paper account。
 4. [x] 文档写清 TWS paper account、Gateway、端口、client id、只读限制。
 
 ## 阶段 4：IBKR Paper Order Adapter
@@ -41,12 +41,12 @@
 3. [x] 增加 IBKR TWS API wire codec：V100+ client version handshake、长度前缀 frame、server version 解析。
 4. [x] 接入真实 socket session，完成 TWS / Gateway server version 握手。
 5. [x] 读取并校验 IBKR paper account id，`[paper] account_id` 必须匹配 TWS / Gateway 返回账号。
-6. [~] 接入 PaperRuntime executor：真实 Gateway tiny order 命令已完成；自动 `paper-run` submit 尚未开闸。
+6. [x] 接入 PaperRuntime executor：CLI 与 REST `paper-run` 已在 `order_submit_enabled = true` 时注入 `IbkrPaperOrderExecutor`。
 7. [~] 增加 IBKR recover/open-orders 等价命令：open-orders / executions 只读命令已完成，recover 尚未完成。
-8. [~] 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门：手动 `ibkr-paper-tiny-order --confirm-ibkr-paper-order` 已完成；runner 闸门尚未接入。
+8. [x] 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门：默认本地 dry-run；开闸时要求真实 `-AccountId DU...` 并打开临时 config 的 `order_submit_enabled = true`。
 
 ## 当前状态
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、IBKR TWS API wire codec、真实 socket server version 握手、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / next valid order id 只读读取、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait 和测试 executor 已完成。下一步用真实 TWS / IB Gateway 验证 `ibkr-paper-tiny-order`；自动 `paper-run` submit 接入前，`order_submit_enabled` 必须保持 `false`。
+IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / next valid order id 只读读取、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入，以及 runner 的 `-ConfirmIbkrPaperOrder` 闸门已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。

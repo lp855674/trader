@@ -298,13 +298,21 @@ trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.t
 
 清理命令会同步当前配置 SQLite 中匹配 `run_id + client_order_id` 的订单状态，并输出 `local_synced`。
 
-股票 paper 方向固定为 IBKR。当前新增 IBKR AAPL Parquet 本地 paper runner，用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；该 runner 默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
+股票 paper 方向固定为 IBKR。当前 IBKR AAPL Parquet runner 用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 ```
 
-固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`。
+固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
+
+真实 IBKR paper 自动下单必须显式开闸：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId DU12345 -ConfirmIbkrPaperOrder
+```
+
+`-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，执行 `paper-preflight` 时连接 TWS / IB Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
 
 IBKR read-only preflight 当前提供 Gateway 握手与账号校验，底层通过 Rust 开源 crate `ibapi` 连接 TWS / IB Gateway；项目内部仍保留 `Decimal` 领域类型，只在 adapter 边界和 `ibapi` 的 f64 订单字段做显式转换：
 

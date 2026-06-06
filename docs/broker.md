@@ -685,13 +685,21 @@ trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.t
 
 ### IBKR 股票 Paper
 
-股票 paper 方向固定为 IBKR。当前新增 IBKR AAPL Parquet 本地 paper runner，用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；该 runner 默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
+股票 paper 方向固定为 IBKR。当前 IBKR AAPL Parquet runner 用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 ```
 
-固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`。
+固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
+
+真实 IBKR paper 自动下单必须显式开闸：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId DU12345 -ConfirmIbkrPaperOrder
+```
+
+`-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，执行 `paper-preflight` 时连接 TWS / IB Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
 
 IBKR read-only preflight：
 
@@ -710,11 +718,9 @@ trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --
 
 `ibkr-paper-cancel-order` 会向 TWS / IB Gateway 发送真实 paper cancel 请求，必须显式传 `--confirm-ibkr-paper-cancel`，并只输出 Gateway 返回的 `orderStatus`。该命令不提交新订单，不写 SQLite。
 
-`ibkr-paper-tiny-order` 会先读取 next valid order id，再向 TWS / IB Gateway 发送一笔股票 LMT paper order，并等待同一 order id 的 `orderStatus`。该命令必须显式传 `--confirm-ibkr-paper-order`，不写 SQLite，不接入 `paper-run`，用于真实 Gateway tiny order 联调。真实 Gateway 验证完成前，`paper-run` 仍不允许通过 IBKR 自动提交订单。
+`ibkr-paper-tiny-order` 会先读取 next valid order id，再向 TWS / IB Gateway 发送一笔股票 LMT paper order，并等待同一 order id 的 `orderStatus`。该命令必须显式传 `--confirm-ibkr-paper-order`，不写 SQLite，用于真实 Gateway tiny order 联调。策略自动下单走 `paper-run` 的 `IbkrPaperOrderExecutor`。
 
-真实 IBKR paper order adapter 完成前，`order_submit_enabled` 必须保持 `false`。如果误设为 `true`，`paper-preflight` 和 `paper-run` 都会拒绝继续，避免把本地股票 paper runner 误当成真实 IBKR paper 下单能力。
-
-IBKR paper order adapter 当前已完成可测试接口边界：
+IBKR paper order adapter 当前已完成真实 Gateway client wrapper 与可测试接口边界：
 
 ```text
 query_order_by_client_order_id
@@ -724,23 +730,22 @@ cancel_order
 executions
 ```
 
-`IbkrPaperOrderExecutor` 只聚合 `executions` 作为真实成交来源；如果订单没有 executions 且仍处于 open 状态，会先撤单并返回 0 filled qty，不写 fill、不更新本地账本。该 executor 当前只通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未允许 CLI runner 提交 IBKR paper order。
+`IbkrPaperGatewayOrderClient` 通过 `IbkrPaperGatewayAdapter` 查询 open orders、提交 limit order、撤单、读取 executions。`IbkrPaperOrderExecutor` 只聚合 `executions` 作为真实成交来源；如果订单没有 executions 且仍处于 open 状态，会先撤单并返回 0 filled qty，不写 fill、不更新本地账本。CLI 与 REST 的 `paper-run` 在 `[broker] kind = "ibkr"`、`mode = "paper"`、`order_submit_enabled = true` 且账号校验通过后，会注入该 executor 执行股票 paper order。
 
-IBKR TWS API wire codec 当前已在 `broker` crate 内实现：
+IBKR TWS API wire codec 不再由项目手写维护，`broker` crate 改为依赖 Rust 开源 crate `ibapi`。当前 adapter 覆盖：
 
 ```text
-client version handshake: API\0 + length-prefixed v{min}..{max}
-message frame: 4-byte big-endian length + NUL-separated fields
-server version parse: server_version + connection_time
-managed accounts: request id 17, response id 15
-open orders: request id 5, open order response id 5, end id 53
-executions: request id 7, execution response id 11, end id 55
-next valid id: request id 8, response id 9
-cancel order: request id 4, orderStatus response id 3
-place order: request id 3, next valid id + orderStatus confirmation
+server version / connection time
+managed accounts
+open orders
+executions
+next valid order id
+cancel order
+tiny stock LMT place order
+paper-run automatic stock paper order
 ```
 
-这一步已接入 socket session，完成 TWS / Gateway server version 握手、managed accounts 读取、open orders 读取、executions 读取、next valid order id 读取、受确认保护的 paper cancel，以及受确认保护的 tiny LMT paper order。下一步需要用真实 TWS / IB Gateway 验证 `ibkr-paper-tiny-order`，再决定是否接入 `PaperRuntime` executor。
+这一步已接入真实 `ibapi` socket session，完成 TWS / Gateway server version 握手、managed accounts 读取、open orders 读取、executions 读取、next valid order id 读取、受确认保护的 paper cancel、受确认保护的 tiny LMT paper order，以及 `PaperRuntime` executor 自动下单边界。下一步需要用真实 TWS / IB Gateway 验证 `ibkr-paper-tiny-order` 与 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder` 的完整生命周期。
 
 ---
 
