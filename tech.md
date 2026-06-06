@@ -316,6 +316,8 @@ trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 
 IBKR paper order adapter 已建立测试边界：`IbkrPaperOrderClient` 覆盖按 client order id 查询、提交 limit order、查询订单、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。当前该 executor 仅通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未在 CLI runner 中开闸。
 
+IBKR TWS API wire codec 已进入 `broker` crate：支持 V100+ client version handshake payload、4-byte big-endian 长度前缀 frame、NUL 分隔字段解码、server version / connection time 解析。当前仍未发送真实下单消息，下一步是把 codec 接入真实 socket session，完成 TWS / Gateway server version 握手。
+
 当前 paper 验证命令：
 
 ```powershell

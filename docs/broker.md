@@ -715,6 +715,16 @@ executions
 
 `IbkrPaperOrderExecutor` 只聚合 `executions` 作为真实成交来源；如果订单没有 executions 且仍处于 open 状态，会先撤单并返回 0 filled qty，不写 fill、不更新本地账本。该 executor 当前只通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未允许 CLI runner 提交 IBKR paper order。
 
+IBKR TWS API wire codec 当前已在 `broker` crate 内实现：
+
+```text
+client version handshake: API\0 + length-prefixed v{min}..{max}
+message frame: 4-byte big-endian length + NUL-separated fields
+server version parse: server_version + connection_time
+```
+
+这一步只建立协议消息基础，不发送真实下单消息。下一步需要把 codec 接入 socket session，完成 TWS / Gateway server version 握手，再继续实现 account / open orders / executions 读取。
+
 ---
 
 ## 21. Broker Configuration

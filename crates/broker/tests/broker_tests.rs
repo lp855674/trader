@@ -1,8 +1,9 @@
 use broker::{
     BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
     BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
-    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, MockBroker, SimulatedBrokerSettings,
-    simulate_market_fill,
+    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker,
+    SimulatedBrokerSettings, ibkr_client_version_handshake, ibkr_decode_frame, ibkr_encode_frame,
+    ibkr_parse_server_version, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::time::Duration;
@@ -351,6 +352,45 @@ fn ibkr_paper_gateway_adapter_rejects_common_live_port() {
     .unwrap_err();
 
     assert!(error.to_string().contains("paper port"));
+}
+
+#[test]
+fn ibkr_wire_frame_encodes_length_prefixed_null_fields() {
+    let frame = ibkr_encode_frame(["9", "1", "1001"]);
+
+    assert_eq!(&frame[..4], &[0, 0, 0, 9]);
+    assert_eq!(&frame[4..], &[b'9', 0, b'1', 0, b'1', b'0', b'0', b'1', 0]);
+    assert_eq!(
+        ibkr_decode_frame(&frame).unwrap(),
+        Some((
+            vec!["9".to_string(), "1".to_string(), "1001".to_string()],
+            frame.len()
+        ))
+    );
+}
+
+#[test]
+fn ibkr_client_version_handshake_uses_api_prefix_and_version_range() {
+    let frame = ibkr_client_version_handshake(100, 178);
+
+    assert!(frame.starts_with(b"API\0"));
+    assert_eq!(&frame[4..8], &[0, 0, 0, 9]);
+    assert_eq!(&frame[8..], b"v100..178");
+}
+
+#[test]
+fn ibkr_server_version_frame_maps_to_connection_metadata() {
+    let frame = ibkr_encode_frame(["178", "20260606 12:00:00 CST"]);
+
+    let version = ibkr_parse_server_version(&frame).unwrap();
+
+    assert_eq!(
+        version,
+        IbkrServerVersion {
+            server_version: 178,
+            connection_time: "20260606 12:00:00 CST".to_string(),
+        }
+    );
 }
 
 fn order() -> OrderRequest {
