@@ -193,6 +193,40 @@ impl BinanceOrderSide {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IbkrOrderSide {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IbkrLimitOrderRequest {
+    pub symbol: String,
+    pub side: IbkrOrderSide,
+    pub quantity: Decimal,
+    pub price: Decimal,
+    pub client_order_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrOrderAck {
+    pub order_id: i64,
+    pub client_order_id: String,
+    pub status: String,
+    pub filled_qty: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrTrade {
+    pub trade_id: String,
+    pub order_id: i64,
+    pub symbol: String,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinanceLimitOrderRequest {
     pub symbol: String,

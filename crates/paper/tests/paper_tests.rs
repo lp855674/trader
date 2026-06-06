@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use broker::{
     BinanceLimitOrderRequest, BinanceOrderAck, BinanceOrderSide, BinanceTrade, BrokerError,
+    IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrTrade,
 };
 use data::Bar;
 use paper::{
-    BinancePaperOrderClient, BinancePaperOrderExecutor, ExecutedPaperOrder, PaperOrderExecutor,
-    PaperRuntime, PaperSettings, binance_spot_symbol,
+    BinancePaperOrderClient, BinancePaperOrderExecutor, ExecutedPaperOrder, IbkrPaperOrderClient,
+    IbkrPaperOrderExecutor, PaperOrderExecutor, PaperRuntime, PaperSettings, binance_spot_symbol,
+    ibkr_stock_symbol,
 };
 use rust_decimal_macros::dec;
 use std::sync::{
@@ -239,6 +241,12 @@ fn binance_spot_symbol_maps_strategy_symbol_to_exchange_symbol() {
     assert_eq!(binance_spot_symbol("BTCUSDT").unwrap(), "BTCUSDT");
 }
 
+#[test]
+fn ibkr_stock_symbol_maps_strategy_symbol_to_exchange_symbol() {
+    assert_eq!(ibkr_stock_symbol("US:NASDAQ:AAPL:EQUITY").unwrap(), "AAPL");
+    assert_eq!(ibkr_stock_symbol("AAPL").unwrap(), "AAPL");
+}
+
 #[tokio::test]
 async fn binance_paper_executor_uses_actual_testnet_trades_as_fill() {
     let executor =
@@ -378,6 +386,93 @@ async fn binance_paper_executor_recovers_existing_order_by_client_order_id() {
     assert_eq!(fill.broker_order_id, "77");
     assert_eq!(fill.status, "FILLED");
     assert_eq!(fill.qty, dec!(0.001));
+}
+
+#[tokio::test]
+async fn ibkr_paper_executor_uses_actual_paper_executions_as_fill() {
+    let executor =
+        IbkrPaperOrderExecutor::new_with_client_order_prefix(FakeIbkrClient, "paper-run-1");
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(2),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(195),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.broker_order_id, "1001");
+    assert_eq!(fill.client_order_id, "trader-paper-paper-run-1-1");
+    assert_eq!(fill.status, "Filled");
+    assert_eq!(fill.qty, dec!(2));
+    assert_eq!(fill.price, dec!(195.25));
+    assert_eq!(fill.fee, dec!(0.02));
+}
+
+#[tokio::test]
+async fn ibkr_paper_executor_cancels_unfilled_open_paper_order() {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let executor = IbkrPaperOrderExecutor::new(CancellableUnfilledIbkrClient {
+        cancelled: Arc::clone(&cancelled),
+    });
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(195),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.broker_order_id, "2002");
+    assert_eq!(fill.status, "Cancelled");
+    assert_eq!(fill.qty, dec!(0));
+    assert_eq!(fill.price, dec!(195));
+    assert_eq!(fill.fee, dec!(0));
+    assert!(cancelled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn ibkr_paper_executor_recovers_existing_order_by_client_order_id() {
+    let executor =
+        IbkrPaperOrderExecutor::new_with_client_order_prefix(RecoveringIbkrClient, "paper-run-1");
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(195),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.client_order_id, "trader-paper-paper-run-1-1");
+    assert_eq!(fill.broker_order_id, "3003");
+    assert_eq!(fill.status, "Filled");
+    assert_eq!(fill.qty, dec!(1));
 }
 
 struct FixedExecutor;
@@ -794,6 +889,195 @@ impl BinancePaperOrderClient for RecoveringBinanceClient {
             qty: dec!(0.001),
             fee: dec!(0.000001),
             fee_asset: "BTC".to_string(),
+            ts_ms: 1,
+        }])
+    }
+}
+
+struct FakeIbkrClient;
+
+#[async_trait]
+impl IbkrPaperOrderClient for FakeIbkrClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(client_order_id, "trader-paper-paper-run-1-1");
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        assert_eq!(order.symbol, "AAPL");
+        assert_eq!(order.side, IbkrOrderSide::Buy);
+        assert_eq!(order.quantity, dec!(2));
+        assert_eq!(order.price, dec!(195));
+        assert_eq!(order.client_order_id, "trader-paper-paper-run-1-1");
+        Ok(IbkrOrderAck {
+            order_id: 1001,
+            client_order_id: order.client_order_id.clone(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(&self, symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(order_id, 1001);
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-paper-run-1-1".to_string(),
+            status: "Filled".to_string(),
+            filled_qty: dec!(2),
+        })
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        panic!("cancel_order must not be called after filled executions")
+    }
+
+    async fn executions(&self, symbol: &str, order_id: i64) -> Result<Vec<IbkrTrade>, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(order_id, 1001);
+        Ok(vec![
+            IbkrTrade {
+                trade_id: "exec-1".to_string(),
+                order_id,
+                symbol: symbol.to_string(),
+                price: dec!(195),
+                qty: dec!(1),
+                fee: dec!(0.01),
+                ts_ms: 1,
+            },
+            IbkrTrade {
+                trade_id: "exec-2".to_string(),
+                order_id,
+                symbol: symbol.to_string(),
+                price: dec!(195.5),
+                qty: dec!(1),
+                fee: dec!(0.01),
+                ts_ms: 2,
+            },
+        ])
+    }
+}
+
+struct CancellableUnfilledIbkrClient {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl IbkrPaperOrderClient for CancellableUnfilledIbkrClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id: 2002,
+            client_order_id: order.client_order_id.clone(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn cancel_order(&self, symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(order_id, 2002);
+        self.cancelled.store(true, Ordering::SeqCst);
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "Cancelled".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn executions(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<Vec<IbkrTrade>, BrokerError> {
+        Ok(Vec::new())
+    }
+}
+
+struct RecoveringIbkrClient;
+
+#[async_trait]
+impl IbkrPaperOrderClient for RecoveringIbkrClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        symbol: &str,
+        client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(client_order_id, "trader-paper-paper-run-1-1");
+        Ok(Some(IbkrOrderAck {
+            order_id: 3003,
+            client_order_id: client_order_id.to_string(),
+            status: "Filled".to_string(),
+            filled_qty: dec!(1),
+        }))
+    }
+
+    async fn place_limit_order(
+        &self,
+        _order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        panic!("place_limit_order must not be called for recoverable client_order_id")
+    }
+
+    async fn query_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        panic!("query_order must not be called after client id recovery")
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        panic!("cancel_order must not be called after client id recovery")
+    }
+
+    async fn executions(&self, symbol: &str, order_id: i64) -> Result<Vec<IbkrTrade>, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(order_id, 3003);
+        Ok(vec![IbkrTrade {
+            trade_id: "exec-3003".to_string(),
+            order_id,
+            symbol: symbol.to_string(),
+            price: dec!(195),
+            qty: dec!(1),
+            fee: dec!(0.01),
             ts_ms: 1,
         }])
     }

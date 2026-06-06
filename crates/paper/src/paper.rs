@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+pub mod ibkr;
+
+pub use ibkr::{IbkrPaperOrderClient, IbkrPaperOrderExecutor, ibkr_stock_symbol};
+
 use accounting::AccountBook;
 use async_trait::async_trait;
 use backtest::BacktestSummary;

@@ -314,6 +314,8 @@ trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 
 该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 只作为后续 IBKR API 握手和下单 adapter 的配置边界保留。当前命令不做 IBKR 协议握手、不读取账号、不提交订单。`paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时会拒绝启动；真实 IBKR paper order adapter 完成前必须保持 `false`。
 
+IBKR paper order adapter 已建立测试边界：`IbkrPaperOrderClient` 覆盖按 client order id 查询、提交 limit order、查询订单、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。当前该 executor 仅通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未在 CLI runner 中开闸。
+
 当前 paper 验证命令：
 
 ```powershell

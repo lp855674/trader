@@ -703,6 +703,18 @@ trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
 
 真实 IBKR paper order adapter 完成前，`order_submit_enabled` 必须保持 `false`。如果误设为 `true`，`paper-preflight` 和 `paper-run` 都会拒绝继续，避免把本地股票 paper runner 误当成真实 IBKR paper 下单能力。
 
+IBKR paper order adapter 当前已完成可测试接口边界：
+
+```text
+query_order_by_client_order_id
+place_limit_order
+query_order
+cancel_order
+executions
+```
+
+`IbkrPaperOrderExecutor` 只聚合 `executions` 作为真实成交来源；如果订单没有 executions 且仍处于 open 状态，会先撤单并返回 0 filled qty，不写 fill、不更新本地账本。该 executor 当前只通过测试 client 验证，尚未接真实 TWS / IB Gateway API，也未允许 CLI runner 提交 IBKR paper order。
+
 ---
 
 ## 21. Broker Configuration

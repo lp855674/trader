@@ -36,7 +36,7 @@
 
 ## 阶段 4：IBKR Paper Order Adapter
 
-1. 抽象 IBKR order client，先用测试 client 覆盖 place/query/cancel/fills。
+1. [x] 抽象 IBKR order client，先用测试 client 覆盖 place/query/cancel/fills。
 2. 接入 PaperRuntime executor：只写真实 IBKR paper fills；未成交不伪造成交。
 3. 增加 IBKR recover/open-orders 等价命令。
 4. 在 runner 中加入 `-ConfirmIbkrPaperOrder` 闸门，默认仍不提交订单。
@@ -45,4 +45,4 @@
 
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
-IBKR stock paper 本地 Parquet runner 和 read-only TCP preflight 已完成。下一步进入 IBKR paper order adapter 设计与实现，但在 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。
+IBKR stock paper 本地 Parquet runner、read-only TCP preflight、IBKR paper order client trait 和测试 executor 已完成。下一步接真实 IBKR TWS / Gateway client；在真实 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。
