@@ -736,9 +736,15 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
             })?;
             Ok(true)
         }
-        config::BrokerKind::Futu
-        | config::BrokerKind::Okx
-        | config::BrokerKind::InteractiveBrokers => Ok(false),
+        config::BrokerKind::InteractiveBrokers => {
+            if app_config.broker.order_submit_enabled {
+                return Err(ApiError(anyhow::anyhow!(
+                    "IBKR paper order submit is not implemented; run ibkr-paper-readonly first and keep order_submit_enabled=false"
+                )));
+            }
+            Ok(false)
+        }
+        config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
     }
 }
 

@@ -29,10 +29,10 @@
 
 ## 阶段 3：IBKR Read-only Preflight
 
-1. 增加 IBKR 连接配置边界：host、port、client id 的配置或环境变量映射。
-2. 新增 `trader ibkr-paper-readonly`，先只做本地 TWS / Gateway 连接探测和账号只读能力验证。
-3. `paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时必须要求 read-only readiness 通过；否则拒绝启动。
-4. 文档写清 TWS paper account、Gateway、端口、client id、只读限制。
+1. [x] 增加 IBKR 连接配置边界：host、port、client id。
+2. [x] 新增 `trader ibkr-paper-readonly`，先只做本地 TWS / Gateway TCP 连接探测。
+3. [x] `paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时拒绝启动；真实 IBKR order adapter 完成前不允许开闸。
+4. [x] 文档写清 TWS paper account、Gateway、端口、client id、只读限制。
 
 ## 阶段 4：IBKR Paper Order Adapter
 
@@ -43,4 +43,6 @@
 
 ## 当前状态
 
-Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。下一步进入 IBKR read-only / paper order adapter。
+Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
+
+IBKR stock paper 本地 Parquet runner 和 read-only TCP preflight 已完成。下一步进入 IBKR paper order adapter 设计与实现，但在 adapter 完成并验证前，`order_submit_enabled` 必须保持 `false`。

@@ -150,6 +150,21 @@ fn binance_paper_readonly_requires_testnet_credentials() {
 }
 
 #[test]
+fn ibkr_paper_readonly_reports_connection_failure_without_gateway() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-readonly",
+            "--config",
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
+}
+
+#[test]
 fn binance_paper_recover_requires_testnet_credentials() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

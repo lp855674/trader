@@ -304,7 +304,15 @@ trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.t
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 ```
 
-固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`。真实 IBKR read-only / paper order adapter 仍是后续阶段。
+固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`。
+
+IBKR read-only preflight 当前提供 TCP 连接探测：
+
+```powershell
+trader ibkr-paper-readonly --config configs/paper/ibkr_aapl_1d_parquet.toml
+```
+
+该命令要求 TWS / IB Gateway paper 环境已启动，并能连接配置中的 `host:port`。默认 paper 端口为 `7497`，`client_id` 只作为后续 IBKR API 握手和下单 adapter 的配置边界保留。当前命令不做 IBKR 协议握手、不读取账号、不提交订单。`paper-preflight` 对 IBKR 在 `order_submit_enabled = true` 时会拒绝启动；真实 IBKR paper order adapter 完成前必须保持 `false`。
 
 当前 paper 验证命令：
 

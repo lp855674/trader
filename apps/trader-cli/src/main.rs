@@ -9,7 +9,9 @@ use metrics::{equity_returns, paper_summary};
 use paper::{BinancePaperOrderExecutor, PaperRuntime, PaperSettings};
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
-use std::{io::Write, path::Path, str::FromStr};
+use std::{io::Write, path::Path, str::FromStr, time::Duration};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 #[derive(Parser)]
 #[command(name = "trader")]
@@ -45,6 +47,10 @@ enum Command {
     },
     BinancePaperReadonly {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
+        config: String,
+    },
+    IbkrPaperReadonly {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
         config: String,
     },
     BinancePaperTinyOrder {
@@ -160,6 +166,14 @@ struct BinancePaperReconciliation {
     local_base_qty: Decimal,
     remote_base_total: Decimal,
     base_delta: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IbkrPaperReadonlyStatus {
+    host: String,
+    port: u16,
+    client_id: u32,
+    connected: bool,
 }
 
 #[tokio::main]
@@ -284,6 +298,19 @@ async fn main() -> Result<()> {
                 account.cash,
                 account.equity,
                 account.margin_used
+            );
+        }
+        Command::IbkrPaperReadonly { config } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper readonly")?;
+            let status = ibkr_paper_readonly_probe(&app_config).await?;
+            println!(
+                "ibkr paper readonly ok: host={} port={} client_id={} connected={} order_submit_enabled={}",
+                status.host,
+                status.port,
+                status.client_id,
+                status.connected,
+                app_config.broker.order_submit_enabled
             );
         }
         Command::BinancePaperTinyOrder {
@@ -833,6 +860,31 @@ fn binance_public_testnet_settings(
     })
 }
 
+async fn ibkr_paper_readonly_probe(
+    app_config: &config::AppConfig,
+) -> Result<IbkrPaperReadonlyStatus> {
+    let host = app_config
+        .broker
+        .host
+        .clone()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = app_config.broker.port.unwrap_or(7497);
+    let client_id = app_config.broker.client_id.unwrap_or(1);
+    let address = format!("{host}:{port}");
+
+    timeout(Duration::from_secs(2), TcpStream::connect(&address))
+        .await
+        .with_context(|| format!("unable to connect to IBKR paper gateway at {address}: timeout"))?
+        .with_context(|| format!("unable to connect to IBKR paper gateway at {address}"))?;
+
+    Ok(IbkrPaperReadonlyStatus {
+        host,
+        port,
+        client_id,
+        connected: true,
+    })
+}
+
 fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<bool> {
     match app_config.broker.kind {
         config::BrokerKind::Simulated => Ok(false),
@@ -858,9 +910,15 @@ fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> Result<
             })?;
             Ok(true)
         }
-        config::BrokerKind::Futu
-        | config::BrokerKind::Okx
-        | config::BrokerKind::InteractiveBrokers => Ok(false),
+        config::BrokerKind::InteractiveBrokers => {
+            if app_config.broker.order_submit_enabled {
+                bail!(
+                    "IBKR paper order submit is not implemented; run ibkr-paper-readonly first and keep order_submit_enabled=false"
+                );
+            }
+            Ok(false)
+        }
+        config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
     }
 }
 
@@ -922,6 +980,16 @@ fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
 fn ensure_binance_paper_config(app_config: &config::AppConfig, command_name: &str) -> Result<()> {
     if app_config.broker.kind != config::BrokerKind::Binance {
         bail!("{command_name} requires broker.kind = binance");
+    }
+    if app_config.broker.mode != config::BrokerMode::Paper {
+        bail!("{command_name} requires broker.mode = paper");
+    }
+    Ok(())
+}
+
+fn ensure_ibkr_paper_config(app_config: &config::AppConfig, command_name: &str) -> Result<()> {
+    if app_config.broker.kind != config::BrokerKind::InteractiveBrokers {
+        bail!("{command_name} requires broker.kind = ibkr");
     }
     if app_config.broker.mode != config::BrokerMode::Paper {
         bail!("{command_name} requires broker.mode = paper");

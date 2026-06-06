@@ -306,6 +306,9 @@ fn parses_ibkr_alias_as_interactive_brokers() {
         [broker]
         kind = "ibkr"
         mode = "paper"
+        host = "127.0.0.1"
+        port = 7497
+        client_id = 1
 
         [paper]
         account_id = "ibkr-paper"
@@ -320,5 +323,8 @@ fn parses_ibkr_alias_as_interactive_brokers() {
 
     assert_eq!(config.broker.kind, config::BrokerKind::InteractiveBrokers);
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
+    assert_eq!(config.broker.host.as_deref(), Some("127.0.0.1"));
+    assert_eq!(config.broker.port, Some(7497));
+    assert_eq!(config.broker.client_id, Some(1));
     assert_eq!(config.data.source, "parquet");
 }
