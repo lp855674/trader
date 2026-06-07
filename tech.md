@@ -480,6 +480,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
+- WebSocket：`subscribe` 会先回放 SQLite run events，再转发 `AppState.event_bus` 中 run_id 匹配的 runtime events；`replay_control` 支持 pause/resume/seek/speed。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
 - Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
 - Research support：`indicators` 提供 Decimal SMA/EMA 基础指标，`moving_average_cross` 策略已复用 `SimpleMovingAverage`；`feature_store` 提供 Decimal feature record、key 和 in-memory range/latest repository，后续可接 Parquet/SQLite adapter。

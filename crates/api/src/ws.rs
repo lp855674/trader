@@ -5,6 +5,7 @@ use axum::{
     },
     response::IntoResponse,
 };
+use events::{AnyEventEnvelope, TraderEvent};
 use replay::{ReplayController, ReplayState};
 use serde::Deserialize;
 
@@ -51,7 +52,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         };
 
         let result = match request.message_type.as_str() {
-            "subscribe" => send_persisted_events(&mut socket, &state, &request.run_id).await,
+            "subscribe" => send_subscription_events(&mut socket, &state, &request.run_id).await,
             "replay_control" => send_replay_control(&mut socket, &state, request).await,
             _ => {
                 socket
@@ -71,6 +72,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             break;
         }
     }
+}
+
+async fn send_subscription_events(
+    socket: &mut WebSocket,
+    state: &AppState,
+    run_id: &str,
+) -> Result<(), axum::Error> {
+    send_persisted_events(socket, state, run_id).await?;
+    stream_runtime_events(socket, state, run_id).await
 }
 
 async fn send_persisted_events(
@@ -107,6 +117,42 @@ async fn send_persisted_events(
             .await?;
     }
     Ok(())
+}
+
+async fn stream_runtime_events(
+    socket: &mut WebSocket,
+    state: &AppState,
+    run_id: &str,
+) -> Result<(), axum::Error> {
+    let mut receiver = state.event_bus.subscribe();
+    loop {
+        let Ok(event) = receiver.recv().await else {
+            continue;
+        };
+        if !runtime_event_matches_run(&event, run_id) {
+            continue;
+        }
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "event",
+                    "event": event
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+    }
+}
+
+fn runtime_event_matches_run(event: &AnyEventEnvelope, run_id: &str) -> bool {
+    let TraderEvent::Runtime(runtime_event) = &event.payload else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&runtime_event.payload_json) else {
+        return false;
+    };
+    payload.get("run_id").and_then(serde_json::Value::as_str) == Some(run_id)
 }
 
 async fn send_replay_control(
@@ -175,6 +221,7 @@ async fn persist_replay_control_event(
     let Ok(payload_json) = serde_json::to_string(replay_state) else {
         return;
     };
+    // best-effort: websocket replay control response should not fail on audit write errors.
     let _ = db
         .insert_event(storage::NewEventRecord {
             event_id: uuid::Uuid::new_v4().to_string(),
