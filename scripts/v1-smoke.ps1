@@ -187,12 +187,20 @@ try {
         Send-WebSocketText $socket (@{ type = "subscribe"; run_id = $paper.run_id } | ConvertTo-Json -Compress)
         $eventText = Receive-WebSocketUntil $socket '"type":"event"'
         Assert-True ($eventText.Contains('"type":"event"')) "expected websocket event replay"
-        Send-WebSocketText $socket (@{ type = "replay_control"; run_id = $paper.run_id; action = "pause" } | ConvertTo-Json -Compress)
-        $replayText = Receive-WebSocketUntil $socket '"type":"replay_state"'
-        Assert-True ($replayText.Contains('"type":"replay_state"')) "expected websocket replay_state"
     } finally {
         $socket.Abort()
         $socket.Dispose()
+    }
+
+    $controlSocket = [System.Net.WebSockets.ClientWebSocket]::new()
+    $null = $controlSocket.ConnectAsync([Uri]"ws://127.0.0.1:8080/ws", [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    try {
+        Send-WebSocketText $controlSocket (@{ type = "replay_control"; run_id = $paper.run_id; action = "pause" } | ConvertTo-Json -Compress)
+        $replayText = Receive-WebSocketUntil $controlSocket '"type":"replay_state"'
+        Assert-True ($replayText.Contains('"type":"replay_state"')) "expected websocket replay_state"
+    } finally {
+        $controlSocket.Abort()
+        $controlSocket.Dispose()
     }
 
     [pscustomobject]@{
