@@ -2,6 +2,7 @@
 
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, EngineEvent, ExecutionReport};
 use data::Bar;
+use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use storage::{Db, NewEventRecord, NewFill, NewOrder, NewPosition, NewStrategyRun};
@@ -56,6 +57,7 @@ impl BacktestSettings {
 pub struct BacktestRuntime {
     db: Option<Db>,
     settings: BacktestSettings,
+    event_bus: Option<EventBus>,
 }
 
 impl BacktestRuntime {
@@ -63,7 +65,13 @@ impl BacktestRuntime {
         Self {
             db: Some(db),
             settings,
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: EventBus) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     pub async fn run(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
@@ -98,6 +106,9 @@ impl BacktestRuntime {
             },
             strategy,
         );
+        if let Some(event_bus) = &self.event_bus {
+            engine.set_event_bus(event_bus.clone());
+        }
         let mut signals = 0;
         let mut orders = 0;
         let started_at_ms = bars.first().map_or(0, |bar| bar.ts_ms);

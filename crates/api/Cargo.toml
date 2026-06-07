@@ -16,6 +16,7 @@ broker.workspace = true
 chrono.workspace = true
 config.workspace = true
 data.workspace = true
+events.workspace = true
 metrics.workspace = true
 paper.workspace = true
 replay.workspace = true

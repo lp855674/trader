@@ -471,7 +471,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
 
 ## Local Verifiable MVP
 

@@ -1,4 +1,5 @@
 use data::Bar;
+use events::{EventBus, TraderEvent};
 use paper::{PaperRunError, PaperRuntime, PaperSettings};
 use runtime::CancellationFlag;
 use rust_decimal_macros::dec;
@@ -29,6 +30,34 @@ async fn paper_runtime_runs_bars_from_stream() {
     );
     assert_eq!(db.list_orders(&run_id).await.unwrap().len(), 1);
     assert_eq!(db.list_portfolio_snapshots(&run_id).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn paper_runtime_publishes_algorithm_events_to_event_bus() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let event_bus = EventBus::new(32);
+    let mut receiver = event_bus.subscribe();
+
+    let summary = PaperRuntime::new_with_event_bus(db, PaperSettings::sample(), event_bus)
+        .run_bars(signal_bars())
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let mut categories = Vec::new();
+    while categories.len() < 12 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let TraderEvent::Runtime(runtime_event) = event.payload {
+            categories.push(runtime_event.category);
+        }
+    }
+    assert!(categories.contains(&"algorithm.universe.selected".to_string()));
+    assert!(categories.contains(&"algorithm.alpha.generated".to_string()));
+    assert!(categories.contains(&"algorithm.oms.accepted".to_string()));
 }
 
 #[tokio::test]

@@ -182,6 +182,7 @@ async fn run_backtest(
     .await?;
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
+        .with_event_bus(state.event_bus.clone())
         .run(bars)
         .await?;
     let payload = serde_json::json!({
@@ -239,7 +240,9 @@ async fn run_paper(
     let run_id = settings.run_id.clone();
     let db = state.db.clone();
     let task_settings = settings.clone();
-    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone()).await?;
+    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone())
+        .await?
+        .with_event_bus(state.event_bus.clone());
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {

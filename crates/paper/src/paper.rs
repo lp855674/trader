@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::Bar;
+use events::EventBus;
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
@@ -30,6 +31,7 @@ pub struct PaperRuntime {
     db: Db,
     settings: PaperSettings,
     executor: Box<dyn PaperOrderExecutor>,
+    event_bus: Option<EventBus>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +115,7 @@ impl PaperRuntime {
             db,
             settings,
             executor,
+            event_bus: None,
         }
     }
 
@@ -125,7 +128,29 @@ impl PaperRuntime {
             db,
             settings,
             executor,
+            event_bus: None,
         }
+    }
+
+    pub fn new_with_event_bus(db: Db, settings: PaperSettings, event_bus: EventBus) -> Self {
+        let executor = Box::new(SimulatedPaperOrderExecutor {
+            client_order_prefix: settings.run_id.clone(),
+            settings: SimulatedBrokerSettings {
+                slippage_bps: settings.slippage_bps,
+                fee_bps: settings.fee_bps,
+            },
+        });
+        Self {
+            db,
+            settings,
+            executor,
+            event_bus: Some(event_bus),
+        }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: EventBus) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     pub async fn run_bars(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
@@ -267,6 +292,9 @@ impl<'a> PaperRunSession<'a> {
             },
             strategy,
         );
+        if let Some(event_bus) = &runtime.event_bus {
+            engine.set_event_bus(event_bus.clone());
+        }
         let last_snapshot = engine.snapshot(Decimal::ONE)?;
 
         Ok(Self {

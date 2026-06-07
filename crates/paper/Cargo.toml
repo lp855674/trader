@@ -16,6 +16,7 @@ async-trait.workspace = true
 backtest.workspace = true
 broker.workspace = true
 data.workspace = true
+events.workspace = true
 execution.workspace = true
 market_rules.workspace = true
 oms.workspace = true

@@ -13,6 +13,7 @@ accounting.workspace = true
 algorithm.workspace = true
 broker.workspace = true
 data.workspace = true
+events.workspace = true
 execution.workspace = true
 portfolio.workspace = true
 risk.workspace = true

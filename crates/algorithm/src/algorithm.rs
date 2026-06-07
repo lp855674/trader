@@ -436,6 +436,7 @@ impl AlgorithmEngine {
             return;
         };
         for event in events {
+            // best-effort: runtime observers may lag or disconnect.
             let _ = event_bus.publish(envelope(
                 "algorithm",
                 TraderEvent::Runtime(RuntimeEvent {
