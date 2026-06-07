@@ -16,16 +16,16 @@
 
 1. [x] 为 `binance-paper-run.ps1` 增加 `summary.json`，记录 run id、config、database、Parquet 路径、ticker price、order_submit、report 路径、recover/open orders 结果。
 2. [x] 增加 Binance reconciliation CLI：读取 SQLite orders/fills/positions/account_balances 与 Binance account/open orders 做只读对账。
-3. 对账输出必须区分 `matched`、`local_only`、`remote_open`、`cash_delta`、`position_delta`。
+3. [x] 对账输出必须区分 `matched`、`local_only`、`remote_open`、`cash_delta`、`position_delta`。
 4. [x] 增加 Binance soak 脚本，多轮执行固定 runner 并汇总每轮 transcript、summary、open-orders 和 reconciliation。
 5. [x] 验证：`cargo test -p trader-cli -p paper -p broker`，一次 `binance-paper-run.ps1 -Limit 100 -ConfirmTestnetOrder`，以及一次 `binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder`。
 
 ## 阶段 2：IBKR 股票 Paper 本地闭环
 
-1. 支持 `[broker] kind = "ibkr"` 作为 `interactive_brokers` 的配置别名。
-2. 新增 `configs/paper/ibkr_aapl_1d_parquet.toml`，固定使用 Parquet 股票行情。
-3. 新增 `scripts/ibkr-paper-run.ps1`：把样例 AAPL CSV 转 Parquet，创建 per-run config/SQLite/report，执行 preflight、paper-run、report。
-4. 验证：`cargo test -p config`、`powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1`。
+1. [x] 支持 `[broker] kind = "ibkr"` 作为 `interactive_brokers` 的配置别名。
+2. [x] 新增 `configs/paper/ibkr_aapl_1d_parquet.toml`，固定使用 Parquet 股票行情。
+3. [x] 新增 `scripts/ibkr-paper-run.ps1`：把样例 AAPL CSV 转 Parquet，创建 per-run config/SQLite/report，执行 preflight、paper-run、report。
+4. [x] 验证：`cargo test -p config`、`powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1`。
 
 ## 阶段 3：IBKR Read-only Preflight
 
@@ -52,3 +52,12 @@
 Binance summary、只读 reconciliation、自动订单生命周期事件和 soak 脚本已经完成。`binance-paper-soak.ps1 -Iterations 2 -Limit 100 -ConfirmTestnetOrder` 已通过，两轮均 completed 且 `open_orders=0`。
 
 IBKR stock paper 本地 Parquet runner、read-only preflight、`broker::IbkrPaperGatewayAdapter`、`ibapi` 真实 Gateway client、managed accounts 读取与 `[paper] account_id` 校验、open orders / executions / reconciliation / recover / next valid order id、受确认保护的 paper cancel、受确认保护的 tiny stock LMT paper order、IBKR paper order client trait、测试 executor、CLI/REST 自动 `paper-run` executor 注入、runner 的 `-ConfirmIbkrPaperOrder` 闸门、IBKR soak 脚本，以及本地 paper readiness 门禁已完成。下一步用真实 TWS / IB Gateway 执行 `ibkr-paper-readonly`、`ibkr-paper-tiny-order` 和 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证真实 IBKR paper 生命周期。
+
+## 剩余收口项
+
+1. [ ] 等 IBKR paper 账号与本机 TWS / IB Gateway 就绪后，执行 `ibkr-paper-readonly`，确认 Gateway 握手和 managed accounts 校验通过。
+2. [ ] 执行 `ibkr-paper-tiny-order --confirm-ibkr-paper-order`，确认真实 paper LMT 下单、状态回报、open orders / executions 查询和受确认撤单链路。
+3. [ ] 执行 `ibkr-paper-run.ps1 -AccountId DU... -ConfirmIbkrPaperOrder`，验证策略自动下单、summary、reconcile、recover 和 open order 清理证据。
+4. [ ] 真实 Gateway 验证后更新 `tech.md` / `docs/broker.md`，把 IBKR paper 生命周期从“待真实验证”改为“已验证”，并保留失败排查步骤。
+
+当前不建议再扩 Binance 主链路；Binance paper 剩余主要是长期 soak 与后续可选的底层 SDK 迁移。IBKR 的通用 `Broker` trait 上 `place_order/account_snapshot` 暂不承诺真实实现，真实 stock paper 订单统一走 `IbkrPaperOrderExecutor`，避免绕过 Runtime/OMS/审计链路。

@@ -170,22 +170,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
 
 ## Production Paper Prep
 
-当前分支开始进入生产前 paper 验证准备阶段。该阶段目标是让 paper run 使用真实配置、真实运行控制、真实持久化和可审计报告，但仍不连接真实券商网络、不发送真实资金订单。
+当前分支处于生产前 paper 验证准备阶段。该阶段目标是让 paper run 使用真实配置、真实运行控制、真实持久化、可审计报告和受闸门保护的真实 paper broker 连接。Binance Spot Testnet crypto paper 已完成真实 testnet 订单链路验证；IBKR stock paper 已完成真实 TWS / Gateway adapter 与 runner 边界，仍等待真实 paper 账号和本机 Gateway 环境做完整生命周期验证。该阶段仍不包含真实资金实盘交易。
 
 配置真源已扩展为：
 
 - `[risk]`：`max_order_notional`、`min_cash_after_order`、`max_exposure`、`max_drawdown`、`max_leverage`、`max_margin_used`、`trading_halted`。
-- `[broker]`：`kind` 与 `mode`。当前支持配置枚举 `simulated`、`futu`、`binance`、`okx`、`interactive_brokers`；`mode` 支持 `paper`、`live`。
+- `[broker]`：`kind` 与 `mode`。当前支持配置枚举 `simulated`、`futu`、`binance`、`okx`、`interactive_brokers`，并支持 `ibkr` 作为 `interactive_brokers` 别名；`mode` 支持 `paper`、`live`。
 - `[live]`：`enabled` 与可选 `heartbeat_ms`。
 
-CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前仍使用本地 fake broker adapter。
+CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前 live surface 仍使用本地 fake broker adapter。Paper order submission 不走 live surface，Binance/IBKR 通过各自受闸门保护的 paper executor 接入。
 
 `PaperRuntime` 现在提供两类入口：
 
 - `run_bars` / `run_bars_with_cancel`：一次性输入历史 bars，保持 V1 本地验证路径。
 - `run_bar_stream_with_cancel`：从 channel-based bar stream 顺序消费 bars，复用同一套 Strategy、Portfolio、MarketRules、Risk、OMS、Broker simulation、Accounting、Storage 处理逻辑，并支持 pacing 与取消。
 
-Broker fake adapters 现在提供 paper 测试 surface：`place_order`、`query_order`、`cancel_order`、`account_snapshot`、`status`。REST 已提供 `GET /api/v1/brokers/account/{account_id}` 返回配置 broker kind 对应的 fake account snapshot；仍不提供绕过 Runtime/OMS 的手动下单 API。
+Broker fake adapters 现在提供本地 paper 测试 surface：`place_order`、`query_order`、`cancel_order`、`account_snapshot`、`status`。REST 已提供 `GET /api/v1/brokers/account/{account_id}` 返回配置 broker kind 对应的本地 broker account surface；仍不提供绕过 Runtime/OMS 的手动下单 API。IBKR 真实 paper 下单不通过通用 `Broker::place_order`，统一通过 `IbkrPaperOrderExecutor`，避免绕过 Runtime/OMS/审计链路。
 
 REST 也提供 `GET /api/v1/preflight/paper`，用于在 server 运行时检查当前配置是否满足本地 paper 验证条件。本地 simulated paper 返回 `real_broker_connection=false`；Binance Spot Testnet paper 在 testnet base_url 与凭证环境变量检查通过后返回 `real_broker_connection=true`。
 
@@ -388,7 +388,7 @@ V1 优先完成：
 - `strategy` / `alpha` / `portfolio` / `risk` / `execution` / `oms` / `broker` 的最小闭环。
 - `backtest` 可运行单策略历史回测。
 - `replay` 可按倍速播放历史行情。
-- `paper` 路径通过 mock broker 模拟成交。
+- `paper` 路径支持本地 simulated 成交；生产前 paper 验证阶段已扩展 Binance Spot Testnet crypto paper executor 与 IBKR stock paper executor，真实 broker paper 成交只从 broker trades/executions 写入，不伪造成交。
 - `api` 提供运行控制、订单、成交、持仓、账户、绩效查询和 WebSocket 推送。
 - `trader-cli` 提供 init、migrate、import、backtest、replay、report、check-config。
 
