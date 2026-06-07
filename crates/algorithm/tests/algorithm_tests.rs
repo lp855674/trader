@@ -7,7 +7,7 @@ use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
 
 #[test]
 fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
-    let strategy = MovingAverageCrossStrategy::new("ma", "US:NASDAQ:AAPL:EQUITY", 2, 3);
+    let strategy = MovingAverageCrossStrategy::new("ma", "US:NASDAQ:AAPL:EQUITY", 2, 3).unwrap();
     let mut engine = AlgorithmEngine::new(
         AlgorithmEngineSettings {
             run_id: "run-a".to_string(),

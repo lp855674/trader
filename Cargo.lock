@@ -4306,6 +4306,7 @@ dependencies = [
  "chrono",
  "data",
  "events",
+ "indicators",
  "rust_decimal",
  "rust_decimal_macros",
  "thiserror 2.0.18",

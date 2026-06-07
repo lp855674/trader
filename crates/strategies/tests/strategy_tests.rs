@@ -7,7 +7,7 @@ use strategies::{
 
 #[test]
 fn moving_average_cross_emits_buy_signal() {
-    let mut strategy = MovingAverageCrossStrategy::new("ma", "AAPL", 2, 3);
+    let mut strategy = MovingAverageCrossStrategy::new("ma", "AAPL", 2, 3).unwrap();
     strategy.on_bar(&Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)));
     strategy.on_bar(&Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)));
     let signal = strategy
@@ -15,6 +15,12 @@ fn moving_average_cross_emits_buy_signal() {
         .unwrap();
 
     assert_eq!(signal.side, SignalSide::Buy);
+}
+
+#[test]
+fn moving_average_cross_rejects_zero_windows() {
+    assert!(MovingAverageCrossStrategy::new("ma", "AAPL", 0, 3).is_err());
+    assert!(MovingAverageCrossStrategy::new("ma", "AAPL", 2, 0).is_err());
 }
 
 #[test]

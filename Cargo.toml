@@ -52,6 +52,7 @@ futures = "0.3"
 hex = "0.4"
 hmac = "0.12"
 ibapi = "3"
+indicators = { path = "crates/indicators" }
 metrics = { path = "crates/metrics" }
 market_rules = { path = "crates/market_rules" }
 oms = { path = "crates/oms" }

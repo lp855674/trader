@@ -2,7 +2,7 @@
 
 use data::Bar;
 use events::{SignalEvent, SignalSide};
-use rust_decimal::Decimal;
+use indicators::{IndicatorError, SimpleMovingAverage};
 use thiserror::Error;
 
 pub trait Strategy: Send {
@@ -42,6 +42,14 @@ impl StrategyContext {
 pub enum StrategyRegistryError {
     #[error("unknown strategy {0}")]
     UnknownStrategy(String),
+    #[error("invalid strategy configuration: {0}")]
+    InvalidConfig(#[from] StrategyConfigError),
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum StrategyConfigError {
+    #[error("moving_average_cross windows must be greater than zero")]
+    InvalidMovingAverageWindow,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -60,7 +68,7 @@ impl StrategyRegistry {
                 context,
                 fast_window,
                 slow_window,
-            ))),
+            )?)),
             other => Err(StrategyRegistryError::UnknownStrategy(other.to_string())),
         }
     }
@@ -77,7 +85,7 @@ impl StrategyRegistry {
                 context,
                 fast_window,
                 slow_window,
-            ))),
+            )?)),
             other => Err(StrategyRegistryError::UnknownStrategy(other.to_string())),
         }
     }
@@ -86,9 +94,8 @@ impl StrategyRegistry {
 pub struct MovingAverageCrossStrategy {
     strategy_id: String,
     symbol: String,
-    fast_window: usize,
-    slow_window: usize,
-    closes: Vec<Decimal>,
+    fast_average: SimpleMovingAverage,
+    slow_average: SimpleMovingAverage,
     last_side: Option<SignalSide>,
 }
 
@@ -98,18 +105,21 @@ impl MovingAverageCrossStrategy {
         symbol: impl Into<String>,
         fast_window: usize,
         slow_window: usize,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, StrategyConfigError> {
+        Ok(Self {
             strategy_id: strategy_id.into(),
             symbol: symbol.into(),
-            fast_window,
-            slow_window,
-            closes: Vec::new(),
+            fast_average: SimpleMovingAverage::new(fast_window).map_err(strategy_config_error)?,
+            slow_average: SimpleMovingAverage::new(slow_window).map_err(strategy_config_error)?,
             last_side: None,
-        }
+        })
     }
 
-    pub fn from_context(context: StrategyContext, fast_window: usize, slow_window: usize) -> Self {
+    pub fn from_context(
+        context: StrategyContext,
+        fast_window: usize,
+        slow_window: usize,
+    ) -> Result<Self, StrategyConfigError> {
         Self::new(
             context.strategy_id,
             context.symbol,
@@ -117,21 +127,15 @@ impl MovingAverageCrossStrategy {
             slow_window,
         )
     }
-
-    fn mean(&self, window: usize) -> Option<Decimal> {
-        if self.closes.len() < window {
-            return None;
-        }
-        let sum: Decimal = self.closes[self.closes.len() - window..].iter().sum();
-        Some(sum / Decimal::from(window))
-    }
 }
 
 impl Strategy for MovingAverageCrossStrategy {
     fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent> {
-        self.closes.push(bar.close);
-        let fast = self.mean(self.fast_window)?;
-        let slow = self.mean(self.slow_window)?;
+        let fast = self.fast_average.update(bar.close);
+        let slow = self.slow_average.update(bar.close);
+        let (Some(fast), Some(slow)) = (fast, slow) else {
+            return None;
+        };
         let side = if fast > slow {
             SignalSide::Buy
         } else if fast < slow {
@@ -158,5 +162,11 @@ impl Strategy for MovingAverageCrossStrategy {
 impl alpha::AlphaModel for MovingAverageCrossStrategy {
     fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent> {
         <Self as Strategy>::on_bar(self, bar)
+    }
+}
+
+fn strategy_config_error(error: IndicatorError) -> StrategyConfigError {
+    match error {
+        IndicatorError::ZeroPeriod => StrategyConfigError::InvalidMovingAverageWindow,
     }
 }
