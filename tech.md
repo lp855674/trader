@@ -472,7 +472,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
 
 ## Local Verifiable MVP
 
@@ -481,7 +481,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
-- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
+- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。

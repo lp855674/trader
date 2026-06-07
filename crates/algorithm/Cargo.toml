@@ -27,4 +27,5 @@ trader_core.workspace = true
 universe.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 rust_decimal_macros.workspace = true
