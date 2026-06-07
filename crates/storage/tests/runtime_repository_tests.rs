@@ -1,5 +1,6 @@
 use storage::{
-    Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
+    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, NewAccountBalance,
+    NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun, StoredRuntimeEvent,
 };
 
 #[tokio::test]
@@ -213,6 +214,75 @@ async fn runtime_records_round_trip() {
     let recoverable = db.list_recoverable_orders("run-1").await.unwrap();
     assert_eq!(recoverable.len(), 1);
     assert_eq!(recoverable[0].client_order_id, "client-3");
+}
+
+#[tokio::test]
+async fn backtest_repository_records_completed_run_execution_position_and_events() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_runtime_events(
+        "backtest-run",
+        &[StoredRuntimeEvent {
+            ts_ms: 1,
+            category: "algorithm.alpha.generated".to_string(),
+            payload_json: "{}".to_string(),
+        }],
+    )
+    .await
+    .unwrap();
+
+    db.insert_filled_backtest_execution(BacktestExecutionRecord {
+        run_id: "backtest-run".to_string(),
+        order_id: "order-1".to_string(),
+        fill_id: "fill-1".to_string(),
+        broker_order_id: "broker-1".to_string(),
+        account_id: "backtest".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: "1".to_string(),
+        fill_price: "20".to_string(),
+        fee: "0".to_string(),
+        ts_ms: 3,
+    })
+    .await
+    .unwrap();
+
+    db.upsert_backtest_position(BacktestPositionRecord {
+        run_id: "backtest-run".to_string(),
+        account_id: "backtest".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        qty: "1".to_string(),
+        avg_price: "20".to_string(),
+        updated_at_ms: 3,
+    })
+    .await
+    .unwrap();
+
+    db.complete_backtest_run(BacktestCompletedRun {
+        run_id: "backtest-run".to_string(),
+        strategy_name: "moving_average_cross".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: 3,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let run = db.get_strategy_run("backtest-run").await.unwrap().unwrap();
+    assert_eq!(run.status, "completed");
+    assert_eq!(
+        db.list_events_by_source("backtest-run")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(db.list_orders("backtest-run").await.unwrap().len(), 1);
+    assert_eq!(db.list_fills("backtest-run").await.unwrap().len(), 1);
+    assert_eq!(db.list_positions("backtest-run").await.unwrap().len(), 1);
 }
 
 #[tokio::test]

@@ -419,7 +419,7 @@ Phase 2 turns the V1 skeleton into a local paper/backtest workflow: config loadi
 
 ## Phase 3 Paper Runtime
 
-Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRuntime` 自己执行 strategy loop，并串联 portfolio、risk、execution、simulated broker、accounting、storage。
+Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 Backtest 与 Paper 共用 `AlgorithmEngine` 执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链；`PaperRuntime` 负责 broker executor、accounting 应用结果和 storage 持久化。
 
 当前可执行链路：
 
@@ -436,6 +436,7 @@ Phase 3 将 paper 从 backtest wrapper 拆成独立 runtime。当前 `PaperRunti
 
 - Strategy 只产生信号，不访问 Broker、OMS、Storage 或 API。
 - SQL 只在 `storage` crate 内部。
+- Backtest runtime 通过 `storage` 的 backtest repository 接口持久化 run、order、fill、position 和 runtime events，不直接构造 SQLite 表 DTO。
 - Paper runtime 使用 `broker::simulate_market_fill` 生成本地模拟成交，账户现金与权益由 `accounting::AccountBook` 维护。
 - 金额/数量在 Rust 内使用 `rust_decimal::Decimal`，写入 SQLite 时使用 decimal string。
 
@@ -480,7 +481,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
-- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
+- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。

@@ -145,6 +145,49 @@ pub struct EventRecord {
     pub payload_json: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredRuntimeEvent {
+    pub ts_ms: i64,
+    pub category: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BacktestExecutionRecord {
+    pub run_id: String,
+    pub order_id: String,
+    pub fill_id: String,
+    pub broker_order_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: Option<String>,
+    pub qty: String,
+    pub fill_price: String,
+    pub fee: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BacktestPositionRecord {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub qty: String,
+    pub avg_price: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BacktestCompletedRun {
+    pub run_id: String,
+    pub strategy_name: String,
+    pub started_at_ms: i64,
+    pub ended_at_ms: i64,
+    pub config_json: String,
+}
+
 impl Db {
     pub async fn insert_instrument(&self, instrument: NewInstrument) -> Result<(), sqlx::Error> {
         sqlx::query(
@@ -569,6 +612,92 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    pub async fn insert_runtime_events(
+        &self,
+        source: &str,
+        events: &[StoredRuntimeEvent],
+    ) -> Result<(), sqlx::Error> {
+        for event in events {
+            self.insert_event(NewEventRecord {
+                event_id: Uuid::new_v4().to_string(),
+                ts_ms: event.ts_ms,
+                source: source.to_string(),
+                category: event.category.clone(),
+                payload_json: event.payload_json.clone(),
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn insert_filled_backtest_execution(
+        &self,
+        execution: BacktestExecutionRecord,
+    ) -> Result<(), sqlx::Error> {
+        self.insert_order(NewOrder {
+            id: execution.order_id.clone(),
+            run_id: execution.run_id.clone(),
+            client_order_id: execution.order_id.clone(),
+            broker_order_id: Some(execution.broker_order_id),
+            account_id: execution.account_id,
+            symbol: execution.symbol.clone(),
+            side: execution.side.clone(),
+            order_type: execution.order_type,
+            price: execution.price,
+            qty: execution.qty.clone(),
+            filled_qty: execution.qty.clone(),
+            status: "FILLED".to_string(),
+            created_at_ms: execution.ts_ms,
+            updated_at_ms: execution.ts_ms,
+        })
+        .await?;
+
+        self.insert_fill(NewFill {
+            id: execution.fill_id,
+            order_id: execution.order_id,
+            run_id: execution.run_id,
+            symbol: execution.symbol,
+            side: execution.side,
+            price: execution.fill_price,
+            qty: execution.qty,
+            fee: execution.fee,
+            ts_ms: execution.ts_ms,
+        })
+        .await
+    }
+
+    pub async fn upsert_backtest_position(
+        &self,
+        position: BacktestPositionRecord,
+    ) -> Result<(), sqlx::Error> {
+        self.upsert_position(NewPosition {
+            run_id: position.run_id,
+            account_id: position.account_id,
+            symbol: position.symbol,
+            qty: position.qty,
+            avg_price: position.avg_price,
+            updated_at_ms: position.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn complete_backtest_run(
+        &self,
+        run: BacktestCompletedRun,
+    ) -> Result<(), sqlx::Error> {
+        self.insert_strategy_run(NewStrategyRun {
+            id: run.run_id,
+            name: run.strategy_name,
+            mode: "backtest".to_string(),
+            status: "completed".to_string(),
+            started_at_ms: run.started_at_ms,
+            ended_at_ms: Some(run.ended_at_ms),
+            error: None,
+            config_json: run.config_json,
+        })
+        .await
     }
 
     pub async fn list_orders(&self, run_id: &str) -> Result<Vec<NewOrder>, sqlx::Error> {

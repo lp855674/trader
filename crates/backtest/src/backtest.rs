@@ -5,7 +5,9 @@ use data::Bar;
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use storage::{Db, NewEventRecord, NewFill, NewOrder, NewPosition, NewStrategyRun};
+use storage::{
+    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent,
+};
 use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -138,33 +140,28 @@ impl BacktestRuntime {
                 )?;
 
                 if let Some(db) = &self.db {
-                    persist_engine_events(db, &self.settings.run_id, &decision.events).await?;
-                    persist_engine_events(db, &self.settings.run_id, &execution.events).await?;
-                    db.insert_order(NewOrder {
-                        id: decision.order_id.clone(),
+                    db.insert_runtime_events(
+                        &self.settings.run_id,
+                        &stored_runtime_events(&decision.events),
+                    )
+                    .await?;
+                    db.insert_runtime_events(
+                        &self.settings.run_id,
+                        &stored_runtime_events(&execution.events),
+                    )
+                    .await?;
+                    db.insert_filled_backtest_execution(BacktestExecutionRecord {
                         run_id: self.settings.run_id.clone(),
-                        client_order_id: decision.order_id.clone(),
-                        broker_order_id: Some(broker_order_id),
+                        order_id: decision.order_id,
+                        fill_id: decision.fill_id,
+                        broker_order_id,
                         account_id: order.account_id.clone(),
                         symbol: order.symbol.clone(),
                         side: format!("{:?}", order.side).to_uppercase(),
                         order_type: format!("{:?}", order.order_type).to_uppercase(),
                         price: order.price.map(|price| price.to_string()),
                         qty: order.qty.to_string(),
-                        filled_qty: order.qty.to_string(),
-                        status: "FILLED".to_string(),
-                        created_at_ms: bar.ts_ms,
-                        updated_at_ms: bar.ts_ms,
-                    })
-                    .await?;
-                    db.insert_fill(NewFill {
-                        id: decision.fill_id,
-                        order_id: decision.order_id,
-                        run_id: self.settings.run_id.clone(),
-                        symbol: order.symbol.clone(),
-                        side: format!("{:?}", order.side).to_uppercase(),
-                        price: bar.close.to_string(),
-                        qty: order.qty.to_string(),
+                        fill_price: bar.close.to_string(),
                         fee: Decimal::ZERO.to_string(),
                         ts_ms: bar.ts_ms,
                     })
@@ -175,21 +172,18 @@ impl BacktestRuntime {
         }
 
         if let Some(db) = &self.db {
-            db.insert_strategy_run(NewStrategyRun {
-                id: self.settings.run_id.clone(),
-                name: self.settings.strategy_name.clone(),
-                mode: "backtest".to_string(),
-                status: "completed".to_string(),
+            db.complete_backtest_run(BacktestCompletedRun {
+                run_id: self.settings.run_id.clone(),
+                strategy_name: self.settings.strategy_name.clone(),
                 started_at_ms,
-                ended_at_ms: Some(ended_at_ms),
-                error: None,
+                ended_at_ms,
                 config_json: "{}".to_string(),
             })
             .await?;
 
             let snapshot = engine.snapshot(last_close)?;
             if snapshot.position_qty != Decimal::ZERO {
-                db.upsert_position(NewPosition {
+                db.upsert_backtest_position(BacktestPositionRecord {
                     run_id: self.settings.run_id.clone(),
                     account_id: self.settings.account_id.clone(),
                     symbol: self.settings.symbol.clone(),
@@ -205,22 +199,15 @@ impl BacktestRuntime {
     }
 }
 
-async fn persist_engine_events(
-    db: &Db,
-    run_id: &str,
-    events: &[EngineEvent],
-) -> anyhow::Result<()> {
-    for event in events {
-        db.insert_event(NewEventRecord {
-            event_id: uuid::Uuid::new_v4().to_string(),
+fn stored_runtime_events(events: &[EngineEvent]) -> Vec<StoredRuntimeEvent> {
+    events
+        .iter()
+        .map(|event| StoredRuntimeEvent {
             ts_ms: event.ts_ms,
-            source: run_id.to_string(),
             category: event.category.clone(),
             payload_json: event.payload_json.clone(),
         })
-        .await?;
-    }
-    Ok(())
+        .collect()
 }
 
 impl Default for BacktestSettings {
