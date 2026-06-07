@@ -482,6 +482,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
 - Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
+- Research support：`indicators` 提供 Decimal SMA/EMA 基础指标；`feature_store` 提供 Decimal feature record、key 和 in-memory range/latest repository，后续可接 Parquet/SQLite adapter。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。

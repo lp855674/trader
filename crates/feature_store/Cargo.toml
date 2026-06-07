@@ -9,3 +9,8 @@ rust-version.workspace = true
 path = "src/feature_store.rs"
 
 [dependencies]
+rust_decimal.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true

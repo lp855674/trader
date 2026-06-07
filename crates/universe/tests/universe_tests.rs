@@ -1,29 +1,35 @@
 use data::Bar;
 use rust_decimal_macros::dec;
-use universe::{StaticUniverseSelector, UniverseContext, UniverseSelector};
+use universe::{StaticUniverseSelector, UniverseContext, UniverseError, UniverseSelector};
 
 #[test]
-fn static_universe_selects_configured_symbol_for_matching_bar() {
-    let selector = StaticUniverseSelector::new(vec!["US:NASDAQ:AAPL:EQUITY".to_string()]);
+fn static_universe_selector_returns_primary_symbol_only_when_configured() {
+    let selector = StaticUniverseSelector::new(vec![
+        "US:NASDAQ:AAPL:EQUITY".to_string(),
+        "US:NASDAQ:MSFT:EQUITY".to_string(),
+    ]);
     let context = UniverseContext {
         primary_symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        bar: Bar::new(1, dec!(100), dec!(100), dec!(100), dec!(100), dec!(1)),
+        bar: bar(),
     };
 
-    let selected = selector.select(&context).unwrap();
-
-    assert_eq!(selected, vec!["US:NASDAQ:AAPL:EQUITY"]);
+    assert_eq!(
+        selector.select(&context).unwrap(),
+        vec!["US:NASDAQ:AAPL:EQUITY".to_string()]
+    );
 }
 
 #[test]
-fn static_universe_filters_out_unconfigured_symbol() {
-    let selector = StaticUniverseSelector::new(vec!["US:NASDAQ:MSFT:EQUITY".to_string()]);
+fn static_universe_selector_rejects_empty_primary_symbol() {
+    let selector = StaticUniverseSelector::new(vec![]);
     let context = UniverseContext {
-        primary_symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        bar: Bar::new(1, dec!(100), dec!(100), dec!(100), dec!(100), dec!(1)),
+        primary_symbol: " ".to_string(),
+        bar: bar(),
     };
 
-    let selected = selector.select(&context).unwrap();
+    assert_eq!(selector.select(&context), Err(UniverseError::EmptySymbol));
+}
 
-    assert!(selected.is_empty());
+fn bar() -> Bar {
+    Bar::new(1, dec!(100), dec!(100), dec!(100), dec!(100), dec!(1))
 }

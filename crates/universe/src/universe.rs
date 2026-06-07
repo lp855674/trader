@@ -43,7 +43,3 @@ impl UniverseSelector for StaticUniverseSelector {
             .collect())
     }
 }
-
-pub fn crate_name() -> &'static str {
-    env!("CARGO_PKG_NAME")
-}

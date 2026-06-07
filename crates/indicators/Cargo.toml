@@ -9,3 +9,8 @@ rust-version.workspace = true
 path = "src/indicators.rs"
 
 [dependencies]
+rust_decimal.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
