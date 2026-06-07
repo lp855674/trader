@@ -9,6 +9,7 @@ rust-version.workspace = true
 path = "src/strategies.rs"
 
 [dependencies]
+alpha.workspace = true
 trader_core.workspace = true
 data.workspace = true
 events.workspace = true

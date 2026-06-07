@@ -1,35 +1,30 @@
 [package]
-name = "paper"
+name = "algorithm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [lib]
-path = "src/paper.rs"
+path = "src/algorithm.rs"
 
 [dependencies]
 accounting.workspace = true
-algorithm.workspace = true
+alpha.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
-backtest.workspace = true
-broker.workspace = true
 data.workspace = true
+events.workspace = true
 execution.workspace = true
 market_rules.workspace = true
 oms.workspace = true
 portfolio.workspace = true
 risk.workspace = true
 rust_decimal.workspace = true
-runtime.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-storage.workspace = true
 strategies.workspace = true
-tokio.workspace = true
 trader_core.workspace = true
-uuid.workspace = true
+universe.workspace = true
 
 [dev-dependencies]
-rust_decimal.workspace = true
 rust_decimal_macros.workspace = true

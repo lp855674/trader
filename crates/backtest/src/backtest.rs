@@ -1,14 +1,10 @@
 #![forbid(unsafe_code)]
 
-use accounting::PositionBook;
-use broker::{Broker, MockBroker};
+use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, EngineEvent, ExecutionReport};
 use data::Bar;
-use execution::immediate_order;
-use portfolio::equal_weight_target;
-use risk::{PortfolioRiskPolicy, PortfolioRiskState, check_max_position};
 use rust_decimal::Decimal;
 use serde::Serialize;
-use storage::{Db, NewFill, NewOrder, NewPosition, NewStrategyRun};
+use storage::{Db, NewEventRecord, NewFill, NewOrder, NewPosition, NewStrategyRun};
 use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,7 +68,7 @@ impl BacktestRuntime {
 
     pub async fn run(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
         let registry = StrategyRegistry;
-        let mut strategy = registry.create(
+        let strategy = registry.create_alpha(
             &self.settings.strategy_name,
             StrategyContext::new(
                 self.settings.strategy_name.clone(),
@@ -82,49 +78,62 @@ impl BacktestRuntime {
             self.settings.fast_window,
             self.settings.slow_window,
         )?;
-        let broker = MockBroker;
-        let mut position_book = PositionBook::default();
-        let portfolio_risk = PortfolioRiskPolicy::new(
-            self.settings.max_exposure,
-            self.settings.max_drawdown,
-            self.settings.max_leverage,
-            self.settings.max_margin_used,
+        let mut engine = AlgorithmEngine::new(
+            AlgorithmEngineSettings {
+                run_id: self.settings.run_id.clone(),
+                mode: StrategyRuntimeMode::Backtest,
+                account_id: self.settings.account_id.clone(),
+                symbol: self.settings.symbol.clone(),
+                order_qty: self.settings.order_qty,
+                max_abs_qty: self.settings.max_abs_qty,
+                max_order_qty: self.settings.max_abs_qty,
+                max_order_notional: self.settings.max_exposure,
+                min_cash_after_order: Decimal::ZERO,
+                max_exposure: self.settings.max_exposure,
+                max_drawdown: self.settings.max_drawdown,
+                max_leverage: self.settings.max_leverage,
+                max_margin_used: self.settings.max_margin_used,
+                trading_halted: self.settings.trading_halted,
+                initial_cash: self.settings.initial_equity,
+            },
+            strategy,
         );
-        let mut gross_exposure = Decimal::ZERO;
-        let mut peak_equity = self.settings.initial_equity;
-        let mut equity = self.settings.initial_equity;
-        let mut cash = self.settings.initial_equity;
         let mut signals = 0;
         let mut orders = 0;
         let started_at_ms = bars.first().map_or(0, |bar| bar.ts_ms);
         let mut ended_at_ms = started_at_ms;
+        let mut last_close = Decimal::ONE;
 
         for bar in bars {
             ended_at_ms = bar.ts_ms;
-            if let Some(signal) = strategy.on_bar(&bar) {
+            last_close = bar.close;
+            let step = engine.on_bar(bar.clone())?;
+            if let Some(decision) = step.decision {
                 signals += 1;
-                let target = equal_weight_target(&signal, self.settings.order_qty);
-                check_max_position(&target, self.settings.max_abs_qty)?;
-                let order = immediate_order(&target, self.settings.account_id.clone());
-                let portfolio_state = PortfolioRiskState::new(
-                    equity,
-                    peak_equity,
-                    gross_exposure,
-                    Decimal::ZERO,
-                    self.settings.trading_halted,
-                );
-                portfolio_risk.check_projected_order(&order, bar.close, &portfolio_state)?;
-                let response = broker.place_order(order.clone()).await?;
-                let order_number = orders + 1;
-                let order_id = format!("{}-order-{}", self.settings.run_id, order_number);
-                let fill_id = format!("{}-fill-{}", self.settings.run_id, order_number);
+                let Some(order) = decision.order else {
+                    continue;
+                };
+                let broker_order_id = format!("backtest-{}", decision.order_number);
+                let execution = engine.apply_execution(
+                    &order,
+                    &ExecutionReport {
+                        broker_order_id: broker_order_id.clone(),
+                        status: "FILLED".to_string(),
+                        price: bar.close,
+                        qty: order.qty,
+                        fee: Decimal::ZERO,
+                    },
+                    bar.ts_ms,
+                )?;
 
                 if let Some(db) = &self.db {
+                    persist_engine_events(db, &self.settings.run_id, &decision.events).await?;
+                    persist_engine_events(db, &self.settings.run_id, &execution.events).await?;
                     db.insert_order(NewOrder {
-                        id: order_id.clone(),
+                        id: decision.order_id.clone(),
                         run_id: self.settings.run_id.clone(),
-                        client_order_id: order_id.clone(),
-                        broker_order_id: Some(response.broker_order_id),
+                        client_order_id: decision.order_id.clone(),
+                        broker_order_id: Some(broker_order_id),
                         account_id: order.account_id.clone(),
                         symbol: order.symbol.clone(),
                         side: format!("{:?}", order.side).to_uppercase(),
@@ -138,8 +147,8 @@ impl BacktestRuntime {
                     })
                     .await?;
                     db.insert_fill(NewFill {
-                        id: fill_id,
-                        order_id,
+                        id: decision.fill_id,
+                        order_id: decision.order_id,
                         run_id: self.settings.run_id.clone(),
                         symbol: order.symbol.clone(),
                         side: format!("{:?}", order.side).to_uppercase(),
@@ -150,28 +159,7 @@ impl BacktestRuntime {
                     })
                     .await?;
                 }
-
-                position_book.buy(
-                    &order.symbol,
-                    order.qty * Decimal::from(order.side.sign()),
-                    bar.close,
-                );
-                cash -= order.qty * bar.close * Decimal::from(order.side.sign());
-                gross_exposure = position_book
-                    .position(&self.settings.symbol)
-                    .map_or(Decimal::ZERO, |position| position.qty.abs() * bar.close);
                 orders += 1;
-            }
-            equity = cash + gross_exposure;
-            portfolio_risk.check_portfolio(&PortfolioRiskState::new(
-                equity,
-                peak_equity,
-                gross_exposure,
-                Decimal::ZERO,
-                self.settings.trading_halted,
-            ))?;
-            if equity > peak_equity {
-                peak_equity = equity;
             }
         }
 
@@ -188,13 +176,14 @@ impl BacktestRuntime {
             })
             .await?;
 
-            if let Some(position) = position_book.position(&self.settings.symbol) {
+            let snapshot = engine.snapshot(last_close)?;
+            if snapshot.position_qty != Decimal::ZERO {
                 db.upsert_position(NewPosition {
                     run_id: self.settings.run_id.clone(),
                     account_id: self.settings.account_id.clone(),
-                    symbol: position.symbol.clone(),
-                    qty: position.qty.to_string(),
-                    avg_price: position.avg_price.to_string(),
+                    symbol: self.settings.symbol.clone(),
+                    qty: snapshot.position_qty.to_string(),
+                    avg_price: snapshot.position_avg_price.to_string(),
                     updated_at_ms: ended_at_ms,
                 })
                 .await?;
@@ -203,6 +192,24 @@ impl BacktestRuntime {
 
         Ok(BacktestSummary { signals, orders })
     }
+}
+
+async fn persist_engine_events(
+    db: &Db,
+    run_id: &str,
+    events: &[EngineEvent],
+) -> anyhow::Result<()> {
+    for event in events {
+        db.insert_event(NewEventRecord {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            ts_ms: event.ts_ms,
+            source: run_id.to_string(),
+            category: event.category.clone(),
+            payload_json: event.payload_json.clone(),
+        })
+        .await?;
+    }
+    Ok(())
 }
 
 impl Default for BacktestSettings {

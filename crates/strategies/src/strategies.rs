@@ -64,6 +64,23 @@ impl StrategyRegistry {
             other => Err(StrategyRegistryError::UnknownStrategy(other.to_string())),
         }
     }
+
+    pub fn create_alpha(
+        &self,
+        name: &str,
+        context: StrategyContext,
+        fast_window: usize,
+        slow_window: usize,
+    ) -> Result<Box<dyn alpha::AlphaModel + Send + Sync>, StrategyRegistryError> {
+        match name {
+            "moving_average_cross" => Ok(Box::new(MovingAverageCrossStrategy::from_context(
+                context,
+                fast_window,
+                slow_window,
+            ))),
+            other => Err(StrategyRegistryError::UnknownStrategy(other.to_string())),
+        }
+    }
 }
 
 pub struct MovingAverageCrossStrategy {
@@ -135,5 +152,11 @@ impl Strategy for MovingAverageCrossStrategy {
             confidence: 0.8,
             ts: chrono::Utc::now(),
         })
+    }
+}
+
+impl alpha::AlphaModel for MovingAverageCrossStrategy {
+    fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent> {
+        <Self as Strategy>::on_bar(self, bar)
     }
 }

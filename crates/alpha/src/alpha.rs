@@ -3,6 +3,6 @@
 use data::Bar;
 use events::SignalEvent;
 
-pub trait AlphaModel {
+pub trait AlphaModel: Send + Sync {
     fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent>;
 }

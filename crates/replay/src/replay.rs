@@ -63,6 +63,20 @@ pub struct ReplaySummary {
     pub speed: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReplayEvent {
+    pub ts_ms: i64,
+    pub category: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReplayEventSummary {
+    pub bars: usize,
+    pub speed: u32,
+    pub events: Vec<ReplayEvent>,
+}
+
 pub struct ReplayRuntime {
     speed: u32,
 }
@@ -75,15 +89,38 @@ impl ReplayRuntime {
     }
 
     pub async fn replay_bars(&self, bars: Vec<Bar>) -> ReplaySummary {
+        let summary = self.replay_bars_with_events(bars).await;
+        ReplaySummary {
+            bars: summary.bars,
+            speed: summary.speed,
+        }
+    }
+
+    pub async fn replay_bars_with_events(&self, bars: Vec<Bar>) -> ReplayEventSummary {
         let delay = Duration::from_millis(1000 / u64::from(self.speed));
         let mut count = 0;
-        for _bar in bars {
+        let mut events = Vec::new();
+        for bar in bars {
             tokio::time::sleep(delay).await;
+            events.push(ReplayEvent {
+                ts_ms: bar.ts_ms,
+                category: "market.bar".to_string(),
+                payload_json: serde_json::json!({
+                    "ts_ms": bar.ts_ms,
+                    "open": bar.open.to_string(),
+                    "high": bar.high.to_string(),
+                    "low": bar.low.to_string(),
+                    "close": bar.close.to_string(),
+                    "volume": bar.volume.to_string()
+                })
+                .to_string(),
+            });
             count += 1;
         }
-        ReplaySummary {
+        ReplayEventSummary {
             bars: count,
             speed: self.speed,
+            events,
         }
     }
 }

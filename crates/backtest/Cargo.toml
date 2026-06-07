@@ -10,6 +10,7 @@ path = "src/backtest.rs"
 
 [dependencies]
 accounting.workspace = true
+algorithm.workspace = true
 broker.workspace = true
 data.workspace = true
 execution.workspace = true

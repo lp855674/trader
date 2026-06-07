@@ -471,7 +471,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路按 `Strategy -> Portfolio -> Execution delta -> MarketRules -> Risk -> OMS -> Broker -> Accounting -> Storage` 执行。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
 
 ## Local Verifiable MVP
 
@@ -480,7 +480,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
-- Core path：paper runtime 串联 Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS、Simulated Broker、Accounting、Storage。
+- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
 - Replay：从 CSV 加载历史 K 线并返回 replay bar summary。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。

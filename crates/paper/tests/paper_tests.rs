@@ -149,10 +149,13 @@ async fn paper_runtime_can_use_injected_order_executor() {
         .map(|event| event.category.as_str())
         .collect::<Vec<_>>();
     categories.sort_unstable();
-    assert_eq!(
-        categories,
-        vec!["paper.order.filled", "paper.order.submitted"]
-    );
+    assert!(categories.contains(&"algorithm.universe.selected"));
+    assert!(categories.contains(&"algorithm.alpha.generated"));
+    assert!(categories.contains(&"algorithm.risk.approved"));
+    assert!(categories.contains(&"algorithm.oms.submitted"));
+    assert!(categories.contains(&"broker.order.submitted"));
+    assert!(categories.contains(&"broker.order.filled"));
+    assert!(categories.contains(&"accounting.updated"));
     assert!(events.iter().any(|event| {
         event
             .payload_json
@@ -221,10 +224,13 @@ async fn paper_runtime_keeps_unfilled_broker_order_without_fill() {
         .map(|event| event.category.as_str())
         .collect::<Vec<_>>();
     categories.sort_unstable();
-    assert_eq!(
-        categories,
-        vec!["paper.order.submitted", "paper.order.unfilled"]
-    );
+    assert!(categories.contains(&"algorithm.universe.selected"));
+    assert!(categories.contains(&"algorithm.alpha.generated"));
+    assert!(categories.contains(&"algorithm.risk.approved"));
+    assert!(categories.contains(&"algorithm.oms.submitted"));
+    assert!(categories.contains(&"broker.order.submitted"));
+    assert!(categories.contains(&"broker.order.unfilled"));
+    assert!(categories.contains(&"accounting.updated"));
     assert!(
         events
             .iter()

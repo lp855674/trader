@@ -51,6 +51,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "algorithm"
+version = "0.1.0"
+dependencies = [
+ "accounting",
+ "alpha",
+ "anyhow",
+ "data",
+ "events",
+ "execution",
+ "market_rules",
+ "oms",
+ "portfolio",
+ "risk",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "strategies",
+ "trader-core",
+ "universe",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +397,7 @@ name = "backtest"
 version = "0.1.0"
 dependencies = [
  "accounting",
+ "algorithm",
  "anyhow",
  "broker",
  "chrono",
@@ -2262,6 +2286,7 @@ name = "paper"
 version = "0.1.0"
 dependencies = [
  "accounting",
+ "algorithm",
  "anyhow",
  "async-trait",
  "backtest",
@@ -3418,6 +3443,7 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -4263,6 +4289,7 @@ dependencies = [
 name = "strategies"
 version = "0.1.0"
 dependencies = [
+ "alpha",
  "chrono",
  "data",
  "events",
@@ -4979,6 +5006,12 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 [[package]]
 name = "universe"
 version = "0.1.0"
+dependencies = [
+ "data",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "untrusted"

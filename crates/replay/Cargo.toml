@@ -12,6 +12,7 @@ path = "src/replay.rs"
 data.workspace = true
 events.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

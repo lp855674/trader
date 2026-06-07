@@ -8,16 +8,13 @@ pub use ibkr::{
     IbkrPaperGatewayOrderClient, IbkrPaperOrderClient, IbkrPaperOrderExecutor, ibkr_stock_symbol,
 };
 
-use accounting::AccountBook;
+use algorithm::{
+    AccountSnapshot, AlgorithmEngine, AlgorithmEngineSettings, EngineEvent, ExecutionReport,
+};
 use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::Bar;
-use execution::order_for_target_delta;
-use market_rules::MarketRuleSet;
-use oms::OrderStateMachine;
-use portfolio::equal_weight_target;
-use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
@@ -25,9 +22,9 @@ use storage::{
     Db, NewAccountBalance, NewEventRecord, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition,
     NewStrategyRun,
 };
-use strategies::{Strategy, StrategyContext, StrategyRegistry, StrategyRuntimeMode};
+use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 use tokio::sync::mpsc;
-use trader_core::{OrderRequest, OrderSide};
+use trader_core::OrderRequest;
 
 pub struct PaperRuntime {
     db: Db,
@@ -227,57 +224,20 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
     }
 }
 
-fn order_event(
-    run_id: &str,
-    category: &str,
-    order_id: &str,
-    client_order_id: &str,
-    broker_order_id: Option<&str>,
-    order: &OrderRequest,
-    filled_qty: Decimal,
-    status: String,
-    ts_ms: i64,
-) -> NewEventRecord {
-    let payload_json = serde_json::json!({
-        "run_id": run_id,
-        "order_id": order_id,
-        "client_order_id": client_order_id,
-        "broker_order_id": broker_order_id,
-        "account_id": &order.account_id,
-        "symbol": &order.symbol,
-        "side": format!("{:?}", order.side).to_uppercase(),
-        "order_type": format!("{:?}", order.order_type).to_uppercase(),
-        "qty": order.qty.to_string(),
-        "filled_qty": filled_qty.to_string(),
-        "status": status
-    })
-    .to_string();
-
-    NewEventRecord {
-        event_id: uuid::Uuid::new_v4().to_string(),
-        ts_ms,
-        source: run_id.to_string(),
-        category: category.to_string(),
-        payload_json,
-    }
-}
-
 struct PaperRunSession<'a> {
     runtime: &'a PaperRuntime,
-    strategy: Box<dyn Strategy + Send>,
-    account_book: AccountBook,
-    portfolio_risk: PortfolioRiskPolicy,
-    peak_equity: Decimal,
+    engine: AlgorithmEngine,
     signals: usize,
     orders: usize,
     started_at_ms: Option<i64>,
     ended_at_ms: i64,
+    last_snapshot: AccountSnapshot,
 }
 
 impl<'a> PaperRunSession<'a> {
     fn new(runtime: &'a PaperRuntime) -> anyhow::Result<Self> {
         let registry = StrategyRegistry;
-        let strategy = registry.create(
+        let strategy = registry.create_alpha(
             &runtime.settings.strategy_name,
             StrategyContext::new(
                 runtime.settings.strategy_name.clone(),
@@ -287,85 +247,60 @@ impl<'a> PaperRunSession<'a> {
             runtime.settings.fast_window,
             runtime.settings.slow_window,
         )?;
-        let account_book = AccountBook::new(
-            runtime.settings.account_id.clone(),
-            runtime.settings.initial_cash,
+        let mut engine = AlgorithmEngine::new(
+            AlgorithmEngineSettings {
+                run_id: runtime.settings.run_id.clone(),
+                mode: StrategyRuntimeMode::Paper,
+                account_id: runtime.settings.account_id.clone(),
+                symbol: runtime.settings.symbol.clone(),
+                order_qty: runtime.settings.order_qty,
+                max_abs_qty: runtime.settings.max_abs_qty,
+                max_order_qty: runtime.settings.max_order_qty,
+                max_order_notional: runtime.settings.max_order_notional,
+                min_cash_after_order: runtime.settings.min_cash_after_order,
+                max_exposure: runtime.settings.max_exposure,
+                max_drawdown: runtime.settings.max_drawdown,
+                max_leverage: runtime.settings.max_leverage,
+                max_margin_used: runtime.settings.max_margin_used,
+                trading_halted: runtime.settings.trading_halted,
+                initial_cash: runtime.settings.initial_cash,
+            },
+            strategy,
         );
-        let portfolio_risk = PortfolioRiskPolicy::new(
-            runtime.settings.max_exposure,
-            runtime.settings.max_drawdown,
-            runtime.settings.max_leverage,
-            runtime.settings.max_margin_used,
-        );
+        let last_snapshot = engine.snapshot(Decimal::ONE)?;
 
         Ok(Self {
             runtime,
-            strategy,
-            account_book,
-            portfolio_risk,
-            peak_equity: runtime.settings.initial_cash,
+            engine,
             signals: 0,
             orders: 0,
             started_at_ms: None,
             ended_at_ms: 0,
+            last_snapshot,
         })
     }
 
     async fn process_bar(&mut self, bar: Bar) -> anyhow::Result<()> {
         self.started_at_ms.get_or_insert(bar.ts_ms);
         self.ended_at_ms = bar.ts_ms;
-        if let Some(signal) = self.strategy.on_bar(&bar) {
+        let step = self.engine.on_bar(bar.clone())?;
+        self.last_snapshot = step.snapshot.clone();
+        if let Some(decision) = step.decision {
             self.signals += 1;
             let settings = &self.runtime.settings;
-            let target = equal_weight_target(&signal, settings.order_qty);
-            check_max_position(&target, settings.max_abs_qty)?;
-            let current_qty = self
-                .account_book
-                .position(&settings.symbol)
-                .map_or(Decimal::ZERO, |position| position.qty);
-            let Some(order) =
-                order_for_target_delta(&target, current_qty, settings.account_id.clone())
-            else {
+            let Some(order) = decision.order else {
                 self.persist_snapshot(&bar).await?;
                 return Ok(());
             };
-            MarketRuleSet::for_symbol(&order.symbol)?.validate_order(&order, bar.close)?;
-            let gross_exposure = self.account_book.market_value(&settings.symbol, bar.close);
-            let equity = self.account_book.equity(&settings.symbol, bar.close);
-            let portfolio_state = PortfolioRiskState::new(
-                equity,
-                self.peak_equity,
-                gross_exposure,
-                Decimal::ZERO,
-                settings.trading_halted,
-            );
-            self.portfolio_risk
-                .check_projected_order(&order, bar.close, &portfolio_state)?;
-            RiskPolicy::new(
-                settings.max_order_qty,
-                settings.max_order_notional,
-                settings.min_cash_after_order,
-            )
-            .check_order(
-                &order,
-                bar.close,
-                self.account_book.cash(),
-                settings.trading_halted,
-            )?;
-            let mut order_state = OrderStateMachine::with_order_qty(order.qty);
-            order_state.submit()?;
-            order_state.accept()?;
-            let order_number = self.orders + 1;
-            let order_id = format!("{}-order-{}", settings.run_id, order_number);
-            let fill_id = format!("{}-fill-{}", settings.run_id, order_number);
+            self.persist_engine_events(&decision.events).await?;
             let client_order_id = self
                 .runtime
                 .executor
-                .client_order_id(&settings.run_id, order_number);
+                .client_order_id(&settings.run_id, decision.order_number);
             self.runtime
                 .db
                 .insert_order(NewOrder {
-                    id: order_id.clone(),
+                    id: decision.order_id.clone(),
                     run_id: settings.run_id.clone(),
                     client_order_id: client_order_id.clone(),
                     broker_order_id: None,
@@ -376,34 +311,56 @@ impl<'a> PaperRunSession<'a> {
                     price: order.price.map(|price| price.to_string()),
                     qty: order.qty.to_string(),
                     filled_qty: Decimal::ZERO.to_string(),
-                    status: format!("{:?}", order_state.status()).to_uppercase(),
+                    status: "SUBMITTED".to_string(),
                     created_at_ms: bar.ts_ms,
                     updated_at_ms: bar.ts_ms,
                 })
                 .await?;
             self.runtime
                 .db
-                .insert_event(order_event(
-                    &settings.run_id,
-                    "paper.order.submitted",
-                    &order_id,
-                    &client_order_id,
-                    None,
-                    &order,
-                    Decimal::ZERO,
-                    format!("{:?}", order_state.status()).to_uppercase(),
-                    bar.ts_ms,
-                ))
+                .insert_event(NewEventRecord {
+                    event_id: uuid::Uuid::new_v4().to_string(),
+                    ts_ms: bar.ts_ms,
+                    source: settings.run_id.clone(),
+                    category: "broker.order.submitted".to_string(),
+                    payload_json: serde_json::json!({
+                        "run_id": &settings.run_id,
+                        "order_id": &decision.order_id,
+                        "client_order_id": &client_order_id,
+                        "broker_order_id": null,
+                        "account_id": &order.account_id,
+                        "symbol": &order.symbol,
+                        "side": format!("{:?}", order.side).to_uppercase(),
+                        "order_type": format!("{:?}", order.order_type).to_uppercase(),
+                        "qty": order.qty.to_string(),
+                        "filled_qty": Decimal::ZERO.to_string(),
+                        "status": "SUBMITTED"
+                    })
+                    .to_string(),
+                })
                 .await?;
             let fill = self
                 .runtime
                 .executor
-                .execute_order(order.clone(), bar.close, order_number)
+                .execute_order(order.clone(), bar.close, decision.order_number)
                 .await?;
+            let applied = self.engine.apply_execution(
+                &order,
+                &ExecutionReport {
+                    broker_order_id: fill.broker_order_id.clone(),
+                    status: fill.status.clone(),
+                    price: fill.price,
+                    qty: fill.qty,
+                    fee: fill.fee,
+                },
+                bar.ts_ms,
+            )?;
+            self.persist_engine_events(&applied.events).await?;
+            self.last_snapshot = applied.snapshot;
             self.runtime
                 .db
                 .insert_order(NewOrder {
-                    id: order_id.clone(),
+                    id: decision.order_id.clone(),
                     run_id: settings.run_id.clone(),
                     client_order_id,
                     broker_order_id: Some(fill.broker_order_id.clone()),
@@ -420,12 +377,11 @@ impl<'a> PaperRunSession<'a> {
                 })
                 .await?;
             if fill.qty > Decimal::ZERO {
-                order_state.record_fill(fill.qty)?;
                 self.runtime
                     .db
                     .insert_fill(NewFill {
-                        id: fill_id,
-                        order_id: order_id.clone(),
+                        id: decision.fill_id,
+                        order_id: decision.order_id.clone(),
                         run_id: settings.run_id.clone(),
                         symbol: order.symbol.clone(),
                         side: format!("{:?}", order.side).to_uppercase(),
@@ -434,46 +390,6 @@ impl<'a> PaperRunSession<'a> {
                         fee: fill.fee.to_string(),
                         ts_ms: bar.ts_ms,
                     })
-                    .await?;
-
-                match order.side {
-                    OrderSide::Buy => {
-                        self.account_book
-                            .buy(&order.symbol, fill.qty, fill.price, fill.fee)
-                    }
-                    OrderSide::Sell => {
-                        self.account_book
-                            .sell(&order.symbol, fill.qty, fill.price, fill.fee)?
-                    }
-                }
-                self.runtime
-                    .db
-                    .insert_event(order_event(
-                        &settings.run_id,
-                        "paper.order.filled",
-                        &order_id,
-                        &fill.client_order_id,
-                        Some(&fill.broker_order_id),
-                        &order,
-                        fill.qty,
-                        fill.status.clone(),
-                        bar.ts_ms,
-                    ))
-                    .await?;
-            } else {
-                self.runtime
-                    .db
-                    .insert_event(order_event(
-                        &settings.run_id,
-                        "paper.order.unfilled",
-                        &order_id,
-                        &fill.client_order_id,
-                        Some(&fill.broker_order_id),
-                        &order,
-                        fill.qty,
-                        fill.status.clone(),
-                        bar.ts_ms,
-                    ))
                     .await?;
             }
             self.orders += 1;
@@ -484,22 +400,7 @@ impl<'a> PaperRunSession<'a> {
 
     async fn persist_snapshot(&mut self, bar: &Bar) -> anyhow::Result<()> {
         let settings = &self.runtime.settings;
-        let market_value = self.account_book.market_value(&settings.symbol, bar.close);
-        let equity = self.account_book.equity(&settings.symbol, bar.close);
-        self.portfolio_risk
-            .check_portfolio(&PortfolioRiskState::new(
-                equity,
-                self.peak_equity,
-                market_value,
-                Decimal::ZERO,
-                settings.trading_halted,
-            ))?;
-        if equity > self.peak_equity {
-            self.peak_equity = equity;
-        }
-        let unrealized_pnl = self
-            .account_book
-            .unrealized_pnl(&settings.symbol, bar.close);
+        self.last_snapshot = self.engine.snapshot(bar.close)?;
         self.runtime
             .db
             .insert_portfolio_snapshot(NewPortfolioSnapshot {
@@ -507,13 +408,29 @@ impl<'a> PaperRunSession<'a> {
                 run_id: settings.run_id.clone(),
                 account_id: settings.account_id.clone(),
                 ts_ms: bar.ts_ms,
-                cash: self.account_book.cash().to_string(),
-                market_value: market_value.to_string(),
-                equity: equity.to_string(),
-                realized_pnl: self.account_book.realized_pnl().to_string(),
-                unrealized_pnl: unrealized_pnl.to_string(),
+                cash: self.last_snapshot.cash.to_string(),
+                market_value: self.last_snapshot.market_value.to_string(),
+                equity: self.last_snapshot.equity.to_string(),
+                realized_pnl: self.last_snapshot.realized_pnl.to_string(),
+                unrealized_pnl: self.last_snapshot.unrealized_pnl.to_string(),
             })
             .await?;
+        Ok(())
+    }
+
+    async fn persist_engine_events(&self, events: &[EngineEvent]) -> anyhow::Result<()> {
+        for event in events {
+            self.runtime
+                .db
+                .insert_event(NewEventRecord {
+                    event_id: uuid::Uuid::new_v4().to_string(),
+                    ts_ms: event.ts_ms,
+                    source: self.runtime.settings.run_id.clone(),
+                    category: event.category.clone(),
+                    payload_json: event.payload_json.clone(),
+                })
+                .await?;
+        }
         Ok(())
     }
 
@@ -540,22 +457,22 @@ impl<'a> PaperRunSession<'a> {
                 run_id: settings.run_id.clone(),
                 account_id: settings.account_id.clone(),
                 asset: settings.base_currency.clone(),
-                total: self.account_book.cash().to_string(),
-                available: self.account_book.cash().to_string(),
+                total: self.last_snapshot.cash.to_string(),
+                available: self.last_snapshot.cash.to_string(),
                 frozen: Decimal::ZERO.to_string(),
                 updated_at_ms: self.ended_at_ms,
             })
             .await?;
 
-        if let Some(position) = self.account_book.position(&settings.symbol) {
+        if self.last_snapshot.position_qty != Decimal::ZERO {
             self.runtime
                 .db
                 .upsert_position(NewPosition {
                     run_id: settings.run_id.clone(),
                     account_id: settings.account_id.clone(),
-                    symbol: position.symbol.clone(),
-                    qty: position.qty.to_string(),
-                    avg_price: position.avg_price.to_string(),
+                    symbol: settings.symbol.clone(),
+                    qty: self.last_snapshot.position_qty.to_string(),
+                    avg_price: self.last_snapshot.position_avg_price.to_string(),
                     updated_at_ms: self.ended_at_ms,
                 })
                 .await?;
