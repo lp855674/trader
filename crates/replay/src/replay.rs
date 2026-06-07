@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use data::Bar;
+use events::{EventBus, RuntimeEvent, TraderEvent, envelope};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -79,13 +80,20 @@ pub struct ReplayEventSummary {
 
 pub struct ReplayRuntime {
     speed: u32,
+    event_bus: Option<EventBus>,
 }
 
 impl ReplayRuntime {
     pub fn new(speed: u32) -> Self {
         Self {
             speed: speed.max(1),
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: EventBus) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     pub async fn replay_bars(&self, bars: Vec<Bar>) -> ReplaySummary {
@@ -102,7 +110,7 @@ impl ReplayRuntime {
         let mut events = Vec::new();
         for bar in bars {
             tokio::time::sleep(delay).await;
-            events.push(ReplayEvent {
+            let event = ReplayEvent {
                 ts_ms: bar.ts_ms,
                 category: "market.bar".to_string(),
                 payload_json: serde_json::json!({
@@ -114,7 +122,9 @@ impl ReplayRuntime {
                     "volume": bar.volume.to_string()
                 })
                 .to_string(),
-            });
+            };
+            self.publish_event(&event);
+            events.push(event);
             count += 1;
         }
         ReplayEventSummary {
@@ -122,5 +132,19 @@ impl ReplayRuntime {
             speed: self.speed,
             events,
         }
+    }
+
+    fn publish_event(&self, event: &ReplayEvent) {
+        let Some(event_bus) = &self.event_bus else {
+            return;
+        };
+        // best-effort: replay observers may lag or disconnect.
+        let _ = event_bus.publish(envelope(
+            "replay",
+            TraderEvent::Runtime(RuntimeEvent {
+                category: event.category.clone(),
+                payload_json: event.payload_json.clone(),
+            }),
+        ));
     }
 }

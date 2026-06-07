@@ -156,6 +156,40 @@ async fn post_replay_returns_created_and_persists_events() {
 }
 
 #[tokio::test]
+async fn post_replay_publishes_market_events_to_event_bus() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let mut receiver = state.event_bus.subscribe();
+    let app = router_with_state(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let mut categories = Vec::new();
+    while categories.len() < 3 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let TraderEvent::Runtime(runtime_event) = event.payload {
+            categories.push(runtime_event.category);
+        }
+    }
+    assert_eq!(categories, vec!["market.bar", "market.bar", "market.bar"]);
+}
+
+#[tokio::test]
 async fn replay_control_routes_update_replay_state() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

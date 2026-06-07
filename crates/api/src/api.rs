@@ -327,7 +327,10 @@ async fn run_replay(
     .await?;
 
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
-    let summary = ReplayRuntime::new(100_000).replay_bars(bars).await;
+    let summary = ReplayRuntime::new(100_000)
+        .with_event_bus(state.event_bus.clone())
+        .replay_bars(bars)
+        .await;
     state
         .db
         .update_strategy_run_status(
