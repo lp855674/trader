@@ -56,7 +56,7 @@ impl LiveRuntime {
         Ok(())
     }
 
-    async fn insert_event(&self, category: &str) -> Result<(), sqlx::Error> {
+    async fn insert_event(&self, category: &str) -> storage::StorageResult<()> {
         self.db
             .insert_event(NewEventRecord {
                 event_id: uuid::Uuid::new_v4().to_string(),

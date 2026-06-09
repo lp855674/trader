@@ -5,13 +5,23 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
+pub type StorageResult<T> = Result<T, StorageError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error(transparent)]
+    Sql(#[from] sqlx::Error),
+    #[error("{0}")]
+    Protocol(String),
+}
+
 #[derive(Clone)]
 pub struct Db {
     pool: SqlitePool,
 }
 
 impl Db {
-    pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
+    pub async fn connect(database_url: &str) -> StorageResult<Self> {
         let options = SqliteConnectOptions::from_str(database_url)?.create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -24,7 +34,7 @@ impl Db {
         &self.pool
     }
 
-    pub async fn migrate(&self) -> Result<(), sqlx::Error> {
+    pub async fn migrate(&self) -> StorageResult<()> {
         sqlx::raw_sql(include_str!("../../../migrations/0001_init.sql"))
             .execute(&self.pool)
             .await?;
@@ -32,7 +42,7 @@ impl Db {
         Ok(())
     }
 
-    async fn ensure_strategy_runs_error_column(&self) -> Result<(), sqlx::Error> {
+    async fn ensure_strategy_runs_error_column(&self) -> StorageResult<()> {
         let columns = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
             "PRAGMA table_info(strategy_runs)",
         )
@@ -48,7 +58,7 @@ impl Db {
             .await;
         if let Err(error) = result {
             if !is_duplicate_column_error(&error) {
-                return Err(error);
+                return Err(error.into());
             }
         }
         Ok(())

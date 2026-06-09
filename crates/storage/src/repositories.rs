@@ -1,4 +1,4 @@
-use crate::Db;
+use crate::{Db, StorageError, StorageResult};
 use chrono::{TimeZone, Utc};
 use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
 use serde::Serialize;
@@ -189,7 +189,7 @@ pub struct BacktestCompletedRun {
 }
 
 impl Db {
-    pub async fn insert_instrument(&self, instrument: NewInstrument) -> Result<(), sqlx::Error> {
+    pub async fn insert_instrument(&self, instrument: NewInstrument) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT INTO instruments (
@@ -210,10 +210,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn get_instrument(
-        &self,
-        symbol: &str,
-    ) -> Result<Option<InstrumentRecord>, sqlx::Error> {
+    pub async fn get_instrument(&self, symbol: &str) -> StorageResult<Option<InstrumentRecord>> {
         let row =
             sqlx::query_as::<_, (String, String, String, String, String, String, String, i64)>(
                 r#"
@@ -242,7 +239,7 @@ impl Db {
         ))
     }
 
-    pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> Result<(), sqlx::Error> {
+    pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO strategy_runs (
@@ -269,7 +266,7 @@ impl Db {
         status: &str,
         ended_at_ms: Option<i64>,
         error: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         sqlx::query(
             r#"
             UPDATE strategy_runs
@@ -286,10 +283,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn get_strategy_run(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<StrategyRunRecord>, sqlx::Error> {
+    pub async fn get_strategy_run(&self, run_id: &str) -> StorageResult<Option<StrategyRunRecord>> {
         let row = sqlx::query_as::<
             _,
             (
@@ -329,7 +323,7 @@ impl Db {
         ))
     }
 
-    pub async fn list_strategy_runs(&self) -> Result<Vec<StrategyRunRecord>, sqlx::Error> {
+    pub async fn list_strategy_runs(&self) -> StorageResult<Vec<StrategyRunRecord>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -371,7 +365,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn insert_order(&self, order: NewOrder) -> Result<(), sqlx::Error> {
+    pub async fn insert_order(&self, order: NewOrder) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO orders (
@@ -405,7 +399,7 @@ impl Db {
         broker_order_id: &str,
         status: &str,
         updated_at_ms: i64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         sqlx::query(
             r#"
             UPDATE orders
@@ -429,7 +423,7 @@ impl Db {
         broker_order_id: &str,
         status: &str,
         updated_at_ms: i64,
-    ) -> Result<u64, sqlx::Error> {
+    ) -> StorageResult<u64> {
         let result = sqlx::query(
             r#"
             UPDATE orders
@@ -454,7 +448,7 @@ impl Db {
         status: &str,
         filled_qty: &str,
         updated_at_ms: i64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         sqlx::query(
             r#"
             UPDATE orders
@@ -479,7 +473,7 @@ impl Db {
         status: &str,
         filled_qty: &str,
         updated_at_ms: i64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         sqlx::query(
             r#"
             UPDATE orders
@@ -497,7 +491,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn insert_fill(&self, fill: NewFill) -> Result<(), sqlx::Error> {
+    pub async fn insert_fill(&self, fill: NewFill) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO fills (
@@ -519,7 +513,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn upsert_position(&self, position: NewPosition) -> Result<(), sqlx::Error> {
+    pub async fn upsert_position(&self, position: NewPosition) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT INTO positions (
@@ -542,10 +536,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn upsert_account_balance(
-        &self,
-        balance: NewAccountBalance,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn upsert_account_balance(&self, balance: NewAccountBalance) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT INTO account_balances (
@@ -573,7 +564,7 @@ impl Db {
     pub async fn insert_portfolio_snapshot(
         &self,
         snapshot: NewPortfolioSnapshot,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO portfolio_snapshots (
@@ -596,7 +587,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn insert_event(&self, event: NewEventRecord) -> Result<(), sqlx::Error> {
+    pub async fn insert_event(&self, event: NewEventRecord) -> StorageResult<()> {
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO event_store (
@@ -618,7 +609,7 @@ impl Db {
         &self,
         source: &str,
         events: &[StoredRuntimeEvent],
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         for event in events {
             self.insert_event(NewEventRecord {
                 event_id: Uuid::new_v4().to_string(),
@@ -635,7 +626,7 @@ impl Db {
     pub async fn insert_filled_backtest_execution(
         &self,
         execution: BacktestExecutionRecord,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         self.insert_order(NewOrder {
             id: execution.order_id.clone(),
             run_id: execution.run_id.clone(),
@@ -671,7 +662,7 @@ impl Db {
     pub async fn upsert_backtest_position(
         &self,
         position: BacktestPositionRecord,
-    ) -> Result<(), sqlx::Error> {
+    ) -> StorageResult<()> {
         self.upsert_position(NewPosition {
             run_id: position.run_id,
             account_id: position.account_id,
@@ -683,10 +674,7 @@ impl Db {
         .await
     }
 
-    pub async fn complete_backtest_run(
-        &self,
-        run: BacktestCompletedRun,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn complete_backtest_run(&self, run: BacktestCompletedRun) -> StorageResult<()> {
         self.insert_strategy_run(NewStrategyRun {
             id: run.run_id,
             name: run.strategy_name,
@@ -700,7 +688,7 @@ impl Db {
         .await
     }
 
-    pub async fn list_orders(&self, run_id: &str) -> Result<Vec<NewOrder>, sqlx::Error> {
+    pub async fn list_orders(&self, run_id: &str) -> StorageResult<Vec<NewOrder>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -773,7 +761,7 @@ impl Db {
     pub async fn get_order_by_client_order_id(
         &self,
         client_order_id: &str,
-    ) -> Result<Option<NewOrder>, sqlx::Error> {
+    ) -> StorageResult<Option<NewOrder>> {
         let row = sqlx::query_as::<
             _,
             (
@@ -839,10 +827,7 @@ impl Db {
         ))
     }
 
-    pub async fn list_recoverable_orders(
-        &self,
-        run_id: &str,
-    ) -> Result<Vec<NewOrder>, sqlx::Error> {
+    pub async fn list_recoverable_orders(&self, run_id: &str) -> StorageResult<Vec<NewOrder>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -916,7 +901,7 @@ impl Db {
         &self,
         run_id: &str,
         order_id: &str,
-    ) -> Result<Option<RecoveredOrderState>, sqlx::Error> {
+    ) -> StorageResult<Option<RecoveredOrderState>> {
         let row = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             r#"
             SELECT id, run_id, qty, filled_qty, status, updated_at_ms
@@ -941,7 +926,7 @@ impl Db {
         ))
     }
 
-    pub async fn list_fills(&self, run_id: &str) -> Result<Vec<NewFill>, sqlx::Error> {
+    pub async fn list_fills(&self, run_id: &str) -> StorageResult<Vec<NewFill>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -985,7 +970,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn list_positions(&self, run_id: &str) -> Result<Vec<NewPosition>, sqlx::Error> {
+    pub async fn list_positions(&self, run_id: &str) -> StorageResult<Vec<NewPosition>> {
         let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             r#"
             SELECT run_id, account_id, symbol, qty, avg_price, updated_at_ms
@@ -1016,7 +1001,7 @@ impl Db {
     pub async fn list_account_balances(
         &self,
         run_id: &str,
-    ) -> Result<Vec<NewAccountBalance>, sqlx::Error> {
+    ) -> StorageResult<Vec<NewAccountBalance>> {
         let rows = sqlx::query_as::<_, (String, String, String, String, String, String, i64)>(
             r#"
             SELECT run_id, account_id, asset, total, available, frozen, updated_at_ms
@@ -1050,7 +1035,7 @@ impl Db {
     pub async fn list_portfolio_snapshots(
         &self,
         run_id: &str,
-    ) -> Result<Vec<NewPortfolioSnapshot>, sqlx::Error> {
+    ) -> StorageResult<Vec<NewPortfolioSnapshot>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -1105,7 +1090,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn list_events(&self) -> Result<Vec<EventRecord>, sqlx::Error> {
+    pub async fn list_events(&self) -> StorageResult<Vec<EventRecord>> {
         let rows = sqlx::query_as::<_, (String, i64, String, String, String)>(
             r#"
             SELECT event_id, ts_ms, source, category, payload_json
@@ -1130,10 +1115,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn list_events_by_source(
-        &self,
-        source: &str,
-    ) -> Result<Vec<EventRecord>, sqlx::Error> {
+    pub async fn list_events_by_source(&self, source: &str) -> StorageResult<Vec<EventRecord>> {
         let rows = sqlx::query_as::<_, (String, i64, String, String, String)>(
             r#"
             SELECT event_id, ts_ms, source, category, payload_json
@@ -1160,11 +1142,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn replay_events_to_bus(
-        &self,
-        source: &str,
-        bus: &EventBus,
-    ) -> Result<usize, sqlx::Error> {
+    pub async fn replay_events_to_bus(&self, source: &str, bus: &EventBus) -> StorageResult<usize> {
         let events = self.list_events_by_source(source).await?;
         let envelopes = events
             .into_iter()
@@ -1172,7 +1150,7 @@ impl Db {
             .collect::<Vec<_>>();
         let replayed = envelopes.len();
         bus.replay(envelopes)
-            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            .map_err(|error| StorageError::Protocol(error.to_string()))?;
         Ok(replayed)
     }
 }

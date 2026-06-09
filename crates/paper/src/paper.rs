@@ -455,7 +455,7 @@ impl<'a> PaperRunSession<'a> {
                     ts_ms: event.ts_ms,
                     source: self.runtime.settings.run_id.clone(),
                     category: event.category.clone(),
-                    payload_json: event.payload_json.clone(),
+                    payload_json: event.payload.to_string(),
                 })
                 .await?;
         }

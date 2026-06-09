@@ -77,3 +77,17 @@ pub fn envelope(source: impl Into<String>, payload: TraderEvent) -> AnyEventEnve
         payload,
     }
 }
+
+pub fn runtime_envelope(
+    source: impl Into<String>,
+    category: impl Into<String>,
+    payload: impl Serialize,
+) -> Result<AnyEventEnvelope, serde_json::Error> {
+    Ok(envelope(
+        source,
+        TraderEvent::Runtime(RuntimeEvent {
+            category: category.into(),
+            payload_json: serde_json::to_string(&payload)?,
+        }),
+    ))
+}

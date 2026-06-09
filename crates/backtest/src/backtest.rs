@@ -5,7 +5,9 @@ use data::Bar;
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use storage::{BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent};
+use storage::{
+    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent,
+};
 use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -203,7 +205,7 @@ fn stored_runtime_events(events: &[EngineEvent]) -> Vec<StoredRuntimeEvent> {
         .map(|event| StoredRuntimeEvent {
             ts_ms: event.ts_ms,
             category: event.category.clone(),
-            payload_json: event.payload_json.clone(),
+            payload_json: event.payload.to_string(),
         })
         .collect()
 }

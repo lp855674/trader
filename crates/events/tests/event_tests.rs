@@ -1,5 +1,6 @@
 use events::{
     EventBus, EventCategory, EventEnvelope, RuntimeEvent, SignalEvent, SignalSide, TraderEvent,
+    runtime_envelope,
 };
 
 #[tokio::test]
@@ -132,5 +133,32 @@ fn runtime_event_uses_stable_wire_format() {
     assert_eq!(
         value["data"]["payload_json"],
         serde_json::json!(r#"{"speed":25}"#)
+    );
+}
+
+#[test]
+fn runtime_envelope_serializes_typed_payload_and_uses_run_source() {
+    let event = runtime_envelope(
+        "run-typed",
+        "algorithm.alpha.generated",
+        serde_json::json!({
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "confidence": 0.8
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(event.source, "run-typed");
+    assert_eq!(event.category, EventCategory::System);
+    let TraderEvent::Runtime(runtime_event) = event.payload else {
+        panic!("expected runtime event");
+    };
+    assert_eq!(runtime_event.category, "algorithm.alpha.generated");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&runtime_event.payload_json).unwrap(),
+        serde_json::json!({
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "confidence": 0.8
+        })
     );
 }

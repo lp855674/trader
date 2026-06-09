@@ -25,6 +25,8 @@ use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub use state::AppState;
 
@@ -314,10 +316,15 @@ async fn run_replay(
             config_json: "{}".to_string(),
         })
         .await?;
-    state.replay_controllers.lock().await.insert(
+    let replay_controller = Arc::new(Mutex::new(ReplayController::new(
         app_config.runtime.run_id.clone(),
-        ReplayController::new(app_config.runtime.run_id.clone(), 100_000),
-    );
+        100_000,
+    )));
+    state
+        .replay_controllers
+        .lock()
+        .await
+        .insert(app_config.runtime.run_id.clone(), replay_controller.clone());
     insert_event(
         &state.db,
         &app_config.runtime.run_id,
@@ -327,8 +334,9 @@ async fn run_replay(
     .await?;
 
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
-    let summary = ReplayRuntime::new(100_000)
+    let summary = ReplayRuntime::new_for_run(app_config.runtime.run_id.clone(), 100_000)
         .with_event_bus(state.event_bus.clone())
+        .with_controller(replay_controller)
         .replay_bars(bars)
         .await;
     state
@@ -583,7 +591,7 @@ async fn record_failed_run(
     state: &AppState,
     run_id: &str,
     error: String,
-) -> Result<(), sqlx::Error> {
+) -> storage::StorageResult<()> {
     state
         .db
         .update_strategy_run_status(
@@ -600,7 +608,7 @@ async fn insert_event(
     source: &str,
     category: &str,
     payload_json: &str,
-) -> Result<(), sqlx::Error> {
+) -> storage::StorageResult<()> {
     db.insert_event(storage::NewEventRecord {
         event_id: uuid::Uuid::new_v4().to_string(),
         ts_ms: chrono::Utc::now().timestamp_millis(),
@@ -621,8 +629,11 @@ async fn update_replay_controller(
         let mut controllers = state.replay_controllers.lock().await;
         let controller = controllers
             .entry(run_id.clone())
-            .or_insert_with(|| ReplayController::new(run_id.clone(), 1));
-        update(controller);
+            .or_insert_with(|| Arc::new(Mutex::new(ReplayController::new(run_id.clone(), 1))))
+            .clone();
+        drop(controllers);
+        let mut controller = controller.lock().await;
+        update(&mut controller);
         controller.state().clone()
     };
     let payload =
@@ -920,14 +931,14 @@ impl From<data::DataError> for ApiError {
     }
 }
 
-impl From<sqlx::Error> for ApiError {
-    fn from(error: sqlx::Error) -> Self {
+impl From<rust_decimal::Error> for ApiError {
+    fn from(error: rust_decimal::Error) -> Self {
         Self(error.into())
     }
 }
 
-impl From<rust_decimal::Error> for ApiError {
-    fn from(error: rust_decimal::Error) -> Self {
+impl From<storage::StorageError> for ApiError {
+    fn from(error: storage::StorageError) -> Self {
         Self(error.into())
     }
 }

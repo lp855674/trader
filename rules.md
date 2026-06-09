@@ -53,8 +53,10 @@
 
 ## 4) 架构边界（强约束）
 
-- 仅 `crates/storage` 允许依赖/使用 `sqlx` 与内联 SQL。
-- 其它 crate 访问数据必须走 `storage::Db` 暴露的接口，禁止透传 `SqlitePool`。
+- 数据库访问必须集中在架构文档明确指定的持久化边界 crate / 模块内；只有该边界的生产代码允许依赖/使用 `sqlx`、`SqlitePool` 与内联 SQL。该边界的测试代码可为验证 migration/repository 行为使用 SQL。
+- 边界之外的 crate / 模块访问数据必须走持久化边界暴露的 repository / service 接口，禁止透传 `SqlitePool`、`Pool<Sqlite>`、transaction handle 或任何 sqlx executor。
+- `sqlx::Error` 也属于数据库实现细节：边界之外不得在 public/private 函数签名、错误转换或 `Cargo.toml` 依赖中直接引用 `sqlx`。上层应接收持久化边界提供的错误类型，或在应用边界转换为 `anyhow::Error` / 本 crate 错误类型。
+- 发现边界之外需要新增 `sqlx` 依赖、SQL 字符串、`SqlitePool` 参数或 `sqlx::Error` 返回值时，应先补持久化边界接口，而不是扩大数据库实现细节的暴露面。
 - tools 文件能力必须受 workspace 边界约束（禁止绝对路径、`..`、symlink escape）。
 - gateway/channels/app 的请求处理必须复用统一契约：`ChannelRequest/ChannelResponse`。
 

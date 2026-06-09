@@ -11,7 +11,7 @@ pub struct AppState {
     pub config_path: String,
     pub event_bus: EventBus,
     pub runtime_manager: RuntimeManager,
-    pub replay_controllers: Arc<Mutex<HashMap<String, ReplayController>>>,
+    pub replay_controllers: Arc<Mutex<HashMap<String, Arc<Mutex<ReplayController>>>>>,
 }
 
 impl AppState {

@@ -1,7 +1,7 @@
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, EngineEventKind};
 use alpha::{AlphaModel, CompositeAlphaModel};
 use data::Bar;
-use events::{SignalEvent, SignalSide};
+use events::{EventBus, SignalEvent, SignalSide};
 use rust_decimal_macros::dec;
 use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
 
@@ -92,6 +92,43 @@ fn algorithm_engine_uses_highest_confidence_composite_alpha_signal() {
         .expect("composite alpha should emit a decision");
 
     assert_eq!(decision.order.unwrap().side, trader_core::OrderSide::Buy);
+}
+
+#[test]
+fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
+    let event_bus = EventBus::new(16);
+    let mut receiver = event_bus.subscribe();
+    let strategy = CompositeAlphaModel::new(vec![Box::new(FixedAlphaModel::new(
+        "source",
+        SignalSide::Buy,
+        0.9,
+    ))]);
+    let mut engine = AlgorithmEngine::new(
+        AlgorithmEngineSettings {
+            run_id: "run-source".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            initial_cash: dec!(100000),
+        },
+        Box::new(strategy),
+    );
+    engine.set_event_bus(event_bus);
+
+    engine.on_bar(bar(1, dec!(100))).unwrap();
+
+    let event = receiver.try_recv().unwrap();
+    assert_eq!(event.source, "run-source");
 }
 
 struct FixedAlphaModel {

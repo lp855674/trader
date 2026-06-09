@@ -3,7 +3,7 @@
 use accounting::AccountBook;
 use alpha::AlphaModel;
 use data::Bar;
-use events::{EventBus, RuntimeEvent, TraderEvent, envelope};
+use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
 use market_rules::MarketRuleSet;
 use oms::OrderStateMachine;
@@ -77,7 +77,7 @@ pub struct EngineEvent {
     pub kind: EngineEventKind,
     pub category: String,
     pub ts_ms: i64,
-    pub payload_json: String,
+    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -427,7 +427,7 @@ impl AlgorithmEngine {
             kind,
             category: kind.category().to_string(),
             ts_ms,
-            payload_json: payload.to_string(),
+            payload,
         }
     }
 
@@ -436,14 +436,15 @@ impl AlgorithmEngine {
             return;
         };
         for event in events {
+            let Ok(envelope) = runtime_envelope(
+                self.settings.run_id.clone(),
+                event.category.clone(),
+                &event.payload,
+            ) else {
+                continue;
+            };
             // best-effort: runtime observers may lag or disconnect.
-            let _ = event_bus.publish(envelope(
-                "algorithm",
-                TraderEvent::Runtime(RuntimeEvent {
-                    category: event.category.clone(),
-                    payload_json: event.payload_json.clone(),
-                }),
-            ));
+            let _ = event_bus.publish(envelope);
         }
     }
 }

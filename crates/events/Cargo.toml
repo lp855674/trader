@@ -10,10 +10,10 @@ path = "src/events.rs"
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true

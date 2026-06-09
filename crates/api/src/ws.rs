@@ -8,6 +8,8 @@ use axum::{
 use events::{AnyEventEnvelope, TraderEvent};
 use replay::{ReplayController, ReplayState};
 use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::AppState;
 
@@ -146,13 +148,7 @@ async fn stream_runtime_events(
 }
 
 fn runtime_event_matches_run(event: &AnyEventEnvelope, run_id: &str) -> bool {
-    let TraderEvent::Runtime(runtime_event) = &event.payload else {
-        return false;
-    };
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&runtime_event.payload_json) else {
-        return false;
-    };
-    payload.get("run_id").and_then(serde_json::Value::as_str) == Some(run_id)
+    matches!(&event.payload, TraderEvent::Runtime(_)) && event.source == run_id
 }
 
 async fn send_replay_control(
@@ -164,7 +160,12 @@ async fn send_replay_control(
         let mut controllers = state.replay_controllers.lock().await;
         let controller = controllers
             .entry(request.run_id.clone())
-            .or_insert_with(|| ReplayController::new(request.run_id.clone(), 1));
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(ReplayController::new(request.run_id.clone(), 1)))
+            })
+            .clone();
+        drop(controllers);
+        let mut controller = controller.lock().await;
         match request.action.as_deref() {
             Some("pause") => controller.pause(),
             Some("resume") => controller.resume(),
