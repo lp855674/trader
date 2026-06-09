@@ -491,20 +491,31 @@ impl<'a> PaperRunSession<'a> {
                 updated_at_ms: self.ended_at_ms,
             })
             .await?;
-
-        if self.last_snapshot.position_qty != Decimal::ZERO {
-            self.runtime
-                .db
-                .upsert_position(NewPosition {
-                    run_id: settings.run_id.clone(),
-                    account_id: settings.account_id.clone(),
-                    symbol: settings.symbol.clone(),
-                    qty: self.last_snapshot.position_qty.to_string(),
-                    avg_price: self.last_snapshot.position_avg_price.to_string(),
-                    updated_at_ms: self.ended_at_ms,
-                })
-                .await?;
-        }
+        self.runtime
+            .db
+            .upsert_position(NewPosition {
+                run_id: settings.run_id.clone(),
+                account_id: settings.account_id.clone(),
+                symbol: settings.symbol.clone(),
+                qty: self.last_snapshot.position_qty.to_string(),
+                avg_price: self.last_snapshot.position_avg_price.to_string(),
+                updated_at_ms: self.ended_at_ms,
+            })
+            .await?;
+        self.runtime
+            .db
+            .insert_portfolio_snapshot(NewPortfolioSnapshot {
+                id: format!("{}-snapshot-final", settings.run_id),
+                run_id: settings.run_id.clone(),
+                account_id: settings.account_id.clone(),
+                ts_ms: self.ended_at_ms,
+                cash: self.last_snapshot.cash.to_string(),
+                market_value: self.last_snapshot.market_value.to_string(),
+                equity: self.last_snapshot.equity.to_string(),
+                realized_pnl: self.last_snapshot.realized_pnl.to_string(),
+                unrealized_pnl: self.last_snapshot.unrealized_pnl.to_string(),
+            })
+            .await?;
 
         Ok(BacktestSummary {
             signals: self.signals,

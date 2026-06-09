@@ -1,6 +1,5 @@
 use storage::{
-    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, NewAccountBalance,
-    NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun, StoredRuntimeEvent,
+    Db, NewAccountBalance, NewFill, NewOrder, NewPortfolioSnapshot, NewPosition, NewStrategyRun,
 };
 
 #[tokio::test]
@@ -223,7 +222,7 @@ async fn backtest_repository_records_completed_run_execution_position_and_events
 
     db.insert_runtime_events(
         "backtest-run",
-        &[StoredRuntimeEvent {
+        &[storage::StoredRuntimeEvent {
             ts_ms: 1,
             category: "algorithm.alpha.generated".to_string(),
             payload_json: "{}".to_string(),
@@ -232,7 +231,7 @@ async fn backtest_repository_records_completed_run_execution_position_and_events
     .await
     .unwrap();
 
-    db.insert_filled_backtest_execution(BacktestExecutionRecord {
+    db.insert_filled_backtest_execution(storage::BacktestExecutionRecord {
         run_id: "backtest-run".to_string(),
         order_id: "order-1".to_string(),
         fill_id: "fill-1".to_string(),
@@ -250,7 +249,7 @@ async fn backtest_repository_records_completed_run_execution_position_and_events
     .await
     .unwrap();
 
-    db.upsert_backtest_position(BacktestPositionRecord {
+    db.upsert_backtest_position(storage::BacktestPositionRecord {
         run_id: "backtest-run".to_string(),
         account_id: "backtest".to_string(),
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
@@ -261,7 +260,7 @@ async fn backtest_repository_records_completed_run_execution_position_and_events
     .await
     .unwrap();
 
-    db.complete_backtest_run(BacktestCompletedRun {
+    db.complete_backtest_run(storage::BacktestCompletedRun {
         run_id: "backtest-run".to_string(),
         strategy_name: "moving_average_cross".to_string(),
         started_at_ms: 1,

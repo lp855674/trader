@@ -29,7 +29,7 @@ async fn paper_runtime_runs_bars_from_stream() {
         "completed"
     );
     assert_eq!(db.list_orders(&run_id).await.unwrap().len(), 1);
-    assert_eq!(db.list_portfolio_snapshots(&run_id).await.unwrap().len(), 3);
+    assert_eq!(db.list_portfolio_snapshots(&run_id).await.unwrap().len(), 4);
 }
 
 #[tokio::test]

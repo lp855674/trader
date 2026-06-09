@@ -5,9 +5,7 @@ use data::Bar;
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use storage::{
-    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent,
-};
+use storage::{BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent};
 use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

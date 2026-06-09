@@ -20,7 +20,8 @@
       "Bash(git commit:*)",
       "Bash(python -m pytest tests/test_models_features.py -v)",
       "Bash(python:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(python *)"
     ]
   }
 }
