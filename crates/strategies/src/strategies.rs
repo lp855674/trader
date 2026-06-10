@@ -4,6 +4,7 @@ use data::Bar;
 use events::{SignalEvent, SignalSide};
 use indicators::{IndicatorError, SimpleMovingAverage};
 use thiserror::Error;
+use universe::StaticUniverseSelector;
 
 pub trait Strategy: Send {
     fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent>;
@@ -42,6 +43,10 @@ impl StrategyContext {
 pub enum StrategyRegistryError {
     #[error("unknown strategy {0}")]
     UnknownStrategy(String),
+    #[error("unknown universe {0}")]
+    UnknownUniverse(String),
+    #[error("strategy assembly requires at least one symbol")]
+    EmptySymbolUniverse,
     #[error("invalid strategy configuration: {0}")]
     InvalidConfig(#[from] StrategyConfigError),
 }
@@ -54,6 +59,22 @@ pub enum StrategyConfigError {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StrategyRegistry;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyAssemblyConfig {
+    pub strategy_name: String,
+    pub universe_name: String,
+    pub alpha_name: String,
+    pub symbols: Vec<String>,
+    pub fast_window: usize,
+    pub slow_window: usize,
+}
+
+pub struct StrategyAssembly {
+    pub primary_symbol: String,
+    pub universe: StaticUniverseSelector,
+    pub alpha: Box<dyn alpha::AlphaModel + Send + Sync>,
+}
 
 impl StrategyRegistry {
     pub fn create(
@@ -88,6 +109,34 @@ impl StrategyRegistry {
             )?)),
             other => Err(StrategyRegistryError::UnknownStrategy(other.to_string())),
         }
+    }
+
+    pub fn assemble_alpha(
+        &self,
+        config: StrategyAssemblyConfig,
+        runtime_mode: StrategyRuntimeMode,
+    ) -> Result<StrategyAssembly, StrategyRegistryError> {
+        let primary_symbol = config
+            .symbols
+            .first()
+            .cloned()
+            .ok_or(StrategyRegistryError::EmptySymbolUniverse)?;
+        let universe = match config.universe_name.as_str() {
+            "static" => StaticUniverseSelector::new(config.symbols),
+            other => return Err(StrategyRegistryError::UnknownUniverse(other.to_string())),
+        };
+        let alpha = self.create_alpha(
+            &config.alpha_name,
+            StrategyContext::new(config.strategy_name, primary_symbol.clone(), runtime_mode),
+            config.fast_window,
+            config.slow_window,
+        )?;
+
+        Ok(StrategyAssembly {
+            primary_symbol,
+            universe,
+            alpha,
+        })
     }
 }
 

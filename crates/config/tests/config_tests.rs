@@ -54,6 +54,8 @@ fn parses_backtest_config() {
     assert_eq!(config.runtime.run_id, "sample-ma-cross");
     assert_eq!(config.database.url, "sqlite://data/trader.sqlite");
     assert_eq!(config.strategy.name, "moving_average_cross");
+    assert_eq!(config.strategy.universe, "static");
+    assert_eq!(config.strategy.alpha, "moving_average_cross");
     assert_eq!(config.data.path, "datasets/sample/aapl_1d.csv");
     assert_eq!(config.portfolio.base_currency, "USD");
     assert_eq!(config.paper.account_id, "paper");
@@ -70,6 +72,67 @@ fn parses_backtest_config() {
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert!(!config.broker.order_submit_enabled);
     assert!(!config.live.enabled);
+}
+
+#[test]
+fn parses_named_universe_and_alpha_strategy_assembly() {
+    let config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "backtest"
+        run_id = "named-assembly"
+
+        [database]
+        url = "sqlite://data/trader.sqlite"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        universe = "static"
+        alpha = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.strategy.universe, "static");
+    assert_eq!(config.strategy.alpha, "moving_average_cross");
+    assert_eq!(
+        config.strategy.symbols,
+        vec!["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+    );
 }
 
 #[test]

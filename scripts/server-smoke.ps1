@@ -11,8 +11,14 @@ $env:TRADER_DATABASE_URL = "sqlite://$databasePath"
 $stdoutPath = Join-Path $env:TEMP ("trader-server-smoke-{0}.out.log" -f [guid]::NewGuid().ToString("N"))
 $stderrPath = Join-Path $env:TEMP ("trader-server-smoke-{0}.err.log" -f [guid]::NewGuid().ToString("N"))
 
-$server = Start-Process -FilePath "cargo" `
-    -ArgumentList @("run", "-p", "trader-server") `
+$env:CARGO_BUILD_JOBS = if ($env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS } else { "1" }
+cargo build -p trader-server
+if ($LASTEXITCODE -ne 0) {
+    throw "cargo build -p trader-server failed with exit code $LASTEXITCODE"
+}
+
+$serverExe = Join-Path $targetDir "debug\trader-server.exe"
+$server = Start-Process -FilePath $serverExe `
     -WorkingDirectory (Get-Location) `
     -PassThru `
     -RedirectStandardOutput $stdoutPath `

@@ -120,9 +120,13 @@ impl BinanceSpotTestnetAdapter {
     }
 
     pub fn new(settings: BinanceSpotTestnetSettings) -> Self {
+        Self::new_with_client(settings, reqwest::Client::new())
+    }
+
+    pub fn new_with_client(settings: BinanceSpotTestnetSettings, client: reqwest::Client) -> Self {
         Self {
             settings,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 

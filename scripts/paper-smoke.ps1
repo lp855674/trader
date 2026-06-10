@@ -6,6 +6,7 @@ $databasePath = Join-Path $env:TEMP "trader-paper-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-paper-$id.toml"
 $stdoutPath = Join-Path $env:TEMP "trader-paper-server-$id.out.log"
 $stderrPath = Join-Path $env:TEMP "trader-paper-server-$id.err.log"
+$serverTargetDir = Join-Path $env:TEMP "trader-paper-server-target-$id"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $traderExe = Join-Path $repoRoot "target/debug/trader.exe"
 
@@ -66,8 +67,10 @@ try {
 
     $env:TRADER_CONFIG = $configPath
     $env:TRADER_DATABASE_URL = $databaseUrl
-    $server = Start-Process -FilePath "cargo" `
-        -ArgumentList @("run", "-p", "trader-server") `
+    $env:CARGO_TARGET_DIR = $serverTargetDir
+    Invoke-CheckedCargo @("build", "-p", "trader-server")
+    $serverExe = Join-Path $serverTargetDir "debug\trader-server.exe"
+    $server = Start-Process -FilePath $serverExe `
         -WorkingDirectory $repoRoot `
         -PassThru `
         -RedirectStandardOutput $stdoutPath `
@@ -141,4 +144,5 @@ try {
     Remove-Item -LiteralPath "$databasePath-wal" -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $serverTargetDir -Recurse -Force -ErrorAction SilentlyContinue
 }

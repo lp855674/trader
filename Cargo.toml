@@ -67,7 +67,7 @@ sha2 = "0.10"
 storage = { path = "crates/storage" }
 strategies = { path = "crates/strategies" }
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "test-util"] }
 toml = "0.8"
 trader_core = { package = "trader-core", path = "crates/core" }
 universe = { path = "crates/universe" }

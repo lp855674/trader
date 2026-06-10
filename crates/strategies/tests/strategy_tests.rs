@@ -2,8 +2,10 @@ use data::Bar;
 use events::SignalSide;
 use rust_decimal_macros::dec;
 use strategies::{
-    MovingAverageCrossStrategy, Strategy, StrategyContext, StrategyRegistry, StrategyRuntimeMode,
+    MovingAverageCrossStrategy, Strategy, StrategyAssemblyConfig, StrategyContext,
+    StrategyRegistry, StrategyRuntimeMode,
 };
+use universe::{UniverseContext, UniverseSelector};
 
 #[test]
 fn moving_average_cross_emits_buy_signal() {
@@ -70,4 +72,48 @@ fn strategy_context_preserves_runtime_mode_and_symbol() {
     assert_eq!(context.strategy_id, "moving_average_cross");
     assert_eq!(context.symbol, "US:NASDAQ:AAPL:EQUITY");
     assert_eq!(context.runtime_mode, StrategyRuntimeMode::Paper);
+}
+
+#[test]
+fn strategy_registry_assembles_named_static_universe_and_alpha() {
+    let registry = StrategyRegistry::default();
+    let config = StrategyAssemblyConfig {
+        strategy_name: "moving_average_cross".to_string(),
+        universe_name: "static".to_string(),
+        alpha_name: "moving_average_cross".to_string(),
+        symbols: vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string(),
+        ],
+        fast_window: 2,
+        slow_window: 3,
+    };
+
+    let mut assembly = registry
+        .assemble_alpha(config, StrategyRuntimeMode::Paper)
+        .unwrap();
+    let selected = assembly
+        .universe
+        .select(&UniverseContext {
+            primary_symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            bar: Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        })
+        .unwrap();
+
+    assert_eq!(assembly.primary_symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(selected, vec!["US:NASDAQ:AAPL:EQUITY"]);
+
+    assembly
+        .alpha
+        .on_bar(&Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)));
+    assembly
+        .alpha
+        .on_bar(&Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)));
+    let signal = assembly
+        .alpha
+        .on_bar(&Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)))
+        .unwrap();
+
+    assert_eq!(signal.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(signal.side, SignalSide::Buy);
 }

@@ -76,9 +76,21 @@ pub struct DataConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StrategyConfig {
     pub name: String,
+    #[serde(default = "default_universe_name")]
+    pub universe: String,
+    #[serde(default = "default_alpha_name")]
+    pub alpha: String,
     pub symbols: Vec<String>,
     pub fast_window: usize,
     pub slow_window: usize,
+}
+
+fn default_universe_name() -> String {
+    "static".to_string()
+}
+
+fn default_alpha_name() -> String {
+    "moving_average_cross".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

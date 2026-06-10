@@ -17,6 +17,7 @@ chrono.workspace = true
 indicators.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true
+universe.workspace = true
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true

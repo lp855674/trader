@@ -47,6 +47,7 @@ pub enum EngineEventKind {
     OmsAccepted,
     BrokerOrderSubmitted,
     BrokerOrderFilled,
+    BrokerOrderPartiallyFilled,
     BrokerOrderUnfilled,
     AccountingUpdated,
     PortfolioSnapshot,
@@ -65,6 +66,7 @@ impl EngineEventKind {
             Self::OmsAccepted => "algorithm.oms.accepted",
             Self::BrokerOrderSubmitted => "broker.order.submitted",
             Self::BrokerOrderFilled => "broker.order.filled",
+            Self::BrokerOrderPartiallyFilled => "broker.order.partially_filled",
             Self::BrokerOrderUnfilled => "broker.order.unfilled",
             Self::AccountingUpdated => "accounting.updated",
             Self::PortfolioSnapshot => "portfolio.snapshot",
@@ -358,7 +360,9 @@ impl AlgorithmEngine {
                 }
             }
         }
-        let fill_kind = if report.qty > Decimal::ZERO {
+        let fill_kind = if report.qty > Decimal::ZERO && report.qty < order.qty {
+            EngineEventKind::BrokerOrderPartiallyFilled
+        } else if report.qty > Decimal::ZERO {
             EngineEventKind::BrokerOrderFilled
         } else {
             EngineEventKind::BrokerOrderUnfilled

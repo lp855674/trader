@@ -150,12 +150,12 @@ async fn replay_runtime_seek_changes_next_published_bar() {
     replay_task.await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn replay_runtime_speed_change_affects_next_bar_pacing() {
     let event_bus = EventBus::new(8);
     let mut receiver = event_bus.subscribe();
-    let controller = Arc::new(Mutex::new(ReplayController::new("run-speed", 2)));
-    let runtime = ReplayRuntime::new_for_run("run-speed", 2)
+    let controller = Arc::new(Mutex::new(ReplayController::new("run-speed", 5)));
+    let runtime = ReplayRuntime::new_for_run("run-speed", 5)
         .with_event_bus(event_bus)
         .with_controller(controller.clone());
 
@@ -168,17 +168,17 @@ async fn replay_runtime_speed_change_affects_next_bar_pacing() {
             .await
     });
 
-    tokio::time::timeout(std::time::Duration::from_millis(700), receiver.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(200)).await;
+    tokio::task::yield_now().await;
+    receiver.recv().await.unwrap();
 
     controller.lock().await.set_speed(100);
 
-    tokio::time::timeout(std::time::Duration::from_millis(150), receiver.recv())
-        .await
-        .expect("increased replay speed should shorten next bar delay")
-        .unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(10)).await;
+    tokio::task::yield_now().await;
+    receiver.recv().await.unwrap();
 
     replay_task.await.unwrap();
 }

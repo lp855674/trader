@@ -136,8 +136,7 @@ impl ReplayRuntime {
             if self.controller.is_some() && state.offset < bars.len() {
                 offset = state.offset;
             }
-            self.sleep_while_running(Duration::from_millis(1000 / u64::from(state.speed)))
-                .await;
+            self.sleep_until_next_bar(state.speed).await;
             let state = self.wait_until_running().await;
             if self.controller.is_some() && state.offset < bars.len() {
                 offset = state.offset;
@@ -215,18 +214,22 @@ impl ReplayRuntime {
         controller.lock().await.advance();
     }
 
-    async fn sleep_while_running(&self, delay: Duration) {
-        let mut elapsed = Duration::ZERO;
-        while elapsed < delay {
-            let step = (delay - elapsed).min(Duration::from_millis(10));
+    async fn sleep_until_next_bar(&self, initial_speed: u32) {
+        let mut progressed_ms = 0_u64;
+        while progressed_ms < 1000 {
+            let step = Duration::from_millis(10);
             tokio::time::sleep(step).await;
-            elapsed += step;
+            let mut speed = initial_speed.max(1);
             let Some(controller) = &self.controller else {
+                progressed_ms += u64::from(speed) * step.as_millis() as u64;
                 continue;
             };
-            if controller.lock().await.state().status != ReplayStatus::Running {
+            let state = controller.lock().await.state().clone();
+            if state.status != ReplayStatus::Running {
                 return;
             }
+            speed = state.speed.max(1);
+            progressed_ms += u64::from(speed) * step.as_millis() as u64;
         }
     }
 }

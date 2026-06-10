@@ -111,19 +111,19 @@ Run: `cargo test -p events -p algorithm -p api`.
 - Modify: `crates/paper/src/ibkr.rs`
 - Test: `crates/paper/tests/*`
 
-- [ ] **Step 1: Add tests for submitted, unfilled, partial, filled and failed broker outcomes**
+- [x] **Step 1: Add tests for submitted, unfilled, partial, filled and failed broker outcomes**
 
 Write tests proving each outcome persists the expected order/fill/accounting/event records.
 
-- [ ] **Step 2: Introduce a unified paper execution result**
+- [x] **Step 2: Introduce a unified paper execution result**
 
 Add a typed execution result shared by simulated, Binance and IBKR executors.
 
-- [ ] **Step 3: Extract lifecycle persistence steps**
+- [x] **Step 3: Extract lifecycle persistence steps**
 
 Split submitted-order persistence, broker execution, execution-result persistence and accounting snapshot updates into explicit methods.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `cargo test -p paper`.
 
@@ -144,7 +144,7 @@ Use a short bar stream and assert emitted `market.bar` events stop, resume, seek
 
 Read controller state before each bar and publish replay state events.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `cargo test -p replay -p api`.
 
@@ -157,15 +157,15 @@ Run: `cargo test -p replay -p api`.
 - Modify: `crates/strategies/src/*`
 - Test: related crate tests
 
-- [ ] **Step 1: Add tests for selecting universe and alpha model from config**
+- [x] **Step 1: Add tests for selecting universe and alpha model from config**
 
 Prove default single-symbol behavior stays intact and config can select a named universe/alpha.
 
-- [ ] **Step 2: Implement config-driven assembly**
+- [x] **Step 2: Implement config-driven assembly**
 
 Add registry wiring without changing existing sample configs.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `cargo test -p config -p universe -p alpha -p strategies`.
 
@@ -175,14 +175,14 @@ Run: `cargo test -p config -p universe -p alpha -p strategies`.
 - Modify only broker adapter internals selected for that slice
 - Test: broker/paper smoke tests
 
-- [ ] **Step 1: Pick one broker client migration at a time**
+- [x] **Step 1: Pick one broker client migration at a time**
 
 Choose Binance or IBKR, not both in one patch.
 
-- [ ] **Step 2: Preserve adapter boundary**
+- [x] **Step 2: Preserve adapter boundary**
 
 Keep existing paper executor and broker adapter domain interfaces stable.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run the broker-specific no-network smoke first, then gated real paper checks only when credentials/environment are explicitly present.

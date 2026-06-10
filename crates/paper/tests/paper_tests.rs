@@ -164,7 +164,7 @@ async fn paper_runtime_can_use_injected_order_executor() {
 }
 
 #[tokio::test]
-async fn paper_runtime_persists_pending_order_before_executor_call() {
+async fn paper_runtime_persists_failed_order_after_executor_error() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let bars = vec![
@@ -186,8 +186,19 @@ async fn paper_runtime_persists_pending_order_before_executor_call() {
     assert_eq!(orders.len(), 1);
     assert_eq!(orders[0].client_order_id, "pending-client-1");
     assert_eq!(orders[0].broker_order_id, None);
-    assert_eq!(orders[0].status, "SUBMITTED");
+    assert_eq!(orders[0].status, "FAILED");
     assert_eq!(orders[0].filled_qty, "0");
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.category == "broker.order.submitted")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.category == "broker.order.failed")
+    );
 }
 
 #[tokio::test]
@@ -235,6 +246,85 @@ async fn paper_runtime_keeps_unfilled_broker_order_without_fill() {
         events
             .iter()
             .any(|event| event.payload_json.contains("\"status\":\"CANCELED\""))
+    );
+}
+
+#[tokio::test]
+async fn paper_runtime_records_partial_broker_order_with_fill_and_accounting() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new_with_executor(
+        db.clone(),
+        PaperSettings::sample(),
+        Box::new(PartiallyFilledExecutor),
+    )
+    .run_bars(bars)
+    .await
+    .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].status, "PARTIALLY_FILLED");
+    assert_eq!(orders[0].filled_qty, "0.5");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].qty, "0.5");
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.category == "broker.order.partially_filled")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.category == "accounting.updated")
+    );
+}
+
+#[tokio::test]
+async fn paper_runtime_marks_order_failed_when_executor_returns_error() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let result = PaperRuntime::new_with_executor(
+        db.clone(),
+        PaperSettings::sample(),
+        Box::new(FailingExecutor),
+    )
+    .run_bars(bars)
+    .await;
+
+    assert!(result.unwrap_err().to_string().contains("broker down"));
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].client_order_id, "pending-client-1");
+    assert_eq!(orders[0].status, "FAILED");
+    assert_eq!(orders[0].filled_qty, "0");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert!(fills.is_empty());
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.category == "broker.order.failed")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.payload_json.contains("\"error\":\"broker down\""))
     );
 }
 
@@ -502,6 +592,31 @@ impl PaperOrderExecutor for FixedExecutor {
             price: dec!(19.5),
             qty: order.qty,
             fee: dec!(0.01),
+        })
+    }
+}
+
+struct PartiallyFilledExecutor;
+
+#[async_trait]
+impl PaperOrderExecutor for PartiallyFilledExecutor {
+    fn client_order_id(&self, _run_id: &str, _order_number: usize) -> String {
+        "partial-client-1".to_string()
+    }
+
+    async fn execute_order(
+        &self,
+        _order: OrderRequest,
+        _mark_price: rust_decimal::Decimal,
+        _order_number: usize,
+    ) -> anyhow::Result<ExecutedPaperOrder> {
+        Ok(ExecutedPaperOrder {
+            client_order_id: "partial-client-1".to_string(),
+            broker_order_id: "external-partial-1".to_string(),
+            status: "PARTIALLY_FILLED".to_string(),
+            price: dec!(19.5),
+            qty: dec!(0.5),
+            fee: dec!(0.005),
         })
     }
 }

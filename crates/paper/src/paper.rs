@@ -9,7 +9,8 @@ pub use ibkr::{
 };
 
 use algorithm::{
-    AccountSnapshot, AlgorithmEngine, AlgorithmEngineSettings, EngineEvent, ExecutionReport,
+    AccountSnapshot, AlgorithmDecision, AlgorithmEngine, AlgorithmEngineSettings, EngineEvent,
+    ExecutionReport,
 };
 use async_trait::async_trait;
 use backtest::BacktestSummary;
@@ -316,7 +317,7 @@ impl<'a> PaperRunSession<'a> {
         if let Some(decision) = step.decision {
             self.signals += 1;
             let settings = &self.runtime.settings;
-            let Some(order) = decision.order else {
+            let Some(order) = decision.order.clone() else {
                 self.persist_snapshot(&bar).await?;
                 return Ok(());
             };
@@ -325,53 +326,22 @@ impl<'a> PaperRunSession<'a> {
                 .runtime
                 .executor
                 .client_order_id(&settings.run_id, decision.order_number);
-            self.runtime
-                .db
-                .insert_order(NewOrder {
-                    id: decision.order_id.clone(),
-                    run_id: settings.run_id.clone(),
-                    client_order_id: client_order_id.clone(),
-                    broker_order_id: None,
-                    account_id: order.account_id.clone(),
-                    symbol: order.symbol.clone(),
-                    side: format!("{:?}", order.side).to_uppercase(),
-                    order_type: format!("{:?}", order.order_type).to_uppercase(),
-                    price: order.price.map(|price| price.to_string()),
-                    qty: order.qty.to_string(),
-                    filled_qty: Decimal::ZERO.to_string(),
-                    status: "SUBMITTED".to_string(),
-                    created_at_ms: bar.ts_ms,
-                    updated_at_ms: bar.ts_ms,
-                })
+            self.persist_submitted_order(&decision, &order, &client_order_id, &bar)
                 .await?;
-            self.runtime
-                .db
-                .insert_event(NewEventRecord {
-                    event_id: uuid::Uuid::new_v4().to_string(),
-                    ts_ms: bar.ts_ms,
-                    source: settings.run_id.clone(),
-                    category: "broker.order.submitted".to_string(),
-                    payload_json: serde_json::json!({
-                        "run_id": &settings.run_id,
-                        "order_id": &decision.order_id,
-                        "client_order_id": &client_order_id,
-                        "broker_order_id": null,
-                        "account_id": &order.account_id,
-                        "symbol": &order.symbol,
-                        "side": format!("{:?}", order.side).to_uppercase(),
-                        "order_type": format!("{:?}", order.order_type).to_uppercase(),
-                        "qty": order.qty.to_string(),
-                        "filled_qty": Decimal::ZERO.to_string(),
-                        "status": "SUBMITTED"
-                    })
-                    .to_string(),
-                })
-                .await?;
-            let fill = self
+            let fill = match self
                 .runtime
                 .executor
                 .execute_order(order.clone(), bar.close, decision.order_number)
-                .await?;
+                .await
+            {
+                Ok(fill) => fill,
+                Err(error) => {
+                    let message = error.to_string();
+                    self.persist_failed_order(&decision, &order, &client_order_id, &bar, &message)
+                        .await?;
+                    return Err(error);
+                }
+            };
             let applied = self.engine.apply_execution(
                 &order,
                 &ExecutionReport {
@@ -385,45 +355,187 @@ impl<'a> PaperRunSession<'a> {
             )?;
             self.persist_engine_events(&applied.events).await?;
             self.last_snapshot = applied.snapshot;
-            self.runtime
-                .db
-                .insert_order(NewOrder {
-                    id: decision.order_id.clone(),
-                    run_id: settings.run_id.clone(),
-                    client_order_id,
-                    broker_order_id: Some(fill.broker_order_id.clone()),
-                    account_id: order.account_id.clone(),
-                    symbol: order.symbol.clone(),
-                    side: format!("{:?}", order.side).to_uppercase(),
-                    order_type: format!("{:?}", order.order_type).to_uppercase(),
-                    price: order.price.map(|price| price.to_string()),
-                    qty: order.qty.to_string(),
-                    filled_qty: fill.qty.to_string(),
-                    status: fill.status.clone(),
-                    created_at_ms: bar.ts_ms,
-                    updated_at_ms: bar.ts_ms,
-                })
+            self.persist_execution_result(&decision, &order, &client_order_id, &fill, &bar)
                 .await?;
-            if fill.qty > Decimal::ZERO {
-                self.runtime
-                    .db
-                    .insert_fill(NewFill {
-                        id: decision.fill_id,
-                        order_id: decision.order_id.clone(),
-                        run_id: settings.run_id.clone(),
-                        symbol: order.symbol.clone(),
-                        side: format!("{:?}", order.side).to_uppercase(),
-                        price: fill.price.to_string(),
-                        qty: fill.qty.to_string(),
-                        fee: fill.fee.to_string(),
-                        ts_ms: bar.ts_ms,
-                    })
-                    .await?;
-            }
             self.orders += 1;
         }
 
         self.persist_snapshot(&bar).await
+    }
+
+    async fn persist_submitted_order(
+        &self,
+        decision: &AlgorithmDecision,
+        order: &OrderRequest,
+        client_order_id: &str,
+        bar: &Bar,
+    ) -> anyhow::Result<()> {
+        self.runtime
+            .db
+            .insert_order(self.order_record(
+                decision,
+                order,
+                client_order_id,
+                None,
+                Decimal::ZERO,
+                "SUBMITTED",
+                bar.ts_ms,
+            ))
+            .await?;
+        self.persist_broker_order_event(
+            "broker.order.submitted",
+            decision,
+            order,
+            client_order_id,
+            None,
+            Decimal::ZERO,
+            "SUBMITTED",
+            None,
+            bar.ts_ms,
+        )
+        .await
+    }
+
+    async fn persist_failed_order(
+        &self,
+        decision: &AlgorithmDecision,
+        order: &OrderRequest,
+        client_order_id: &str,
+        bar: &Bar,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        self.runtime
+            .db
+            .insert_order(self.order_record(
+                decision,
+                order,
+                client_order_id,
+                None,
+                Decimal::ZERO,
+                "FAILED",
+                bar.ts_ms,
+            ))
+            .await?;
+        self.persist_broker_order_event(
+            "broker.order.failed",
+            decision,
+            order,
+            client_order_id,
+            None,
+            Decimal::ZERO,
+            "FAILED",
+            Some(error),
+            bar.ts_ms,
+        )
+        .await
+    }
+
+    async fn persist_execution_result(
+        &self,
+        decision: &AlgorithmDecision,
+        order: &OrderRequest,
+        client_order_id: &str,
+        fill: &ExecutedPaperOrder,
+        bar: &Bar,
+    ) -> anyhow::Result<()> {
+        self.runtime
+            .db
+            .insert_order(self.order_record(
+                decision,
+                order,
+                client_order_id,
+                Some(fill.broker_order_id.clone()),
+                fill.qty,
+                &fill.status,
+                bar.ts_ms,
+            ))
+            .await?;
+        if fill.qty > Decimal::ZERO {
+            self.runtime
+                .db
+                .insert_fill(NewFill {
+                    id: decision.fill_id.clone(),
+                    order_id: decision.order_id.clone(),
+                    run_id: self.runtime.settings.run_id.clone(),
+                    symbol: order.symbol.clone(),
+                    side: format!("{:?}", order.side).to_uppercase(),
+                    price: fill.price.to_string(),
+                    qty: fill.qty.to_string(),
+                    fee: fill.fee.to_string(),
+                    ts_ms: bar.ts_ms,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn order_record(
+        &self,
+        decision: &AlgorithmDecision,
+        order: &OrderRequest,
+        client_order_id: &str,
+        broker_order_id: Option<String>,
+        filled_qty: Decimal,
+        status: &str,
+        ts_ms: i64,
+    ) -> NewOrder {
+        let settings = &self.runtime.settings;
+        NewOrder {
+            id: decision.order_id.clone(),
+            run_id: settings.run_id.clone(),
+            client_order_id: client_order_id.to_string(),
+            broker_order_id,
+            account_id: order.account_id.clone(),
+            symbol: order.symbol.clone(),
+            side: format!("{:?}", order.side).to_uppercase(),
+            order_type: format!("{:?}", order.order_type).to_uppercase(),
+            price: order.price.map(|price| price.to_string()),
+            qty: order.qty.to_string(),
+            filled_qty: filled_qty.to_string(),
+            status: status.to_string(),
+            created_at_ms: ts_ms,
+            updated_at_ms: ts_ms,
+        }
+    }
+
+    async fn persist_broker_order_event(
+        &self,
+        category: &str,
+        decision: &AlgorithmDecision,
+        order: &OrderRequest,
+        client_order_id: &str,
+        broker_order_id: Option<&str>,
+        filled_qty: Decimal,
+        status: &str,
+        error: Option<&str>,
+        ts_ms: i64,
+    ) -> anyhow::Result<()> {
+        let settings = &self.runtime.settings;
+        self.runtime
+            .db
+            .insert_event(NewEventRecord {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                ts_ms,
+                source: settings.run_id.clone(),
+                category: category.to_string(),
+                payload_json: serde_json::json!({
+                    "run_id": &settings.run_id,
+                    "order_id": &decision.order_id,
+                    "client_order_id": client_order_id,
+                    "broker_order_id": broker_order_id,
+                    "account_id": &order.account_id,
+                    "symbol": &order.symbol,
+                    "side": format!("{:?}", order.side).to_uppercase(),
+                    "order_type": format!("{:?}", order.order_type).to_uppercase(),
+                    "qty": order.qty.to_string(),
+                    "filled_qty": filled_qty.to_string(),
+                    "status": status,
+                    "error": error
+                })
+                .to_string(),
+            })
+            .await?;
+        Ok(())
     }
 
     async fn persist_snapshot(&mut self, bar: &Bar) -> anyhow::Result<()> {

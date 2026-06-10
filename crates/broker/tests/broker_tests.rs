@@ -136,6 +136,30 @@ fn binance_testnet_adapter_rejects_live_base_url() {
 }
 
 #[test]
+fn binance_testnet_adapter_accepts_injected_http_client_without_changing_signing() {
+    let client = reqwest::Client::builder()
+        .user_agent("trader-binance-client-test")
+        .build()
+        .unwrap();
+    let adapter = BinanceSpotTestnetAdapter::new_with_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client,
+    );
+
+    let request = adapter.signed_account_request(1_700_000_000_000);
+
+    assert_eq!(request.api_key, "test-key");
+    assert!(request.url.starts_with(
+        "https://testnet.binance.vision/api/v3/account?timestamp=1700000000000&recvWindow=5000&signature="
+    ));
+}
+
+#[test]
 fn binance_testnet_adapter_builds_signed_limit_order_cancel_and_query_urls() {
     let adapter = BinanceSpotTestnetAdapter::new(BinanceSpotTestnetSettings {
         base_url: "https://testnet.binance.vision/api".to_string(),
