@@ -219,17 +219,13 @@ async fn persist_replay_control_event(
         "speed" => "replay.speed",
         _ => "replay.control",
     };
-    let Ok(payload_json) = serde_json::to_string(replay_state) else {
-        return;
-    };
     // best-effort: websocket replay control response should not fail on audit write errors.
     let _ = db
-        .insert_event(storage::NewEventRecord {
-            event_id: uuid::Uuid::new_v4().to_string(),
+        .record_runtime_event(storage::RuntimeEventCommand {
             ts_ms: chrono::Utc::now().timestamp_millis(),
             source: run_id.to_string(),
             category: category.to_string(),
-            payload_json,
+            payload: serde_json::to_value(replay_state).unwrap_or_else(|_| serde_json::json!({})),
         })
         .await;
 }

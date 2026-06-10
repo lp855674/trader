@@ -1,7 +1,9 @@
 use crate::{Db, StorageError, StorageResult};
 use chrono::{TimeZone, Utc};
 use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
+use rust_decimal::Decimal;
 use serde::Serialize;
+use trader_core::OrderRequest;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +179,246 @@ pub struct BacktestPositionRecord {
     pub qty: String,
     pub avg_price: String,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BacktestFilledExecutionCommand {
+    pub run_id: String,
+    pub order_id: String,
+    pub fill_id: String,
+    pub broker_order_id: String,
+    pub order: OrderRequest,
+    pub fill_price: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BacktestPositionCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEventCommand {
+    pub source: String,
+    pub ts_ms: i64,
+    pub category: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveRunCommand {
+    pub run_id: String,
+    pub started_at_ms: i64,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyRunStartCommand {
+    pub run_id: String,
+    pub name: String,
+    pub mode: String,
+    pub started_at_ms: i64,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalOrderCommand {
+    pub run_id: String,
+    pub order_id: String,
+    pub client_order_id: String,
+    pub broker_order_id: Option<String>,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: Option<Decimal>,
+    pub qty: Decimal,
+    pub filled_qty: Decimal,
+    pub status: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFillCommand {
+    pub id: String,
+    pub order_id: String,
+    pub run_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountBalanceCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub asset: String,
+    pub total: Decimal,
+    pub available: Decimal,
+    pub frozen: Decimal,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioSnapshotCommand {
+    pub id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub cash: Decimal,
+    pub market_value: Decimal,
+    pub equity: Decimal,
+    pub realized_pnl: Decimal,
+    pub unrealized_pnl: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaperOrderCommand {
+    pub run_id: String,
+    pub order_id: String,
+    pub client_order_id: String,
+    pub order: OrderRequest,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaperFailedOrderCommand {
+    pub run_id: String,
+    pub order_id: String,
+    pub client_order_id: String,
+    pub order: OrderRequest,
+    pub error: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaperExecutionCommand {
+    pub run_id: String,
+    pub order_id: String,
+    pub fill_id: String,
+    pub client_order_id: String,
+    pub order: OrderRequest,
+    pub broker_order_id: String,
+    pub status: String,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaperPortfolioSnapshotCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub cash: Decimal,
+    pub market_value: Decimal,
+    pub equity: Decimal,
+    pub realized_pnl: Decimal,
+    pub unrealized_pnl: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaperFinalStateCommand {
+    pub run_id: String,
+    pub strategy_name: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub base_currency: String,
+    pub started_at_ms: i64,
+    pub ended_at_ms: i64,
+    pub config_json: String,
+    pub cash: Decimal,
+    pub market_value: Decimal,
+    pub equity: Decimal,
+    pub realized_pnl: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub position_qty: Decimal,
+    pub position_avg_price: Decimal,
+}
+
+struct PaperOrderRecordInput<'a> {
+    run_id: &'a str,
+    order_id: &'a str,
+    client_order_id: &'a str,
+    broker_order_id: Option<String>,
+    order: &'a OrderRequest,
+    filled_qty: Decimal,
+    status: &'a str,
+    ts_ms: i64,
+}
+
+fn paper_order_record(input: PaperOrderRecordInput<'_>) -> NewOrder {
+    NewOrder {
+        id: input.order_id.to_string(),
+        run_id: input.run_id.to_string(),
+        client_order_id: input.client_order_id.to_string(),
+        broker_order_id: input.broker_order_id,
+        account_id: input.order.account_id.clone(),
+        symbol: input.order.symbol.clone(),
+        side: order_side(input.order),
+        order_type: order_type(input.order),
+        price: input.order.price.map(|price| price.to_string()),
+        qty: input.order.qty.to_string(),
+        filled_qty: input.filled_qty.to_string(),
+        status: input.status.to_string(),
+        created_at_ms: input.ts_ms,
+        updated_at_ms: input.ts_ms,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paper_order_event_payload(
+    run_id: &str,
+    order_id: &str,
+    client_order_id: &str,
+    broker_order_id: Option<&str>,
+    order: &OrderRequest,
+    filled_qty: Decimal,
+    status: &str,
+    error: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_id,
+        "order_id": order_id,
+        "client_order_id": client_order_id,
+        "broker_order_id": broker_order_id,
+        "account_id": &order.account_id,
+        "symbol": &order.symbol,
+        "side": order_side(order),
+        "order_type": order_type(order),
+        "qty": order.qty.to_string(),
+        "filled_qty": filled_qty.to_string(),
+        "status": status,
+        "error": error
+    })
+}
+
+fn order_side(order: &OrderRequest) -> String {
+    format!("{:?}", order.side).to_uppercase()
+}
+
+fn order_type(order: &OrderRequest) -> String {
+    format!("{:?}", order.order_type).to_uppercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -605,6 +847,297 @@ impl Db {
         Ok(())
     }
 
+    pub async fn record_runtime_event(&self, command: RuntimeEventCommand) -> StorageResult<()> {
+        self.insert_event(NewEventRecord {
+            event_id: Uuid::new_v4().to_string(),
+            ts_ms: command.ts_ms,
+            source: command.source,
+            category: command.category,
+            payload_json: command.payload.to_string(),
+        })
+        .await
+    }
+
+    pub async fn start_strategy_run(&self, command: StrategyRunStartCommand) -> StorageResult<()> {
+        self.insert_strategy_run(NewStrategyRun {
+            id: command.run_id,
+            name: command.name,
+            mode: command.mode,
+            status: "running".to_string(),
+            started_at_ms: command.started_at_ms,
+            ended_at_ms: None,
+            error: None,
+            config_json: command.config.to_string(),
+        })
+        .await
+    }
+
+    pub async fn start_live_run(&self, command: LiveRunCommand) -> StorageResult<()> {
+        self.insert_strategy_run(NewStrategyRun {
+            id: command.run_id,
+            name: "live".to_string(),
+            mode: "live".to_string(),
+            status: "running".to_string(),
+            started_at_ms: command.started_at_ms,
+            ended_at_ms: None,
+            error: None,
+            config_json: command.config.to_string(),
+        })
+        .await
+    }
+
+    pub async fn record_external_order(&self, command: ExternalOrderCommand) -> StorageResult<()> {
+        self.insert_order(NewOrder {
+            id: command.order_id,
+            run_id: command.run_id,
+            client_order_id: command.client_order_id,
+            broker_order_id: command.broker_order_id,
+            account_id: command.account_id,
+            symbol: command.symbol,
+            side: command.side,
+            order_type: command.order_type,
+            price: command.price.map(|price| price.to_string()),
+            qty: command.qty.to_string(),
+            filled_qty: command.filled_qty.to_string(),
+            status: command.status,
+            created_at_ms: command.ts_ms,
+            updated_at_ms: command.ts_ms,
+        })
+        .await
+    }
+
+    pub async fn record_external_fill(&self, command: ExternalFillCommand) -> StorageResult<()> {
+        self.insert_fill(NewFill {
+            id: command.id,
+            order_id: command.order_id,
+            run_id: command.run_id,
+            symbol: command.symbol,
+            side: command.side,
+            price: command.price.to_string(),
+            qty: command.qty.to_string(),
+            fee: command.fee.to_string(),
+            ts_ms: command.ts_ms,
+        })
+        .await
+    }
+
+    pub async fn record_account_balance(
+        &self,
+        command: AccountBalanceCommand,
+    ) -> StorageResult<()> {
+        self.upsert_account_balance(NewAccountBalance {
+            run_id: command.run_id,
+            account_id: command.account_id,
+            asset: command.asset,
+            total: command.total.to_string(),
+            available: command.available.to_string(),
+            frozen: command.frozen.to_string(),
+            updated_at_ms: command.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_position(&self, command: PositionCommand) -> StorageResult<()> {
+        self.upsert_position(NewPosition {
+            run_id: command.run_id,
+            account_id: command.account_id,
+            symbol: command.symbol,
+            qty: command.qty.to_string(),
+            avg_price: command.avg_price.to_string(),
+            updated_at_ms: command.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_portfolio_snapshot(
+        &self,
+        command: PortfolioSnapshotCommand,
+    ) -> StorageResult<()> {
+        self.insert_portfolio_snapshot(NewPortfolioSnapshot {
+            id: command.id,
+            run_id: command.run_id,
+            account_id: command.account_id,
+            ts_ms: command.ts_ms,
+            cash: command.cash.to_string(),
+            market_value: command.market_value.to_string(),
+            equity: command.equity.to_string(),
+            realized_pnl: command.realized_pnl.to_string(),
+            unrealized_pnl: command.unrealized_pnl.to_string(),
+        })
+        .await
+    }
+
+    pub async fn record_paper_order_submitted(
+        &self,
+        command: PaperOrderCommand,
+    ) -> StorageResult<()> {
+        self.insert_order(paper_order_record(PaperOrderRecordInput {
+            run_id: &command.run_id,
+            order_id: &command.order_id,
+            client_order_id: &command.client_order_id,
+            broker_order_id: None,
+            order: &command.order,
+            filled_qty: Decimal::ZERO,
+            status: "SUBMITTED",
+            ts_ms: command.ts_ms,
+        }))
+        .await?;
+        self.insert_event(NewEventRecord {
+            event_id: Uuid::new_v4().to_string(),
+            ts_ms: command.ts_ms,
+            source: command.run_id.clone(),
+            category: "broker.order.submitted".to_string(),
+            payload_json: paper_order_event_payload(
+                &command.run_id,
+                &command.order_id,
+                &command.client_order_id,
+                None,
+                &command.order,
+                Decimal::ZERO,
+                "SUBMITTED",
+                None,
+            )
+            .to_string(),
+        })
+        .await
+    }
+
+    pub async fn record_paper_order_failed(
+        &self,
+        command: PaperFailedOrderCommand,
+    ) -> StorageResult<()> {
+        self.insert_order(paper_order_record(PaperOrderRecordInput {
+            run_id: &command.run_id,
+            order_id: &command.order_id,
+            client_order_id: &command.client_order_id,
+            broker_order_id: None,
+            order: &command.order,
+            filled_qty: Decimal::ZERO,
+            status: "FAILED",
+            ts_ms: command.ts_ms,
+        }))
+        .await?;
+        self.insert_event(NewEventRecord {
+            event_id: Uuid::new_v4().to_string(),
+            ts_ms: command.ts_ms,
+            source: command.run_id.clone(),
+            category: "broker.order.failed".to_string(),
+            payload_json: paper_order_event_payload(
+                &command.run_id,
+                &command.order_id,
+                &command.client_order_id,
+                None,
+                &command.order,
+                Decimal::ZERO,
+                "FAILED",
+                Some(&command.error),
+            )
+            .to_string(),
+        })
+        .await
+    }
+
+    pub async fn record_paper_execution_result(
+        &self,
+        command: PaperExecutionCommand,
+    ) -> StorageResult<()> {
+        self.insert_order(paper_order_record(PaperOrderRecordInput {
+            run_id: &command.run_id,
+            order_id: &command.order_id,
+            client_order_id: &command.client_order_id,
+            broker_order_id: Some(command.broker_order_id.clone()),
+            order: &command.order,
+            filled_qty: command.qty,
+            status: &command.status,
+            ts_ms: command.ts_ms,
+        }))
+        .await?;
+
+        if command.qty > Decimal::ZERO {
+            let symbol = command.order.symbol.clone();
+            let side = order_side(&command.order);
+            self.insert_fill(NewFill {
+                id: command.fill_id,
+                order_id: command.order_id,
+                run_id: command.run_id,
+                symbol,
+                side,
+                price: command.price.to_string(),
+                qty: command.qty.to_string(),
+                fee: command.fee.to_string(),
+                ts_ms: command.ts_ms,
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn record_paper_portfolio_snapshot(
+        &self,
+        command: PaperPortfolioSnapshotCommand,
+    ) -> StorageResult<()> {
+        self.insert_portfolio_snapshot(NewPortfolioSnapshot {
+            id: format!("{}-snapshot-{}", command.run_id, command.ts_ms),
+            run_id: command.run_id,
+            account_id: command.account_id,
+            ts_ms: command.ts_ms,
+            cash: command.cash.to_string(),
+            market_value: command.market_value.to_string(),
+            equity: command.equity.to_string(),
+            realized_pnl: command.realized_pnl.to_string(),
+            unrealized_pnl: command.unrealized_pnl.to_string(),
+        })
+        .await
+    }
+
+    pub async fn complete_paper_run(&self, command: PaperFinalStateCommand) -> StorageResult<()> {
+        self.insert_strategy_run(NewStrategyRun {
+            id: command.run_id.clone(),
+            name: command.strategy_name,
+            mode: "paper".to_string(),
+            status: "completed".to_string(),
+            started_at_ms: command.started_at_ms,
+            ended_at_ms: Some(command.ended_at_ms),
+            error: None,
+            config_json: command.config_json,
+        })
+        .await?;
+
+        self.upsert_account_balance(NewAccountBalance {
+            run_id: command.run_id.clone(),
+            account_id: command.account_id.clone(),
+            asset: command.base_currency,
+            total: command.cash.to_string(),
+            available: command.cash.to_string(),
+            frozen: Decimal::ZERO.to_string(),
+            updated_at_ms: command.ended_at_ms,
+        })
+        .await?;
+
+        self.upsert_position(NewPosition {
+            run_id: command.run_id.clone(),
+            account_id: command.account_id.clone(),
+            symbol: command.symbol,
+            qty: command.position_qty.to_string(),
+            avg_price: command.position_avg_price.to_string(),
+            updated_at_ms: command.ended_at_ms,
+        })
+        .await?;
+
+        self.insert_portfolio_snapshot(NewPortfolioSnapshot {
+            id: format!("{}-snapshot-final", command.run_id),
+            run_id: command.run_id,
+            account_id: command.account_id,
+            ts_ms: command.ended_at_ms,
+            cash: command.cash.to_string(),
+            market_value: command.market_value.to_string(),
+            equity: command.equity.to_string(),
+            realized_pnl: command.realized_pnl.to_string(),
+            unrealized_pnl: command.unrealized_pnl.to_string(),
+        })
+        .await
+    }
+
     pub async fn insert_runtime_events(
         &self,
         source: &str,
@@ -659,6 +1192,36 @@ impl Db {
         .await
     }
 
+    pub async fn record_backtest_filled_execution(
+        &self,
+        command: BacktestFilledExecutionCommand,
+    ) -> StorageResult<()> {
+        self.insert_order(paper_order_record(PaperOrderRecordInput {
+            run_id: &command.run_id,
+            order_id: &command.order_id,
+            client_order_id: &command.order_id,
+            broker_order_id: Some(command.broker_order_id),
+            order: &command.order,
+            filled_qty: command.order.qty,
+            status: "FILLED",
+            ts_ms: command.ts_ms,
+        }))
+        .await?;
+
+        self.insert_fill(NewFill {
+            id: command.fill_id,
+            order_id: command.order_id,
+            run_id: command.run_id,
+            symbol: command.order.symbol.clone(),
+            side: order_side(&command.order),
+            price: command.fill_price.to_string(),
+            qty: command.order.qty.to_string(),
+            fee: command.fee.to_string(),
+            ts_ms: command.ts_ms,
+        })
+        .await
+    }
+
     pub async fn upsert_backtest_position(
         &self,
         position: BacktestPositionRecord,
@@ -670,6 +1233,21 @@ impl Db {
             qty: position.qty,
             avg_price: position.avg_price,
             updated_at_ms: position.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_backtest_position(
+        &self,
+        command: BacktestPositionCommand,
+    ) -> StorageResult<()> {
+        self.upsert_position(NewPosition {
+            run_id: command.run_id,
+            account_id: command.account_id,
+            symbol: command.symbol,
+            qty: command.qty.to_string(),
+            avg_price: command.avg_price.to_string(),
+            updated_at_ms: command.updated_at_ms,
         })
         .await
     }

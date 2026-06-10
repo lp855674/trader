@@ -27,7 +27,7 @@ fn moving_average_cross_rejects_zero_windows() {
 
 #[test]
 fn strategy_registry_creates_moving_average_cross_by_name() {
-    let registry = StrategyRegistry::default();
+    let registry = StrategyRegistry;
     let context = StrategyContext::new(
         "moving_average_cross",
         "US:NASDAQ:AAPL:EQUITY",
@@ -50,7 +50,7 @@ fn strategy_registry_creates_moving_average_cross_by_name() {
 
 #[test]
 fn strategy_registry_rejects_unknown_strategy_name() {
-    let registry = StrategyRegistry::default();
+    let registry = StrategyRegistry;
     let context = StrategyContext::new("unknown", "AAPL", StrategyRuntimeMode::Paper);
 
     let error = match registry.create("unknown", context, 2, 3) {
@@ -76,7 +76,7 @@ fn strategy_context_preserves_runtime_mode_and_symbol() {
 
 #[test]
 fn strategy_registry_assembles_named_static_universe_and_alpha() {
-    let registry = StrategyRegistry::default();
+    let registry = StrategyRegistry;
     let config = StrategyAssemblyConfig {
         strategy_name: "moving_average_cross".to_string(),
         universe_name: "static".to_string(),

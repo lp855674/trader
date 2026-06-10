@@ -1,4 +1,7 @@
-use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, EngineEventKind};
+use algorithm::{
+    AccountingUpdatedPayload, AlgorithmEngine, AlgorithmEngineSettings, AlgorithmOrderPayload,
+    AlphaGeneratedPayload, EngineEventKind, UniverseSelectedPayload,
+};
 use alpha::{AlphaModel, CompositeAlphaModel};
 use data::Bar;
 use events::{EventBus, SignalEvent, SignalSide};
@@ -129,6 +132,53 @@ fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
 
     let event = receiver.try_recv().unwrap();
     assert_eq!(event.source, "run-source");
+}
+
+#[test]
+fn algorithm_payload_structs_serialize_stable_schema_fields() {
+    let order = serde_json::to_value(AlgorithmOrderPayload {
+        run_id: "run-schema".to_string(),
+        broker_order_id: Some("broker-1".to_string()),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        qty: "1".to_string(),
+        filled_qty: "1".to_string(),
+        status: "FILLED".to_string(),
+    })
+    .unwrap();
+    assert_eq!(order["run_id"], serde_json::json!("run-schema"));
+    assert_eq!(order["symbol"], serde_json::json!("US:NASDAQ:AAPL:EQUITY"));
+    assert_eq!(order["status"], serde_json::json!("FILLED"));
+    assert_eq!(order["filled_qty"], serde_json::json!("1"));
+    assert_eq!(order["broker_order_id"], serde_json::json!("broker-1"));
+
+    let accounting = serde_json::to_value(AccountingUpdatedPayload {
+        run_id: "run-schema".to_string(),
+        cash: "99999".to_string(),
+        realized_pnl: "12.5".to_string(),
+    })
+    .unwrap();
+    assert_eq!(accounting["cash"], serde_json::json!("99999"));
+    assert_eq!(accounting["realized_pnl"], serde_json::json!("12.5"));
+
+    let universe = serde_json::to_value(UniverseSelectedPayload {
+        run_id: "run-schema".to_string(),
+        mode: "Paper".to_string(),
+        symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
+    })
+    .unwrap();
+    assert_eq!(universe["run_id"], serde_json::json!("run-schema"));
+
+    let alpha = serde_json::to_value(AlphaGeneratedPayload {
+        run_id: "run-schema".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        confidence: 0.9,
+    })
+    .unwrap();
+    assert_eq!(alpha["symbol"], serde_json::json!("US:NASDAQ:AAPL:EQUITY"));
 }
 
 struct FixedAlphaModel {

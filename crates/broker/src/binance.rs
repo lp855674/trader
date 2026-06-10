@@ -124,10 +124,7 @@ impl BinanceSpotTestnetAdapter {
     }
 
     pub fn new_with_client(settings: BinanceSpotTestnetSettings, client: reqwest::Client) -> Self {
-        Self {
-            settings,
-            client,
-        }
+        Self { settings, client }
     }
 
     pub fn signed_account_request(&self, timestamp_ms: i64) -> BinanceSignedRequest {

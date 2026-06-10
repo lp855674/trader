@@ -1,6 +1,6 @@
 use crate::CancellationFlag;
 use broker::{Broker, BrokerKind, BrokerStatus, FakeBrokerAdapter};
-use storage::{Db, NewEventRecord, NewStrategyRun};
+use storage::{Db, LiveRunCommand, RuntimeEventCommand};
 use tokio::time::{Duration, sleep};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,21 +28,15 @@ impl LiveRuntime {
     pub async fn run(&self, cancel: CancellationFlag) -> anyhow::Result<()> {
         let started_at_ms = chrono::Utc::now().timestamp_millis();
         self.db
-            .insert_strategy_run(NewStrategyRun {
-                id: self.settings.run_id.clone(),
-                name: "live".to_string(),
-                mode: "live".to_string(),
-                status: "running".to_string(),
+            .start_live_run(LiveRunCommand {
+                run_id: self.settings.run_id.clone(),
                 started_at_ms,
-                ended_at_ms: None,
-                error: None,
-                config_json: serde_json::json!({
+                config: serde_json::json!({
                     "broker_kind": self.settings.broker_kind
-                })
-                .to_string(),
+                }),
             })
             .await?;
-        self.insert_event("live.started").await?;
+        self.record_event("live.started").await?;
 
         while !cancel.is_cancelled() {
             sleep(Duration::from_millis(10)).await;
@@ -52,22 +46,20 @@ impl LiveRuntime {
         self.db
             .update_strategy_run_status(&self.settings.run_id, "stopped", Some(ended_at_ms), None)
             .await?;
-        self.insert_event("live.stopped").await?;
+        self.record_event("live.stopped").await?;
         Ok(())
     }
 
-    async fn insert_event(&self, category: &str) -> storage::StorageResult<()> {
+    async fn record_event(&self, category: &str) -> storage::StorageResult<()> {
         self.db
-            .insert_event(NewEventRecord {
-                event_id: uuid::Uuid::new_v4().to_string(),
+            .record_runtime_event(RuntimeEventCommand {
                 ts_ms: chrono::Utc::now().timestamp_millis(),
                 source: self.settings.run_id.clone(),
                 category: category.to_string(),
-                payload_json: serde_json::json!({
+                payload: serde_json::json!({
                     "run_id": &self.settings.run_id,
                     "broker_kind": self.settings.broker_kind
-                })
-                .to_string(),
+                }),
             })
             .await
     }

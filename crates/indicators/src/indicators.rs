@@ -31,10 +31,10 @@ impl SimpleMovingAverage {
     pub fn update(&mut self, value: Decimal) -> Option<Decimal> {
         self.values.push_back(value);
         self.sum += value;
-        if self.values.len() > self.period {
-            if let Some(removed) = self.values.pop_front() {
-                self.sum -= removed;
-            }
+        if self.values.len() > self.period
+            && let Some(removed) = self.values.pop_front()
+        {
+            self.sum -= removed;
         }
         if self.values.len() < self.period {
             return None;

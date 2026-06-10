@@ -127,6 +127,7 @@ Universe Selection
 - Broker 只负责交易通道，不负责风控、仓位管理、策略逻辑、订单拆分或 PnL。
 - SQLite 是交易状态和运行状态真源；Parquet 是历史行情和研究数据真源。
 - API 不直接暴露数据库，不绕过 OMS 下单，不绕过 Risk 控制。
+- SQLite / SQL / `sqlx` 只属于 storage 边界。Backtest、Paper、API、CLI 等边界外生产路径不得构造 storage 写入 DTO，不得透传 `SqlitePool`，写入必须走 storage 暴露的语义 command / repository 方法。
 - 文档单一来源按 `docs/README.md` 执行：API、DB、事件、crate 职责不要在多个文件重复维护。
 
 ## 技术栈
@@ -472,7 +473,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Algorithm 事件 payload 在 Rust 内使用 typed payload struct 构造，再序列化为 `serde_json::Value` 写入 EventBus / SQLite，避免各 runtime 手写漂移的 JSON schema。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。Backtest / Paper runtime 会消费配置中的 `strategy.universe`、`strategy.alpha` 与 `strategy.symbols`，通过 `StrategyRegistry::assemble_alpha` 装配 universe selector 和 alpha model。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。Replay runtime 会读取共享 `ReplayController`，正在运行的 replay loop 会响应 pause、resume、seek 和 speed。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
 
 ## Local Verifiable MVP
 
@@ -481,7 +482,7 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
 - WebSocket：`subscribe` 会先回放 SQLite run events，再转发 `AppState.event_bus` 中 run_id 匹配的 runtime events；`replay_control` 支持 pause/resume/seek/speed。
-- Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store。
+- Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store；storage crate 负责 decimal string、状态字符串、event id、SQLite record shape 等持久化转换。
 - Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
 - Research support：`indicators` 提供 Decimal SMA/EMA 基础指标，`moving_average_cross` 策略已复用 `SimpleMovingAverage`；`feature_store` 提供 Decimal feature record、key 和 in-memory range/latest repository，后续可接 Parquet/SQLite adapter。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。

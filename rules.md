@@ -76,12 +76,16 @@
 ## 7) 验证规范
 
 - 代码改动后至少执行：
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\script\verify.ps1`
-  - Linux/macOS：`bash ./script/verify`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`
+  - Linux/macOS：`bash ./scripts/verify`
   - 至少包含 `cargo check`
-  - `./script/clippy`（不要直接 `cargo clippy`）
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`
+  - Linux/macOS：`bash ./scripts/clippy`
+  - 不要直接 `cargo clippy`
 - 触及 DB 边界时额外执行：
-  - `./script/check-db-boundary` 或 `./script/check-db-boundary.ps1`
+  - `./scripts/check-db-boundary` 或 `./scripts/check-db-boundary.ps1`
+- 触及 storage 写入 DTO、repository command 或持久化调用边界时额外执行：
+  - `./scripts/check-storage-dto-boundary.ps1`
 - 高风险改动（gateway/tools/daemon/db）需要补充风险说明与回滚思路。
 
 ## 8) 风险分级

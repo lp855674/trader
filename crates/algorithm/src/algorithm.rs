@@ -82,6 +82,48 @@ pub struct EngineEvent {
     pub payload: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UniverseSelectedPayload {
+    pub run_id: String,
+    pub mode: String,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AlphaGeneratedPayload {
+    pub run_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortfolioTargetGeneratedPayload {
+    pub run_id: String,
+    pub symbol: String,
+    pub target_qty: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlgorithmOrderPayload {
+    pub run_id: String,
+    pub broker_order_id: Option<String>,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub qty: String,
+    pub filled_qty: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountingUpdatedPayload {
+    pub run_id: String,
+    pub cash: String,
+    pub realized_pnl: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlgorithmDecision {
     pub order_number: usize,
@@ -181,10 +223,10 @@ impl AlgorithmEngine {
         events.push(self.event(
             EngineEventKind::UniverseSelected,
             bar.ts_ms,
-            serde_json::json!({
-                "run_id": self.settings.run_id,
-                "mode": format!("{:?}", self.settings.mode),
-                "symbols": selected
+            payload_value(UniverseSelectedPayload {
+                run_id: self.settings.run_id.clone(),
+                mode: format!("{:?}", self.settings.mode),
+                symbols: selected.clone(),
             }),
         ));
         if !selected
@@ -208,11 +250,11 @@ impl AlgorithmEngine {
         events.push(self.event(
             EngineEventKind::AlphaGenerated,
             bar.ts_ms,
-            serde_json::json!({
-                "run_id": self.settings.run_id,
-                "symbol": signal.symbol,
-                "side": format!("{:?}", signal.side),
-                "confidence": signal.confidence
+            payload_value(AlphaGeneratedPayload {
+                run_id: self.settings.run_id.clone(),
+                symbol: signal.symbol.clone(),
+                side: format!("{:?}", signal.side),
+                confidence: signal.confidence,
             }),
         ));
 
@@ -221,10 +263,10 @@ impl AlgorithmEngine {
         events.push(self.event(
             EngineEventKind::PortfolioTargetGenerated,
             bar.ts_ms,
-            serde_json::json!({
-                "run_id": self.settings.run_id,
-                "symbol": target.symbol,
-                "target_qty": target.target_qty.to_string()
+            payload_value(PortfolioTargetGeneratedPayload {
+                run_id: self.settings.run_id.clone(),
+                symbol: target.symbol.clone(),
+                target_qty: target.target_qty.to_string(),
             }),
         ));
 
@@ -382,10 +424,10 @@ impl AlgorithmEngine {
             self.event(
                 EngineEventKind::AccountingUpdated,
                 ts_ms,
-                serde_json::json!({
-                    "run_id": self.settings.run_id,
-                    "cash": self.account_book.cash().to_string(),
-                    "realized_pnl": self.account_book.realized_pnl().to_string()
+                payload_value(AccountingUpdatedPayload {
+                    run_id: self.settings.run_id.clone(),
+                    cash: self.account_book.cash().to_string(),
+                    realized_pnl: self.account_book.realized_pnl().to_string(),
                 }),
             ),
         ];
@@ -460,15 +502,22 @@ fn order_payload(
     status: &str,
     broker_order_id: Option<&str>,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "run_id": run_id,
-        "broker_order_id": broker_order_id,
-        "account_id": order.account_id,
-        "symbol": order.symbol,
-        "side": format!("{:?}", order.side).to_uppercase(),
-        "order_type": format!("{:?}", order.order_type).to_uppercase(),
-        "qty": order.qty.to_string(),
-        "filled_qty": filled_qty.to_string(),
-        "status": status,
+    payload_value(AlgorithmOrderPayload {
+        run_id: run_id.to_string(),
+        broker_order_id: broker_order_id.map(str::to_string),
+        account_id: order.account_id.clone(),
+        symbol: order.symbol.clone(),
+        side: format!("{:?}", order.side).to_uppercase(),
+        order_type: format!("{:?}", order.order_type).to_uppercase(),
+        qty: order.qty.to_string(),
+        filled_qty: filled_qty.to_string(),
+        status: status.to_string(),
     })
+}
+
+fn payload_value(payload: impl Serialize) -> serde_json::Value {
+    match serde_json::to_value(payload) {
+        Ok(value) => value,
+        Err(_) => serde_json::Value::Object(Default::default()),
+    }
 }

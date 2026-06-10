@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+JOBS="${JOBS:-1}"
+export CARGO_BUILD_JOBS="$JOBS"
+
+cargo clippy --workspace --all-targets -j "$JOBS"

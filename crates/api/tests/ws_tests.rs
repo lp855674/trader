@@ -1,19 +1,18 @@
 use api::{AppState, router_with_state};
 use events::{RuntimeEvent, TraderEvent, envelope};
 use futures::{SinkExt, StreamExt};
-use storage::{Db, NewEventRecord};
+use storage::{Db, RuntimeEventCommand};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
 async fn websocket_subscribe_replays_persisted_run_events() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_event(NewEventRecord {
-        event_id: "event-1".to_string(),
+    db.record_runtime_event(RuntimeEventCommand {
         ts_ms: 1,
         source: "run-a".to_string(),
         category: "paper.completed".to_string(),
-        payload_json: r#"{"orders":1}"#.to_string(),
+        payload: serde_json::json!({ "orders": 1 }),
     })
     .await
     .unwrap();

@@ -5,6 +5,4 @@ param(
 $ErrorActionPreference = "Stop"
 $env:CARGO_BUILD_JOBS = "$Jobs"
 
-cargo fmt --all -- --check
-cargo check --workspace -j $Jobs
-cargo test --workspace -j $Jobs
+cargo clippy --workspace --all-targets -j $Jobs

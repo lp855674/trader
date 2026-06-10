@@ -609,23 +609,19 @@ async fn main() -> Result<()> {
                 client_order_id,
             };
             let started_at_ms = chrono::Utc::now().timestamp_millis();
-            db.insert_strategy_run(storage::NewStrategyRun {
-                id: app_config.runtime.run_id.clone(),
+            db.start_strategy_run(storage::StrategyRunStartCommand {
+                run_id: app_config.runtime.run_id.clone(),
                 name: "binance_paper_tiny_order".to_string(),
                 mode: "paper".to_string(),
-                status: "running".to_string(),
                 started_at_ms,
-                ended_at_ms: None,
-                error: None,
-                config_json: serde_json::json!({
+                config: serde_json::json!({
                     "broker": "binance",
                     "testnet": true,
                     "symbol": symbol,
                     "side": side,
                     "qty": qty,
                     "price": price
-                })
-                .to_string(),
+                }),
             })
             .await?;
             insert_event(
@@ -638,8 +634,8 @@ async fn main() -> Result<()> {
             let placed = adapter.place_limit_order(&order).await?;
             let order_id = format!("{}-binance-{}", app_config.runtime.run_id, placed.order_id);
             let now_ms = chrono::Utc::now().timestamp_millis();
-            db.insert_order(storage::NewOrder {
-                id: order_id.clone(),
+            db.record_external_order(storage::ExternalOrderCommand {
+                order_id: order_id.clone(),
                 run_id: app_config.runtime.run_id.clone(),
                 client_order_id: order.client_order_id.clone(),
                 broker_order_id: Some(placed.order_id.to_string()),
@@ -647,12 +643,11 @@ async fn main() -> Result<()> {
                 symbol: symbol.clone(),
                 side: side.to_ascii_uppercase(),
                 order_type: "LIMIT".to_string(),
-                price: Some(price.clone()),
-                qty: qty.clone(),
-                filled_qty: "0".to_string(),
+                price: Some(Decimal::from_str(&price)?),
+                qty: Decimal::from_str(&qty)?,
+                filled_qty: Decimal::ZERO,
                 status: placed.status.clone(),
-                created_at_ms: now_ms,
-                updated_at_ms: now_ms,
+                ts_ms: now_ms,
             })
             .await?;
             let queried = adapter
@@ -680,7 +675,7 @@ async fn main() -> Result<()> {
             };
             let ended_at_ms = chrono::Utc::now().timestamp_millis();
             for trade in &trades {
-                db.insert_fill(storage::NewFill {
+                db.record_external_fill(storage::ExternalFillCommand {
                     id: format!(
                         "{}-binance-trade-{}",
                         app_config.runtime.run_id, trade.trade_id
@@ -689,9 +684,9 @@ async fn main() -> Result<()> {
                     run_id: app_config.runtime.run_id.clone(),
                     symbol: trade.symbol.clone(),
                     side: side.to_ascii_uppercase(),
-                    price: trade.price.to_string(),
-                    qty: trade.qty.to_string(),
-                    fee: trade.fee.to_string(),
+                    price: trade.price,
+                    qty: trade.qty,
+                    fee: trade.fee,
                     ts_ms: trade.ts_ms,
                 })
                 .await?;
@@ -709,11 +704,11 @@ async fn main() -> Result<()> {
                     &all_fills,
                     ended_at_ms,
                 )?;
-                db.upsert_account_balance(accounting.balance).await?;
+                db.record_account_balance(accounting.balance).await?;
                 if let Some(position) = accounting.position {
-                    db.upsert_position(position).await?;
+                    db.record_position(position).await?;
                 }
-                db.insert_portfolio_snapshot(accounting.snapshot).await?;
+                db.record_portfolio_snapshot(accounting.snapshot).await?;
             }
             db.update_order_execution_by_broker_id(
                 &app_config.runtime.run_id,
@@ -895,15 +890,12 @@ async fn main() -> Result<()> {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
             let started_at_ms = chrono::Utc::now().timestamp_millis();
-            db.insert_strategy_run(storage::NewStrategyRun {
-                id: app_config.runtime.run_id.clone(),
+            db.start_strategy_run(storage::StrategyRunStartCommand {
+                run_id: app_config.runtime.run_id.clone(),
                 name: app_config.strategy.name.clone(),
                 mode: "replay".to_string(),
-                status: "running".to_string(),
                 started_at_ms,
-                ended_at_ms: None,
-                error: None,
-                config_json: "{}".to_string(),
+                config: serde_json::json!({}),
             })
             .await?;
             insert_event(&db, &app_config.runtime.run_id, "replay.started", "{}").await?;
@@ -1281,10 +1273,10 @@ fn write_binance_klines(
     format: KlineOutputFormat,
 ) -> Result<()> {
     let output = output.as_ref();
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     match format {
         KlineOutputFormat::Parquet => {
@@ -1320,9 +1312,9 @@ fn write_binance_klines_csv(
 }
 
 struct BinanceAccountingRecords {
-    balance: storage::NewAccountBalance,
-    position: Option<storage::NewPosition>,
-    snapshot: storage::NewPortfolioSnapshot,
+    balance: storage::AccountBalanceCommand,
+    position: Option<storage::PositionCommand>,
+    snapshot: storage::PortfolioSnapshotCommand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1378,15 +1370,15 @@ async fn recover_binance_paper_orders(
         let filled_qty = binance_filled_qty(&trades, queried.executed_qty);
         let ended_at_ms = chrono::Utc::now().timestamp_millis();
         for trade in &trades {
-            db.insert_fill(storage::NewFill {
+            db.record_external_fill(storage::ExternalFillCommand {
                 id: format!("{run_id}-binance-trade-{}", trade.trade_id),
                 order_id: order.id.clone(),
                 run_id: run_id.clone(),
                 symbol: trade.symbol.clone(),
                 side: order.side.clone(),
-                price: trade.price.to_string(),
-                qty: trade.qty.to_string(),
-                fee: trade.fee.to_string(),
+                price: trade.price,
+                qty: trade.qty,
+                fee: trade.fee,
                 ts_ms: trade.ts_ms,
             })
             .await?;
@@ -1412,30 +1404,31 @@ async fn recover_binance_paper_orders(
                 &all_fills,
                 ended_at_ms,
             )?;
-            db.upsert_account_balance(accounting.balance).await?;
+            db.record_account_balance(accounting.balance).await?;
             if let Some(position) = accounting.position {
-                db.upsert_position(position).await?;
+                db.record_position(position).await?;
             }
-            db.insert_portfolio_snapshot(accounting.snapshot).await?;
+            db.record_portfolio_snapshot(accounting.snapshot).await?;
         }
         summary.recovered += 1;
         summary.trades += trades.len();
     }
 
     summary.remaining = db.list_recoverable_orders(run_id).await?.len();
-    if summary.scanned > 0 && summary.missing == 0 && summary.remaining == 0 {
-        if let Some(run) = db.get_strategy_run(run_id).await? {
-            if run.status != "completed" {
-                db.update_strategy_run_status(
-                    run_id,
-                    "recovered",
-                    Some(chrono::Utc::now().timestamp_millis()),
-                    None,
-                )
-                .await?;
-                summary.run_status_updated = true;
-            }
-        }
+    if summary.scanned > 0
+        && summary.missing == 0
+        && summary.remaining == 0
+        && let Some(run) = db.get_strategy_run(run_id).await?
+        && run.status != "completed"
+    {
+        db.update_strategy_run_status(
+            run_id,
+            "recovered",
+            Some(chrono::Utc::now().timestamp_millis()),
+            None,
+        )
+        .await?;
+        summary.run_status_updated = true;
     }
     Ok(summary)
 }
@@ -1495,15 +1488,15 @@ async fn recover_ibkr_paper_orders(
         let status = ibkr_recovered_order_status(&order, open_order, filled_qty)?;
         let ended_at_ms = chrono::Utc::now().timestamp_millis();
         for execution in &matched_executions {
-            db.insert_fill(storage::NewFill {
+            db.record_external_fill(storage::ExternalFillCommand {
                 id: format!("{run_id}-ibkr-trade-{}", execution.trade_id),
                 order_id: order.id.clone(),
                 run_id: run_id.clone(),
                 symbol: execution.symbol.clone(),
                 side: execution.side.clone(),
-                price: execution.price.to_string(),
-                qty: execution.qty.to_string(),
-                fee: execution.fee.to_string(),
+                price: execution.price,
+                qty: execution.qty,
+                fee: execution.fee,
                 ts_ms: ended_at_ms,
             })
             .await?;
@@ -1523,19 +1516,20 @@ async fn recover_ibkr_paper_orders(
     }
 
     summary.remaining = db.list_recoverable_orders(run_id).await?.len();
-    if summary.scanned > 0 && summary.missing == 0 && summary.remaining == 0 {
-        if let Some(run) = db.get_strategy_run(run_id).await? {
-            if run.status != "completed" {
-                db.update_strategy_run_status(
-                    run_id,
-                    "recovered",
-                    Some(chrono::Utc::now().timestamp_millis()),
-                    None,
-                )
-                .await?;
-                summary.run_status_updated = true;
-            }
-        }
+    if summary.scanned > 0
+        && summary.missing == 0
+        && summary.remaining == 0
+        && let Some(run) = db.get_strategy_run(run_id).await?
+        && run.status != "completed"
+    {
+        db.update_strategy_run_status(
+            run_id,
+            "recovered",
+            Some(chrono::Utc::now().timestamp_millis()),
+            None,
+        )
+        .await?;
+        summary.run_status_updated = true;
     }
     Ok(summary)
 }
@@ -1791,33 +1785,33 @@ fn binance_accounting_records_from_fills(
     let market_value = signed_qty * avg_price;
 
     Ok(BinanceAccountingRecords {
-        balance: storage::NewAccountBalance {
+        balance: storage::AccountBalanceCommand {
             run_id: run_id.to_string(),
             account_id: account_id.to_string(),
             asset: base_currency.to_string(),
-            total: cash.to_string(),
-            available: cash.to_string(),
-            frozen: Decimal::ZERO.to_string(),
+            total: cash,
+            available: cash,
+            frozen: Decimal::ZERO,
             updated_at_ms,
         },
-        position: (!fills.is_empty()).then(|| storage::NewPosition {
+        position: (!fills.is_empty()).then(|| storage::PositionCommand {
             run_id: run_id.to_string(),
             account_id: account_id.to_string(),
             symbol: symbol.clone(),
-            qty: signed_qty.to_string(),
-            avg_price: avg_price.to_string(),
+            qty: signed_qty,
+            avg_price,
             updated_at_ms,
         }),
-        snapshot: storage::NewPortfolioSnapshot {
+        snapshot: storage::PortfolioSnapshotCommand {
             id: format!("{run_id}-binance-snapshot-{updated_at_ms}"),
             run_id: run_id.to_string(),
             account_id: account_id.to_string(),
             ts_ms: updated_at_ms,
-            cash: cash.to_string(),
-            market_value: market_value.to_string(),
-            equity: (cash + market_value).to_string(),
-            realized_pnl: Decimal::ZERO.to_string(),
-            unrealized_pnl: Decimal::ZERO.to_string(),
+            cash,
+            market_value,
+            equity: cash + market_value,
+            realized_pnl: Decimal::ZERO,
+            unrealized_pnl: Decimal::ZERO,
         },
     })
 }
@@ -1828,15 +1822,105 @@ async fn insert_event(
     category: &str,
     payload_json: &str,
 ) -> Result<()> {
-    db.insert_event(storage::NewEventRecord {
-        event_id: uuid::Uuid::new_v4().to_string(),
+    let payload = serde_json::from_str(payload_json)
+        .unwrap_or_else(|_| serde_json::Value::String(payload_json.to_string()));
+    db.record_runtime_event(storage::RuntimeEventCommand {
         ts_ms: chrono::Utc::now().timestamp_millis(),
         source: source.to_string(),
         category: category.to_string(),
-        payload_json: payload_json.to_string(),
+        payload,
     })
     .await?;
     Ok(())
+}
+
+async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {
+    let app_config = config::AppConfig::from_toml_file(config_path)?;
+    ensure_database_parent(&app_config.database.url)?;
+    let db = storage::Db::connect(&app_config.database.url).await?;
+    Ok((app_config, db))
+}
+
+fn ensure_database_parent(database_url: &str) -> Result<()> {
+    let Some(path) = sqlite_file_path(database_url) else {
+        return Ok(());
+    };
+    if let Some(parent) = std::path::Path::new(path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn sqlite_file_path(database_url: &str) -> Option<&str> {
+    if database_url == "sqlite::memory:" || database_url == "sqlite://:memory:" {
+        return None;
+    }
+    database_url
+        .strip_prefix("sqlite://")
+        .or_else(|| database_url.strip_prefix("sqlite:"))
+}
+
+fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings> {
+    Ok(BacktestSettings {
+        run_id: app_config.runtime.run_id.clone(),
+        strategy_name: app_config.strategy.name.clone(),
+        universe_name: app_config.strategy.universe.clone(),
+        alpha_name: app_config.strategy.alpha.clone(),
+        symbols: app_config.strategy.symbols.clone(),
+        symbol: app_config
+            .strategy
+            .symbols
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
+        account_id: "backtest".to_string(),
+        order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
+        max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
+        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
+        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
+        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
+        trading_halted: app_config.risk.trading_halted,
+        initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        fast_window: app_config.strategy.fast_window,
+        slow_window: app_config.strategy.slow_window,
+    })
+}
+
+fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
+    Ok(PaperSettings {
+        run_id: app_config.runtime.run_id.clone(),
+        strategy_name: app_config.strategy.name.clone(),
+        universe_name: app_config.strategy.universe.clone(),
+        alpha_name: app_config.strategy.alpha.clone(),
+        symbols: app_config.strategy.symbols.clone(),
+        symbol: app_config
+            .strategy
+            .symbols
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
+        account_id: app_config.paper.account_id.clone(),
+        order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
+        max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+        max_order_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
+        max_order_notional: Decimal::from_str(&app_config.risk.max_order_notional)?,
+        min_cash_after_order: Decimal::from_str(&app_config.risk.min_cash_after_order)?,
+        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
+        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
+        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
+        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
+        trading_halted: app_config.risk.trading_halted,
+        initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        base_currency: app_config.portfolio.base_currency.clone(),
+        slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
+        fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,
+        fast_window: app_config.strategy.fast_window,
+        slow_window: app_config.strategy.slow_window,
+        bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
+    })
 }
 
 #[cfg(test)]
@@ -1887,13 +1971,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(records.balance.total, "9936.17961");
+        assert_eq!(records.balance.total, dec!(9936.17961));
         let position = records.position.unwrap();
         assert_eq!(position.symbol, "BTCUSDT");
-        assert_eq!(position.qty, "0.001");
-        assert_eq!(position.avg_price, "63820.39");
-        assert_eq!(records.snapshot.market_value, "63.82039");
-        assert_eq!(records.snapshot.equity, "10000.00000");
+        assert_eq!(position.qty, dec!(0.001));
+        assert_eq!(position.avg_price, dec!(63820.39));
+        assert_eq!(records.snapshot.market_value, dec!(63.82039));
+        assert_eq!(records.snapshot.equity, dec!(10000.00000));
     }
 
     #[test]
@@ -1934,9 +2018,9 @@ mod tests {
         .unwrap();
 
         let position = records.position.unwrap();
-        assert_eq!(position.qty, "0.002");
-        assert_eq!(position.avg_price, "63890.1950");
-        assert_eq!(records.snapshot.market_value, "127.7803900");
+        assert_eq!(position.qty, dec!(0.002));
+        assert_eq!(position.avg_price, dec!(63890.1950));
+        assert_eq!(records.snapshot.market_value, dec!(127.7803900));
     }
 
     #[test]
@@ -2215,87 +2299,4 @@ mod tests {
             updated_at_ms: 1,
         }
     }
-}
-
-async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {
-    let app_config = config::AppConfig::from_toml_file(config_path)?;
-    ensure_database_parent(&app_config.database.url)?;
-    let db = storage::Db::connect(&app_config.database.url).await?;
-    Ok((app_config, db))
-}
-
-fn ensure_database_parent(database_url: &str) -> Result<()> {
-    let Some(path) = sqlite_file_path(database_url) else {
-        return Ok(());
-    };
-    if let Some(parent) = std::path::Path::new(path).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(())
-}
-
-fn sqlite_file_path(database_url: &str) -> Option<&str> {
-    if database_url == "sqlite::memory:" || database_url == "sqlite://:memory:" {
-        return None;
-    }
-    database_url
-        .strip_prefix("sqlite://")
-        .or_else(|| database_url.strip_prefix("sqlite:"))
-}
-
-fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings> {
-    Ok(BacktestSettings {
-        run_id: app_config.runtime.run_id.clone(),
-        strategy_name: app_config.strategy.name.clone(),
-        symbol: app_config
-            .strategy
-            .symbols
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
-        account_id: "backtest".to_string(),
-        order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
-        max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
-        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
-        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
-        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
-        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
-        trading_halted: app_config.risk.trading_halted,
-        initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
-        fast_window: app_config.strategy.fast_window,
-        slow_window: app_config.strategy.slow_window,
-    })
-}
-
-fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
-    Ok(PaperSettings {
-        run_id: app_config.runtime.run_id.clone(),
-        strategy_name: app_config.strategy.name.clone(),
-        symbol: app_config
-            .strategy
-            .symbols
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string()),
-        account_id: app_config.paper.account_id.clone(),
-        order_qty: Decimal::from_str(&app_config.portfolio.order_qty)?,
-        max_abs_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
-        max_order_qty: Decimal::from_str(&app_config.portfolio.max_abs_qty)?,
-        max_order_notional: Decimal::from_str(&app_config.risk.max_order_notional)?,
-        min_cash_after_order: Decimal::from_str(&app_config.risk.min_cash_after_order)?,
-        max_exposure: Decimal::from_str(&app_config.risk.max_exposure)?,
-        max_drawdown: Decimal::from_str(&app_config.risk.max_drawdown)?,
-        max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
-        max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
-        trading_halted: app_config.risk.trading_halted,
-        initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
-        base_currency: app_config.portfolio.base_currency.clone(),
-        slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
-        fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,
-        fast_window: app_config.strategy.fast_window,
-        slow_window: app_config.strategy.slow_window,
-        bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
-    })
 }

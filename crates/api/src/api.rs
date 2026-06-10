@@ -66,6 +66,71 @@ struct PaperPreflightResponse {
     order_submit_enabled: bool,
 }
 
+#[derive(Serialize)]
+struct OrderResponse {
+    id: String,
+    run_id: String,
+    client_order_id: String,
+    broker_order_id: Option<String>,
+    account_id: String,
+    symbol: String,
+    side: String,
+    order_type: String,
+    price: Option<String>,
+    qty: String,
+    filled_qty: String,
+    status: String,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct FillResponse {
+    id: String,
+    order_id: String,
+    run_id: String,
+    symbol: String,
+    side: String,
+    price: String,
+    qty: String,
+    fee: String,
+    ts_ms: i64,
+}
+
+#[derive(Serialize)]
+struct PositionResponse {
+    run_id: String,
+    account_id: String,
+    symbol: String,
+    qty: String,
+    avg_price: String,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct AccountBalanceResponse {
+    run_id: String,
+    account_id: String,
+    asset: String,
+    total: String,
+    available: String,
+    frozen: String,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct PortfolioSnapshotResponse {
+    id: String,
+    run_id: String,
+    account_id: String,
+    ts_ms: i64,
+    cash: String,
+    market_value: String,
+    equity: String,
+    realized_pnl: String,
+    unrealized_pnl: String,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -212,15 +277,12 @@ async fn run_paper(
 
     state
         .db
-        .insert_strategy_run(storage::NewStrategyRun {
-            id: settings.run_id.clone(),
+        .start_strategy_run(storage::StrategyRunStartCommand {
+            run_id: settings.run_id.clone(),
             name: settings.strategy_name.clone(),
             mode: "paper".to_string(),
-            status: "running".to_string(),
             started_at_ms,
-            ended_at_ms: None,
-            error: None,
-            config_json: "{}".to_string(),
+            config: serde_json::json!({}),
         })
         .await?;
     insert_event(
@@ -305,15 +367,12 @@ async fn run_replay(
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     state
         .db
-        .insert_strategy_run(storage::NewStrategyRun {
-            id: app_config.runtime.run_id.clone(),
+        .start_strategy_run(storage::StrategyRunStartCommand {
+            run_id: app_config.runtime.run_id.clone(),
             name: app_config.strategy.name.clone(),
             mode: "replay".to_string(),
-            status: "running".to_string(),
             started_at_ms,
-            ended_at_ms: None,
-            error: None,
-            config_json: "{}".to_string(),
+            config: serde_json::json!({}),
         })
         .await?;
     let replay_controller = Arc::new(Mutex::new(ReplayController::new(
@@ -405,53 +464,120 @@ async fn stop_live_run(
     get_run_status(State(state), Path(run_id)).await
 }
 
-async fn list_orders(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<storage::NewOrder>>, ApiError> {
+async fn list_orders(State(state): State<AppState>) -> Result<Json<Vec<OrderResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    Ok(Json(
-        state.db.list_orders(&app_config.runtime.run_id).await?,
-    ))
+    let orders = state
+        .db
+        .list_orders(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|order| OrderResponse {
+            id: order.id,
+            run_id: order.run_id,
+            client_order_id: order.client_order_id,
+            broker_order_id: order.broker_order_id,
+            account_id: order.account_id,
+            symbol: order.symbol,
+            side: order.side,
+            order_type: order.order_type,
+            price: order.price,
+            qty: order.qty,
+            filled_qty: order.filled_qty,
+            status: order.status,
+            created_at_ms: order.created_at_ms,
+            updated_at_ms: order.updated_at_ms,
+        })
+        .collect();
+    Ok(Json(orders))
 }
 
-async fn list_fills(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<storage::NewFill>>, ApiError> {
+async fn list_fills(State(state): State<AppState>) -> Result<Json<Vec<FillResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    Ok(Json(state.db.list_fills(&app_config.runtime.run_id).await?))
+    let fills = state
+        .db
+        .list_fills(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|fill| FillResponse {
+            id: fill.id,
+            order_id: fill.order_id,
+            run_id: fill.run_id,
+            symbol: fill.symbol,
+            side: fill.side,
+            price: fill.price,
+            qty: fill.qty,
+            fee: fill.fee,
+            ts_ms: fill.ts_ms,
+        })
+        .collect();
+    Ok(Json(fills))
 }
 
 async fn list_positions(
     State(state): State<AppState>,
-) -> Result<Json<Vec<storage::NewPosition>>, ApiError> {
+) -> Result<Json<Vec<PositionResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    Ok(Json(
-        state.db.list_positions(&app_config.runtime.run_id).await?,
-    ))
+    let positions = state
+        .db
+        .list_positions(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|position| PositionResponse {
+            run_id: position.run_id,
+            account_id: position.account_id,
+            symbol: position.symbol,
+            qty: position.qty,
+            avg_price: position.avg_price,
+            updated_at_ms: position.updated_at_ms,
+        })
+        .collect();
+    Ok(Json(positions))
 }
 
 async fn list_account_balances(
     State(state): State<AppState>,
-) -> Result<Json<Vec<storage::NewAccountBalance>>, ApiError> {
+) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    Ok(Json(
-        state
-            .db
-            .list_account_balances(&app_config.runtime.run_id)
-            .await?,
-    ))
+    let balances = state
+        .db
+        .list_account_balances(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|balance| AccountBalanceResponse {
+            run_id: balance.run_id,
+            account_id: balance.account_id,
+            asset: balance.asset,
+            total: balance.total,
+            available: balance.available,
+            frozen: balance.frozen,
+            updated_at_ms: balance.updated_at_ms,
+        })
+        .collect();
+    Ok(Json(balances))
 }
 
 async fn list_portfolio_snapshots(
     State(state): State<AppState>,
-) -> Result<Json<Vec<storage::NewPortfolioSnapshot>>, ApiError> {
+) -> Result<Json<Vec<PortfolioSnapshotResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    Ok(Json(
-        state
-            .db
-            .list_portfolio_snapshots(&app_config.runtime.run_id)
-            .await?,
-    ))
+    let snapshots = state
+        .db
+        .list_portfolio_snapshots(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|snapshot| PortfolioSnapshotResponse {
+            id: snapshot.id,
+            run_id: snapshot.run_id,
+            account_id: snapshot.account_id,
+            ts_ms: snapshot.ts_ms,
+            cash: snapshot.cash,
+            market_value: snapshot.market_value,
+            equity: snapshot.equity,
+            realized_pnl: snapshot.realized_pnl,
+            unrealized_pnl: snapshot.unrealized_pnl,
+        })
+        .collect();
+    Ok(Json(snapshots))
 }
 
 async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSummary>, ApiError> {
@@ -609,12 +735,13 @@ async fn insert_event(
     category: &str,
     payload_json: &str,
 ) -> storage::StorageResult<()> {
-    db.insert_event(storage::NewEventRecord {
-        event_id: uuid::Uuid::new_v4().to_string(),
+    let payload = serde_json::from_str(payload_json)
+        .unwrap_or_else(|_| serde_json::Value::String(payload_json.to_string()));
+    db.record_runtime_event(storage::RuntimeEventCommand {
         ts_ms: chrono::Utc::now().timestamp_millis(),
         source: source.to_string(),
         category: category.to_string(),
-        payload_json: payload_json.to_string(),
+        payload,
     })
     .await
 }
@@ -646,6 +773,9 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
     Ok(BacktestSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        universe_name: app_config.strategy.universe.clone(),
+        alpha_name: app_config.strategy.alpha.clone(),
+        symbols: app_config.strategy.symbols.clone(),
         symbol: app_config
             .strategy
             .symbols
@@ -670,6 +800,9 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
     Ok(PaperSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        universe_name: app_config.strategy.universe.clone(),
+        alpha_name: app_config.strategy.alpha.clone(),
+        symbols: app_config.strategy.symbols.clone(),
         symbol: app_config
             .strategy
             .symbols

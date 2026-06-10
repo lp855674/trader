@@ -1,14 +1,15 @@
 #![forbid(unsafe_code)]
 
-use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, EngineEvent, ExecutionReport};
+use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, ExecutionReport};
 use data::Bar;
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use storage::{
-    BacktestCompletedRun, BacktestExecutionRecord, BacktestPositionRecord, Db, StoredRuntimeEvent,
+    BacktestCompletedRun, BacktestFilledExecutionCommand, BacktestPositionCommand, Db,
+    RuntimeEventCommand,
 };
-use strategies::{StrategyContext, StrategyRegistry, StrategyRuntimeMode};
+use strategies::{StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
@@ -20,6 +21,9 @@ pub struct BacktestSummary {
 pub struct BacktestSettings {
     pub run_id: String,
     pub strategy_name: String,
+    pub universe_name: String,
+    pub alpha_name: String,
+    pub symbols: Vec<String>,
     pub symbol: String,
     pub account_id: String,
     pub order_qty: Decimal,
@@ -39,6 +43,9 @@ impl BacktestSettings {
         Self {
             run_id: "sample-ma-cross".to_string(),
             strategy_name: "moving_average_cross".to_string(),
+            universe_name: "static".to_string(),
+            alpha_name: "moving_average_cross".to_string(),
+            symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
             symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
             account_id: "backtest".to_string(),
             order_qty: Decimal::ONE,
@@ -52,6 +59,13 @@ impl BacktestSettings {
             fast_window: 2,
             slow_window: 3,
         }
+    }
+
+    fn assembly_symbols(&self) -> Vec<String> {
+        if self.symbols.iter().any(|symbol| symbol == &self.symbol) {
+            return self.symbols.clone();
+        }
+        vec![self.symbol.clone()]
     }
 }
 
@@ -78,22 +92,23 @@ impl BacktestRuntime {
 
     pub async fn run(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
         let registry = StrategyRegistry;
-        let strategy = registry.create_alpha(
-            &self.settings.strategy_name,
-            StrategyContext::new(
-                self.settings.strategy_name.clone(),
-                self.settings.symbol.clone(),
-                StrategyRuntimeMode::Backtest,
-            ),
-            self.settings.fast_window,
-            self.settings.slow_window,
+        let assembly = registry.assemble_alpha(
+            StrategyAssemblyConfig {
+                strategy_name: self.settings.strategy_name.clone(),
+                universe_name: self.settings.universe_name.clone(),
+                alpha_name: self.settings.alpha_name.clone(),
+                symbols: self.settings.assembly_symbols(),
+                fast_window: self.settings.fast_window,
+                slow_window: self.settings.slow_window,
+            },
+            StrategyRuntimeMode::Backtest,
         )?;
-        let mut engine = AlgorithmEngine::new(
+        let mut engine = AlgorithmEngine::new_with_universe(
             AlgorithmEngineSettings {
                 run_id: self.settings.run_id.clone(),
                 mode: StrategyRuntimeMode::Backtest,
                 account_id: self.settings.account_id.clone(),
-                symbol: self.settings.symbol.clone(),
+                symbol: assembly.primary_symbol.clone(),
                 order_qty: self.settings.order_qty,
                 max_abs_qty: self.settings.max_abs_qty,
                 max_order_qty: self.settings.max_abs_qty,
@@ -106,7 +121,8 @@ impl BacktestRuntime {
                 trading_halted: self.settings.trading_halted,
                 initial_cash: self.settings.initial_equity,
             },
-            strategy,
+            Box::new(assembly.universe),
+            assembly.alpha,
         );
         if let Some(event_bus) = &self.event_bus {
             engine.set_event_bus(event_bus.clone());
@@ -140,29 +156,16 @@ impl BacktestRuntime {
                 )?;
 
                 if let Some(db) = &self.db {
-                    db.insert_runtime_events(
-                        &self.settings.run_id,
-                        &stored_runtime_events(&decision.events),
-                    )
-                    .await?;
-                    db.insert_runtime_events(
-                        &self.settings.run_id,
-                        &stored_runtime_events(&execution.events),
-                    )
-                    .await?;
-                    db.insert_filled_backtest_execution(BacktestExecutionRecord {
+                    record_runtime_events(db, &self.settings.run_id, &decision.events).await?;
+                    record_runtime_events(db, &self.settings.run_id, &execution.events).await?;
+                    db.record_backtest_filled_execution(BacktestFilledExecutionCommand {
                         run_id: self.settings.run_id.clone(),
                         order_id: decision.order_id,
                         fill_id: decision.fill_id,
                         broker_order_id,
-                        account_id: order.account_id.clone(),
-                        symbol: order.symbol.clone(),
-                        side: format!("{:?}", order.side).to_uppercase(),
-                        order_type: format!("{:?}", order.order_type).to_uppercase(),
-                        price: order.price.map(|price| price.to_string()),
-                        qty: order.qty.to_string(),
-                        fill_price: bar.close.to_string(),
-                        fee: Decimal::ZERO.to_string(),
+                        order,
+                        fill_price: bar.close,
+                        fee: Decimal::ZERO,
                         ts_ms: bar.ts_ms,
                     })
                     .await?;
@@ -183,12 +186,12 @@ impl BacktestRuntime {
 
             let snapshot = engine.snapshot(last_close)?;
             if snapshot.position_qty != Decimal::ZERO {
-                db.upsert_backtest_position(BacktestPositionRecord {
+                db.record_backtest_position(BacktestPositionCommand {
                     run_id: self.settings.run_id.clone(),
                     account_id: self.settings.account_id.clone(),
-                    symbol: self.settings.symbol.clone(),
-                    qty: snapshot.position_qty.to_string(),
-                    avg_price: snapshot.position_avg_price.to_string(),
+                    symbol: self.primary_symbol(),
+                    qty: snapshot.position_qty,
+                    avg_price: snapshot.position_avg_price,
                     updated_at_ms: ended_at_ms,
                 })
                 .await?;
@@ -197,17 +200,31 @@ impl BacktestRuntime {
 
         Ok(BacktestSummary { signals, orders })
     }
+
+    fn primary_symbol(&self) -> String {
+        self.settings
+            .assembly_symbols()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| self.settings.symbol.clone())
+    }
 }
 
-fn stored_runtime_events(events: &[EngineEvent]) -> Vec<StoredRuntimeEvent> {
-    events
-        .iter()
-        .map(|event| StoredRuntimeEvent {
+async fn record_runtime_events(
+    db: &Db,
+    source: &str,
+    events: &[algorithm::EngineEvent],
+) -> anyhow::Result<()> {
+    for event in events {
+        db.record_runtime_event(RuntimeEventCommand {
+            source: source.to_string(),
             ts_ms: event.ts_ms,
             category: event.category.clone(),
-            payload_json: event.payload.to_string(),
+            payload: event.payload.clone(),
         })
-        .collect()
+        .await?;
+    }
+    Ok(())
 }
 
 impl Default for BacktestSettings {

@@ -56,10 +56,10 @@ impl Db {
         let result = sqlx::query("ALTER TABLE strategy_runs ADD COLUMN error TEXT")
             .execute(&self.pool)
             .await;
-        if let Err(error) = result {
-            if !is_duplicate_column_error(&error) {
-                return Err(error.into());
-            }
+        if let Err(error) = result
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
         }
         Ok(())
     }

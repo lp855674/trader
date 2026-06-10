@@ -117,6 +117,29 @@ async fn paper_runtime_rejects_drawdown_above_limit() {
 }
 
 #[tokio::test]
+async fn paper_runtime_uses_configured_universe_and_alpha_names() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.universe_name = "unknown_universe".to_string();
+    let bars = vec![Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1))];
+
+    let error = PaperRuntime::new(db.clone(), settings)
+        .run_bars(bars.clone())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown universe"));
+
+    let mut settings = PaperSettings::sample();
+    settings.alpha_name = "unknown_alpha".to_string();
+    let error = PaperRuntime::new(db, settings)
+        .run_bars(bars)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown strategy unknown_alpha"));
+}
+
+#[tokio::test]
 async fn paper_runtime_can_use_injected_order_executor() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
