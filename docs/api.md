@@ -44,6 +44,23 @@ POST /api/v1/replay/{run_id}/speed/{speed}
 GET  /ws
 ```
 
+REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
+
+```json
+[
+  {
+    "event_id": "01890f0e-d8b1-7cc6-94f4-8f9f0f7f0a11",
+    "ts_ms": 1700000000000,
+    "source": "sample-ma-cross",
+    "category": "algorithm.alpha.generated",
+    "payload": {
+      "run_id": "sample-ma-cross",
+      "symbol": "AAPL"
+    }
+  }
+]
+```
+
 WebSocket 当前支持：
 
 ```text
@@ -563,7 +580,7 @@ GET /api/v1/runs/{run_id}
     "final_cash": "10200",
     "final_equity": "10820.5",
     "base_currency": "USDT",
-    "config_json": {},
+    "config": {},
     "params_json": {},
     "git_commit": "abc123",
     "engine_version": "0.1.0"

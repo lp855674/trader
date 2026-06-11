@@ -16,6 +16,23 @@ fn loads_config_from_file() {
 }
 
 #[test]
+fn loads_multi_symbol_backtest_config_from_file() {
+    let config =
+        AppConfig::from_toml_file("../../configs/backtest/multi_symbol_ma_cross.toml").unwrap();
+
+    assert_eq!(config.runtime.mode, RuntimeMode::Backtest);
+    assert_eq!(config.runtime.run_id, "sample-multi-symbol-ma-cross");
+    assert_eq!(config.data.inputs.len(), 2);
+    assert_eq!(config.data.inputs[0].source, "csv");
+    assert_eq!(config.data.inputs[0].path, "datasets/sample/aapl_1d.csv");
+    assert_eq!(config.data.inputs[1].symbol, "US:NASDAQ:MSFT:EQUITY");
+    assert_eq!(
+        config.strategy.symbols,
+        vec!["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+    );
+}
+
+#[test]
 fn loads_binance_parquet_paper_config_from_file() {
     let config =
         AppConfig::from_toml_file("../../configs/paper/binance_btcusdt_1m_parquet.toml").unwrap();

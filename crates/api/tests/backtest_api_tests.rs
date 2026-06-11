@@ -105,6 +105,70 @@ async fn post_backtest_persists_lifecycle_events() {
 }
 
 #[tokio::test]
+async fn post_backtest_runs_multi_symbol_data_inputs() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let config_path = write_multi_symbol_config("api-backtest-multi-symbol", "backtest");
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(
+        db.clone(),
+        config_path.to_string_lossy().into_owned(),
+    ));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(summary["orders"], 2);
+    let positions = db
+        .list_positions("api-backtest-multi-symbol")
+        .await
+        .unwrap();
+    assert_eq!(positions.len(), 2);
+}
+
+#[tokio::test]
+async fn post_paper_run_runs_multi_symbol_data_inputs() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let config_path = write_multi_symbol_config("api-paper-multi-symbol", "paper");
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(
+        db.clone(),
+        config_path.to_string_lossy().into_owned(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/paper-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    wait_for_status(app, "api-paper-multi-symbol", "completed").await;
+    let orders = db.list_orders("api-paper-multi-symbol").await.unwrap();
+    assert_eq!(orders.len(), 2);
+    let positions = db.list_positions("api-paper-multi-symbol").await.unwrap();
+    assert_eq!(positions.len(), 2);
+}
+
+#[tokio::test]
 async fn post_replay_returns_created_and_persists_events() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -153,6 +217,83 @@ async fn post_replay_returns_created_and_persists_events() {
                 .any(|window| window == b"replay.completed")
         );
     }
+}
+
+#[tokio::test]
+async fn event_routes_return_structured_payload_objects() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/runs/sample-ma-cross/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let events: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let first = events.as_array().unwrap().first().unwrap();
+    assert!(first.get("payload_json").is_none());
+    assert!(first.get("payload").unwrap().is_object());
+}
+
+#[tokio::test]
+async fn run_routes_return_structured_config_objects() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/runs/sample-ma-cross")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let run: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(run.get("config_json").is_none());
+    assert!(run.get("config").unwrap().is_object());
 }
 
 #[tokio::test]
@@ -631,6 +772,99 @@ fn temp_config_with_enabled_broker_submit() -> PathBuf {
     );
     std::fs::write(&path, content).unwrap();
     path
+}
+
+fn write_multi_symbol_config(run_id: &str, runtime_mode: &str) -> PathBuf {
+    let aapl_path = temp_path("api-aapl", "csv");
+    let msft_path = temp_path("api-msft", "csv");
+    std::fs::write(
+        &aapl_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &msft_path,
+        "ts_ms,open,high,low,close,volume\n1,30,30,30,30,1\n2,31,31,31,31,1\n3,40,40,40,40,1\n",
+    )
+    .unwrap();
+
+    let config_path = temp_path("api-config", "toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+            [runtime]
+            mode = "{runtime_mode}"
+            run_id = "{run_id}"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            [[data.inputs]]
+            symbol = "US:NASDAQ:AAPL:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [[data.inputs]]
+            symbol = "US:NASDAQ:MSFT:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&aapl_path),
+            toml_path(&msft_path)
+        ),
+    )
+    .unwrap();
+    config_path
+}
+
+fn temp_path(name: &str, extension: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "trader-{name}-{}.{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        extension
+    ))
+}
+
+fn toml_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 async fn assert_status(app: axum::Router, run_id: &str, expected_status: &str) {

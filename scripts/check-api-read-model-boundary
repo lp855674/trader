@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+pattern='Json<.*storage::[A-Za-z0-9_]*Record'
+violations=""
+
+while IFS= read -r file; do
+    set +e
+    file_violations="$(awk -v pattern="$pattern" '
+        $0 ~ pattern { printf "%s:%d:%s\n", FILENAME, FNR, $0; found = 1 }
+        END { exit found ? 1 : 0 }
+    ' "$file")"
+    status=$?
+    set -e
+
+    if [[ "$status" -eq 1 ]]; then
+        violations+="$file_violations"$'\n'
+    elif [[ "$status" -gt 1 ]]; then
+        exit "$status"
+    fi
+done < <(find crates/api/src -type f -name '*.rs')
+
+if [[ -n "$violations" ]]; then
+    echo "API read model boundary violation found:"
+    printf "%s" "$violations"
+    exit 1
+fi
+
+echo "API read model boundary check passed."

@@ -101,7 +101,13 @@ fn strategy_registry_assembles_named_static_universe_and_alpha() {
         .unwrap();
 
     assert_eq!(assembly.primary_symbol, "US:NASDAQ:AAPL:EQUITY");
-    assert_eq!(selected, vec!["US:NASDAQ:AAPL:EQUITY"]);
+    assert_eq!(
+        selected,
+        vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string()
+        ]
+    );
 
     assembly
         .alpha
@@ -116,4 +122,46 @@ fn strategy_registry_assembles_named_static_universe_and_alpha() {
 
     assert_eq!(signal.symbol, "US:NASDAQ:AAPL:EQUITY");
     assert_eq!(signal.side, SignalSide::Buy);
+}
+
+#[test]
+fn strategy_registry_assembles_independent_alpha_state_per_symbol() {
+    let registry = StrategyRegistry;
+    let config = StrategyAssemblyConfig {
+        strategy_name: "moving_average_cross".to_string(),
+        universe_name: "static".to_string(),
+        alpha_name: "moving_average_cross".to_string(),
+        symbols: vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string(),
+        ],
+        fast_window: 2,
+        slow_window: 3,
+    };
+    let mut assembly = registry
+        .assemble_alpha(config, StrategyRuntimeMode::Backtest)
+        .unwrap();
+
+    let mut aapl_signal = None;
+    for (ts_ms, close) in [(1, dec!(10)), (2, dec!(11)), (3, dec!(20))] {
+        aapl_signal = assembly.alpha.on_bar_for_symbol(
+            "US:NASDAQ:AAPL:EQUITY",
+            &Bar::new(ts_ms, close, close, close, close, dec!(1)),
+        );
+    }
+    let mut msft_signal = None;
+    for (ts_ms, close) in [(1, dec!(30)), (2, dec!(29)), (3, dec!(20))] {
+        msft_signal = assembly.alpha.on_bar_for_symbol(
+            "US:NASDAQ:MSFT:EQUITY",
+            &Bar::new(ts_ms, close, close, close, close, dec!(1)),
+        );
+    }
+
+    let aapl_signal = aapl_signal.unwrap();
+    let msft_signal = msft_signal.unwrap();
+
+    assert_eq!(aapl_signal.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(aapl_signal.side, SignalSide::Buy);
+    assert_eq!(msft_signal.symbol, "US:NASDAQ:MSFT:EQUITY");
+    assert_eq!(msft_signal.side, SignalSide::Sell);
 }

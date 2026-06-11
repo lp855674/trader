@@ -13,7 +13,7 @@ use paper::{
 };
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
-use std::{io::Write, path::Path, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, io::Write, path::Path, str::FromStr, time::Duration};
 
 #[derive(Parser)]
 #[command(name = "trader")]
@@ -240,6 +240,54 @@ struct IbkrPaperReconciliation {
     qty_delta: Decimal,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalOrder {
+    client_order_id: String,
+    broker_order_id: Option<String>,
+    qty: String,
+    status: String,
+}
+
+impl From<storage::StoredOrder> for LocalOrder {
+    fn from(order: storage::StoredOrder) -> Self {
+        Self {
+            client_order_id: order.client_order_id,
+            broker_order_id: order.broker_order_id,
+            qty: order.qty,
+            status: order.status,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalFill {
+    id: String,
+    symbol: String,
+    side: String,
+    price: String,
+    qty: String,
+}
+
+impl From<storage::StoredFill> for LocalFill {
+    fn from(fill: storage::StoredFill) -> Self {
+        Self {
+            id: fill.id,
+            symbol: fill.symbol,
+            side: fill.side,
+            price: fill.price,
+            qty: fill.qty,
+        }
+    }
+}
+
+fn local_orders_from_storage(orders: Vec<storage::StoredOrder>) -> Vec<LocalOrder> {
+    orders.into_iter().map(LocalOrder::from).collect()
+}
+
+fn local_fills_from_storage(fills: Vec<storage::StoredFill>) -> Vec<LocalFill> {
+    fills.into_iter().map(LocalFill::from).collect()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -273,9 +321,9 @@ async fn main() -> Result<()> {
                 &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
             )
             .await?;
-            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+            let market_slices = load_configured_market_slices(&app_config)?;
             let summary = BacktestRuntime::new(db, backtest_settings(&app_config)?)
-                .run(bars)
+                .run_market_slices(market_slices)
                 .await?;
             let (app_config, db) = load_db(&config).await?;
             let payload = serde_json::json!({
@@ -299,12 +347,16 @@ async fn main() -> Result<()> {
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
-            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
-                .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
+            let market_slices = load_configured_market_slices(&app_config).with_context(|| {
+                format!(
+                    "failed to load market data from {}",
+                    data_source_description(&app_config)
+                )
+            })?;
             let settings = paper_settings(&app_config)?;
             let summary = paper_runtime(&app_config, db, settings)
                 .await?
-                .run_bars(bars)
+                .run_market_slices(market_slices)
                 .await?;
             println!(
                 "paper completed: signals={} orders={}",
@@ -321,14 +373,18 @@ async fn main() -> Result<()> {
                 bail!("paper preflight requires broker.mode = paper");
             }
             let real_broker_connection = paper_real_broker_connection_ready(&app_config).await?;
-            let bars = data::load_bars(&app_config.data.source, &app_config.data.path)
-                .with_context(|| format!("failed to load bars from {}", app_config.data.path))?;
+            let market_slices = load_configured_market_slices(&app_config).with_context(|| {
+                format!(
+                    "failed to load market data from {}",
+                    data_source_description(&app_config)
+                )
+            })?;
             println!(
                 "paper preflight ok: run_id={} strategy={} symbol={} bars={} database={} broker={} broker_mode={} account={} max_order_notional={} max_exposure={} trading_halted={} real_broker_connection={} order_submit_enabled={}",
                 settings.run_id,
                 settings.strategy_name,
                 settings.symbol,
-                bars.len(),
+                market_slices.len(),
                 app_config.database.url,
                 broker_kind_slug(app_config.broker.kind),
                 broker_mode_slug(app_config.broker.mode),
@@ -695,7 +751,8 @@ async fn main() -> Result<()> {
                 let account = adapter
                     .account_snapshot(&app_config.paper.account_id)
                     .await?;
-                let all_fills = db.list_fills(&app_config.runtime.run_id).await?;
+                let all_fills =
+                    local_fills_from_storage(db.list_fills(&app_config.runtime.run_id).await?);
                 let accounting = binance_accounting_records_from_fills(
                     &app_config.runtime.run_id,
                     &app_config.paper.account_id,
@@ -941,8 +998,8 @@ async fn main() -> Result<()> {
                 .await?
                 .map(|run| run.status)
                 .unwrap_or_else(|| "missing".to_string());
-            let orders = db.list_orders(run_id).await?;
-            let fills = db.list_fills(run_id).await?;
+            let orders = local_orders_from_storage(db.list_orders(run_id).await?);
+            let fills = local_fills_from_storage(db.list_fills(run_id).await?);
             let balances = db.list_account_balances(run_id).await?;
             let snapshots = db.list_portfolio_snapshots(run_id).await?;
             let equity = snapshots
@@ -1395,7 +1452,7 @@ async fn recover_binance_paper_orders(
             let account = adapter
                 .account_snapshot(&app_config.paper.account_id)
                 .await?;
-            let all_fills = db.list_fills(run_id).await?;
+            let all_fills = local_fills_from_storage(db.list_fills(run_id).await?);
             let accounting = binance_accounting_records_from_fills(
                 run_id,
                 &app_config.paper.account_id,
@@ -1455,10 +1512,11 @@ async fn recover_ibkr_paper_orders(
 
     let open_orders = adapter.open_orders().await?;
     for order in orders {
+        let local_order = LocalOrder::from(order.clone());
         let symbol = paper::ibkr_stock_symbol(&order.symbol)?;
         let open_order = open_orders
             .iter()
-            .find(|remote| ibkr_local_order_matches_single_remote_open(&order, remote));
+            .find(|remote| ibkr_local_order_matches_single_remote_open(&local_order, remote));
         let broker_order_id = order
             .broker_order_id
             .clone()
@@ -1485,7 +1543,7 @@ async fn recover_ibkr_paper_orders(
         let filled_qty = matched_executions
             .iter()
             .fold(Decimal::ZERO, |total, execution| total + execution.qty);
-        let status = ibkr_recovered_order_status(&order, open_order, filled_qty)?;
+        let status = ibkr_recovered_order_status(&local_order, open_order, filled_qty)?;
         let ended_at_ms = chrono::Utc::now().timestamp_millis();
         for execution in &matched_executions {
             db.record_external_fill(storage::ExternalFillCommand {
@@ -1542,8 +1600,8 @@ async fn reconcile_binance_paper(
 ) -> Result<BinancePaperReconciliation> {
     let run_id = &app_config.runtime.run_id;
     let exchange_symbol = paper::binance_spot_symbol(symbol)?;
-    let local_orders = db.list_orders(run_id).await?;
-    let local_fills = db.list_fills(run_id).await?;
+    let local_orders = local_orders_from_storage(db.list_orders(run_id).await?);
+    let local_fills = local_fills_from_storage(db.list_fills(run_id).await?);
     let local_balances = db.list_account_balances(run_id).await?;
     let local_positions = db.list_positions(run_id).await?;
     let remote_open_orders = adapter.open_orders(&exchange_symbol).await?;
@@ -1601,7 +1659,7 @@ async fn reconcile_binance_paper(
 }
 
 fn binance_local_order_matches_remote_open(
-    local: &storage::NewOrder,
+    local: &LocalOrder,
     remote_open_orders: &[BinanceOpenOrder],
 ) -> bool {
     remote_open_orders.iter().any(|remote| {
@@ -1618,8 +1676,8 @@ async fn reconcile_ibkr_paper(
     symbol: &str,
 ) -> Result<IbkrPaperReconciliation> {
     let run_id = &app_config.runtime.run_id;
-    let local_orders = db.list_orders(run_id).await?;
-    let local_fills = db.list_fills(run_id).await?;
+    let local_orders = local_orders_from_storage(db.list_orders(run_id).await?);
+    let local_fills = local_fills_from_storage(db.list_fills(run_id).await?);
     let remote_open_orders = adapter.open_orders().await?;
     let remote_executions = adapter
         .executions(request_id, &app_config.paper.account_id, symbol)
@@ -1677,7 +1735,7 @@ async fn reconcile_ibkr_paper(
 }
 
 fn ibkr_local_order_matches_remote_open(
-    local: &storage::NewOrder,
+    local: &LocalOrder,
     remote_open_orders: &[IbkrOpenOrder],
 ) -> bool {
     remote_open_orders
@@ -1685,16 +1743,13 @@ fn ibkr_local_order_matches_remote_open(
         .any(|remote| ibkr_local_order_matches_single_remote_open(local, remote))
 }
 
-fn ibkr_local_order_matches_single_remote_open(
-    local: &storage::NewOrder,
-    remote: &IbkrOpenOrder,
-) -> bool {
+fn ibkr_local_order_matches_single_remote_open(local: &LocalOrder, remote: &IbkrOpenOrder) -> bool {
     local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
         || (!remote.client_order_id.is_empty() && local.client_order_id == remote.client_order_id)
 }
 
 fn ibkr_recovered_order_status(
-    local: &storage::NewOrder,
+    local: &LocalOrder,
     open_order: Option<&IbkrOpenOrder>,
     filled_qty: Decimal,
 ) -> Result<String> {
@@ -1713,8 +1768,8 @@ fn ibkr_recovered_order_status(
 
 fn ibkr_execution_matches_local(
     execution: &broker::IbkrExecution,
-    local_orders: &[storage::NewOrder],
-    local_fills: &[storage::NewFill],
+    local_orders: &[LocalOrder],
+    local_fills: &[LocalFill],
 ) -> bool {
     local_orders
         .iter()
@@ -1756,7 +1811,7 @@ fn binance_accounting_records_from_fills(
     account_id: &str,
     base_currency: &str,
     cash: Decimal,
-    fills: &[storage::NewFill],
+    fills: &[LocalFill],
     updated_at_ms: i64,
 ) -> Result<BinanceAccountingRecords> {
     let mut symbol = String::new();
@@ -1839,6 +1894,68 @@ async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> 
     ensure_database_parent(&app_config.database.url)?;
     let db = storage::Db::connect(&app_config.database.url).await?;
     Ok((app_config, db))
+}
+
+fn load_configured_market_slices(app_config: &config::AppConfig) -> Result<Vec<data::MarketSlice>> {
+    let inputs = configured_bar_inputs(app_config)?;
+    Ok(data::load_market_slices(&inputs)?)
+}
+
+fn configured_bar_inputs(app_config: &config::AppConfig) -> Result<Vec<data::BarInput>> {
+    if app_config.data.inputs.is_empty() {
+        return Ok(vec![data::BarInput::new(
+            primary_strategy_symbol(app_config),
+            app_config.data.source.clone(),
+            app_config.data.path.clone(),
+        )]);
+    }
+
+    let input_symbols = app_config
+        .data
+        .inputs
+        .iter()
+        .map(|input| input.symbol.as_str())
+        .collect::<BTreeSet<_>>();
+    for symbol in &app_config.strategy.symbols {
+        if !input_symbols.contains(symbol.as_str()) {
+            bail!("missing data input for strategy symbol {symbol}");
+        }
+    }
+
+    Ok(app_config
+        .data
+        .inputs
+        .iter()
+        .map(|input| {
+            data::BarInput::new(
+                input.symbol.clone(),
+                input.source.clone(),
+                input.path.clone(),
+            )
+        })
+        .collect())
+}
+
+fn data_source_description(app_config: &config::AppConfig) -> String {
+    if app_config.data.inputs.is_empty() {
+        return app_config.data.path.clone();
+    }
+    app_config
+        .data
+        .inputs
+        .iter()
+        .map(|input| format!("{}={}", input.symbol, input.path))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn primary_strategy_symbol(app_config: &config::AppConfig) -> String {
+    app_config
+        .strategy
+        .symbols
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string())
 }
 
 fn ensure_database_parent(database_url: &str) -> Result<()> {
@@ -1926,10 +2043,11 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
 #[cfg(test)]
 mod tests {
     use super::{
-        binance_accounting_records_from_fills, binance_balance_total, binance_base_asset,
-        binance_cancel_outcome, binance_local_order_matches_remote_open, binance_testnet_settings,
-        ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
-        ibkr_recovered_order_status, settings_with_broker_initial_cash,
+        LocalFill, LocalOrder, binance_accounting_records_from_fills, binance_balance_total,
+        binance_base_asset, binance_cancel_outcome, binance_local_order_matches_remote_open,
+        binance_testnet_settings, ibkr_execution_matches_local,
+        ibkr_local_order_matches_remote_open, ibkr_recovered_order_status,
+        settings_with_broker_initial_cash,
     };
     use broker::{BinanceAssetBalance, BinanceOpenOrder, IbkrExecution, IbkrOpenOrder};
     use rust_decimal::Decimal;
@@ -1956,16 +2074,12 @@ mod tests {
             "binance-testnet",
             "USDT",
             dec!(9936.17961),
-            &[storage::NewFill {
+            &[LocalFill {
                 id: "fill-1".to_string(),
-                order_id: "order-1".to_string(),
-                run_id: "run-1".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63820.39".to_string(),
                 qty: "0.001".to_string(),
-                fee: "0".to_string(),
-                ts_ms: 10,
             }],
             11,
         )
@@ -1983,27 +2097,19 @@ mod tests {
     #[test]
     fn binance_accounting_records_accumulate_existing_fills() {
         let fills = vec![
-            storage::NewFill {
+            LocalFill {
                 id: "fill-1".to_string(),
-                order_id: "order-1".to_string(),
-                run_id: "run-1".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63820.39".to_string(),
                 qty: "0.001".to_string(),
-                fee: "0".to_string(),
-                ts_ms: 10,
             },
-            storage::NewFill {
+            LocalFill {
                 id: "fill-2".to_string(),
-                order_id: "order-2".to_string(),
-                run_id: "run-1".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63960".to_string(),
                 qty: "0.001".to_string(),
-                fee: "0".to_string(),
-                ts_ms: 11,
             },
         ];
 
@@ -2047,21 +2153,11 @@ mod tests {
                 executed_qty: dec!(0),
             },
         ];
-        let by_client = storage::NewOrder {
-            id: "order-1".to_string(),
-            run_id: "run-1".to_string(),
+        let by_client = LocalOrder {
             client_order_id: "client-42".to_string(),
             broker_order_id: None,
-            account_id: "paper".to_string(),
-            symbol: "BTCUSDT".to_string(),
-            side: "BUY".to_string(),
-            order_type: "MARKET".to_string(),
-            price: None,
             qty: "0.001".to_string(),
-            filled_qty: "0".to_string(),
             status: "NEW".to_string(),
-            created_at_ms: 1,
-            updated_at_ms: 1,
         };
         let mut by_broker = by_client.clone();
         by_broker.client_order_id = "other-client".to_string();
@@ -2148,16 +2244,12 @@ mod tests {
             fee: dec!(0.35),
         };
         let by_broker_order = sample_order("client-42", Some("42"));
-        let by_fill = storage::NewFill {
+        let by_fill = LocalFill {
             id: "run-1-ibkr-trade-exec-42".to_string(),
-            order_id: "order-2".to_string(),
-            run_id: "run-1".to_string(),
             symbol: "AAPL".to_string(),
             side: "BUY".to_string(),
             price: "185.25".to_string(),
             qty: "1".to_string(),
-            fee: "0.35".to_string(),
-            ts_ms: 10,
         };
 
         assert!(ibkr_execution_matches_local(
@@ -2281,22 +2373,12 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_order(client_order_id: &str, broker_order_id: Option<&str>) -> storage::NewOrder {
-        storage::NewOrder {
-            id: "order-1".to_string(),
-            run_id: "run-1".to_string(),
+    fn sample_order(client_order_id: &str, broker_order_id: Option<&str>) -> LocalOrder {
+        LocalOrder {
             client_order_id: client_order_id.to_string(),
             broker_order_id: broker_order_id.map(str::to_string),
-            account_id: "DU12345".to_string(),
-            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-            side: "BUY".to_string(),
-            order_type: "LIMIT".to_string(),
-            price: Some("185.25".to_string()),
             qty: "1".to_string(),
-            filled_qty: "0".to_string(),
             status: "SUBMITTED".to_string(),
-            created_at_ms: 1,
-            updated_at_ms: 1,
         }
     }
 }

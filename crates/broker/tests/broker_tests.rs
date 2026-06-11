@@ -1,12 +1,248 @@
+use async_trait::async_trait;
 use broker::{
-    BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
-    BinanceSpotTestnetSettings, Broker, BrokerKind, BrokerOrderStatus, FakeBrokerAdapter,
-    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, MockBroker, SimulatedBrokerSettings,
+    BinanceHttpClient, BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
+    BinanceSpotTestnetSettings, Broker, BrokerError, BrokerKind, BrokerOrderStatus,
+    FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest, IbkrOpenOrder,
+    IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, SimulatedBrokerSettings,
     simulate_market_fill,
 };
 use rust_decimal_macros::dec;
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use trader_core::{OrderRequest, OrderSide, OrderType};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakeBinanceHttpCall {
+    method: &'static str,
+    url: String,
+    api_key: Option<String>,
+}
+
+#[derive(Debug)]
+struct FakeBinanceHttpClient {
+    calls: Mutex<Vec<FakeBinanceHttpCall>>,
+    responses: Mutex<VecDeque<String>>,
+}
+
+impl FakeBinanceHttpClient {
+    fn new(responses: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.into_iter().map(str::to_string).collect()),
+        }
+    }
+
+    fn calls(&self) -> Vec<FakeBinanceHttpCall> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    fn next_response(&self) -> Result<String, BrokerError> {
+        self.responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| BrokerError::Config("missing fake Binance HTTP response".to_string()))
+    }
+}
+
+#[async_trait]
+impl BinanceHttpClient for FakeBinanceHttpClient {
+    async fn get(&self, url: &str, api_key: Option<&str>) -> Result<String, BrokerError> {
+        self.calls.lock().unwrap().push(FakeBinanceHttpCall {
+            method: "GET",
+            url: url.to_string(),
+            api_key: api_key.map(str::to_string),
+        });
+        self.next_response()
+    }
+
+    async fn post(&self, url: &str, api_key: Option<&str>) -> Result<String, BrokerError> {
+        self.calls.lock().unwrap().push(FakeBinanceHttpCall {
+            method: "POST",
+            url: url.to_string(),
+            api_key: api_key.map(str::to_string),
+        });
+        self.next_response()
+    }
+
+    async fn delete(&self, url: &str, api_key: Option<&str>) -> Result<String, BrokerError> {
+        self.calls.lock().unwrap().push(FakeBinanceHttpCall {
+            method: "DELETE",
+            url: url.to_string(),
+            api_key: api_key.map(str::to_string),
+        });
+        self.next_response()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FakeIbkrGatewayCall {
+    ConnectProbe,
+    ConnectAndHandshake,
+    ManagedAccounts,
+    OpenOrders,
+    Executions {
+        request_id: i64,
+        account_id: String,
+        symbol: String,
+    },
+    NextOrderId,
+    CancelOrder {
+        order_id: i64,
+    },
+    PlaceLimitOrder {
+        account_id: String,
+        symbol: String,
+        client_order_id: String,
+    },
+}
+
+#[derive(Debug)]
+struct FakeIbkrGatewayClient {
+    calls: Mutex<Vec<FakeIbkrGatewayCall>>,
+    accounts: Vec<String>,
+    open_orders: Vec<IbkrOpenOrder>,
+    executions: Vec<IbkrExecution>,
+    next_order_id: i64,
+}
+
+impl FakeIbkrGatewayClient {
+    fn new() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            accounts: vec!["DU12345".to_string()],
+            open_orders: vec![IbkrOpenOrder {
+                order_id: 42,
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BUY".to_string(),
+                order_type: "LMT".to_string(),
+                quantity: dec!(1),
+                limit_price: Some(dec!(185.25)),
+                status: "Submitted".to_string(),
+                client_order_id: "client-42".to_string(),
+                filled_qty: dec!(0),
+            }],
+            executions: vec![IbkrExecution {
+                request_id: 7,
+                order_id: 42,
+                trade_id: "exec-42".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BUY".to_string(),
+                qty: dec!(1),
+                price: dec!(185.25),
+                fee: dec!(0.35),
+            }],
+            next_order_id: 43,
+        }
+    }
+
+    fn calls(&self) -> Vec<FakeIbkrGatewayCall> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl IbkrGatewayClient for FakeIbkrGatewayClient {
+    async fn connect_probe(&self) -> Result<(), BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::ConnectProbe);
+        Ok(())
+    }
+
+    async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::ConnectAndHandshake);
+        Ok(IbkrServerVersion {
+            server_version: 178,
+            connection_time: "20260611 09:30:00 CST".to_string(),
+        })
+    }
+
+    async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::ManagedAccounts);
+        Ok(self.accounts.clone())
+    }
+
+    async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::OpenOrders);
+        Ok(self.open_orders.clone())
+    }
+
+    async fn executions(
+        &self,
+        request_id: i64,
+        account_id: &str,
+        symbol: &str,
+    ) -> Result<Vec<IbkrExecution>, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::Executions {
+                request_id,
+                account_id: account_id.to_string(),
+                symbol: symbol.to_string(),
+            });
+        Ok(self.executions.clone())
+    }
+
+    async fn next_order_id(&self) -> Result<i64, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::NextOrderId);
+        Ok(self.next_order_id)
+    }
+
+    async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::CancelOrder { order_id });
+        Ok(IbkrOrderStatus {
+            order_id,
+            status: "Cancelled".to_string(),
+            filled_qty: dec!(0),
+            remaining_qty: dec!(1),
+            avg_fill_price: dec!(0),
+        })
+    }
+
+    async fn place_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::PlaceLimitOrder {
+                account_id: account_id.to_string(),
+                symbol: order.symbol.clone(),
+                client_order_id: order.client_order_id.clone(),
+            });
+        Ok(IbkrOrderAck {
+            order_id: self.next_order_id,
+            client_order_id: order.client_order_id.clone(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+}
 
 #[tokio::test]
 async fn mock_broker_accepts_order() {
@@ -157,6 +393,73 @@ fn binance_testnet_adapter_accepts_injected_http_client_without_changing_signing
     assert!(request.url.starts_with(
         "https://testnet.binance.vision/api/v3/account?timestamp=1700000000000&recvWindow=5000&signature="
     ));
+}
+
+#[tokio::test]
+async fn binance_testnet_adapter_routes_readonly_calls_through_http_client_boundary() {
+    let client = Arc::new(FakeBinanceHttpClient::new([
+        r#"{"serverTime":1700000000000}"#,
+        r#"[{"orderId":42,"clientOrderId":"client-42","symbol":"BTCUSDT","status":"NEW","side":"BUY","price":"10000","origQty":"0.001","executedQty":"0"}]"#,
+    ]));
+    let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client.clone(),
+    );
+
+    let orders = adapter.open_orders("BTCUSDT").await.unwrap();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_id, 42);
+    let calls = client.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].method, "GET");
+    assert!(calls[0].url.ends_with("/v3/time"));
+    assert_eq!(calls[0].api_key, None);
+    assert_eq!(calls[1].method, "GET");
+    assert!(calls[1].url.contains("/v3/openOrders?symbol=BTCUSDT"));
+    assert_eq!(calls[1].api_key.as_deref(), Some("test-key"));
+}
+
+#[tokio::test]
+async fn binance_testnet_adapter_routes_order_submit_through_http_client_boundary() {
+    let client = Arc::new(FakeBinanceHttpClient::new([
+        r#"{"serverTime":1700000000000}"#,
+        r#"{"orderId":42,"clientOrderId":"client-42","status":"NEW","executedQty":"0"}"#,
+    ]));
+    let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client.clone(),
+    );
+    let order = BinanceLimitOrderRequest {
+        symbol: "BTCUSDT".to_string(),
+        side: BinanceOrderSide::Buy,
+        quantity: dec!(0.001),
+        price: dec!(10000),
+        client_order_id: "client-42".to_string(),
+    };
+
+    let ack = adapter.place_limit_order(&order).await.unwrap();
+
+    assert_eq!(ack.order_id, 42);
+    assert_eq!(ack.client_order_id, "client-42");
+    let calls = client.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].method, "GET");
+    assert!(calls[0].url.ends_with("/v3/time"));
+    assert_eq!(calls[1].method, "POST");
+    assert!(calls[1].url.contains("/v3/order?symbol=BTCUSDT"));
+    assert!(calls[1].url.contains("newClientOrderId=client-42"));
+    assert_eq!(calls[1].api_key.as_deref(), Some("test-key"));
 }
 
 #[test]
@@ -348,6 +651,82 @@ fn ibkr_paper_gateway_adapter_rejects_common_live_port() {
     .unwrap_err();
 
     assert!(error.to_string().contains("paper port"));
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client_boundary() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+
+    let accounts = adapter.validate_paper_account("DU12345").await.unwrap();
+    let open_orders = adapter.open_orders().await.unwrap();
+    let executions = adapter.executions(7, "DU12345", "AAPL").await.unwrap();
+    let next_order_id = adapter.next_order_id().await.unwrap();
+
+    assert_eq!(accounts, vec!["DU12345"]);
+    assert_eq!(open_orders[0].order_id, 42);
+    assert_eq!(executions[0].trade_id, "exec-42");
+    assert_eq!(next_order_id, 43);
+    assert_eq!(
+        client.calls(),
+        vec![
+            FakeIbkrGatewayCall::ManagedAccounts,
+            FakeIbkrGatewayCall::OpenOrders,
+            FakeIbkrGatewayCall::Executions {
+                request_id: 7,
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+            },
+            FakeIbkrGatewayCall::NextOrderId,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_boundary() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+    let order = IbkrLimitOrderRequest {
+        symbol: "AAPL".to_string(),
+        side: IbkrOrderSide::Buy,
+        quantity: dec!(1),
+        price: dec!(185.25),
+        client_order_id: "client-42".to_string(),
+    };
+
+    let ack = adapter.place_limit_order("DU12345", &order).await.unwrap();
+    let cancelled = adapter.cancel_ibkr_order(42).await.unwrap();
+
+    assert_eq!(ack.order_id, 43);
+    assert_eq!(ack.client_order_id, "client-42");
+    assert_eq!(cancelled.status, "Cancelled");
+    assert_eq!(
+        client.calls(),
+        vec![
+            FakeIbkrGatewayCall::PlaceLimitOrder {
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+                client_order_id: "client-42".to_string(),
+            },
+            FakeIbkrGatewayCall::CancelOrder { order_id: 42 },
+        ]
+    );
 }
 
 #[tokio::test]

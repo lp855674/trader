@@ -35,11 +35,6 @@ impl UniverseSelector for StaticUniverseSelector {
         if context.primary_symbol.trim().is_empty() {
             return Err(UniverseError::EmptySymbol);
         }
-        Ok(self
-            .symbols
-            .iter()
-            .filter(|symbol| symbol.as_str() == context.primary_symbol)
-            .cloned()
-            .collect())
+        Ok(self.symbols.clone())
     }
 }

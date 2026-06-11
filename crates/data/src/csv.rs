@@ -25,6 +25,10 @@ pub enum DataError {
     NullValue { row: usize, column: &'static str },
     #[error("unsupported data source {0}")]
     UnsupportedSource(String),
+    #[error("at least one bar input is required")]
+    EmptyBarInputs,
+    #[error("duplicate bar for symbol {symbol} at timestamp {ts_ms}")]
+    DuplicateSymbolTimestamp { symbol: String, ts_ms: i64 },
 }
 
 #[derive(Debug, Deserialize)]

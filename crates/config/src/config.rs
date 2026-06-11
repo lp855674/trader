@@ -69,6 +69,17 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DataConfig {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub inputs: Vec<DataInputConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataInputConfig {
+    pub symbol: String,
     pub source: String,
     pub path: String,
 }

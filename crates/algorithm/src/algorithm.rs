@@ -2,7 +2,7 @@
 
 use accounting::AccountBook;
 use alpha::AlphaModel;
-use data::Bar;
+use data::{Bar, MarketSlice};
 use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
 use market_rules::MarketRuleSet;
@@ -11,6 +11,7 @@ use portfolio::equal_weight_target;
 use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use strategies::StrategyRuntimeMode;
 use trader_core::{OrderRequest, OrderSide};
 use universe::{StaticUniverseSelector, UniverseContext, UniverseSelector};
@@ -136,6 +137,7 @@ pub struct AlgorithmDecision {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlgorithmStep {
     pub decision: Option<AlgorithmDecision>,
+    pub decisions: Vec<AlgorithmDecision>,
     pub snapshot: AccountSnapshot,
 }
 
@@ -148,6 +150,14 @@ pub struct AccountSnapshot {
     pub unrealized_pnl: Decimal,
     pub position_qty: Decimal,
     pub position_avg_price: Decimal,
+    pub positions: Vec<PositionSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionSnapshot {
+    pub symbol: String,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +182,7 @@ pub struct AlgorithmEngine {
     account_book: AccountBook,
     portfolio_risk: PortfolioRiskPolicy,
     event_bus: Option<EventBus>,
+    last_prices: BTreeMap<String, Decimal>,
     peak_equity: Decimal,
     orders: usize,
 }
@@ -205,6 +216,7 @@ impl AlgorithmEngine {
             account_book,
             portfolio_risk,
             event_bus: None,
+            last_prices: BTreeMap::new(),
             orders: 0,
         }
     }
@@ -214,38 +226,86 @@ impl AlgorithmEngine {
     }
 
     pub fn on_bar(&mut self, bar: Bar) -> anyhow::Result<AlgorithmStep> {
-        let mut events = Vec::new();
+        let symbol = self.settings.symbol.clone();
+        self.on_market_slice(MarketSlice::single(symbol, bar))
+    }
+
+    pub fn on_market_slice(&mut self, market_slice: MarketSlice) -> anyhow::Result<AlgorithmStep> {
+        for (symbol, bar) in market_slice.iter() {
+            self.last_prices.insert(symbol.to_string(), bar.close);
+        }
+        let Some(primary_bar) = market_slice
+            .bar(&self.settings.symbol)
+            .or_else(|| market_slice.iter().next().map(|(_, bar)| bar))
+        else {
+            return Ok(AlgorithmStep {
+                decision: None,
+                decisions: Vec::new(),
+                snapshot: self.snapshot_from_prices()?,
+            });
+        };
+
         let context = UniverseContext {
             primary_symbol: self.settings.symbol.clone(),
-            bar: bar.clone(),
+            bar: primary_bar.clone(),
         };
         let selected = self.universe.select(&context)?;
-        events.push(self.event(
+        let universe_event = self.event(
             EngineEventKind::UniverseSelected,
-            bar.ts_ms,
+            market_slice.ts_ms,
             payload_value(UniverseSelectedPayload {
                 run_id: self.settings.run_id.clone(),
                 mode: format!("{:?}", self.settings.mode),
                 symbols: selected.clone(),
             }),
-        ));
-        if !selected
-            .iter()
-            .any(|symbol| symbol == &self.settings.symbol)
-        {
-            self.publish_events(&events);
-            return Ok(AlgorithmStep {
-                decision: None,
-                snapshot: self.snapshot(bar.close)?,
-            });
+        );
+        let mut decisions = Vec::new();
+        for symbol in selected {
+            let Some(bar) = market_slice.bar(&symbol) else {
+                continue;
+            };
+            let include_universe_event = decisions.is_empty();
+            if let Some(decision) =
+                self.decision_for_symbol(&symbol, bar, include_universe_event, &universe_event)?
+            {
+                decisions.push(decision);
+            }
         }
 
-        let Some(signal) = self.alpha.on_bar(&bar) else {
-            self.publish_events(&events);
+        if decisions.is_empty() {
+            self.publish_events(std::slice::from_ref(&universe_event));
             return Ok(AlgorithmStep {
                 decision: None,
-                snapshot: self.snapshot(bar.close)?,
+                decisions,
+                snapshot: self.snapshot_from_prices()?,
             });
+        };
+
+        for decision in &decisions {
+            self.publish_events(&decision.events);
+        }
+        Ok(AlgorithmStep {
+            decision: decisions.first().cloned(),
+            decisions,
+            snapshot: self.snapshot_from_prices()?,
+        })
+    }
+
+    fn decision_for_symbol(
+        &mut self,
+        symbol: &str,
+        bar: &Bar,
+        include_universe_event: bool,
+        universe_event: &EngineEvent,
+    ) -> anyhow::Result<Option<AlgorithmDecision>> {
+        let mut events = if include_universe_event {
+            vec![universe_event.clone()]
+        } else {
+            Vec::new()
+        };
+
+        let Some(signal) = self.alpha.on_bar_for_symbol(symbol, bar) else {
+            return Ok(None);
         };
         events.push(self.event(
             EngineEventKind::AlphaGenerated,
@@ -272,15 +332,11 @@ impl AlgorithmEngine {
 
         let current_qty = self
             .account_book
-            .position(&self.settings.symbol)
+            .position(&target.symbol)
             .map_or(Decimal::ZERO, |position| position.qty);
         let order = order_for_target_delta(&target, current_qty, self.settings.account_id.clone());
         let Some(order) = order else {
-            self.publish_events(&events);
-            return Ok(AlgorithmStep {
-                decision: None,
-                snapshot: self.snapshot(bar.close)?,
-            });
+            return Ok(None);
         };
         MarketRuleSet::for_symbol(&order.symbol)?.validate_order(&order, bar.close)?;
         events.push(self.event(
@@ -297,8 +353,8 @@ impl AlgorithmEngine {
 
         let gross_exposure = self
             .account_book
-            .market_value(&self.settings.symbol, bar.close);
-        let equity = self.account_book.equity(&self.settings.symbol, bar.close);
+            .market_value_with_prices(&self.last_prices);
+        let equity = self.account_book.equity_with_prices(&self.last_prices);
         let portfolio_state = PortfolioRiskState::new(
             equity,
             self.peak_equity,
@@ -377,11 +433,7 @@ impl AlgorithmEngine {
             order: Some(order),
             events,
         };
-        self.publish_events(&decision.events);
-        Ok(AlgorithmStep {
-            decision: Some(decision),
-            snapshot: self.snapshot(bar.close)?,
-        })
+        Ok(Some(decision))
     }
 
     pub fn apply_execution(
@@ -402,6 +454,7 @@ impl AlgorithmEngine {
                 }
             }
         }
+        self.last_prices.insert(order.symbol.clone(), report.price);
         let fill_kind = if report.qty > Decimal::ZERO && report.qty < order.qty {
             EngineEventKind::BrokerOrderPartiallyFilled
         } else if report.qty > Decimal::ZERO {
@@ -434,15 +487,21 @@ impl AlgorithmEngine {
         self.publish_events(&events);
         Ok(AppliedExecution {
             events,
-            snapshot: self.snapshot(report.price)?,
+            snapshot: self.snapshot_from_prices()?,
         })
     }
 
     pub fn snapshot(&mut self, mark_price: Decimal) -> anyhow::Result<AccountSnapshot> {
+        self.last_prices
+            .insert(self.settings.symbol.clone(), mark_price);
+        self.snapshot_from_prices()
+    }
+
+    pub fn snapshot_from_prices(&mut self) -> anyhow::Result<AccountSnapshot> {
         let market_value = self
             .account_book
-            .market_value(&self.settings.symbol, mark_price);
-        let equity = self.account_book.equity(&self.settings.symbol, mark_price);
+            .market_value_with_prices(&self.last_prices);
+        let equity = self.account_book.equity_with_prices(&self.last_prices);
         self.portfolio_risk
             .check_portfolio(&PortfolioRiskState::new(
                 equity,
@@ -455,6 +514,17 @@ impl AlgorithmEngine {
             self.peak_equity = equity;
         }
         let position = self.account_book.position(&self.settings.symbol);
+        let positions = self
+            .account_book
+            .positions()
+            .into_iter()
+            .filter(|position| position.qty != Decimal::ZERO)
+            .map(|position| PositionSnapshot {
+                symbol: position.symbol.clone(),
+                qty: position.qty,
+                avg_price: position.avg_price,
+            })
+            .collect::<Vec<_>>();
         Ok(AccountSnapshot {
             cash: self.account_book.cash(),
             market_value,
@@ -462,9 +532,10 @@ impl AlgorithmEngine {
             realized_pnl: self.account_book.realized_pnl(),
             unrealized_pnl: self
                 .account_book
-                .unrealized_pnl(&self.settings.symbol, mark_price),
+                .unrealized_pnl_with_prices(&self.last_prices),
             position_qty: position.map_or(Decimal::ZERO, |position| position.qty),
             position_avg_price: position.map_or(Decimal::ZERO, |position| position.avg_price),
+            positions,
         })
     }
 

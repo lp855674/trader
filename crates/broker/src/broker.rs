@@ -4,15 +4,15 @@ pub mod binance;
 pub mod ibkr;
 
 pub use binance::{
-    BinanceAssetBalance, BinanceKlineBar, BinanceLimitOrderRequest, BinanceOpenOrder,
-    BinanceOrderAck, BinanceOrderSide, BinanceSignedRequest, BinanceSpotTestnetAdapter,
-    BinanceSpotTestnetSettings, BinanceTrade,
+    BinanceAssetBalance, BinanceHttpClient, BinanceKlineBar, BinanceLimitOrderRequest,
+    BinanceOpenOrder, BinanceOrderAck, BinanceOrderSide, BinanceSignedRequest,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, BinanceTrade, ReqwestBinanceHttpClient,
 };
 
 pub use ibkr::{
-    IbkrExecution, IbkrLimitOrderRequest, IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide,
-    IbkrOrderStatus, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion,
-    IbkrTrade,
+    IbapiIbkrGatewayClient, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest, IbkrOpenOrder,
+    IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings, IbkrServerVersion, IbkrTrade,
 };
 
 use async_trait::async_trait;

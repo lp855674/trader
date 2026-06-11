@@ -3,6 +3,7 @@
 use data::Bar;
 use events::{SignalEvent, SignalSide};
 use indicators::{IndicatorError, SimpleMovingAverage};
+use std::collections::BTreeMap;
 use thiserror::Error;
 use universe::StaticUniverseSelector;
 
@@ -121,22 +122,74 @@ impl StrategyRegistry {
             .first()
             .cloned()
             .ok_or(StrategyRegistryError::EmptySymbolUniverse)?;
+        let symbols = config.symbols.clone();
         let universe = match config.universe_name.as_str() {
-            "static" => StaticUniverseSelector::new(config.symbols),
+            "static" => StaticUniverseSelector::new(symbols.clone()),
             other => return Err(StrategyRegistryError::UnknownUniverse(other.to_string())),
         };
-        let alpha = self.create_alpha(
-            &config.alpha_name,
-            StrategyContext::new(config.strategy_name, primary_symbol.clone(), runtime_mode),
-            config.fast_window,
-            config.slow_window,
-        )?;
+        let alpha = if symbols.len() == 1 {
+            self.create_alpha(
+                &config.alpha_name,
+                StrategyContext::new(config.strategy_name, primary_symbol.clone(), runtime_mode),
+                config.fast_window,
+                config.slow_window,
+            )?
+        } else {
+            Box::new(PerSymbolAlphaModel::new(
+                self,
+                &config,
+                runtime_mode,
+                symbols,
+                primary_symbol.clone(),
+            )?)
+        };
 
         Ok(StrategyAssembly {
             primary_symbol,
             universe,
             alpha,
         })
+    }
+}
+
+struct PerSymbolAlphaModel {
+    primary_symbol: String,
+    models: BTreeMap<String, Box<dyn alpha::AlphaModel + Send + Sync>>,
+}
+
+impl PerSymbolAlphaModel {
+    fn new(
+        registry: &StrategyRegistry,
+        config: &StrategyAssemblyConfig,
+        runtime_mode: StrategyRuntimeMode,
+        symbols: Vec<String>,
+        primary_symbol: String,
+    ) -> Result<Self, StrategyRegistryError> {
+        let mut models = BTreeMap::new();
+        for symbol in symbols {
+            let model = registry.create_alpha(
+                &config.alpha_name,
+                StrategyContext::new(config.strategy_name.clone(), symbol.clone(), runtime_mode),
+                config.fast_window,
+                config.slow_window,
+            )?;
+            models.insert(symbol, model);
+        }
+        Ok(Self {
+            primary_symbol,
+            models,
+        })
+    }
+}
+
+impl alpha::AlphaModel for PerSymbolAlphaModel {
+    fn on_bar(&mut self, bar: &Bar) -> Option<SignalEvent> {
+        let primary_symbol = self.primary_symbol.clone();
+        self.on_bar_for_symbol(&primary_symbol, bar)
+    }
+
+    fn on_bar_for_symbol(&mut self, symbol: &str, bar: &Bar) -> Option<SignalEvent> {
+        self.models.get_mut(symbol)?.on_bar_for_symbol(symbol, bar)
     }
 }
 

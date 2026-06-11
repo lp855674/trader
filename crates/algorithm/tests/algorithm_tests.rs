@@ -3,10 +3,11 @@ use algorithm::{
     AlphaGeneratedPayload, EngineEventKind, UniverseSelectedPayload,
 };
 use alpha::{AlphaModel, CompositeAlphaModel};
-use data::Bar;
+use data::{Bar, MarketSlice, SymbolBar};
 use events::{EventBus, SignalEvent, SignalSide};
 use rust_decimal_macros::dec;
 use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
+use universe::StaticUniverseSelector;
 
 #[test]
 fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
@@ -98,6 +99,54 @@ fn algorithm_engine_uses_highest_confidence_composite_alpha_signal() {
 }
 
 #[test]
+fn algorithm_engine_generates_orders_for_each_selected_symbol_in_market_slice() {
+    let mut engine = AlgorithmEngine::new_with_universe(
+        AlgorithmEngineSettings {
+            run_id: "run-multi".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            initial_cash: dec!(100000),
+        },
+        Box::new(StaticUniverseSelector::new(vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string(),
+        ])),
+        Box::new(SymbolEchoAlphaModel),
+    );
+
+    let step = engine
+        .on_market_slice(market_slice(1, dec!(20), dec!(50)))
+        .unwrap();
+
+    let symbols = step
+        .decisions
+        .iter()
+        .map(|decision| decision.order.as_ref().unwrap().symbol.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        symbols,
+        vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string()
+        ]
+    );
+    assert_eq!(step.snapshot.positions.len(), 0);
+    assert_eq!(step.decisions[0].order_number, 1);
+    assert_eq!(step.decisions[1].order_number, 2);
+}
+
+#[test]
 fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
     let event_bus = EventBus::new(16);
     let mut receiver = event_bus.subscribe();
@@ -185,6 +234,24 @@ struct FixedAlphaModel {
     signal: SignalEvent,
 }
 
+struct SymbolEchoAlphaModel;
+
+impl AlphaModel for SymbolEchoAlphaModel {
+    fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
+        None
+    }
+
+    fn on_bar_for_symbol(&mut self, symbol: &str, _bar: &Bar) -> Option<SignalEvent> {
+        Some(SignalEvent {
+            strategy_id: "echo".to_string(),
+            symbol: symbol.to_string(),
+            side: SignalSide::Buy,
+            confidence: 0.9,
+            ts: chrono::Utc::now(),
+        })
+    }
+}
+
 impl FixedAlphaModel {
     fn new(strategy_id: &str, side: SignalSide, confidence: f64) -> Self {
         Self {
@@ -207,4 +274,18 @@ impl AlphaModel for FixedAlphaModel {
 
 fn bar(ts_ms: i64, close: rust_decimal::Decimal) -> Bar {
     Bar::new(ts_ms, close, close, close, close, dec!(1))
+}
+
+fn market_slice(
+    ts_ms: i64,
+    aapl_close: rust_decimal::Decimal,
+    msft_close: rust_decimal::Decimal,
+) -> MarketSlice {
+    MarketSlice::new(
+        ts_ms,
+        vec![
+            SymbolBar::new("US:NASDAQ:AAPL:EQUITY", bar(ts_ms, aapl_close)),
+            SymbolBar::new("US:NASDAQ:MSFT:EQUITY", bar(ts_ms, msft_close)),
+        ],
+    )
 }

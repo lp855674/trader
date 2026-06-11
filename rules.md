@@ -57,6 +57,10 @@
 - 边界之外的 crate / 模块访问数据必须走持久化边界暴露的 repository / service 接口，禁止透传 `SqlitePool`、`Pool<Sqlite>`、transaction handle 或任何 sqlx executor。
 - `sqlx::Error` 也属于数据库实现细节：边界之外不得在 public/private 函数签名、错误转换或 `Cargo.toml` 依赖中直接引用 `sqlx`。上层应接收持久化边界提供的错误类型，或在应用边界转换为 `anyhow::Error` / 本 crate 错误类型。
 - 发现边界之外需要新增 `sqlx` 依赖、SQL 字符串、`SqlitePool` 参数或 `sqlx::Error` 返回值时，应先补持久化边界接口，而不是扩大数据库实现细节的暴露面。
+- 持久化边界的写入输入与读取输出必须显式分离：写入使用 command / `New*` 这类输入 DTO，读取使用 record / `Stored*` 这类 read model；边界之外不得直接引用或传递写入 DTO 类型。
+- 边界之外若读取持久化记录，应在 I/O 边缘映射为本 crate / 模块自己的 read model；业务 helper、对账逻辑和测试样例不直接依赖 storage record / DTO 类型。
+- API response 是 API 契约，不是 storage 契约；HTTP handler 返回类型必须使用 API-owned response struct，禁止直接返回 storage record / read model 类型。
+- API response 中的 JSON payload/config 必须作为结构化 JSON 值返回，禁止把内部 JSON 再作为字符串二次编码；只有原始文本确实不可解析为 JSON 时才允许显式字符串 fallback。
 - tools 文件能力必须受 workspace 边界约束（禁止绝对路径、`..`、symlink escape）。
 - gateway/channels/app 的请求处理必须复用统一契约：`ChannelRequest/ChannelResponse`。
 
@@ -83,9 +87,14 @@
   - Linux/macOS：`bash ./scripts/clippy`
   - 不要直接 `cargo clippy`
 - 触及 DB 边界时额外执行：
-  - `./scripts/check-db-boundary` 或 `./scripts/check-db-boundary.ps1`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check-db-boundary`
 - 触及 storage 写入 DTO、repository command 或持久化调用边界时额外执行：
-  - `./scripts/check-storage-dto-boundary.ps1`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check-storage-dto-boundary`
+- 触及 API 查询路由或 response read model 时额外执行：
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-api-read-model-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check-api-read-model-boundary`
 - 高风险改动（gateway/tools/daemon/db）需要补充风险说明与回滚思路。
 
 ## 8) 风险分级

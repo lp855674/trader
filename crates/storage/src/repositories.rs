@@ -83,7 +83,38 @@ pub struct RecoveredOrderState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredOrder {
+    pub id: String,
+    pub run_id: String,
+    pub client_order_id: String,
+    pub broker_order_id: Option<String>,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: Option<String>,
+    pub qty: String,
+    pub filled_qty: String,
+    pub status: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewFill {
+    pub id: String,
+    pub order_id: String,
+    pub run_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub price: String,
+    pub qty: String,
+    pub fee: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredFill {
     pub id: String,
     pub order_id: String,
     pub run_id: String,
@@ -106,6 +137,16 @@ pub struct NewPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredPosition {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub qty: String,
+    pub avg_price: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewAccountBalance {
     pub run_id: String,
     pub account_id: String,
@@ -117,7 +158,31 @@ pub struct NewAccountBalance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredAccountBalance {
+    pub run_id: String,
+    pub account_id: String,
+    pub asset: String,
+    pub total: String,
+    pub available: String,
+    pub frozen: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewPortfolioSnapshot {
+    pub id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub cash: String,
+    pub market_value: String,
+    pub equity: String,
+    pub realized_pnl: String,
+    pub unrealized_pnl: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredPortfolioSnapshot {
     pub id: String,
     pub run_id: String,
     pub account_id: String,
@@ -354,6 +419,7 @@ pub struct PaperFinalStateCommand {
     pub unrealized_pnl: Decimal,
     pub position_qty: Decimal,
     pub position_avg_price: Decimal,
+    pub positions: Vec<PositionCommand>,
 }
 
 struct PaperOrderRecordInput<'a> {
@@ -1117,12 +1183,24 @@ impl Db {
         self.upsert_position(NewPosition {
             run_id: command.run_id.clone(),
             account_id: command.account_id.clone(),
-            symbol: command.symbol,
+            symbol: command.symbol.clone(),
             qty: command.position_qty.to_string(),
             avg_price: command.position_avg_price.to_string(),
             updated_at_ms: command.ended_at_ms,
         })
         .await?;
+
+        for position in command.positions {
+            self.upsert_position(NewPosition {
+                run_id: position.run_id,
+                account_id: position.account_id,
+                symbol: position.symbol,
+                qty: position.qty.to_string(),
+                avg_price: position.avg_price.to_string(),
+                updated_at_ms: position.updated_at_ms,
+            })
+            .await?;
+        }
 
         self.insert_portfolio_snapshot(NewPortfolioSnapshot {
             id: format!("{}-snapshot-final", command.run_id),
@@ -1266,7 +1344,7 @@ impl Db {
         .await
     }
 
-    pub async fn list_orders(&self, run_id: &str) -> StorageResult<Vec<NewOrder>> {
+    pub async fn list_orders(&self, run_id: &str) -> StorageResult<Vec<StoredOrder>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -1316,7 +1394,7 @@ impl Db {
                     status,
                     created_at_ms,
                     updated_at_ms,
-                )| NewOrder {
+                )| StoredOrder {
                     id,
                     run_id,
                     client_order_id,
@@ -1339,7 +1417,7 @@ impl Db {
     pub async fn get_order_by_client_order_id(
         &self,
         client_order_id: &str,
-    ) -> StorageResult<Option<NewOrder>> {
+    ) -> StorageResult<Option<StoredOrder>> {
         let row = sqlx::query_as::<
             _,
             (
@@ -1386,7 +1464,7 @@ impl Db {
                 status,
                 created_at_ms,
                 updated_at_ms,
-            )| NewOrder {
+            )| StoredOrder {
                 id,
                 run_id,
                 client_order_id,
@@ -1405,7 +1483,7 @@ impl Db {
         ))
     }
 
-    pub async fn list_recoverable_orders(&self, run_id: &str) -> StorageResult<Vec<NewOrder>> {
+    pub async fn list_recoverable_orders(&self, run_id: &str) -> StorageResult<Vec<StoredOrder>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -1455,7 +1533,7 @@ impl Db {
                     status,
                     created_at_ms,
                     updated_at_ms,
-                )| NewOrder {
+                )| StoredOrder {
                     id,
                     run_id,
                     client_order_id,
@@ -1504,7 +1582,7 @@ impl Db {
         ))
     }
 
-    pub async fn list_fills(&self, run_id: &str) -> StorageResult<Vec<NewFill>> {
+    pub async fn list_fills(&self, run_id: &str) -> StorageResult<Vec<StoredFill>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -1533,7 +1611,7 @@ impl Db {
         Ok(rows
             .into_iter()
             .map(
-                |(id, order_id, run_id, symbol, side, price, qty, fee, ts_ms)| NewFill {
+                |(id, order_id, run_id, symbol, side, price, qty, fee, ts_ms)| StoredFill {
                     id,
                     order_id,
                     run_id,
@@ -1548,7 +1626,7 @@ impl Db {
             .collect())
     }
 
-    pub async fn list_positions(&self, run_id: &str) -> StorageResult<Vec<NewPosition>> {
+    pub async fn list_positions(&self, run_id: &str) -> StorageResult<Vec<StoredPosition>> {
         let rows = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
             r#"
             SELECT run_id, account_id, symbol, qty, avg_price, updated_at_ms
@@ -1564,7 +1642,7 @@ impl Db {
         Ok(rows
             .into_iter()
             .map(
-                |(run_id, account_id, symbol, qty, avg_price, updated_at_ms)| NewPosition {
+                |(run_id, account_id, symbol, qty, avg_price, updated_at_ms)| StoredPosition {
                     run_id,
                     account_id,
                     symbol,
@@ -1579,7 +1657,7 @@ impl Db {
     pub async fn list_account_balances(
         &self,
         run_id: &str,
-    ) -> StorageResult<Vec<NewAccountBalance>> {
+    ) -> StorageResult<Vec<StoredAccountBalance>> {
         let rows = sqlx::query_as::<_, (String, String, String, String, String, String, i64)>(
             r#"
             SELECT run_id, account_id, asset, total, available, frozen, updated_at_ms
@@ -1596,7 +1674,7 @@ impl Db {
             .into_iter()
             .map(
                 |(run_id, account_id, asset, total, available, frozen, updated_at_ms)| {
-                    NewAccountBalance {
+                    StoredAccountBalance {
                         run_id,
                         account_id,
                         asset,
@@ -1613,7 +1691,7 @@ impl Db {
     pub async fn list_portfolio_snapshots(
         &self,
         run_id: &str,
-    ) -> StorageResult<Vec<NewPortfolioSnapshot>> {
+    ) -> StorageResult<Vec<StoredPortfolioSnapshot>> {
         let rows = sqlx::query_as::<
             _,
             (
@@ -1653,7 +1731,7 @@ impl Db {
                     equity,
                     realized_pnl,
                     unrealized_pnl,
-                )| NewPortfolioSnapshot {
+                )| StoredPortfolioSnapshot {
                     id,
                     run_id,
                     account_id,

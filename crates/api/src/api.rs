@@ -24,6 +24,7 @@ use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -46,6 +47,18 @@ struct RunStatusResponse {
 struct RunStartResponse {
     run_id: String,
     status: String,
+}
+
+#[derive(Serialize)]
+struct RunResponse {
+    id: String,
+    name: String,
+    mode: String,
+    status: String,
+    started_at_ms: i64,
+    ended_at_ms: Option<i64>,
+    error: Option<String>,
+    config: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -129,6 +142,15 @@ struct PortfolioSnapshotResponse {
     equity: String,
     realized_pnl: String,
     unrealized_pnl: String,
+}
+
+#[derive(Serialize)]
+struct EventResponse {
+    event_id: String,
+    ts_ms: i64,
+    source: String,
+    category: String,
+    payload: serde_json::Value,
 }
 
 pub fn router() -> Router {
@@ -217,13 +239,13 @@ async fn paper_preflight(
         )));
     }
     let real_broker_connection = paper_real_broker_connection_ready(&app_config).await?;
-    let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+    let market_slices = load_configured_market_slices(&app_config)?;
     Ok(Json(PaperPreflightResponse {
         status: "ok",
         run_id: settings.run_id,
         strategy: settings.strategy_name,
         symbol: settings.symbol,
-        bars: bars.len(),
+        bars: market_slices.len(),
         database: app_config.database.url,
         broker: broker_kind_slug(app_config.broker.kind),
         broker_mode: broker_mode_slug(app_config.broker.mode),
@@ -247,10 +269,10 @@ async fn run_backtest(
         &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
     )
     .await?;
-    let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
+    let market_slices = load_configured_market_slices(&app_config)?;
     let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
         .with_event_bus(state.event_bus.clone())
-        .run(bars)
+        .run_market_slices(market_slices)
         .await?;
     let payload = serde_json::json!({
         "run_id": &app_config.runtime.run_id,
@@ -293,11 +315,12 @@ async fn run_paper(
     )
     .await?;
 
-    let bars = match data::load_bars(&app_config.data.source, &app_config.data.path) {
-        Ok(bars) => bars,
+    let market_slices = match load_configured_market_slices(&app_config) {
+        Ok(market_slices) => market_slices,
         Err(error) => {
-            record_failed_run(&state, &settings.run_id, error.to_string()).await?;
-            return Err(error.into());
+            let message = error.0.to_string();
+            record_failed_run(&state, &settings.run_id, message).await?;
+            return Err(error);
         }
     };
 
@@ -310,7 +333,9 @@ async fn run_paper(
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {
-            let result = runtime.run_bars_with_cancel(bars, cancel).await;
+            let result = runtime
+                .run_market_slices_with_cancel(market_slices, cancel)
+                .await;
 
             match result {
                 Ok(summary) => {
@@ -600,10 +625,15 @@ async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSu
     )))
 }
 
-async fn list_runs(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<storage::StrategyRunRecord>>, ApiError> {
-    Ok(Json(state.db.list_strategy_runs().await?))
+async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<RunResponse>>, ApiError> {
+    let runs = state
+        .db
+        .list_strategy_runs()
+        .await?
+        .into_iter()
+        .map(run_response)
+        .collect();
+    Ok(Json(runs))
 }
 
 async fn get_run(
@@ -613,20 +643,59 @@ async fn get_run(
     let Some(run) = state.db.get_strategy_run(&run_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    Ok(Json(run).into_response())
+    Ok(Json(run_response(run)).into_response())
 }
 
-async fn list_events(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<storage::EventRecord>>, ApiError> {
-    Ok(Json(state.db.list_events().await?))
+async fn list_events(State(state): State<AppState>) -> Result<Json<Vec<EventResponse>>, ApiError> {
+    let events = state
+        .db
+        .list_events()
+        .await?
+        .into_iter()
+        .map(event_response)
+        .collect();
+    Ok(Json(events))
 }
 
 async fn list_run_events(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
-) -> Result<Json<Vec<storage::EventRecord>>, ApiError> {
-    Ok(Json(state.db.list_events_by_source(&run_id).await?))
+) -> Result<Json<Vec<EventResponse>>, ApiError> {
+    let events = state
+        .db
+        .list_events_by_source(&run_id)
+        .await?
+        .into_iter()
+        .map(event_response)
+        .collect();
+    Ok(Json(events))
+}
+
+fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
+    let config = serde_json::from_str(&run.config_json)
+        .unwrap_or(serde_json::Value::String(run.config_json));
+    RunResponse {
+        id: run.id,
+        name: run.name,
+        mode: run.mode,
+        status: run.status,
+        started_at_ms: run.started_at_ms,
+        ended_at_ms: run.ended_at_ms,
+        error: run.error,
+        config,
+    }
+}
+
+fn event_response(event: storage::EventRecord) -> EventResponse {
+    let payload = serde_json::from_str(&event.payload_json)
+        .unwrap_or(serde_json::Value::String(event.payload_json));
+    EventResponse {
+        event_id: event.event_id,
+        ts_ms: event.ts_ms,
+        source: event.source,
+        category: event.category,
+        payload,
+    }
 }
 
 async fn get_run_status(
@@ -767,6 +836,59 @@ async fn update_replay_controller(
         serde_json::to_string(&replay_state).map_err(|error| ApiError(anyhow::anyhow!(error)))?;
     insert_event(&state.db, &run_id, category, &payload).await?;
     Ok(Json(replay_state))
+}
+
+fn load_configured_market_slices(
+    app_config: &config::AppConfig,
+) -> Result<Vec<data::MarketSlice>, ApiError> {
+    let inputs = configured_bar_inputs(app_config)?;
+    Ok(data::load_market_slices(&inputs)?)
+}
+
+fn configured_bar_inputs(app_config: &config::AppConfig) -> Result<Vec<data::BarInput>, ApiError> {
+    if app_config.data.inputs.is_empty() {
+        return Ok(vec![data::BarInput::new(
+            primary_strategy_symbol(app_config),
+            app_config.data.source.clone(),
+            app_config.data.path.clone(),
+        )]);
+    }
+
+    let input_symbols = app_config
+        .data
+        .inputs
+        .iter()
+        .map(|input| input.symbol.as_str())
+        .collect::<BTreeSet<_>>();
+    for symbol in &app_config.strategy.symbols {
+        if !input_symbols.contains(symbol.as_str()) {
+            return Err(ApiError(anyhow::anyhow!(
+                "missing data input for strategy symbol {symbol}"
+            )));
+        }
+    }
+
+    Ok(app_config
+        .data
+        .inputs
+        .iter()
+        .map(|input| {
+            data::BarInput::new(
+                input.symbol.clone(),
+                input.source.clone(),
+                input.path.clone(),
+            )
+        })
+        .collect())
+}
+
+fn primary_strategy_symbol(app_config: &config::AppConfig) -> String {
+    app_config
+        .strategy
+        .symbols
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string())
 }
 
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {

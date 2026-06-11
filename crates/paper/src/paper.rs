@@ -15,14 +15,14 @@ use algorithm::{
 use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
-use data::Bar;
+use data::{Bar, MarketSlice};
 use events::EventBus;
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{error::Error, fmt, time::Duration};
 use storage::{
     Db, PaperExecutionCommand, PaperFailedOrderCommand, PaperFinalStateCommand, PaperOrderCommand,
-    PaperPortfolioSnapshotCommand, RuntimeEventCommand,
+    PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
 };
 use strategies::{StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode};
 use tokio::sync::mpsc;
@@ -172,15 +172,37 @@ impl PaperRuntime {
             .await
     }
 
+    pub async fn run_market_slices(
+        &self,
+        market_slices: Vec<MarketSlice>,
+    ) -> anyhow::Result<BacktestSummary> {
+        self.run_market_slices_with_cancel(market_slices, CancellationFlag::default())
+            .await
+    }
+
     pub async fn run_bars_with_cancel(
         &self,
         bars: Vec<Bar>,
         cancel: CancellationFlag,
     ) -> anyhow::Result<BacktestSummary> {
+        let symbol = self.primary_symbol();
+        let market_slices = bars
+            .into_iter()
+            .map(|bar| MarketSlice::single(symbol.clone(), bar))
+            .collect::<Vec<_>>();
+        self.run_market_slices_with_cancel(market_slices, cancel)
+            .await
+    }
+
+    pub async fn run_market_slices_with_cancel(
+        &self,
+        market_slices: Vec<MarketSlice>,
+        cancel: CancellationFlag,
+    ) -> anyhow::Result<BacktestSummary> {
         let mut session = PaperRunSession::new(self)?;
-        for bar in bars {
+        for market_slice in market_slices {
             self.wait_before_bar(&cancel).await?;
-            session.process_bar(bar).await?;
+            session.process_market_slice(market_slice).await?;
         }
         session.finish().await
     }
@@ -193,7 +215,9 @@ impl PaperRuntime {
         let mut session = PaperRunSession::new(self)?;
         while let Some(bar) = bars.recv().await {
             self.wait_before_bar(&cancel).await?;
-            session.process_bar(bar).await?;
+            session
+                .process_market_slice(MarketSlice::single(self.primary_symbol(), bar))
+                .await?;
         }
         session.finish().await
     }
@@ -209,6 +233,14 @@ impl PaperRuntime {
             return Err(PaperRunError::Cancelled.into());
         }
         Ok(())
+    }
+
+    fn primary_symbol(&self) -> String {
+        self.settings
+            .assembly_symbols()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| self.settings.symbol.clone())
     }
 }
 
@@ -324,24 +356,26 @@ impl<'a> PaperRunSession<'a> {
         })
     }
 
-    async fn process_bar(&mut self, bar: Bar) -> anyhow::Result<()> {
-        self.started_at_ms.get_or_insert(bar.ts_ms);
-        self.ended_at_ms = bar.ts_ms;
-        let step = self.engine.on_bar(bar.clone())?;
+    async fn process_market_slice(&mut self, market_slice: MarketSlice) -> anyhow::Result<()> {
+        self.started_at_ms.get_or_insert(market_slice.ts_ms);
+        self.ended_at_ms = market_slice.ts_ms;
+        let step = self.engine.on_market_slice(market_slice.clone())?;
         self.last_snapshot = step.snapshot.clone();
-        if let Some(decision) = step.decision {
+        for decision in step.decisions {
             self.signals += 1;
             let settings = &self.runtime.settings;
             let Some(order) = decision.order.clone() else {
-                self.persist_snapshot(&bar).await?;
-                return Ok(());
+                continue;
             };
+            let bar = market_slice.bar(&order.symbol).ok_or_else(|| {
+                anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
+            })?;
             self.persist_engine_events(&decision.events).await?;
             let client_order_id = self
                 .runtime
                 .executor
                 .client_order_id(&settings.run_id, decision.order_number);
-            self.persist_submitted_order(&decision, &order, &client_order_id, &bar)
+            self.persist_submitted_order(&decision, &order, &client_order_id, bar)
                 .await?;
             let fill = match self
                 .runtime
@@ -352,7 +386,7 @@ impl<'a> PaperRunSession<'a> {
                 Ok(fill) => fill,
                 Err(error) => {
                     let message = error.to_string();
-                    self.persist_failed_order(&decision, &order, &client_order_id, &bar, &message)
+                    self.persist_failed_order(&decision, &order, &client_order_id, bar, &message)
                         .await?;
                     return Err(error);
                 }
@@ -370,12 +404,12 @@ impl<'a> PaperRunSession<'a> {
             )?;
             self.persist_engine_events(&applied.events).await?;
             self.last_snapshot = applied.snapshot;
-            self.persist_execution_result(&decision, &order, &client_order_id, &fill, &bar)
+            self.persist_execution_result(&decision, &order, &client_order_id, &fill, bar)
                 .await?;
             self.orders += 1;
         }
 
-        self.persist_snapshot(&bar).await
+        self.persist_snapshot(market_slice.ts_ms).await
     }
 
     async fn persist_submitted_order(
@@ -447,15 +481,15 @@ impl<'a> PaperRunSession<'a> {
         Ok(())
     }
 
-    async fn persist_snapshot(&mut self, bar: &Bar) -> anyhow::Result<()> {
+    async fn persist_snapshot(&mut self, ts_ms: i64) -> anyhow::Result<()> {
         let settings = &self.runtime.settings;
-        self.last_snapshot = self.engine.snapshot(bar.close)?;
+        self.last_snapshot = self.engine.snapshot_from_prices()?;
         self.runtime
             .db
             .record_paper_portfolio_snapshot(PaperPortfolioSnapshotCommand {
                 run_id: settings.run_id.clone(),
                 account_id: settings.account_id.clone(),
-                ts_ms: bar.ts_ms,
+                ts_ms,
                 cash: self.last_snapshot.cash,
                 market_value: self.last_snapshot.market_value,
                 equity: self.last_snapshot.equity,
@@ -502,6 +536,19 @@ impl<'a> PaperRunSession<'a> {
                 unrealized_pnl: self.last_snapshot.unrealized_pnl,
                 position_qty: self.last_snapshot.position_qty,
                 position_avg_price: self.last_snapshot.position_avg_price,
+                positions: self
+                    .last_snapshot
+                    .positions
+                    .iter()
+                    .map(|position| PositionCommand {
+                        run_id: settings.run_id.clone(),
+                        account_id: settings.account_id.clone(),
+                        symbol: position.symbol.clone(),
+                        qty: position.qty,
+                        avg_price: position.avg_price,
+                        updated_at_ms: self.ended_at_ms,
+                    })
+                    .collect(),
             })
             .await?;
 

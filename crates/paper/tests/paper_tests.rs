@@ -3,7 +3,7 @@ use broker::{
     BinanceLimitOrderRequest, BinanceOrderAck, BinanceOrderSide, BinanceTrade, BrokerError,
     IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrTrade,
 };
-use data::Bar;
+use data::{Bar, MarketSlice, SymbolBar};
 use paper::{
     BinancePaperOrderClient, BinancePaperOrderExecutor, ExecutedPaperOrder, IbkrPaperOrderClient,
     IbkrPaperOrderExecutor, PaperOrderExecutor, PaperRuntime, PaperSettings, binance_spot_symbol,
@@ -137,6 +137,38 @@ async fn paper_runtime_uses_configured_universe_and_alpha_names() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("unknown strategy unknown_alpha"));
+}
+
+#[tokio::test]
+async fn paper_runtime_runs_market_slices_for_multiple_symbols() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.symbols = vec![
+        "US:NASDAQ:AAPL:EQUITY".to_string(),
+        "US:NASDAQ:MSFT:EQUITY".to_string(),
+    ];
+    let slices = vec![
+        market_slice(1, dec!(10), dec!(30)),
+        market_slice(2, dec!(11), dec!(31)),
+        market_slice(3, dec!(20), dec!(40)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), settings)
+        .run_market_slices(slices)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.signals, 2);
+    assert_eq!(summary.orders, 2);
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 2);
+    assert_eq!(orders[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(orders[1].symbol, "US:NASDAQ:MSFT:EQUITY");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 2);
+    let positions = db.list_positions("sample-ma-cross").await.unwrap();
+    assert_eq!(positions.len(), 2);
 }
 
 #[tokio::test]
@@ -617,6 +649,40 @@ impl PaperOrderExecutor for FixedExecutor {
             fee: dec!(0.01),
         })
     }
+}
+
+fn market_slice(
+    ts_ms: i64,
+    aapl_close: rust_decimal::Decimal,
+    msft_close: rust_decimal::Decimal,
+) -> MarketSlice {
+    MarketSlice::new(
+        ts_ms,
+        vec![
+            SymbolBar::new(
+                "US:NASDAQ:AAPL:EQUITY",
+                Bar::new(
+                    ts_ms,
+                    aapl_close,
+                    aapl_close,
+                    aapl_close,
+                    aapl_close,
+                    dec!(1),
+                ),
+            ),
+            SymbolBar::new(
+                "US:NASDAQ:MSFT:EQUITY",
+                Bar::new(
+                    ts_ms,
+                    msft_close,
+                    msft_close,
+                    msft_close,
+                    msft_close,
+                    dec!(1),
+                ),
+            ),
+        ],
+    )
 }
 
 struct PartiallyFilledExecutor;

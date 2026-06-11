@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, ExecutionReport};
-use data::Bar;
+use data::{Bar, MarketSlice};
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -91,6 +91,18 @@ impl BacktestRuntime {
     }
 
     pub async fn run(&self, bars: Vec<Bar>) -> anyhow::Result<BacktestSummary> {
+        let symbol = self.primary_symbol();
+        let slices = bars
+            .into_iter()
+            .map(|bar| MarketSlice::single(symbol.clone(), bar))
+            .collect::<Vec<_>>();
+        self.run_market_slices(slices).await
+    }
+
+    pub async fn run_market_slices(
+        &self,
+        market_slices: Vec<MarketSlice>,
+    ) -> anyhow::Result<BacktestSummary> {
         let registry = StrategyRegistry;
         let assembly = registry.assemble_alpha(
             StrategyAssemblyConfig {
@@ -129,19 +141,20 @@ impl BacktestRuntime {
         }
         let mut signals = 0;
         let mut orders = 0;
-        let started_at_ms = bars.first().map_or(0, |bar| bar.ts_ms);
+        let started_at_ms = market_slices.first().map_or(0, |slice| slice.ts_ms);
         let mut ended_at_ms = started_at_ms;
-        let mut last_close = Decimal::ONE;
 
-        for bar in bars {
-            ended_at_ms = bar.ts_ms;
-            last_close = bar.close;
-            let step = engine.on_bar(bar.clone())?;
-            if let Some(decision) = step.decision {
+        for market_slice in market_slices {
+            ended_at_ms = market_slice.ts_ms;
+            let step = engine.on_market_slice(market_slice.clone())?;
+            for decision in step.decisions {
                 signals += 1;
                 let Some(order) = decision.order else {
                     continue;
                 };
+                let bar = market_slice.bar(&order.symbol).ok_or_else(|| {
+                    anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
+                })?;
                 let broker_order_id = format!("backtest-{}", decision.order_number);
                 let execution = engine.apply_execution(
                     &order,
@@ -184,14 +197,14 @@ impl BacktestRuntime {
             })
             .await?;
 
-            let snapshot = engine.snapshot(last_close)?;
-            if snapshot.position_qty != Decimal::ZERO {
+            let snapshot = engine.snapshot_from_prices()?;
+            for position in snapshot.positions {
                 db.record_backtest_position(BacktestPositionCommand {
                     run_id: self.settings.run_id.clone(),
                     account_id: self.settings.account_id.clone(),
-                    symbol: self.primary_symbol(),
-                    qty: snapshot.position_qty,
-                    avg_price: snapshot.position_avg_price,
+                    symbol: position.symbol,
+                    qty: position.qty,
+                    avg_price: position.avg_price,
                     updated_at_ms: ended_at_ms,
                 })
                 .await?;

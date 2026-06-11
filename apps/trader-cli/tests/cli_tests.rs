@@ -25,6 +25,30 @@ fn backtest_accepts_config_argument() {
 }
 
 #[test]
+fn backtest_accepts_multi_symbol_data_inputs() {
+    let config = write_multi_symbol_cli_config("cli-backtest-multi-symbol", "backtest");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=2 orders=2"));
+}
+
+#[test]
+fn paper_run_accepts_multi_symbol_data_inputs() {
+    let config = write_multi_symbol_cli_config("cli-paper-multi-symbol", "paper");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-run", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("paper completed: signals=2 orders=2"));
+}
+
+#[test]
 fn import_bars_can_write_parquet_output() {
     let output = std::env::temp_dir().join(format!(
         "trader-cli-import-{}.parquet",
@@ -659,6 +683,90 @@ fn write_ibkr_cli_config_with_order_submit(
     )
     .unwrap();
     config
+}
+
+fn write_multi_symbol_cli_config(run_id: &str, runtime_mode: &str) -> PathBuf {
+    let aapl_path = temp_output("trader-cli-aapl", "csv");
+    let msft_path = temp_output("trader-cli-msft", "csv");
+    let db_path = temp_output("trader-cli-multi-symbol", "sqlite");
+    std::fs::write(
+        &aapl_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &msft_path,
+        "ts_ms,open,high,low,close,volume\n1,30,30,30,30,1\n2,31,31,31,31,1\n3,40,40,40,40,1\n",
+    )
+    .unwrap();
+
+    let config = temp_output("trader-cli-multi-symbol", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "{runtime_mode}"
+            run_id = "{run_id}"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            [[data.inputs]]
+            symbol = "US:NASDAQ:AAPL:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [[data.inputs]]
+            symbol = "US:NASDAQ:MSFT:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&db_path),
+            toml_path(&aapl_path),
+            toml_path(&msft_path)
+        ),
+    )
+    .unwrap();
+    config
+}
+
+fn toml_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn workspace_root() -> &'static str {

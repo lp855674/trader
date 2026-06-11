@@ -1,5 +1,6 @@
 use accounting::{AccountBook, PositionBook};
 use rust_decimal_macros::dec;
+use std::collections::BTreeMap;
 
 #[test]
 fn buy_updates_average_price() {
@@ -65,4 +66,26 @@ fn account_unrealized_pnl_uses_mark_price() {
     book.buy("AAPL", dec!(2), dec!(100), dec!(1));
 
     assert_eq!(book.unrealized_pnl("AAPL", dec!(110)), dec!(20));
+}
+
+#[test]
+fn account_values_multiple_positions_with_symbol_prices() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+    book.buy("AAPL", dec!(2), dec!(100), dec!(0));
+    book.buy("MSFT", dec!(3), dec!(50), dec!(0));
+    let prices = BTreeMap::from([
+        ("AAPL".to_string(), dec!(110)),
+        ("MSFT".to_string(), dec!(40)),
+    ]);
+
+    assert_eq!(book.market_value_with_prices(&prices), dec!(340));
+    assert_eq!(book.equity_with_prices(&prices), dec!(9990));
+    assert_eq!(book.unrealized_pnl_with_prices(&prices), dec!(-10));
+    assert_eq!(
+        book.positions()
+            .into_iter()
+            .map(|position| position.symbol.clone())
+            .collect::<Vec<_>>(),
+        vec!["AAPL".to_string(), "MSFT".to_string()]
+    );
 }

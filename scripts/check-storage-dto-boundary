@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+violations=""
+
+line_has_storage_write_boundary_violation() {
+    local line="$1"
+
+    [[ "$line" =~ (^|[^[:alnum:]_])(NewOrder|NewFill)([^[:alnum:]_]|$) ]] && return 0
+    [[ "$line" =~ NewOrder[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewFill[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewPortfolioSnapshot[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewEventRecord[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewAccountBalance[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewPosition[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ NewStrategyRun[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ StoredRuntimeEvent[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ BacktestExecutionRecord[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ BacktestPositionRecord[[:space:]]*\{ ]] && return 0
+    [[ "$line" =~ \.insert_strategy_run[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.insert_order[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.insert_fill[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.insert_event[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.insert_portfolio_snapshot[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.upsert_account_balance[[:space:]]*\( ]] && return 0
+    [[ "$line" =~ \.upsert_position[[:space:]]*\( ]] && return 0
+
+    return 1
+}
+
+while IFS= read -r file; do
+    in_test_module=0
+    line_number=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        ((line_number += 1))
+        if [[ "$line" =~ \#\[cfg\(test\)\] ]]; then
+            in_test_module=1
+        fi
+        if [[ "$in_test_module" -eq 1 ]]; then
+            continue
+        fi
+        if line_has_storage_write_boundary_violation "$line"; then
+            violations+="${file}:${line_number}:${line}"$'\n'
+        fi
+    done < "$file"
+done < <(find crates apps -type f -name '*.rs' ! -path 'crates/storage/*')
+
+if [[ -n "$violations" ]]; then
+    echo "Storage DTO boundary violation found outside storage:"
+    printf "%s" "$violations"
+    exit 1
+fi
+
+storage_read_violations=""
+
+while IFS= read -r file; do
+    line_number=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        ((line_number += 1))
+        if [[ "$line" == *"StorageResult<"* ]]; then
+            return_type="${line#*StorageResult<}"
+            if [[ "$return_type" =~ New(Order|Fill|Position|AccountBalance|PortfolioSnapshot|StrategyRun|EventRecord) ]]; then
+                storage_read_violations+="${file}:${line_number}:${line}"$'\n'
+            fi
+        fi
+    done < "$file"
+done < <(find crates/storage/src -type f -name '*.rs')
+
+if [[ -n "$storage_read_violations" ]]; then
+    echo "Storage read API returns write DTO type:"
+    printf "%s" "$storage_read_violations"
+    exit 1
+fi
+
+echo "Storage DTO boundary check passed."

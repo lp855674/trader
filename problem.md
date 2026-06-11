@@ -9,6 +9,16 @@
 - P3 Paper 生命周期：submitted、failed、execution result、portfolio snapshot、final state 的持久化转换集中到 `storage`。
 - P4 Replay 控制闭环：正在运行的 replay loop 会响应 pause、resume、seek、speed，REST / WebSocket / replay runtime 测试已覆盖。
 - P5 Universe / Alpha 动态装配：`strategy.universe`、`strategy.alpha`、`strategy.symbols` 现在进入 Backtest / Paper runtime 的实际 `StrategyRegistry::assemble_alpha` 链路，不再只是配置字段。
+- 后续切片 CLI read model 隔离：CLI 只读查询与对账 helper 不再接收 `storage::NewOrder` / `storage::NewFill`，从 storage 查询结果进入 CLI 后立即映射为本地 `LocalOrder` / `LocalFill`。
+- 后续切片 storage read/write DTO 命名隔离：`storage` 查询 API 已返回 `StoredOrder` / `StoredFill` / `StoredPosition` / `StoredAccountBalance` / `StoredPortfolioSnapshot` 读模型，`New*` 类型只保留为 storage 边界内写入输入；边界检查已禁止外部代码直接引用这些写入 DTO，并禁止 storage 公开读取 API 返回写入 DTO。
+- 后续切片 API read model 隔离：REST 查询路由已把 run/event storage record 映射成 API-owned `RunResponse` / `EventResponse`，不再把 storage record 类型作为 HTTP response contract；`scripts/check-api-read-model-boundary.ps1` 已接入 `scripts/verify.ps1`。
+- 后续切片 REST event payload 契约：`GET /api/v1/events` 与 `GET /api/v1/runs/{run_id}/events` 已返回结构化 JSON `payload`，不再把 storage 内部 `payload_json` 字符串直接暴露给客户端。
+- 后续切片 REST run config 契约：`GET /api/v1/runs` 与 `GET /api/v1/runs/{run_id}` 已返回结构化 JSON `config`，不再把 storage 内部 `config_json` 字符串直接暴露给客户端。
+- 后续切片边界门禁跨平台收口：DB 边界、storage DTO 边界、API read model 边界均已补齐 bash 版本，并接入 Linux/macOS `scripts/verify`；Windows `verify.ps1` 与 bash `verify` 执行同一类架构门禁。
+- 后续切片 feature_store Parquet adapter：`feature_store` 已提供 Parquet-backed repository 和 feature record round-trip 读写，Decimal feature value 以字符串保存并读回为 `Decimal`；该切片不引入 SQL，不绕过 storage SQL 边界。
+- 后续切片 Universe / Alpha 真实多标的能力：`data::MarketSlice` / `SymbolBar` 已表示同一时间点多标的行情；`StaticUniverseSelector` 返回配置的完整 symbol 集合；`StrategyRegistry::assemble_alpha` 会为多标的 moving average alpha 建立 per-symbol 独立状态；`AlgorithmEngine::on_market_slice`、Backtest `run_market_slices` 和 Paper `run_market_slices` 会按每个有行情 symbol 生成订单、成交和持仓，并按全组合价格表计算权益、敞口和未实现盈亏。CLI / REST 的 Backtest 与 Paper 入口已支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；旧 `[data] source/path` 单文件配置保持兼容包装。
+- 后续切片 Binance client 演进：`BinanceSpotTestnetAdapter` 已抽出 `BinanceHttpClient` 边界，默认仍使用 `ReqwestBinanceHttpClient`；read-only 与下单调用已可通过 fake client 验证，后续替换 Rust SDK 时不需要改 Paper runtime 主链路。
+- 后续切片 IBKR client 稳定性：`IbkrPaperGatewayAdapter` 已抽出 `IbkrGatewayClient` 边界，默认仍使用 `IbapiIbkrGatewayClient`；账号校验、open orders、executions、next order id、place/cancel order 已可通过 fake Gateway client 做无网络验证。
 
 已验证：
 
@@ -26,9 +36,8 @@
 
 仍待后续独立切片：
 
-- Binance 底层 client 暂不替换；后续如推进，应保持现有 `BinanceSpotTestnetAdapter` / `BinancePaperOrderClient` 领域边界，先做 read-only adapter spike，再处理下单路径。
-- IBKR 目前保留 `ibapi` adapter 路线；后续重点应是 recover / reconcile 稳定性和真实 paper 环境验证。
-- CLI 只读查询与对账函数仍会接收 storage 读模型类型；本轮约束的是“边界外不得构造/写入 storage DTO”。若要进一步隐藏读模型，需要新增独立 query response/read model。
+- Binance 底层 SDK 仍暂不替换；HTTP client 边界 spike 已覆盖 read-only 与下单路径。后续如迁移 Rust SDK，应继续保持现有 `BinanceSpotTestnetAdapter` / `BinancePaperOrderClient` 领域边界。
+- IBKR 目前保留 `ibapi` adapter 路线；Gateway client 边界已可 fake 验证，仍待有真实 paper 账号与本机 TWS / Gateway 环境后做完整生命周期验证。
 
 我已基于 `docs/architecture.md`、`tech.md` 和当前代码重新核对项目状态。下面把原先的粗略问题分析细化为可以继续推进实现的问题清单。
 
@@ -232,7 +241,7 @@ Replay runtime 本身并没有消费 `ReplayController` 的 pause/resume/seek/sp
 
 ## P5：Universe / Alpha 动态装配（主链路已接入，后续扩展保留）
 
-当前状态：`strategy.universe`、`strategy.alpha`、`strategy.symbols` 已进入 Backtest / Paper runtime 的实际 `StrategyRegistry::assemble_alpha` 链路；当前仍保留更复杂多标的、多 Alpha、feature store 研究流水线作为后续切片。
+当前状态：`strategy.universe`、`strategy.alpha`、`strategy.symbols` 已进入 Backtest / Paper runtime 的实际 `StrategyRegistry::assemble_alpha` 链路；`[[data.inputs]]` 已把 CLI / REST 配置入口接到多标的 `MarketSlice`。当前仍保留更复杂 Universe selector、多 Alpha、feature store 研究流水线作为后续切片。
 
 ### 现状
 
@@ -240,7 +249,7 @@ Replay runtime 本身并没有消费 `ReplayController` 的 pause/resume/seek/sp
 
 ### 真正缺口
 
-Universe 仍以静态 symbol 为主，Alpha 组合也偏最小策略示例。距离多市场、多标的、配置化策略装配和研究流水线还有差距。
+Universe 仍以静态 symbol 为主，Alpha 组合也偏最小策略示例。距离多市场动态筛选、多 Alpha 权重/冲突处理和研究流水线还有差距。
 
 ### 风险
 
@@ -254,7 +263,7 @@ Universe 仍以静态 symbol 为主，Alpha 组合也偏最小策略示例。距
 后续可以逐步增加：
 
 - 配置化 Universe selector。
-- 多标的 `MarketSlice` 输入。
+- 更复杂的 Universe selector。
 - Alpha 权重/冲突处理策略。
 - Strategy/Alpha registry 的配置化装配。
 - feature store 与 Parquet 研究数据接入。

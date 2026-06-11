@@ -127,7 +127,7 @@ Universe Selection
 - Broker 只负责交易通道，不负责风控、仓位管理、策略逻辑、订单拆分或 PnL。
 - SQLite 是交易状态和运行状态真源；Parquet 是历史行情和研究数据真源。
 - API 不直接暴露数据库，不绕过 OMS 下单，不绕过 Risk 控制。
-- SQLite / SQL / `sqlx` 只属于 storage 边界。Backtest、Paper、API、CLI 等边界外生产路径不得构造 storage 写入 DTO，不得透传 `SqlitePool`，写入必须走 storage 暴露的语义 command / repository 方法。
+- SQLite / SQL / `sqlx` 只属于 storage 边界。Backtest、Paper、API、CLI 等边界外生产路径不得构造 storage 写入 DTO，不得透传 `SqlitePool`，写入必须走 storage 暴露的语义 command / repository 方法。storage 对外读取返回明确 read model，不复用写入 DTO；边界外只读/对账逻辑不直接传递 storage record，从 storage 查询结果进入业务 helper 前先映射为本 crate 的 read model。REST API 查询路由会再映射为 API-owned response struct，不直接把 storage record 作为 HTTP contract 暴露。
 - 文档单一来源按 `docs/README.md` 执行：API、DB、事件、crate 职责不要在多个文件重复维护。
 
 ## 技术栈
@@ -357,9 +357,9 @@ trader ibkr-paper-tiny-order --config configs/paper/ibkr_aapl_1d_parquet.toml --
 
 IBKR paper order adapter 已接入真实 Gateway client wrapper：`IbkrPaperGatewayOrderClient` 通过 `IbkrPaperGatewayAdapter` 查询 open orders、提交 limit order、撤单、读取 executions；`IbkrPaperOrderExecutor` 只根据 executions 写入成交，空 executions 会撤销 open order 并返回 0 filled qty，不伪造成交。CLI 与 REST 的 `paper-run` 在 `[broker] kind = "ibkr"`、`mode = "paper"`、`order_submit_enabled = true` 且账号校验通过后，会注入该 executor 执行股票 paper order。
 
-IBKR TWS API wire codec 不再由项目手写维护，`broker` crate 改为依赖 `ibapi`。当前 adapter 覆盖 server version / connection time、managed accounts、open orders、executions、next valid order id、cancel order、tiny stock LMT place order，并已接入真实 socket session 完成账号校验、只读订单/成交读取、受确认保护的 paper 撤单、受确认保护的 tiny paper order，以及 `paper-run` 自动股票 paper order。
+IBKR TWS API wire codec 不再由项目手写维护，`broker` crate 改为依赖 `ibapi`。当前 adapter 覆盖 server version / connection time、managed accounts、open orders、executions、next valid order id、cancel order、tiny stock LMT place order，并已接入真实 socket session 完成账号校验、只读订单/成交读取、受确认保护的 paper 撤单、受确认保护的 tiny paper order，以及 `paper-run` 自动股票 paper order。`IbkrGatewayClient` / `IbapiIbkrGatewayClient` 已把 Gateway 调用从 `IbkrPaperGatewayAdapter` 中隔离出来，账号校验、open orders、executions、next order id、place/cancel order 均可用 fake Gateway client 做无网络验证；真实完整生命周期仍需要本机 TWS / Gateway 与真实 paper account。
 
-Binance 也有 Rust 开源包可选，例如 `binance`、`binance_spot_connector_rust` 和 `binance-sdk`。当前 Binance Spot Testnet adapter 仍使用项目内 `reqwest + HMAC` 实现；后续若迁移，应优先保留现有 `BinancePaperOrderClient` / `BinanceSpotTestnetAdapter` 领域边界，逐步替换底层 REST client，避免和 IBKR 迁移混在同一改动里。
+Binance 也有 Rust 开源包可选，例如 `binance`、`binance_spot_connector_rust` 和 `binance-sdk`。当前 Binance Spot Testnet adapter 仍使用项目内 `reqwest + HMAC` 实现；`BinanceHttpClient` / `ReqwestBinanceHttpClient` 已把底层 HTTP 调用从 `BinanceSpotTestnetAdapter` 中隔离出来，read-only 与下单调用均可用 fake client 验证。后续若迁移 Rust SDK，应优先保留现有 `BinancePaperOrderClient` / `BinanceSpotTestnetAdapter` 领域边界，逐步替换底层 REST client，避免和 IBKR 迁移混在同一改动里。
 
 当前 paper 验证命令：
 
@@ -473,7 +473,22 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Algorithm 事件 payload 在 Rust 内使用 typed payload struct 构造，再序列化为 `serde_json::Value` 写入 EventBus / SQLite，避免各 runtime 手写漂移的 JSON schema。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。Backtest / Paper runtime 会消费配置中的 `strategy.universe`、`strategy.alpha` 与 `strategy.symbols`，通过 `StrategyRegistry::assemble_alpha` 装配 universe selector 和 alpha model。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。Replay runtime 会读取共享 `ReplayController`，正在运行的 replay loop 会响应 pause、resume、seek 和 speed。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Algorithm 事件 payload 在 Rust 内使用 typed payload struct 构造，再序列化为 `serde_json::Value` 写入 EventBus / SQLite，避免各 runtime 手写漂移的 JSON schema。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。`data` 提供 `MarketSlice` / `SymbolBar` 表达同一时间点的多标的行情；`AlgorithmEngine::on_market_slice` 会对 Universe 选出的每个有行情 symbol 独立运行 Alpha、Portfolio、MarketRules、Risk、Execution 和 OMS，并用全组合持仓价格表计算权益、敞口和未实现盈亏。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。Backtest / Paper runtime 会消费配置中的 `strategy.universe`、`strategy.alpha` 与 `strategy.symbols`，通过 `StrategyRegistry::assemble_alpha` 装配 universe selector 和 alpha model；多标的 moving average alpha 会为每个 symbol 维护独立指标状态，Backtest/Paper 也提供 `run_market_slices` 入口持久化多标的订单、成交和持仓。CLI / REST 的 Backtest 与 Paper 入口支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；旧 `[data] source/path` 单文件配置继续作为单标的兼容包装。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。Replay runtime 会读取共享 `ReplayController`，正在运行的 replay loop 会响应 pause、resume、seek 和 speed。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+
+多标的行情配置使用 `[[data.inputs]]`：
+
+```toml
+[data]
+[[data.inputs]]
+symbol = "US:NASDAQ:AAPL:EQUITY"
+source = "csv"
+path = "datasets/sample/aapl_1d.csv"
+
+[[data.inputs]]
+symbol = "US:NASDAQ:MSFT:EQUITY"
+source = "csv"
+path = "datasets/sample/msft_1d.csv"
+```
 
 ## Local Verifiable MVP
 
@@ -481,10 +496,11 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 - CLI：`check-config`、`migrate`、`backtest`、`paper-run`、`replay`、`report`。
 - REST：`health`、`backtests`、`paper-runs`、`replays`、`orders`、`fills`、`positions`、`account-balances`、`portfolio/snapshots`、`metrics`、`runs`、`events`。
+- REST run/event 查询返回 API-owned response，`config` / `payload` 是结构化 JSON 值；SQLite 内部的 `config_json` / `payload_json` 只属于 storage 持久化表示。
 - WebSocket：`subscribe` 会先回放 SQLite run events，再转发 `AppState.event_bus` 中 run_id 匹配的 runtime events；`replay_control` 支持 pause/resume/seek/speed。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store；storage crate 负责 decimal string、状态字符串、event id、SQLite record shape 等持久化转换。
-- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
-- Research support：`indicators` 提供 Decimal SMA/EMA 基础指标，`moving_average_cross` 策略已复用 `SimpleMovingAverage`；`feature_store` 提供 Decimal feature record、key 和 in-memory range/latest repository，后续可接 Parquet/SQLite adapter。
+- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合和多标的独立状态；`[[data.inputs]]` 会加载多文件行情并合并为 `MarketSlice`，生成 per-symbol order decisions，并按全组合持仓估值；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
+- Research support：`indicators` 提供 Decimal SMA/EMA 基础指标，`moving_average_cross` 策略已复用 `SimpleMovingAverage`；`feature_store` 提供 Decimal feature record、key、in-memory range/latest repository，以及 Parquet-backed repository / round-trip 读写。Feature Parquet schema 使用 `run_id`、`symbol`、`name`、`ts_ms`、`value`、`version`，其中 Decimal `value` 以字符串保存以保留精度；SQLite adapter 不在 feature_store 内实现，若需要 SQL 持久化必须走 storage 边界。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。

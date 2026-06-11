@@ -3,7 +3,7 @@ use rust_decimal_macros::dec;
 use universe::{StaticUniverseSelector, UniverseContext, UniverseError, UniverseSelector};
 
 #[test]
-fn static_universe_selector_returns_primary_symbol_only_when_configured() {
+fn static_universe_selector_returns_configured_symbols() {
     let selector = StaticUniverseSelector::new(vec![
         "US:NASDAQ:AAPL:EQUITY".to_string(),
         "US:NASDAQ:MSFT:EQUITY".to_string(),
@@ -15,7 +15,10 @@ fn static_universe_selector_returns_primary_symbol_only_when_configured() {
 
     assert_eq!(
         selector.select(&context).unwrap(),
-        vec!["US:NASDAQ:AAPL:EQUITY".to_string()]
+        vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+            "US:NASDAQ:MSFT:EQUITY".to_string()
+        ]
     );
 }
 

@@ -46,6 +46,12 @@ impl PositionBook {
     pub fn position_mut(&mut self, symbol: &str) -> Option<&mut Position> {
         self.positions.get_mut(symbol)
     }
+
+    pub fn positions(&self) -> Vec<&Position> {
+        let mut positions = self.positions.values().collect::<Vec<_>>();
+        positions.sort_by(|left, right| left.symbol.cmp(&right.symbol));
+        positions
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,13 +101,40 @@ impl AccountBook {
         self.positions.position(symbol)
     }
 
+    pub fn positions(&self) -> Vec<&Position> {
+        self.positions.positions()
+    }
+
     pub fn market_value(&self, symbol: &str, mark_price: Decimal) -> Decimal {
         self.position(symbol)
             .map_or(Decimal::ZERO, |position| position.qty * mark_price)
     }
 
+    pub fn market_value_with_prices(
+        &self,
+        mark_prices: &std::collections::BTreeMap<String, Decimal>,
+    ) -> Decimal {
+        self.positions()
+            .into_iter()
+            .map(|position| {
+                position.qty
+                    * mark_prices
+                        .get(&position.symbol)
+                        .copied()
+                        .unwrap_or(position.avg_price)
+            })
+            .fold(Decimal::ZERO, |sum, value| sum + value)
+    }
+
     pub fn equity(&self, symbol: &str, mark_price: Decimal) -> Decimal {
         self.cash + self.market_value(symbol, mark_price)
+    }
+
+    pub fn equity_with_prices(
+        &self,
+        mark_prices: &std::collections::BTreeMap<String, Decimal>,
+    ) -> Decimal {
+        self.cash + self.market_value_with_prices(mark_prices)
     }
 
     pub fn cash(&self) -> Decimal {
@@ -116,5 +149,21 @@ impl AccountBook {
         self.position(symbol).map_or(Decimal::ZERO, |position| {
             position.qty * (mark_price - position.avg_price)
         })
+    }
+
+    pub fn unrealized_pnl_with_prices(
+        &self,
+        mark_prices: &std::collections::BTreeMap<String, Decimal>,
+    ) -> Decimal {
+        self.positions()
+            .into_iter()
+            .map(|position| {
+                let mark_price = mark_prices
+                    .get(&position.symbol)
+                    .copied()
+                    .unwrap_or(position.avg_price);
+                position.qty * (mark_price - position.avg_price)
+            })
+            .fold(Decimal::ZERO, |sum, value| sum + value)
     }
 }

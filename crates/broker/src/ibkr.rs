@@ -10,7 +10,7 @@ use ibapi::{
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use serde::Serialize;
-use std::time::Duration;
+use std::{fmt, sync::Arc, time::Duration};
 use tokio::time::timeout;
 use trader_core::OrderRequest;
 
@@ -96,15 +96,60 @@ pub struct IbkrPaperGatewaySettings {
     pub connect_timeout: Duration,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IbkrPaperGatewayAdapter {
     settings: IbkrPaperGatewaySettings,
+    client: Arc<dyn IbkrGatewayClient>,
+}
+
+impl fmt::Debug for IbkrPaperGatewayAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IbkrPaperGatewayAdapter")
+            .field("host", &self.settings.host)
+            .field("port", &self.settings.port)
+            .field("client_id", &self.settings.client_id)
+            .field("connect_timeout", &self.settings.connect_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IbkrServerVersion {
     pub server_version: i64,
     pub connection_time: String,
+}
+
+#[async_trait]
+pub trait IbkrGatewayClient: Send + Sync {
+    async fn connect_probe(&self) -> Result<(), BrokerError>;
+    async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError>;
+    async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError>;
+    async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError>;
+    async fn executions(
+        &self,
+        request_id: i64,
+        account_id: &str,
+        symbol: &str,
+    ) -> Result<Vec<IbkrExecution>, BrokerError>;
+    async fn next_order_id(&self) -> Result<i64, BrokerError>;
+    async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError>;
+    async fn place_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct IbapiIbkrGatewayClient {
+    settings: IbkrPaperGatewaySettings,
+}
+
+impl IbapiIbkrGatewayClient {
+    pub fn new(settings: IbkrPaperGatewaySettings) -> Self {
+        Self { settings }
+    }
 }
 
 impl IbkrPaperGatewayAdapter {
@@ -114,7 +159,17 @@ impl IbkrPaperGatewayAdapter {
                 "IBKR paper adapter requires a paper port; got common live port 7496".to_string(),
             ));
         }
-        Ok(Self { settings })
+        Ok(Self::new_with_gateway_client(
+            settings.clone(),
+            Arc::new(IbapiIbkrGatewayClient::new(settings)),
+        ))
+    }
+
+    pub fn new_with_gateway_client(
+        settings: IbkrPaperGatewaySettings,
+        client: Arc<dyn IbkrGatewayClient>,
+    ) -> Self {
+        Self { settings, client }
     }
 
     pub fn settings(&self) -> &IbkrPaperGatewaySettings {
@@ -122,12 +177,105 @@ impl IbkrPaperGatewayAdapter {
     }
 
     pub async fn connect_probe(&self) -> Result<(), BrokerError> {
+        self.client.connect_probe().await
+    }
+
+    pub async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
+        self.client.connect_and_handshake().await
+    }
+
+    pub async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
+        self.client.managed_accounts().await
+    }
+
+    pub async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
+        self.client.open_orders().await
+    }
+
+    pub async fn executions(
+        &self,
+        request_id: i64,
+        account_id: &str,
+        symbol: &str,
+    ) -> Result<Vec<IbkrExecution>, BrokerError> {
+        self.client.executions(request_id, account_id, symbol).await
+    }
+
+    pub async fn next_order_id(&self) -> Result<i64, BrokerError> {
+        self.client.next_order_id().await
+    }
+
+    pub async fn cancel_ibkr_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
+        self.client.cancel_order(order_id).await
+    }
+
+    pub async fn place_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        validate_limit_order(account_id, order)?;
+        self.client.place_limit_order(account_id, order).await
+    }
+
+    pub async fn validate_paper_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<String>, BrokerError> {
+        let trimmed = account_id.trim();
+        if trimmed.is_empty() || trimmed == "ibkr-paper" {
+            return Err(BrokerError::Config(
+                "configured IBKR paper account id must be a real TWS / Gateway paper account id, usually DU...".to_string(),
+            ));
+        }
+        let accounts = self.managed_accounts().await?;
+        if accounts.iter().any(|account| account == trimmed) {
+            return Ok(accounts);
+        }
+        Err(BrokerError::Config(format!(
+            "configured IBKR paper account id {trimmed} was not returned by TWS / Gateway; returned accounts: {}",
+            accounts.join(",")
+        )))
+    }
+}
+
+impl IbapiIbkrGatewayClient {
+    async fn connect_client(&self) -> Result<Client, BrokerError> {
+        let address = self.address();
+        timeout(
+            self.settings.connect_timeout,
+            Client::connect(&address, client_id_i32(self.settings.client_id)?),
+        )
+        .await
+        .map_err(|_| {
+            BrokerError::Connection(format!(
+                "unable to connect to IBKR paper gateway at {address}: timeout"
+            ))
+        })?
+        .map_err(|error| map_ibapi_connect_error(&address, error))
+    }
+
+    fn address(&self) -> String {
+        format!("{}:{}", self.settings.host, self.settings.port)
+    }
+
+    fn timeout_error(&self, operation: &str) -> BrokerError {
+        BrokerError::Connection(format!(
+            "IBKR paper gateway {operation} timed out at {}",
+            self.address()
+        ))
+    }
+}
+
+#[async_trait]
+impl IbkrGatewayClient for IbapiIbkrGatewayClient {
+    async fn connect_probe(&self) -> Result<(), BrokerError> {
         let client = self.connect_client().await?;
         client.disconnect().await;
         Ok(())
     }
 
-    pub async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
+    async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError> {
         let client = self.connect_client().await?;
         let version = IbkrServerVersion {
             server_version: i64::from(client.server_version()),
@@ -140,7 +288,7 @@ impl IbkrPaperGatewayAdapter {
         Ok(version)
     }
 
-    pub async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
+    async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError> {
         let client = self.connect_client().await?;
         let accounts = timeout(self.settings.connect_timeout, client.managed_accounts())
             .await
@@ -150,7 +298,7 @@ impl IbkrPaperGatewayAdapter {
         Ok(accounts)
     }
 
-    pub async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
+    async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
         let client = self.connect_client().await?;
         let mut subscription = timeout(self.settings.connect_timeout, client.all_open_orders())
             .await
@@ -172,7 +320,7 @@ impl IbkrPaperGatewayAdapter {
         Ok(orders)
     }
 
-    pub async fn executions(
+    async fn executions(
         &self,
         request_id: i64,
         account_id: &str,
@@ -218,7 +366,7 @@ impl IbkrPaperGatewayAdapter {
         Ok(executions)
     }
 
-    pub async fn next_order_id(&self) -> Result<i64, BrokerError> {
+    async fn next_order_id(&self) -> Result<i64, BrokerError> {
         let client = self.connect_client().await?;
         let order_id = timeout(self.settings.connect_timeout, client.next_valid_order_id())
             .await
@@ -228,7 +376,7 @@ impl IbkrPaperGatewayAdapter {
         Ok(i64::from(order_id))
     }
 
-    pub async fn cancel_ibkr_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
+    async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
         let client = self.connect_client().await?;
         let mut subscription = timeout(
             self.settings.connect_timeout,
@@ -258,7 +406,7 @@ impl IbkrPaperGatewayAdapter {
         )))
     }
 
-    pub async fn place_limit_order(
+    async fn place_limit_order(
         &self,
         account_id: &str,
         order: &IbkrLimitOrderRequest,
@@ -319,52 +467,6 @@ impl IbkrPaperGatewayAdapter {
         Err(BrokerError::Rejected(format!(
             "IBKR place order {order_id} returned no order status"
         )))
-    }
-
-    pub async fn validate_paper_account(
-        &self,
-        account_id: &str,
-    ) -> Result<Vec<String>, BrokerError> {
-        let trimmed = account_id.trim();
-        if trimmed.is_empty() || trimmed == "ibkr-paper" {
-            return Err(BrokerError::Config(
-                "configured IBKR paper account id must be a real TWS / Gateway paper account id, usually DU...".to_string(),
-            ));
-        }
-        let accounts = self.managed_accounts().await?;
-        if accounts.iter().any(|account| account == trimmed) {
-            return Ok(accounts);
-        }
-        Err(BrokerError::Config(format!(
-            "configured IBKR paper account id {trimmed} was not returned by TWS / Gateway; returned accounts: {}",
-            accounts.join(",")
-        )))
-    }
-
-    async fn connect_client(&self) -> Result<Client, BrokerError> {
-        let address = self.address();
-        timeout(
-            self.settings.connect_timeout,
-            Client::connect(&address, client_id_i32(self.settings.client_id)?),
-        )
-        .await
-        .map_err(|_| {
-            BrokerError::Connection(format!(
-                "unable to connect to IBKR paper gateway at {address}: timeout"
-            ))
-        })?
-        .map_err(|error| map_ibapi_connect_error(&address, error))
-    }
-
-    fn address(&self) -> String {
-        format!("{}:{}", self.settings.host, self.settings.port)
-    }
-
-    fn timeout_error(&self, operation: &str) -> BrokerError {
-        BrokerError::Connection(format!(
-            "IBKR paper gateway {operation} timed out at {}",
-            self.address()
-        ))
     }
 }
 

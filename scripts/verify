@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+JOBS="${JOBS:-1}"
+export CARGO_BUILD_JOBS="$JOBS"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+bash "$script_dir/check-db-boundary"
+bash "$script_dir/check-storage-dto-boundary"
+bash "$script_dir/check-api-read-model-boundary"
+
 cargo fmt --all -- --check
-cargo check --workspace
-cargo test --workspace
+cargo check --workspace -j "$JOBS"
+cargo test --workspace -j "$JOBS"
