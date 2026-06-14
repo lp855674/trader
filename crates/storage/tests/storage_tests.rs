@@ -51,6 +51,25 @@ async fn migration_creates_contract_accounting_tables() {
 }
 
 #[tokio::test]
+async fn migration_creates_reference_snapshot_and_ops_tables() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let tables = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+
+    assert!(tables.contains(&"crypto_market_meta".to_string()));
+    assert!(tables.contains(&"corporate_actions_meta".to_string()));
+    assert!(tables.contains(&"cash_snapshots".to_string()));
+    assert!(tables.contains(&"position_snapshots".to_string()));
+    assert!(tables.contains(&"configs".to_string()));
+    assert!(tables.contains(&"system_logs".to_string()));
+}
+
+#[tokio::test]
 async fn instrument_round_trip() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

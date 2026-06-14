@@ -13,10 +13,10 @@ Trader 采用渐进式开发路线。
 ## Schema Gap Closure
 
 - Keep `event_store` as immutable audit truth.
-- Add `order_events` and `risk_events` as query projections.
-- Add `insights` and `portfolio_targets` for research and post-run analysis.
-- Add market-rule reference tables before claiming configurable multi-market support.
-- Add `crypto_positions` and `funding_rates` before claiming full crypto derivative accounting.
+- `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
+- Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
+- `crypto_positions` and `funding_rates` exist as storage boundary; runtime accounting still needs funding settlement and reconciliation before claiming full crypto derivative accounting.
+- `crypto_market_meta`、`corporate_actions_meta`、`cash_snapshots`、`position_snapshots`、`configs` and `system_logs` exist as storage boundary; automatic capture and production lifecycle remain follow-up work.
 
 目标：
 

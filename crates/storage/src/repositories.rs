@@ -3,6 +3,7 @@ use chrono::{TimeZone, Utc};
 use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
 use rust_decimal::Decimal;
 use serde::Serialize;
+use sqlx::Row;
 use trader_core::OrderRequest;
 use uuid::Uuid;
 
@@ -144,6 +145,214 @@ pub struct StoredFundingRate {
     pub funding_rate: String,
     pub mark_price: Option<String>,
     pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewCryptoMarketMeta {
+    pub exchange: String,
+    pub symbol: String,
+    pub base_asset: String,
+    pub quote_asset: String,
+    pub instrument_type: String,
+    pub contract_type: Option<String>,
+    pub contract_size: Option<String>,
+    pub settlement_asset: Option<String>,
+    pub min_notional: Option<String>,
+    pub min_qty: Option<String>,
+    pub max_qty: Option<String>,
+    pub price_precision: Option<i64>,
+    pub qty_precision: Option<i64>,
+    pub price_tick: Option<String>,
+    pub qty_step: Option<String>,
+    pub maker_fee_rate: Option<String>,
+    pub taker_fee_rate: Option<String>,
+    pub funding_interval_hours: Option<i64>,
+    pub max_leverage: Option<String>,
+    pub margin_modes: Option<String>,
+    pub is_inverse: bool,
+    pub is_active: bool,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredCryptoMarketMeta {
+    pub id: i64,
+    pub exchange: String,
+    pub symbol: String,
+    pub base_asset: String,
+    pub quote_asset: String,
+    pub instrument_type: String,
+    pub contract_type: Option<String>,
+    pub contract_size: Option<String>,
+    pub settlement_asset: Option<String>,
+    pub min_notional: Option<String>,
+    pub min_qty: Option<String>,
+    pub max_qty: Option<String>,
+    pub price_precision: Option<i64>,
+    pub qty_precision: Option<i64>,
+    pub price_tick: Option<String>,
+    pub qty_step: Option<String>,
+    pub maker_fee_rate: Option<String>,
+    pub taker_fee_rate: Option<String>,
+    pub funding_interval_hours: Option<i64>,
+    pub max_leverage: Option<String>,
+    pub margin_modes: Option<String>,
+    pub is_inverse: bool,
+    pub is_active: bool,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewCorporateActionMeta {
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub action_type: String,
+    pub ex_date_ms: i64,
+    pub record_date_ms: Option<i64>,
+    pub payable_date_ms: Option<i64>,
+    pub ratio: Option<String>,
+    pub cash_amount: Option<String>,
+    pub currency: Option<String>,
+    pub source: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredCorporateActionMeta {
+    pub id: i64,
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub action_type: String,
+    pub ex_date_ms: i64,
+    pub record_date_ms: Option<i64>,
+    pub payable_date_ms: Option<i64>,
+    pub ratio: Option<String>,
+    pub cash_amount: Option<String>,
+    pub currency: Option<String>,
+    pub source: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewCashSnapshot {
+    pub run_id: String,
+    pub ts_ms: i64,
+    pub currency: String,
+    pub cash: String,
+    pub available_cash: String,
+    pub frozen_cash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredCashSnapshot {
+    pub id: i64,
+    pub run_id: String,
+    pub ts_ms: i64,
+    pub currency: String,
+    pub cash: String,
+    pub available_cash: String,
+    pub frozen_cash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewPositionSnapshot {
+    pub run_id: String,
+    pub ts_ms: i64,
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub position_side: Option<String>,
+    pub qty: String,
+    pub available_qty: String,
+    pub avg_price: Option<String>,
+    pub entry_price: Option<String>,
+    pub market_price: Option<String>,
+    pub mark_price: Option<String>,
+    pub market_value: Option<String>,
+    pub unrealized_pnl: Option<String>,
+    pub realized_pnl: Option<String>,
+    pub currency: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredPositionSnapshot {
+    pub id: i64,
+    pub run_id: String,
+    pub ts_ms: i64,
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub position_side: Option<String>,
+    pub qty: String,
+    pub available_qty: String,
+    pub avg_price: Option<String>,
+    pub entry_price: Option<String>,
+    pub market_price: Option<String>,
+    pub mark_price: Option<String>,
+    pub market_value: Option<String>,
+    pub unrealized_pnl: Option<String>,
+    pub realized_pnl: Option<String>,
+    pub currency: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewConfigRecord {
+    pub id: String,
+    pub name: String,
+    pub config_type: String,
+    pub content: String,
+    pub format: String,
+    pub checksum: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredConfigRecord {
+    pub id: String,
+    pub name: String,
+    pub config_type: String,
+    pub content: String,
+    pub format: String,
+    pub checksum: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewSystemLog {
+    pub id: String,
+    pub run_id: Option<String>,
+    pub ts_ms: i64,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub fields_json: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredSystemLog {
+    pub id: String,
+    pub run_id: Option<String>,
+    pub ts_ms: i64,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub fields_json: Option<String>,
+    pub created_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1290,6 +1499,530 @@ impl Db {
                         funding_rate,
                         mark_price,
                         source,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn upsert_crypto_market_meta(&self, meta: NewCryptoMarketMeta) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO crypto_market_meta (
+                exchange, symbol, base_asset, quote_asset, instrument_type,
+                contract_type, contract_size, settlement_asset, min_notional,
+                min_qty, max_qty, price_precision, qty_precision, price_tick,
+                qty_step, maker_fee_rate, taker_fee_rate, funding_interval_hours,
+                max_leverage, margin_modes, is_inverse, is_active, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(exchange, symbol) DO UPDATE SET
+                base_asset = excluded.base_asset,
+                quote_asset = excluded.quote_asset,
+                instrument_type = excluded.instrument_type,
+                contract_type = excluded.contract_type,
+                contract_size = excluded.contract_size,
+                settlement_asset = excluded.settlement_asset,
+                min_notional = excluded.min_notional,
+                min_qty = excluded.min_qty,
+                max_qty = excluded.max_qty,
+                price_precision = excluded.price_precision,
+                qty_precision = excluded.qty_precision,
+                price_tick = excluded.price_tick,
+                qty_step = excluded.qty_step,
+                maker_fee_rate = excluded.maker_fee_rate,
+                taker_fee_rate = excluded.taker_fee_rate,
+                funding_interval_hours = excluded.funding_interval_hours,
+                max_leverage = excluded.max_leverage,
+                margin_modes = excluded.margin_modes,
+                is_inverse = excluded.is_inverse,
+                is_active = excluded.is_active,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(meta.exchange)
+        .bind(meta.symbol)
+        .bind(meta.base_asset)
+        .bind(meta.quote_asset)
+        .bind(meta.instrument_type)
+        .bind(meta.contract_type)
+        .bind(meta.contract_size)
+        .bind(meta.settlement_asset)
+        .bind(meta.min_notional)
+        .bind(meta.min_qty)
+        .bind(meta.max_qty)
+        .bind(meta.price_precision)
+        .bind(meta.qty_precision)
+        .bind(meta.price_tick)
+        .bind(meta.qty_step)
+        .bind(meta.maker_fee_rate)
+        .bind(meta.taker_fee_rate)
+        .bind(meta.funding_interval_hours)
+        .bind(meta.max_leverage)
+        .bind(meta.margin_modes)
+        .bind(meta.is_inverse)
+        .bind(meta.is_active)
+        .bind(meta.created_at_ms)
+        .bind(meta.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn find_crypto_market_meta(
+        &self,
+        exchange: &str,
+        symbol: &str,
+    ) -> StorageResult<Option<StoredCryptoMarketMeta>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, exchange, symbol, base_asset, quote_asset, instrument_type,
+                   contract_type, contract_size, settlement_asset, min_notional,
+                   min_qty, max_qty, price_precision, qty_precision, price_tick,
+                   qty_step, maker_fee_rate, taker_fee_rate, funding_interval_hours,
+                   max_leverage, margin_modes, is_inverse, is_active,
+                   created_at AS created_at_ms, updated_at AS updated_at_ms
+            FROM crypto_market_meta
+            WHERE exchange = ? AND symbol = ?
+            "#,
+        )
+        .bind(exchange)
+        .bind(symbol)
+        .fetch_optional(self.pool())
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let is_inverse: i64 = row.try_get("is_inverse")?;
+        let is_active: i64 = row.try_get("is_active")?;
+
+        Ok(Some(StoredCryptoMarketMeta {
+            id: row.try_get("id")?,
+            exchange: row.try_get("exchange")?,
+            symbol: row.try_get("symbol")?,
+            base_asset: row.try_get("base_asset")?,
+            quote_asset: row.try_get("quote_asset")?,
+            instrument_type: row.try_get("instrument_type")?,
+            contract_type: row.try_get("contract_type")?,
+            contract_size: row.try_get("contract_size")?,
+            settlement_asset: row.try_get("settlement_asset")?,
+            min_notional: row.try_get("min_notional")?,
+            min_qty: row.try_get("min_qty")?,
+            max_qty: row.try_get("max_qty")?,
+            price_precision: row.try_get("price_precision")?,
+            qty_precision: row.try_get("qty_precision")?,
+            price_tick: row.try_get("price_tick")?,
+            qty_step: row.try_get("qty_step")?,
+            maker_fee_rate: row.try_get("maker_fee_rate")?,
+            taker_fee_rate: row.try_get("taker_fee_rate")?,
+            funding_interval_hours: row.try_get("funding_interval_hours")?,
+            max_leverage: row.try_get("max_leverage")?,
+            margin_modes: row.try_get("margin_modes")?,
+            is_inverse: is_inverse != 0,
+            is_active: is_active != 0,
+            created_at_ms: row.try_get("created_at_ms")?,
+            updated_at_ms: row.try_get("updated_at_ms")?,
+        }))
+    }
+
+    pub async fn insert_corporate_action_meta(
+        &self,
+        action: NewCorporateActionMeta,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO corporate_actions_meta (
+                market, exchange, symbol, action_type, ex_date, record_date,
+                payable_date, ratio, cash_amount, currency, source, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(action.market)
+        .bind(action.exchange)
+        .bind(action.symbol)
+        .bind(action.action_type)
+        .bind(action.ex_date_ms)
+        .bind(action.record_date_ms)
+        .bind(action.payable_date_ms)
+        .bind(action.ratio)
+        .bind(action.cash_amount)
+        .bind(action.currency)
+        .bind(action.source)
+        .bind(action.created_at_ms)
+        .bind(action.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_corporate_actions(
+        &self,
+        market: &str,
+        symbol: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> StorageResult<Vec<StoredCorporateActionMeta>> {
+        type CorporateActionRow = (
+            i64,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            i64,
+        );
+
+        let rows = sqlx::query_as::<_, CorporateActionRow>(
+            r#"
+            SELECT id, market, exchange, symbol, action_type, ex_date, record_date,
+                   payable_date, ratio, cash_amount, currency, source, created_at, updated_at
+            FROM corporate_actions_meta
+            WHERE market = ?
+              AND symbol = ?
+              AND ex_date >= ?
+              AND ex_date < ?
+            ORDER BY ex_date, id
+            "#,
+        )
+        .bind(market)
+        .bind(symbol)
+        .bind(start_ms)
+        .bind(end_ms)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    market,
+                    exchange,
+                    symbol,
+                    action_type,
+                    ex_date_ms,
+                    record_date_ms,
+                    payable_date_ms,
+                    ratio,
+                    cash_amount,
+                    currency,
+                    source,
+                    created_at_ms,
+                    updated_at_ms,
+                )| StoredCorporateActionMeta {
+                    id,
+                    market,
+                    exchange,
+                    symbol,
+                    action_type,
+                    ex_date_ms,
+                    record_date_ms,
+                    payable_date_ms,
+                    ratio,
+                    cash_amount,
+                    currency,
+                    source,
+                    created_at_ms,
+                    updated_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn insert_cash_snapshot(&self, snapshot: NewCashSnapshot) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO cash_snapshots (
+                run_id, ts, currency, cash, available_cash, frozen_cash, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(snapshot.run_id)
+        .bind(snapshot.ts_ms)
+        .bind(snapshot.currency)
+        .bind(snapshot.cash)
+        .bind(snapshot.available_cash)
+        .bind(snapshot.frozen_cash)
+        .bind(snapshot.created_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_cash_snapshots(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredCashSnapshot>> {
+        let rows = sqlx::query_as::<_, (i64, String, i64, String, String, String, String, i64)>(
+            r#"
+            SELECT id, run_id, ts, currency, cash, available_cash, frozen_cash, created_at
+            FROM cash_snapshots
+            WHERE run_id = ?
+            ORDER BY ts, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    run_id,
+                    ts_ms,
+                    currency,
+                    cash,
+                    available_cash,
+                    frozen_cash,
+                    created_at_ms,
+                )| {
+                    StoredCashSnapshot {
+                        id,
+                        run_id,
+                        ts_ms,
+                        currency,
+                        cash,
+                        available_cash,
+                        frozen_cash,
+                        created_at_ms,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn insert_position_snapshot(
+        &self,
+        snapshot: NewPositionSnapshot,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO position_snapshots (
+                run_id, ts, market, exchange, symbol, asset_class, position_side,
+                qty, available_qty, avg_price, entry_price, market_price, mark_price,
+                market_value, unrealized_pnl, realized_pnl, currency, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(snapshot.run_id)
+        .bind(snapshot.ts_ms)
+        .bind(snapshot.market)
+        .bind(snapshot.exchange)
+        .bind(snapshot.symbol)
+        .bind(snapshot.asset_class)
+        .bind(snapshot.position_side)
+        .bind(snapshot.qty)
+        .bind(snapshot.available_qty)
+        .bind(snapshot.avg_price)
+        .bind(snapshot.entry_price)
+        .bind(snapshot.market_price)
+        .bind(snapshot.mark_price)
+        .bind(snapshot.market_value)
+        .bind(snapshot.unrealized_pnl)
+        .bind(snapshot.realized_pnl)
+        .bind(snapshot.currency)
+        .bind(snapshot.created_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_position_snapshots(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredPositionSnapshot>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, run_id, ts AS ts_ms, market, exchange, symbol, asset_class, position_side,
+                   qty, available_qty, avg_price, entry_price, market_price, mark_price,
+                   market_value, unrealized_pnl, realized_pnl, currency, created_at AS created_at_ms
+            FROM position_snapshots
+            WHERE run_id = ?
+            ORDER BY ts, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        let mut snapshots = Vec::with_capacity(rows.len());
+        for row in rows {
+            snapshots.push(StoredPositionSnapshot {
+                id: row.try_get("id")?,
+                run_id: row.try_get("run_id")?,
+                ts_ms: row.try_get("ts_ms")?,
+                market: row.try_get("market")?,
+                exchange: row.try_get("exchange")?,
+                symbol: row.try_get("symbol")?,
+                asset_class: row.try_get("asset_class")?,
+                position_side: row.try_get("position_side")?,
+                qty: row.try_get("qty")?,
+                available_qty: row.try_get("available_qty")?,
+                avg_price: row.try_get("avg_price")?,
+                entry_price: row.try_get("entry_price")?,
+                market_price: row.try_get("market_price")?,
+                mark_price: row.try_get("mark_price")?,
+                market_value: row.try_get("market_value")?,
+                unrealized_pnl: row.try_get("unrealized_pnl")?,
+                realized_pnl: row.try_get("realized_pnl")?,
+                currency: row.try_get("currency")?,
+                created_at_ms: row.try_get("created_at_ms")?,
+            });
+        }
+        Ok(snapshots)
+    }
+
+    pub async fn upsert_config(&self, config: NewConfigRecord) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO configs (
+                id, name, config_type, content, format, checksum, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                config_type = excluded.config_type,
+                content = excluded.content,
+                format = excluded.format,
+                checksum = excluded.checksum,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(config.id)
+        .bind(config.name)
+        .bind(config.config_type)
+        .bind(config.content)
+        .bind(config.format)
+        .bind(config.checksum)
+        .bind(config.created_at_ms)
+        .bind(config.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_config_by_name(
+        &self,
+        name: &str,
+    ) -> StorageResult<Option<StoredConfigRecord>> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, name, config_type, content, format, checksum, created_at, updated_at
+            FROM configs
+            WHERE name = ?
+            ORDER BY updated_at DESC, id
+            LIMIT 1
+            "#,
+        )
+        .bind(name)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(id, name, config_type, content, format, checksum, created_at_ms, updated_at_ms)| {
+                StoredConfigRecord {
+                    id,
+                    name,
+                    config_type,
+                    content,
+                    format,
+                    checksum,
+                    created_at_ms,
+                    updated_at_ms,
+                }
+            },
+        ))
+    }
+
+    pub async fn insert_system_log(&self, log: NewSystemLog) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO system_logs (
+                id, run_id, ts, level, target, message, fields_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(log.id)
+        .bind(log.run_id)
+        .bind(log.ts_ms)
+        .bind(log.level)
+        .bind(log.target)
+        .bind(log.message)
+        .bind(log.fields_json)
+        .bind(log.created_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_system_logs(
+        &self,
+        run_id: Option<&str>,
+    ) -> StorageResult<Vec<StoredSystemLog>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<String>,
+                i64,
+                String,
+                String,
+                String,
+                Option<String>,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, run_id, ts, level, target, message, fields_json, created_at
+            FROM system_logs
+            WHERE (? IS NULL OR run_id = ?)
+            ORDER BY ts, id
+            "#,
+        )
+        .bind(run_id)
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, run_id, ts_ms, level, target, message, fields_json, created_at_ms)| {
+                    StoredSystemLog {
+                        id,
+                        run_id,
+                        ts_ms,
+                        level,
+                        target,
+                        message,
+                        fields_json,
+                        created_at_ms,
                     }
                 },
             )

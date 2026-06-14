@@ -51,6 +51,11 @@ impl Db {
         ))
         .execute(&self.pool)
         .await?;
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0005_reference_snapshots_and_ops.sql"
+        ))
+        .execute(&self.pool)
+        .await?;
         self.ensure_strategy_runs_error_column().await?;
         Ok(())
     }

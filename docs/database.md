@@ -43,7 +43,16 @@ The current implemented SQLite schema is split across migrations:
 - `crypto_positions`
 - `funding_rates`
 
-The complete schema below is the target production schema. A table appearing in the target schema does not mean it is implemented in the current migration.
+`migrations/0005_reference_snapshots_and_ops.sql` adds the remaining target storage-boundary tables:
+
+- `crypto_market_meta`
+- `corporate_actions_meta`
+- `cash_snapshots`
+- `position_snapshots`
+- `configs`
+- `system_logs`
+
+The current migrations cover the 24 target SQLite tables below, plus `event_store` as the immutable audit truth. A table existing in migration means the storage boundary exists; it does not mean every runtime path already writes it automatically.
 
 ---
 

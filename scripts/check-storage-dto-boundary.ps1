@@ -6,12 +6,32 @@ Set-Location $repoRoot
 $patterns = @(
     "\bNewOrder\b",
     "\bNewFill\b",
+    "\bNewLotSizeRule\b",
+    "\bNewPriceLimitRule\b",
+    "\bNewCryptoPosition\b",
+    "\bNewFundingRate\b",
+    "\bNewCryptoMarketMeta\b",
+    "\bNewCorporateActionMeta\b",
+    "\bNewCashSnapshot\b",
+    "\bNewPositionSnapshot\b",
+    "\bNewConfigRecord\b",
+    "\bNewSystemLog\b",
     "NewOrder\s*\{",
     "NewFill\s*\{",
     "NewPortfolioSnapshot\s*\{",
     "NewEventRecord\s*\{",
     "NewAccountBalance\s*\{",
     "NewPosition\s*\{",
+    "NewLotSizeRule\s*\{",
+    "NewPriceLimitRule\s*\{",
+    "NewCryptoPosition\s*\{",
+    "NewFundingRate\s*\{",
+    "NewCryptoMarketMeta\s*\{",
+    "NewCorporateActionMeta\s*\{",
+    "NewCashSnapshot\s*\{",
+    "NewPositionSnapshot\s*\{",
+    "NewConfigRecord\s*\{",
+    "NewSystemLog\s*\{",
     "NewStrategyRun\s*\{",
     "StoredRuntimeEvent\s*\{",
     "BacktestExecutionRecord\s*\{",
@@ -22,7 +42,17 @@ $patterns = @(
     "\.insert_event\(",
     "\.insert_portfolio_snapshot\(",
     "\.upsert_account_balance\(",
-    "\.upsert_position\("
+    "\.upsert_position\(",
+    "\.insert_lot_size_rule\(",
+    "\.insert_price_limit_rule\(",
+    "\.upsert_crypto_position\(",
+    "\.upsert_funding_rate\(",
+    "\.upsert_crypto_market_meta\(",
+    "\.insert_corporate_action_meta\(",
+    "\.insert_cash_snapshot\(",
+    "\.insert_position_snapshot\(",
+    "\.upsert_config\(",
+    "\.insert_system_log\("
 )
 
 $pattern = ($patterns -join "|")
@@ -56,7 +86,7 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-$storageReadRegex = [regex]"StorageResult<.*New(Order|Fill|Position|AccountBalance|PortfolioSnapshot|StrategyRun|EventRecord)"
+$storageReadRegex = [regex]"StorageResult<.*New(Order|Fill|Position|AccountBalance|PortfolioSnapshot|StrategyRun|EventRecord|LotSizeRule|PriceLimitRule|CryptoPosition|FundingRate|CryptoMarketMeta|CorporateActionMeta|CashSnapshot|PositionSnapshot|ConfigRecord|SystemLog)"
 $storageReadViolations = @()
 
 $storageFiles = Get-ChildItem -Path crates/storage/src -Recurse -Filter *.rs

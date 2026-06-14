@@ -1,7 +1,8 @@
 use storage::{
-    Db, NewAccountBalance, NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate,
-    NewLotSizeRule, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition, NewPriceLimitRule,
-    NewRiskEvent, NewStrategyRun,
+    Db, NewAccountBalance, NewCashSnapshot, NewConfigRecord, NewCorporateActionMeta,
+    NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate,
+    NewLotSizeRule, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
+    NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
 };
 
 #[tokio::test]
@@ -446,6 +447,222 @@ async fn contract_accounting_records_round_trip_decimal_strings() {
     assert_eq!(rates.len(), 1);
     assert_eq!(rates[0].funding_rate, "0.0002");
     assert_eq!(rates[0].mark_price.as_deref(), Some("65001.0000"));
+}
+
+#[tokio::test]
+async fn reference_snapshot_and_ops_records_round_trip() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-reference".to_string(),
+        name: "snapshot_boundary".to_string(),
+        mode: "paper".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.upsert_crypto_market_meta(NewCryptoMarketMeta {
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USDT".to_string(),
+        instrument_type: "SPOT".to_string(),
+        contract_type: None,
+        contract_size: None,
+        settlement_asset: None,
+        min_notional: Some("5".to_string()),
+        min_qty: Some("0.00001".to_string()),
+        max_qty: None,
+        price_precision: Some(2),
+        qty_precision: Some(5),
+        price_tick: Some("0.01".to_string()),
+        qty_step: Some("0.00001".to_string()),
+        maker_fee_rate: Some("0.001".to_string()),
+        taker_fee_rate: Some("0.001".to_string()),
+        funding_interval_hours: None,
+        max_leverage: None,
+        margin_modes: None,
+        is_inverse: false,
+        is_active: true,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    })
+    .await
+    .unwrap();
+    db.upsert_crypto_market_meta(NewCryptoMarketMeta {
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USDT".to_string(),
+        instrument_type: "PERP".to_string(),
+        contract_type: Some("LINEAR".to_string()),
+        contract_size: Some("1".to_string()),
+        settlement_asset: Some("USDT".to_string()),
+        min_notional: Some("10".to_string()),
+        min_qty: Some("0.001".to_string()),
+        max_qty: None,
+        price_precision: Some(2),
+        qty_precision: Some(3),
+        price_tick: Some("0.10".to_string()),
+        qty_step: Some("0.001".to_string()),
+        maker_fee_rate: Some("0.0002".to_string()),
+        taker_fee_rate: Some("0.0004".to_string()),
+        funding_interval_hours: Some(8),
+        max_leverage: Some("50".to_string()),
+        margin_modes: Some(r#"["CROSS","ISOLATED"]"#.to_string()),
+        is_inverse: false,
+        is_active: true,
+        created_at_ms: 10,
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+
+    let market_meta = db
+        .find_crypto_market_meta("BINANCE", "BTCUSDT")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(market_meta.instrument_type, "PERP");
+    assert_eq!(market_meta.max_leverage.as_deref(), Some("50"));
+    assert_eq!(market_meta.qty_step.as_deref(), Some("0.001"));
+
+    db.insert_corporate_action_meta(NewCorporateActionMeta {
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        action_type: "SPLIT".to_string(),
+        ex_date_ms: 100,
+        record_date_ms: Some(101),
+        payable_date_ms: Some(102),
+        ratio: Some("4:1".to_string()),
+        cash_amount: None,
+        currency: None,
+        source: Some("fixture".to_string()),
+        created_at_ms: 12,
+        updated_at_ms: 12,
+    })
+    .await
+    .unwrap();
+
+    let actions = db
+        .list_corporate_actions("US", "US:NASDAQ:AAPL:EQUITY", 0, 200)
+        .await
+        .unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].action_type, "SPLIT");
+    assert_eq!(actions[0].ratio.as_deref(), Some("4:1"));
+
+    db.insert_cash_snapshot(NewCashSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 20,
+        currency: "USD".to_string(),
+        cash: "1000.1234".to_string(),
+        available_cash: "900.1234".to_string(),
+        frozen_cash: "100.0000".to_string(),
+        created_at_ms: 20,
+    })
+    .await
+    .unwrap();
+    let cash_snapshots = db.list_cash_snapshots("run-reference").await.unwrap();
+    assert_eq!(cash_snapshots.len(), 1);
+    assert_eq!(cash_snapshots[0].cash, "1000.1234");
+
+    db.insert_position_snapshot(NewPositionSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 21,
+        market: "CRYPTO".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        position_side: Some("long".to_string()),
+        qty: "0.25".to_string(),
+        available_qty: "0.25".to_string(),
+        avg_price: Some("65000.1234".to_string()),
+        entry_price: Some("65000.1234".to_string()),
+        market_price: Some("65100.0000".to_string()),
+        mark_price: Some("65101.0000".to_string()),
+        market_value: Some("16275.0000".to_string()),
+        unrealized_pnl: Some("24.96915".to_string()),
+        realized_pnl: Some("0".to_string()),
+        currency: "USDT".to_string(),
+        created_at_ms: 21,
+    })
+    .await
+    .unwrap();
+    let position_snapshots = db.list_position_snapshots("run-reference").await.unwrap();
+    assert_eq!(position_snapshots.len(), 1);
+    assert_eq!(
+        position_snapshots[0].mark_price.as_deref(),
+        Some("65101.0000")
+    );
+
+    db.upsert_config(NewConfigRecord {
+        id: "config-paper".to_string(),
+        name: "paper-binance".to_string(),
+        config_type: "BROKER".to_string(),
+        content: "order_submit_enabled = false".to_string(),
+        format: "TOML".to_string(),
+        checksum: Some("sha256:old".to_string()),
+        created_at_ms: 30,
+        updated_at_ms: 30,
+    })
+    .await
+    .unwrap();
+    db.upsert_config(NewConfigRecord {
+        id: "config-paper".to_string(),
+        name: "paper-binance".to_string(),
+        config_type: "BROKER".to_string(),
+        content: "order_submit_enabled = true".to_string(),
+        format: "TOML".to_string(),
+        checksum: Some("sha256:new".to_string()),
+        created_at_ms: 30,
+        updated_at_ms: 31,
+    })
+    .await
+    .unwrap();
+    let config = db
+        .get_config_by_name("paper-binance")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(config.content, "order_submit_enabled = true");
+    assert_eq!(config.checksum.as_deref(), Some("sha256:new"));
+
+    db.insert_system_log(NewSystemLog {
+        id: "log-1".to_string(),
+        run_id: Some("run-reference".to_string()),
+        ts_ms: 40,
+        level: "INFO".to_string(),
+        target: "paper".to_string(),
+        message: "started".to_string(),
+        fields_json: Some(r#"{"orders":0}"#.to_string()),
+        created_at_ms: 40,
+    })
+    .await
+    .unwrap();
+    db.insert_system_log(NewSystemLog {
+        id: "log-2".to_string(),
+        run_id: Some("run-other".to_string()),
+        ts_ms: 41,
+        level: "WARN".to_string(),
+        target: "paper".to_string(),
+        message: "other".to_string(),
+        fields_json: None,
+        created_at_ms: 41,
+    })
+    .await
+    .unwrap();
+    let logs = db.list_system_logs(Some("run-reference")).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].message, "started");
+    assert_eq!(logs[0].fields_json.as_deref(), Some(r#"{"orders":0}"#));
 }
 
 #[tokio::test]

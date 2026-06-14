@@ -1,0 +1,3 @@
+scripts/check-api-read-model-boundary text eol=lf
+scripts/check-db-boundary text eol=lf
+scripts/check-storage-dto-boundary text eol=lf
