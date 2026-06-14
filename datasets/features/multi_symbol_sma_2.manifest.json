@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "parquet_path": "datasets/features/multi_symbol_sma_2.parquet",
+  "record_count": 4,
+  "run_ids": [
+    "research-sample-multi-sma"
+  ],
+  "symbols": [
+    "US:NASDAQ:AAPL:EQUITY",
+    "US:NASDAQ:MSFT:EQUITY"
+  ],
+  "feature_names": [
+    "sma_close_2"
+  ],
+  "versions": [
+    "v1"
+  ],
+  "build_contract": {
+    "builder": "feature-build-indicator",
+    "indicator": "sma",
+    "value_column": "close",
+    "period": 2,
+    "run_id": "research-sample-multi-sma",
+    "feature_name": "sma_close_2",
+    "version": "v1",
+    "inputs": [
+      {
+        "symbol": "US:NASDAQ:AAPL:EQUITY",
+        "source": "csv",
+        "path": "datasets/sample/aapl_1d.csv",
+        "content_hash": "fnv1a64:32331f94bda975ae",
+        "bar_count": 3,
+        "first_ts_ms": 1704067200000,
+        "last_ts_ms": 1704240000000
+      },
+      {
+        "symbol": "US:NASDAQ:MSFT:EQUITY",
+        "source": "csv",
+        "path": "datasets/sample/msft_1d.csv",
+        "content_hash": "fnv1a64:bea3aa38b5b17d57",
+        "bar_count": 3,
+        "first_ts_ms": 1704067200000,
+        "last_ts_ms": 1704240000000
+      }
+    ]
+  }
+}

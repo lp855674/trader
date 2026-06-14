@@ -27,4 +27,5 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+feature_store.workspace = true
 rust_decimal_macros.workspace = true

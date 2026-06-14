@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use storage::Db;
+use strategies::StrategyUniverseFilterConfig;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[tokio::test]
@@ -169,6 +170,48 @@ async fn paper_runtime_runs_market_slices_for_multiple_symbols() {
     assert_eq!(fills.len(), 2);
     let positions = db.list_positions("sample-ma-cross").await.unwrap();
     assert_eq!(positions.len(), 2);
+}
+
+#[tokio::test]
+async fn paper_runtime_applies_filtered_universe_rules() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.universe_name = "filtered".to_string();
+    settings.symbols = vec![
+        "US:NASDAQ:AAPL:EQUITY".to_string(),
+        "US:NASDAQ:MSFT:EQUITY".to_string(),
+    ];
+    settings.universe_filter = StrategyUniverseFilterConfig {
+        include_symbols: Vec::new(),
+        exclude_symbols: vec!["US:NASDAQ:MSFT:EQUITY".to_string()],
+        symbol_prefixes: Vec::new(),
+        require_current_data: false,
+        max_symbols: None,
+        feature_rank: None,
+    };
+    let slices = vec![
+        market_slice(1, dec!(10), dec!(30)),
+        market_slice(2, dec!(11), dec!(31)),
+        market_slice(3, dec!(20), dec!(40)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), settings)
+        .run_market_slices(slices)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 1);
+    let orders = db.list_orders("sample-ma-cross").await.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    let positions = db.list_positions("sample-ma-cross").await.unwrap();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].symbol, "US:NASDAQ:AAPL:EQUITY");
 }
 
 #[tokio::test]

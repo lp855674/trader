@@ -175,16 +175,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
 
 配置真源已扩展为：
 
-- `[risk]`：`max_order_notional`、`min_cash_after_order`、`max_exposure`、`max_drawdown`、`max_leverage`、`max_margin_used`、`trading_halted`。
+- `[risk]`：`max_order_notional`、`min_cash_after_order`、`max_exposure`、`max_drawdown`、`max_leverage`、`max_margin_used`、`trading_halted`、`allow_short`。`allow_short` 是可选显式覆盖项：配置为 `true` 时允许所有策略 symbol 产生负目标仓位，配置为 `false` 时全部禁止；未配置时按每个 `strategy.symbols` 的资产类型保守派生，只有 `CRYPTO_PERP` 或 `CRYPTO_FUTURE` symbol 默认允许 short，股票、crypto spot 或无法识别的 symbol 默认禁止。混合 Universe 不再整体压成单一默认值，crypto derivative 可以 short，非 shortable 标的仍会被 Risk 拒绝。`max_margin_used` 是绝对保证金占用上限；配置为 `0` 时不启用该上限，配置为正数时按 market rules 的初始保证金率校验衍生品目标仓位。
 - `[broker]`：`kind` 与 `mode`。当前支持配置枚举 `simulated`、`futu`、`binance`、`okx`、`interactive_brokers`，并支持 `ibkr` 作为 `interactive_brokers` 别名；`mode` 支持 `paper`、`live`。
 - `[live]`：`enabled` 与可选 `heartbeat_ms`。
 
-CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前 live surface 仍使用本地 fake broker adapter。Paper order submission 不走 live surface，Binance/IBKR 通过各自受闸门保护的 paper executor 接入。
+CLI 与 REST 的 paper/backtest settings 从 `[risk]` 读取风控阈值，并通过 `AppConfig::effective_allow_short()` 与 `AppConfig::shortable_symbols()` 解析全局覆盖和逐标的短仓权限，不再使用隐藏硬编码风控默认值。REST live surface 的 broker kind 从 `[broker]` 读取；当前 live surface 仍使用本地 fake broker adapter。Paper order submission 不走 live surface，Binance/IBKR 通过各自受闸门保护的 paper executor 接入。
 
 `PaperRuntime` 现在提供两类入口：
 
 - `run_bars` / `run_bars_with_cancel`：一次性输入历史 bars，保持 V1 本地验证路径。
-- `run_bar_stream_with_cancel`：从 channel-based bar stream 顺序消费 bars，复用同一套 Strategy、Portfolio、MarketRules、Risk、OMS、Broker simulation、Accounting、Storage 处理逻辑，并支持 pacing 与取消。
+- `run_market_slices` / `run_market_slices_with_cancel`：一次性输入多标的 `MarketSlice`，用于 Backtest / Paper 的配置化多文件行情路径。
+- `run_bar_stream_with_cancel`：从 channel-based 单标的 bar stream 顺序消费 bars，保持旧 paper stream 兼容路径。
+- `run_market_slice_stream_with_cancel`：从 channel-based 多标的 `MarketSlice` stream 顺序消费行情，复用同一套 Strategy、Portfolio、MarketRules、Risk、OMS、Broker simulation、Accounting、Storage 处理逻辑，并支持 pacing 与取消。
 
 Broker fake adapters 现在提供本地 paper 测试 surface：`place_order`、`query_order`、`cancel_order`、`account_snapshot`、`status`。REST 已提供 `GET /api/v1/brokers/account/{account_id}` 返回配置 broker kind 对应的本地 broker account surface；仍不提供绕过 Runtime/OMS 的手动下单 API。IBKR 真实 paper 下单不通过通用 `Broker::place_order`，统一通过 `IbkrPaperOrderExecutor`，避免绕过 Runtime/OMS/审计链路。
 
@@ -473,7 +475,13 @@ Phase 6 introduces `crates/runtime` as the in-memory active run registry. API st
 
 ## MVP Core Rules
 
-当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Algorithm 事件 payload 在 Rust 内使用 typed payload struct 构造，再序列化为 `serde_json::Value` 写入 EventBus / SQLite，避免各 runtime 手写漂移的 JSON schema。Alpha 层支持单模型和 `CompositeAlphaModel` 多模型组合，组合模型按最高 confidence 选择有效信号。`data` 提供 `MarketSlice` / `SymbolBar` 表达同一时间点的多标的行情；`AlgorithmEngine::on_market_slice` 会对 Universe 选出的每个有行情 symbol 独立运行 Alpha、Portfolio、MarketRules、Risk、Execution 和 OMS，并用全组合持仓价格表计算权益、敞口和未实现盈亏。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。Backtest / Paper runtime 会消费配置中的 `strategy.universe`、`strategy.alpha` 与 `strategy.symbols`，通过 `StrategyRegistry::assemble_alpha` 装配 universe selector 和 alpha model；多标的 moving average alpha 会为每个 symbol 维护独立指标状态，Backtest/Paper 也提供 `run_market_slices` 入口持久化多标的订单、成交和持仓。CLI / REST 的 Backtest 与 Paper 入口支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；旧 `[data] source/path` 单文件配置继续作为单标的兼容包装。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。Replay runtime 会读取共享 `ReplayController`，正在运行的 replay loop 会响应 pause、resume、seek 和 speed。MarketRules 校验 lot size、tick size、min qty、min notional；Risk 校验 max order qty、max order notional、cash buffer 和 trading halt；OMS 跟踪订单状态、累计成交和剩余数量。
+当前 MVP 订单链路已收敛到共享 `algorithm` crate，由 `AlgorithmEngine` 统一执行 `Universe -> Alpha / Strategy -> Portfolio -> MarketRules -> Risk -> Execution -> OMS` 决策链，并输出标准化 `algorithm.*` / `broker.order.*` / `accounting.*` 事件。Algorithm 事件 payload 在 Rust 内使用 typed payload struct 构造，再序列化为 `serde_json::Value` 写入 EventBus / SQLite，避免各 runtime 手写漂移的 JSON schema。
+
+Alpha 层支持单模型、`CompositeAlphaModel` 最高置信度组合、`NetSignalAlphaModel` 净信号组合和 `MajorityVoteAlphaModel` 多数投票组合；Strategy/Alpha registry 当前支持 `moving_average_cross`、`exponential_moving_average_cross`、`price_momentum`、`price_channel_breakout`、`price_channel_reversion` 与 `relative_strength_index_reversion` 六个模型。配置也可用 `[[strategy.alpha_components]]` 装配多个 alpha component，每个 component 的 `weight` 会缩放 signal confidence。`alpha_conflict_resolution = "highest_confidence"` 会选择加权 confidence 最高的信号；`alpha_conflict_resolution = "net_signal"` 会把 Buy / CloseShort 视为正向、Sell / CloseLong 视为负向，按已加权 confidence 抵消后只输出净方向，完全抵消时不输出信号；`alpha_conflict_resolution = "majority_vote"` 会按正负方向计票，票数多的一侧胜出，输出 confidence 为胜方已加权 confidence 的平均值，票数相同时不输出信号；`alpha_conflict_resolution = "category_majority"` 会先按 component `category` 分组，每组内部执行净信号组合，再让每个 category 贡献一票做多数投票，避免同一模型族靠重复 component 放大票数，未配置 `category` 时默认按 component `name` 分组。`[strategy.alpha_gate]` 可把只读 feature store 记录作为 Alpha 信号闸门，按 `run_id + symbol + feature_name` 读取不晚于当前 bar 的最新 feature，配置了 `version` 时只使用匹配版本的 feature，缺失或不满足 `min_value` / `max_value` 区间时抑制信号。
+
+`data` 提供 `MarketSlice` / `SymbolBar` 表达同一时间点的多标的行情；`AlgorithmEngine::on_market_slice` 会对 Universe 选出的每个有行情 symbol 独立运行 Alpha、Portfolio、MarketRules、Risk、Execution 和 OMS，并用全组合持仓价格表计算权益、敞口和未实现盈亏。Portfolio target 使用 signed quantity：`Buy` 映射为正目标仓位，`Sell` 映射为负目标仓位，`CloseLong` / `CloseShort` 映射为 0；Accounting 支持负持仓、卖空开仓、买入回补和短仓未实现盈亏。Risk 对目标仓位按 gross exposure 做投影，因此 short 不会绕过敞口限制，真实减仓卖出也不会被误判为增加风险；同时 `[risk] allow_short` 控制是否允许负目标仓位，显式 `true`/`false` 作为全局覆盖，未显式配置时按 symbol 派生 shortable 集合，混合 Universe 中 crypto derivative short 可放行而股票/spot short 仍会被拒绝。`MarketRuleSet` 还提供初始保证金率：股票与 crypto spot 为 0，`CRYPTO_PERP` / `CRYPTO_FUTURE` 为 10%；Algorithm 在目标仓位投影时计算 projected `margin_used`，`max_margin_used` 为正数时由 Risk 拒绝超过上限的衍生品目标仓位。Backtest 与 Paper 不再各自维护一套策略 loop；Backtest 使用同一 engine 加模拟成交，Paper 使用同一 engine 加 simulated / Binance / IBKR paper executor。Backtest / Paper runtime 会消费配置中的 `strategy.universe`、`strategy.alpha` 与 `strategy.symbols`，通过 `StrategyRegistry::assemble_alpha` 装配 universe selector、alpha model 和可选 feature gate；多标的 moving average alpha 会为每个 symbol 维护独立指标状态，Backtest/Paper 也提供 `run_market_slices` 入口持久化多标的订单、成交和持仓。
+
+Universe 当前支持 `static`、`filtered`、`ranked` 和 `feature_ranked` 四类 selector：`static` 保持原有配置 symbol 全量返回；`filtered` 在配置候选 symbols 上应用 `include_symbols`、`exclude_symbols`、`symbol_prefixes` 和 `require_current_data` 通用规则，其中 `require_current_data` 会基于当前 `MarketSlice` 的可用 symbols 动态收缩 universe；`ranked` 使用 `symbols` 的配置顺序作为排名，并可通过 `[strategy.universe_filter].max_symbols` 截取前 N 个通过过滤条件的 symbol；`feature_ranked` 从只读 Feature Parquet 中读取不晚于当前 bar 的最新 feature value 排名，再复用同一套 universe filter 与 `max_symbols` 截断。CLI / REST 的 Backtest 与 Paper 入口支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；旧 `[data] source/path` 单文件配置继续作为单标的兼容包装。REST 启动的 Backtest/Paper 会把同一批 algorithm runtime events 发布到 `AppState.event_bus`，同时继续写入 SQLite `event_store` 作为审计真源。Replay 会为每根历史 K 线生成 `market.bar` runtime event；REST 启动的 Replay 同样发布到 `AppState.event_bus`，并继续写入 replay lifecycle events。Replay runtime 会读取共享 `ReplayController`，正在运行的 replay loop 会响应 pause、resume、seek 和 speed。MarketRules 校验 lot size、tick size、min qty、min notional 和初始保证金率；Risk 校验 max order qty、max order notional、cash buffer、trading halt、short permission、gross exposure、leverage 和 max margin；OMS 跟踪订单状态、累计成交和剩余数量。
 
 多标的行情配置使用 `[[data.inputs]]`：
 
@@ -490,6 +498,298 @@ source = "csv"
 path = "datasets/sample/msft_1d.csv"
 ```
 
+过滤型 Universe 配置使用 `[strategy.universe_filter]`：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+universe = "filtered"
+symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[strategy.universe_filter]
+exclude_symbols = ["US:NASDAQ:MSFT:EQUITY"]
+symbol_prefixes = ["US:NASDAQ:"]
+require_current_data = true
+```
+
+排序型 Universe 配置使用 `universe = "ranked"`，`symbols` 顺序就是 rank：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+universe = "ranked"
+symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[strategy.universe_filter]
+max_symbols = 1
+require_current_data = true
+```
+
+Feature 排序型 Universe 配置使用 `universe = "feature_ranked"` 和 `[strategy.universe_rank]`。当前只支持 Parquet feature source；`descending` 默认 `true`：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+universe = "feature_ranked"
+symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[strategy.universe_filter]
+max_symbols = 1
+require_current_data = true
+
+[strategy.universe_rank]
+source = "parquet"
+path = "datasets/features/multi_symbol_sma_1.parquet"
+manifest_path = "datasets/features/multi_symbol_sma_1.manifest.json"
+run_id = "research-2026-06-11"
+feature_name = "sma_close_1"
+version = "v1"
+build_indicator = "sma"
+build_period = 1
+build_value_column = "close"
+```
+
+`feature_ranked` 与 Alpha feature gate 一样只在 CLI / REST settings 装配边界读取 Parquet 和校验 manifest；策略运行时只接收内存 feature records，不访问 SQLite，不透传 SQL 连接。
+
+EMA 交叉 Alpha 使用 `exponential_moving_average_cross`：
+
+```toml
+[strategy]
+name = "exponential_moving_average_cross"
+alpha = "exponential_moving_average_cross"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+```
+
+价格动量 Alpha 使用 `price_momentum`，比较短周期和长周期的单位时间价格动量：
+
+```toml
+[strategy]
+name = "price_momentum"
+alpha = "price_momentum"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 1
+slow_window = 2
+```
+
+价格通道突破 Alpha 使用 `price_channel_breakout`，比较最近 `fast_window` 根确认 K 线是否全部突破前 `slow_window` 根 close 价格通道：
+
+```toml
+[strategy]
+name = "price_channel_breakout"
+alpha = "price_channel_breakout"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 1
+slow_window = 2
+```
+
+价格通道均值回归 Alpha 使用 `price_channel_reversion`，复用同一价格通道判断，但在向上突破时发 Sell、向下突破时发 Buy。Sell 会通过 signed portfolio target 形成负目标仓位，而不是只把已有多头打平：
+
+```toml
+[strategy]
+name = "price_channel_reversion"
+alpha = "price_channel_reversion"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 1
+slow_window = 2
+```
+
+RSI 均值回归 Alpha 使用 `relative_strength_index_reversion`。`fast_window` 是 RSI period，`slow_window` 是 overbought 阈值；oversold 阈值按 `100 - slow_window` 派生。RSI 低于 oversold 时发 Buy，高于 overbought 时发 Sell：
+
+```toml
+[strategy]
+name = "relative_strength_index_reversion"
+alpha = "relative_strength_index_reversion"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 3
+slow_window = 70
+```
+
+加权 Alpha 组合配置使用 `[[strategy.alpha_components]]`：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+alpha = "moving_average_cross"
+alpha_conflict_resolution = "highest_confidence"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 2
+slow_window = 3
+weight = 0.25
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 2
+slow_window = 3
+weight = 0.5
+```
+
+冲突处理可改为净信号组合：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+alpha = "moving_average_cross"
+alpha_conflict_resolution = "net_signal"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 1
+slow_window = 2
+weight = 1.0
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 2
+slow_window = 1
+weight = 0.25
+```
+
+也可改为多数投票组合：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+alpha = "moving_average_cross"
+alpha_conflict_resolution = "majority_vote"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 1
+slow_window = 2
+weight = 0.25
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 1
+slow_window = 2
+weight = 0.5
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+fast_window = 2
+slow_window = 1
+weight = 1.0
+```
+
+也可改为按模型类别分层投票：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+alpha = "moving_average_cross"
+alpha_conflict_resolution = "category_majority"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+category = "trend"
+fast_window = 2
+slow_window = 1
+weight = 0.25
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+category = "trend"
+fast_window = 2
+slow_window = 1
+weight = 0.5
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+category = "mean_reversion"
+fast_window = 1
+slow_window = 2
+weight = 1.0
+
+[[strategy.alpha_components]]
+name = "moving_average_cross"
+category = "quality"
+fast_window = 1
+slow_window = 2
+weight = 0.5
+```
+
+Alpha feature gate 使用 `[strategy.alpha_gate]`，当前只支持 Parquet feature source：
+
+```toml
+[strategy.alpha_gate]
+source = "parquet"
+path = "datasets/features/quality.parquet"
+manifest_path = "datasets/features/quality.manifest.json"
+run_id = "research-2026-06-11"
+feature_name = "quality_score"
+version = "v2"
+build_indicator = "sma"
+build_period = 20
+build_value_column = "close"
+min_value = "0.7"
+max_value = "1.0"
+```
+
+该闸门是通用 Alpha 包装器，不限定具体策略或市场。Feature Parquet 记录使用 `feature_store` schema：`run_id`、`symbol`、`name`、`ts_ms`、`value`、`version`；`value` 以 Decimal 字符串保存。`version` 是可选约束；省略时允许任意版本，配置后只在匹配版本中取最新记录。`manifest_path` 是可选校验文件；配置后 CLI / REST 会在装配 Backtest / Paper settings 时先校验 manifest 的 `parquet_path`、schema、`run_id`、策略 symbols、`feature_name` 和 `version` 是否覆盖当前 alpha gate 或 universe rank；若配置了 `build_indicator`、`build_period` 或 `build_value_column`，且 manifest 带 `build_contract`，还会校验这些构建参数一致，再读取 Parquet feature records 并传入 StrategyRegistry。策略运行时不访问 SQLite，也不透传 SQL 连接。
+
+研究特征 Parquet 可生成配套 manifest，用于记录可复现实验元数据：
+
+```powershell
+trader feature-manifest --parquet datasets/features/quality.parquet --output datasets/features/quality.manifest.json
+```
+
+Manifest JSON 由 `feature_store` 生成，包含 `schema_version`、`parquet_path`、`record_count`、`run_ids`、`symbols`、`feature_names` 和 `versions`。由 `feature-build-indicator` / `feature-build-sma` 生成的 manifest 还会携带可选 `build_contract`，记录 builder、indicator、value_column、period、run_id、feature_name、version 以及生成 feature 时使用的 bars inputs。bars input 除 source/path/symbol 外，可包含当前 bars 文件的 `content_hash`、`bar_count`、`first_ts_ms` 和 `last_ts_ms` 快照。该 manifest 只描述 Parquet 研究特征与构建输入元数据，不引入 SQL 持久化；当它被 `[strategy.alpha_gate].manifest_path` 或 `[strategy.universe_rank].manifest_path` 引用时，CLI / REST 会提前校验 Parquet 文件、研究批次、标的、feature、version，并在 manifest 带 `build_contract` 时校验当前 Backtest / Paper 的 data inputs 与生成 feature 的 bars inputs 一致；若 manifest 带输入快照，还会重新加载当前 bars 并复算内容 hash、bar 数和首尾时间戳，拒绝同一路径文件内容或时间范围漂移。配置可选 `build_indicator`、`build_period`、`build_value_column` 后，还会严格校验 manifest 构建参数，防止训练/研究特征和回测行情源或特征生成方式漂移。
+
+CLI 也提供最小本地 feature 生成入口，可从 CSV / Parquet bars 的 close 价格生成 SMA / EMA / RSI feature Parquet，并同步写 manifest：
+
+```powershell
+trader feature-build-indicator --indicator sma --source parquet --input datasets/sample/aapl_1d.parquet --symbol US:NASDAQ:AAPL:EQUITY --run-id research-2026-06-11 --feature-name sma_close_20 --period 20 --version v1 --output datasets/features/aapl_sma_20.parquet --manifest-output datasets/features/aapl_sma_20.manifest.json
+trader feature-build-indicator --indicator ema --source parquet --input datasets/sample/aapl_1d.parquet --symbol US:NASDAQ:AAPL:EQUITY --run-id research-2026-06-11 --feature-name ema_close_20 --period 20 --version v1 --output datasets/features/aapl_ema_20.parquet --manifest-output datasets/features/aapl_ema_20.manifest.json
+trader feature-build-indicator --indicator rsi --source parquet --input datasets/sample/aapl_1d.parquet --symbol US:NASDAQ:AAPL:EQUITY --run-id research-2026-06-11 --feature-name rsi_close_14 --period 14 --version v1 --output datasets/features/aapl_rsi_14.parquet --manifest-output datasets/features/aapl_rsi_14.manifest.json
+trader feature-build-indicator --indicator sma --inputs-config configs/backtest/multi_symbol_ma_cross.toml --run-id research-2026-06-11 --feature-name sma_close_20 --period 20 --version v1 --output datasets/features/multi_sma_20.parquet --manifest-output datasets/features/multi_sma_20.manifest.json
+trader feature-build-sma --source parquet --input datasets/sample/aapl_1d.parquet --symbol US:NASDAQ:AAPL:EQUITY --run-id research-2026-06-11 --feature-name sma_close_20 --period 20 --version v1 --output datasets/features/aapl_sma_20.parquet --manifest-output datasets/features/aapl_sma_20.manifest.json
+```
+
+`feature-build-indicator` 的输入模式二选一：单标的使用 `--source/--input/--symbol`，多标的使用 `--inputs-config <config.toml>` 读取现有 `[[data.inputs]]`，并要求配置中的 `strategy.symbols` 都有对应行情输入。`feature-build-sma` 是兼容入口；新增研究流水线应优先使用 `feature-build-indicator --indicator sma|ema|rsi`。两者输出仍是通用 `feature_store` Parquet schema，并在 manifest 的 `build_contract` 中固化 indicator、period、value_column、source / path / symbol 与可选 bars 输入快照，供后续 Backtest / Paper 装配边界做一致性校验。
+
+仓库内提供了一个完整本地样例：
+
+```powershell
+trader backtest --config configs/backtest/ema_cross.toml
+trader backtest --config configs/backtest/ranked_universe_ma_cross.toml
+trader backtest --config configs/backtest/feature_ranked_universe_ma_cross.toml
+trader backtest --config configs/backtest/price_momentum.toml
+trader backtest --config configs/backtest/price_channel_breakout.toml
+trader backtest --config configs/backtest/price_channel_reversion.toml
+trader backtest --config configs/backtest/rsi_reversion.toml
+trader backtest --config configs/backtest/sma_feature_gate.toml
+trader backtest --config configs/backtest/rsi_feature_gate.toml
+trader backtest --config configs/backtest/sma_feature_gate_suppressed.toml
+trader backtest --config configs/backtest/multi_symbol_sma_feature_gate.toml
+trader backtest --config configs/backtest/net_signal_alpha_ma_cross.toml
+trader backtest --config configs/backtest/majority_vote_alpha_ma_cross.toml
+trader backtest --config configs/backtest/category_majority_alpha_ma_cross.toml
+```
+
+单标的样例读取 `datasets/sample/aapl_1d.csv`，`ema_cross.toml` 验证 EMA 交叉 Alpha 可通过同一 StrategyRegistry / Backtest / CLI / REST 主链路运行；`price_momentum.toml` 验证非均线价格动量 Alpha 可通过同一主链路运行；`price_channel_breakout.toml` 验证价格通道突破 Alpha 可通过同一主链路运行；`price_channel_reversion.toml` 使用 `datasets/sample/aapl_reversion_1d.csv` 验证价格通道均值回归 Alpha 可在向下延伸后产生 Buy 订单，测试链路也覆盖向上突破 Sell 形成短仓并持久化负持仓；`rsi_reversion.toml` 使用 `datasets/sample/aapl_rsi_reversion_1d.csv` 验证 RSI 均值回归 Alpha 可在 oversold 后产生 Buy 订单。股票短仓示例配置必须在 `[risk]` 中显式设置 `allow_short = true`，crypto derivative 示例可依赖资产类型派生默认值。`sma_feature_gate.toml` 通过 `datasets/features/aapl_sma_2.parquet` 和 `datasets/features/aapl_sma_2.manifest.json` 校验并应用 `sma_close_2` alpha gate。`rsi_feature_gate.toml` 通过 `datasets/features/aapl_rsi_3.parquet` 和 `datasets/features/aapl_rsi_3.manifest.json` 校验并应用 `rsi_close_3` alpha gate。`sma_feature_gate_suppressed.toml` 使用同一份合法 feature/manifest，但把 `min_value` 提高到样例 feature 无法满足，用于验证 gate 会明确抑制信号并跑出 `signals=0 orders=0`。多标的样例读取 AAPL / MSFT 的 `[[data.inputs]]`，`ranked_universe_ma_cross.toml` 验证可按配置 rank 与 `max_symbols` 收缩 universe；`feature_ranked_universe_ma_cross.toml` 通过 `datasets/features/multi_symbol_sma_1.parquet` 和 manifest 按 feature value 选择当前排名最高的 symbol；`multi_symbol_sma_feature_gate.toml` 通过 `datasets/features/multi_symbol_sma_2.parquet` 和 `datasets/features/multi_symbol_sma_2.manifest.json` 覆盖两个策略 symbols。`net_signal_alpha_ma_cross.toml` 验证多个 Alpha component 方向冲突时可按加权 confidence 做净额抵消；`majority_vote_alpha_ma_cross.toml` 验证方向由 component 多数票决定；`category_majority_alpha_ma_cross.toml` 验证同一 category 内先净信号聚合、跨 category 再多数投票。feature-ranked universe 与四个 feature gate 样例共同形成 `bars -> feature-build-indicator -> feature manifest -> feature-ranked universe / alpha gate -> backtest` 的本地研究闭环。
+
 ## Local Verifiable MVP
 
 当前分支的 MVP 完成标准是“本地可实际验证的交易闭环”，不是完整实盘交易平台。可验证闭环包括：
@@ -499,8 +799,8 @@ path = "datasets/sample/msft_1d.csv"
 - REST run/event 查询返回 API-owned response，`config` / `payload` 是结构化 JSON 值；SQLite 内部的 `config_json` / `payload_json` 只属于 storage 持久化表示。
 - WebSocket：`subscribe` 会先回放 SQLite run events，再转发 `AppState.event_bus` 中 run_id 匹配的 runtime events；`replay_control` 支持 pause/resume/seek/speed。
 - Storage：SQLite 持久化 run、order、fill、position、account balance、portfolio snapshot、event store；storage crate 负责 decimal string、状态字符串、event id、SQLite record shape 等持久化转换。
-- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Alpha 支持多模型组合和多标的独立状态；`[[data.inputs]]` 会加载多文件行情并合并为 `MarketSlice`，生成 per-symbol order decisions，并按全组合持仓估值；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
-- Research support：`indicators` 提供 Decimal SMA/EMA 基础指标，`moving_average_cross` 策略已复用 `SimpleMovingAverage`；`feature_store` 提供 Decimal feature record、key、in-memory range/latest repository，以及 Parquet-backed repository / round-trip 读写。Feature Parquet schema 使用 `run_id`、`symbol`、`name`、`ts_ms`、`value`、`version`，其中 Decimal `value` 以字符串保存以保留精度；SQLite adapter 不在 feature_store 内实现，若需要 SQL 持久化必须走 storage 边界。
+- Core path：共享 `AlgorithmEngine` 串联 Universe、Alpha / Strategy、Portfolio、Execution delta、MarketRules、Risk、OMS；Universe 支持静态、过滤、配置顺序排名和只读 feature value 排名；Alpha 支持最高置信度组合、净信号组合、多数投票组合、多标的独立状态和只读 feature gate；Portfolio target 支持 signed quantity，Sell 可形成短仓，Accounting 支持负持仓估值和买入回补，Risk 使用 gross exposure、leverage 和 projected margin 校验目标仓位，并用 `[risk] allow_short` 的显式覆盖值或按 symbol 派生的 shortable 集合控制是否允许负目标仓位；`[[data.inputs]]` 会加载多文件行情并合并为 `MarketSlice`，生成 per-symbol order decisions，并按全组合持仓估值；Backtest 通过 storage backtest repository 写入审计结果，Paper runtime 负责 Broker executor、Accounting 应用结果和 Storage 持久化。
+- Research support：`indicators` 提供 Decimal SMA/EMA/RSI 基础指标，`moving_average_cross` 策略复用 `SimpleMovingAverage`，`exponential_moving_average_cross` 策略复用 `ExponentialMovingAverage`，`relative_strength_index_reversion` 策略复用 `RelativeStrengthIndex`，`price_momentum` 使用 Decimal close 价格斜率比较，`price_channel_breakout` 使用 Decimal close 价格通道突破判断，`price_channel_reversion` 复用同一通道判断做均值回归反向信号；`feature_store` 提供 Decimal feature record、key、in-memory range/latest repository，以及 Parquet-backed repository / round-trip 读写。Feature Parquet schema 使用 `run_id`、`symbol`、`name`、`ts_ms`、`value`、`version`，其中 Decimal `value` 以字符串保存以保留精度；Backtest / Paper 可通过 `[strategy.universe_rank]` 用 Parquet feature 记录做 Universe 排名，也可通过 `[strategy.alpha_gate]` 过滤 Alpha 信号，并可用 `version` 约束研究特征批次；CLI 可通过 `feature-build-indicator --indicator sma|ema|rsi` 从单标的 bars 或 `--inputs-config` 多标的配置生成 SMA / EMA / RSI feature Parquet 和 manifest，`feature-build-sma` 保持兼容，也可通过 `feature-manifest` 为已有 Feature Parquet 生成 JSON manifest。manifest 记录 schema version、Parquet path、记录数、run ids、symbols、feature names 和 versions；由 feature 生成命令写出的 manifest 还会记录 `build_contract`，使 `manifest_path` 可让 CLI / REST 在运行前校验 universe rank 或 alpha gate 引用的 Parquet 文件、研究批次、标的、feature、version、source bars 输入一致性、可选 bars 输入快照和可选的构建参数期望；SQLite adapter 不在 feature_store 内实现，若需要 SQL 持久化必须走 storage 边界。
 - Replay：从 CSV/Parquet 加载历史 K 线，返回 replay bar summary，并向 runtime bus 发布 `market.bar` events。
 - Report：从 SQLite 读取真实持久化结果，输出 run status、orders、fills、balances、snapshots、total return。
 - Audit events：backtest、paper、replay lifecycle 写入 `event_store`，并可通过 REST 查询。
@@ -534,3 +834,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1
 - `docs/superpowers/plans/2026-06-02-trader-local-mvp-completion-plan.md`
 - `docs/superpowers/plans/2026-06-04-trader-production-paper-prep-plan.md`
 - `docs/superpowers/plans/2026-06-05-trader-paper-reconciliation-ibkr-plan.md`
+
+
+# 代码参考
+D:\code-refer\trader

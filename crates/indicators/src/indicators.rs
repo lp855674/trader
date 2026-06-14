@@ -71,6 +71,70 @@ impl ExponentialMovingAverage {
     }
 }
 
+pub struct RelativeStrengthIndex {
+    period: usize,
+    previous: Option<Decimal>,
+    gains: VecDeque<Decimal>,
+    losses: VecDeque<Decimal>,
+    gain_sum: Decimal,
+    loss_sum: Decimal,
+}
+
+impl RelativeStrengthIndex {
+    pub fn new(period: usize) -> Result<Self, IndicatorError> {
+        if period == 0 {
+            return Err(IndicatorError::ZeroPeriod);
+        }
+        Ok(Self {
+            period,
+            previous: None,
+            gains: VecDeque::with_capacity(period),
+            losses: VecDeque::with_capacity(period),
+            gain_sum: Decimal::ZERO,
+            loss_sum: Decimal::ZERO,
+        })
+    }
+
+    pub fn update(&mut self, value: Decimal) -> Option<Decimal> {
+        let previous = self.previous.replace(value)?;
+        let delta = value - previous;
+        let gain = delta.max(Decimal::ZERO);
+        let loss = (-delta).max(Decimal::ZERO);
+
+        self.gains.push_back(gain);
+        self.losses.push_back(loss);
+        self.gain_sum += gain;
+        self.loss_sum += loss;
+        if self.gains.len() > self.period
+            && let Some(removed) = self.gains.pop_front()
+        {
+            self.gain_sum -= removed;
+        }
+        if self.losses.len() > self.period
+            && let Some(removed) = self.losses.pop_front()
+        {
+            self.loss_sum -= removed;
+        }
+        if self.gains.len() < self.period {
+            return None;
+        }
+
+        if self.loss_sum == Decimal::ZERO {
+            return Some(if self.gain_sum == Decimal::ZERO {
+                Decimal::from(50)
+            } else {
+                Decimal::from(100)
+            });
+        }
+        if self.gain_sum == Decimal::ZERO {
+            return Some(Decimal::ZERO);
+        }
+
+        let relative_strength = self.gain_sum / self.loss_sum;
+        Some(Decimal::from(100) - Decimal::from(100) / (Decimal::ONE + relative_strength))
+    }
+}
+
 pub fn indicator_sma(values: &[Decimal], period: usize) -> Result<Option<Decimal>, IndicatorError> {
     let mut average = SimpleMovingAverage::new(period)?;
     Ok(values
@@ -86,5 +150,14 @@ pub fn indicator_ema(values: &[Decimal], period: usize) -> Result<Option<Decimal
         .iter()
         .copied()
         .filter_map(|value| average.update(value))
+        .last())
+}
+
+pub fn indicator_rsi(values: &[Decimal], period: usize) -> Result<Option<Decimal>, IndicatorError> {
+    let mut index = RelativeStrengthIndex::new(period)?;
+    Ok(values
+        .iter()
+        .copied()
+        .filter_map(|value| index.update(value))
         .last())
 }

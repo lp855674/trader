@@ -1,0 +1,56 @@
+[runtime]
+mode = "backtest"
+run_id = "sample-rsi-feature-gate"
+
+[database]
+url = "sqlite://data/rsi_feature_gate.sqlite"
+
+[data]
+source = "csv"
+path = "datasets/sample/aapl_rsi_reversion_1d.csv"
+
+[strategy]
+name = "relative_strength_index_reversion"
+alpha = "relative_strength_index_reversion"
+symbols = ["US:NASDAQ:AAPL:EQUITY"]
+fast_window = 3
+slow_window = 70
+
+[strategy.alpha_gate]
+source = "parquet"
+path = "datasets/features/aapl_rsi_3.parquet"
+manifest_path = "datasets/features/aapl_rsi_3.manifest.json"
+run_id = "research-sample-rsi"
+feature_name = "rsi_close_3"
+version = "v1"
+build_indicator = "rsi"
+build_period = 3
+build_value_column = "close"
+max_value = "30"
+
+[portfolio]
+initial_cash = "100000"
+base_currency = "USD"
+order_qty = "1"
+max_abs_qty = "100"
+
+[risk]
+max_order_notional = "1000000"
+min_cash_after_order = "0"
+max_exposure = "1000000"
+max_drawdown = "1"
+max_leverage = "10"
+max_margin_used = "0"
+trading_halted = false
+
+[broker]
+kind = "simulated"
+mode = "paper"
+
+[paper]
+account_id = "paper"
+slippage_bps = "25"
+fee_bps = "10"
+
+[live]
+enabled = false

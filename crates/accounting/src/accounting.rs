@@ -10,6 +10,8 @@ pub enum AccountingError {
     PositionNotFound,
     #[error("sell quantity exceeds position")]
     InsufficientPosition,
+    #[error("quantity must be positive")]
+    InvalidQuantity,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,18 +27,19 @@ pub struct PositionBook {
 }
 
 impl PositionBook {
-    pub fn buy(&mut self, symbol: &str, qty: Decimal, price: Decimal) {
-        let entry = self
-            .positions
+    fn entry_mut(&mut self, symbol: &str) -> &mut Position {
+        self.positions
             .entry(symbol.to_string())
             .or_insert(Position {
                 symbol: symbol.to_string(),
                 qty: Decimal::ZERO,
                 avg_price: Decimal::ZERO,
-            });
-        let notional = entry.qty * entry.avg_price + qty * price;
-        entry.qty += qty;
-        entry.avg_price = notional / entry.qty;
+            })
+    }
+
+    pub fn buy(&mut self, symbol: &str, qty: Decimal, price: Decimal) {
+        let entry = self.entry_mut(symbol);
+        increase_long_position(entry, qty, price);
     }
 
     pub fn position(&self, symbol: &str) -> Option<&Position> {
@@ -74,7 +77,29 @@ impl AccountBook {
 
     pub fn buy(&mut self, symbol: &str, qty: Decimal, price: Decimal, fee: Decimal) {
         self.cash -= qty * price + fee;
-        self.positions.buy(symbol, qty, price);
+        let mut realized_pnl = Decimal::ZERO;
+        {
+            let position = self.positions.entry_mut(symbol);
+            if position.qty < Decimal::ZERO {
+                let closing_qty = qty.min(position.qty.abs());
+                if closing_qty > Decimal::ZERO {
+                    realized_pnl += closing_qty * (position.avg_price - price) - fee;
+                    position.qty += closing_qty;
+                    if position.qty == Decimal::ZERO {
+                        position.avg_price = Decimal::ZERO;
+                    }
+                }
+
+                let opening_qty = qty - closing_qty;
+                if opening_qty > Decimal::ZERO {
+                    position.qty = opening_qty;
+                    position.avg_price = price;
+                }
+            } else {
+                increase_long_position(position, qty, price);
+            }
+        }
+        self.realized_pnl += realized_pnl;
     }
 
     pub fn sell(
@@ -84,16 +109,33 @@ impl AccountBook {
         price: Decimal,
         fee: Decimal,
     ) -> Result<(), AccountingError> {
-        let position = self
-            .positions
-            .position_mut(symbol)
-            .ok_or(AccountingError::PositionNotFound)?;
-        if qty > position.qty {
-            return Err(AccountingError::InsufficientPosition);
+        if qty <= Decimal::ZERO {
+            return Err(AccountingError::InvalidQuantity);
         }
         self.cash += qty * price - fee;
-        self.realized_pnl += qty * (price - position.avg_price) - fee;
-        position.qty -= qty;
+        let mut realized_pnl = Decimal::ZERO;
+        {
+            let position = self.positions.entry_mut(symbol);
+            if position.qty > Decimal::ZERO {
+                let closing_qty = qty.min(position.qty);
+                if closing_qty > Decimal::ZERO {
+                    realized_pnl += closing_qty * (price - position.avg_price) - fee;
+                    position.qty -= closing_qty;
+                    if position.qty == Decimal::ZERO {
+                        position.avg_price = Decimal::ZERO;
+                    }
+                }
+
+                let opening_qty = qty - closing_qty;
+                if opening_qty > Decimal::ZERO {
+                    position.qty = -opening_qty;
+                    position.avg_price = price;
+                }
+            } else {
+                increase_short_position(position, qty, price);
+            }
+        }
+        self.realized_pnl += realized_pnl;
         Ok(())
     }
 
@@ -122,6 +164,27 @@ impl AccountBook {
                         .get(&position.symbol)
                         .copied()
                         .unwrap_or(position.avg_price)
+            })
+            .fold(Decimal::ZERO, |sum, value| sum + value)
+    }
+
+    pub fn gross_exposure(&self, symbol: &str, mark_price: Decimal) -> Decimal {
+        self.position(symbol)
+            .map_or(Decimal::ZERO, |position| (position.qty * mark_price).abs())
+    }
+
+    pub fn gross_exposure_with_prices(
+        &self,
+        mark_prices: &std::collections::BTreeMap<String, Decimal>,
+    ) -> Decimal {
+        self.positions()
+            .into_iter()
+            .map(|position| {
+                let mark_price = mark_prices
+                    .get(&position.symbol)
+                    .copied()
+                    .unwrap_or(position.avg_price);
+                (position.qty * mark_price).abs()
             })
             .fold(Decimal::ZERO, |sum, value| sum + value)
     }
@@ -166,4 +229,31 @@ impl AccountBook {
             })
             .fold(Decimal::ZERO, |sum, value| sum + value)
     }
+}
+
+fn increase_long_position(position: &mut Position, qty: Decimal, price: Decimal) {
+    let new_qty = position.qty + qty;
+    if new_qty == Decimal::ZERO {
+        position.qty = Decimal::ZERO;
+        position.avg_price = Decimal::ZERO;
+        return;
+    }
+
+    let notional = position.qty * position.avg_price + qty * price;
+    position.qty = new_qty;
+    position.avg_price = notional / new_qty;
+}
+
+fn increase_short_position(position: &mut Position, qty: Decimal, price: Decimal) {
+    let current_short_qty = position.qty.abs();
+    let new_short_qty = current_short_qty + qty;
+    if new_short_qty == Decimal::ZERO {
+        position.qty = Decimal::ZERO;
+        position.avg_price = Decimal::ZERO;
+        return;
+    }
+
+    let notional = current_short_qty * position.avg_price + qty * price;
+    position.qty = -new_short_qty;
+    position.avg_price = notional / new_short_qty;
 }

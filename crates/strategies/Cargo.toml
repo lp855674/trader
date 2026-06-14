@@ -13,6 +13,7 @@ alpha.workspace = true
 trader_core.workspace = true
 data.workspace = true
 events.workspace = true
+feature_store.workspace = true
 chrono.workspace = true
 indicators.workspace = true
 rust_decimal.workspace = true

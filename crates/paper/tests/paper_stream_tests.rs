@@ -1,4 +1,4 @@
-use data::Bar;
+use data::{Bar, MarketSlice, SymbolBar};
 use events::{EventBus, TraderEvent};
 use paper::{PaperRunError, PaperRuntime, PaperSettings};
 use runtime::CancellationFlag;
@@ -29,6 +29,38 @@ async fn paper_runtime_runs_bars_from_stream() {
         "completed"
     );
     assert_eq!(db.list_orders(&run_id).await.unwrap().len(), 1);
+    assert_eq!(db.list_portfolio_snapshots(&run_id).await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn paper_runtime_runs_market_slices_from_stream() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.run_id = "sample-market-slice-stream".to_string();
+    settings.symbols = vec![
+        "US:NASDAQ:AAPL:EQUITY".to_string(),
+        "US:NASDAQ:MSFT:EQUITY".to_string(),
+    ];
+    let run_id = settings.run_id.clone();
+    let (sender, receiver) = mpsc::channel(4);
+    for market_slice in signal_market_slices() {
+        sender.send(market_slice).await.unwrap();
+    }
+    drop(sender);
+
+    let summary = PaperRuntime::new(db.clone(), settings)
+        .run_market_slice_stream_with_cancel(receiver, CancellationFlag::default())
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 2);
+    assert_eq!(
+        db.get_strategy_run(&run_id).await.unwrap().unwrap().status,
+        "completed"
+    );
+    assert_eq!(db.list_orders(&run_id).await.unwrap().len(), 2);
+    assert_eq!(db.list_positions(&run_id).await.unwrap().len(), 2);
     assert_eq!(db.list_portfolio_snapshots(&run_id).await.unwrap().len(), 4);
 }
 
@@ -91,4 +123,46 @@ fn signal_bars() -> Vec<Bar> {
         Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ]
+}
+
+fn signal_market_slices() -> Vec<MarketSlice> {
+    vec![
+        market_slice(1, dec!(10), dec!(30)),
+        market_slice(2, dec!(11), dec!(31)),
+        market_slice(3, dec!(20), dec!(40)),
+    ]
+}
+
+fn market_slice(
+    ts_ms: i64,
+    aapl_close: rust_decimal::Decimal,
+    msft_close: rust_decimal::Decimal,
+) -> MarketSlice {
+    MarketSlice::new(
+        ts_ms,
+        vec![
+            SymbolBar::new(
+                "US:NASDAQ:AAPL:EQUITY",
+                Bar::new(
+                    ts_ms,
+                    aapl_close,
+                    aapl_close,
+                    aapl_close,
+                    aapl_close,
+                    dec!(1),
+                ),
+            ),
+            SymbolBar::new(
+                "US:NASDAQ:MSFT:EQUITY",
+                Bar::new(
+                    ts_ms,
+                    msft_close,
+                    msft_close,
+                    msft_close,
+                    msft_close,
+                    dec!(1),
+                ),
+            ),
+        ],
+    )
 }

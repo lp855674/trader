@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "parquet_path": "datasets/features/aapl_rsi_3.parquet",
+  "record_count": 1,
+  "run_ids": [
+    "research-sample-rsi"
+  ],
+  "symbols": [
+    "US:NASDAQ:AAPL:EQUITY"
+  ],
+  "feature_names": [
+    "rsi_close_3"
+  ],
+  "versions": [
+    "v1"
+  ],
+  "build_contract": {
+    "builder": "feature-build-indicator",
+    "indicator": "rsi",
+    "value_column": "close",
+    "period": 3,
+    "run_id": "research-sample-rsi",
+    "feature_name": "rsi_close_3",
+    "version": "v1",
+    "inputs": [
+      {
+        "symbol": "US:NASDAQ:AAPL:EQUITY",
+        "source": "csv",
+        "path": "datasets/sample/aapl_rsi_reversion_1d.csv",
+        "content_hash": "fnv1a64:f7eb841b7ca04471",
+        "bar_count": 4,
+        "first_ts_ms": 1704067200000,
+        "last_ts_ms": 1704326400000
+      }
+    ]
+  }
+}

@@ -21,7 +21,11 @@
       "Bash(python -m pytest tests/test_models_features.py -v)",
       "Bash(python:*)",
       "Bash(git:*)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(sqlite3 *)",
+      "Bash(xargs grep -l \"rusqlite\\\\|sqlx\\\\|diesel\")",
+      "Bash(cat)",
+      "Read(//tmp/**)"
     ]
   }
 }

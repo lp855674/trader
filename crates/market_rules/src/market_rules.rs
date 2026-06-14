@@ -29,6 +29,7 @@ pub struct MarketRuleSet {
     pub min_qty: Decimal,
     pub min_notional: Decimal,
     pub allow_market_orders: bool,
+    pub initial_margin_rate: Decimal,
 }
 
 impl MarketRuleSet {
@@ -39,6 +40,7 @@ impl MarketRuleSet {
             min_qty: Decimal::from(100),
             min_notional: Decimal::ZERO,
             allow_market_orders: true,
+            initial_margin_rate: Decimal::ZERO,
         }
     }
 
@@ -49,6 +51,7 @@ impl MarketRuleSet {
             min_qty: Decimal::from(100),
             min_notional: Decimal::ZERO,
             allow_market_orders: true,
+            initial_margin_rate: Decimal::ZERO,
         }
     }
 
@@ -59,6 +62,7 @@ impl MarketRuleSet {
             min_qty: Decimal::ONE,
             min_notional: Decimal::ZERO,
             allow_market_orders: true,
+            initial_margin_rate: Decimal::ZERO,
         }
     }
 
@@ -69,6 +73,7 @@ impl MarketRuleSet {
             min_qty: Decimal::new(1, 6),
             min_notional: Decimal::from(10),
             allow_market_orders: true,
+            initial_margin_rate: Decimal::ZERO,
         }
     }
 
@@ -79,7 +84,12 @@ impl MarketRuleSet {
             min_qty: Decimal::new(1, 3),
             min_notional: Decimal::from(5),
             allow_market_orders: true,
+            initial_margin_rate: Decimal::new(1, 1),
         }
+    }
+
+    pub fn crypto_future() -> Self {
+        Self::crypto_perp()
     }
 
     pub fn for_symbol(symbol: &str) -> Result<Self, MarketRuleError> {
@@ -98,6 +108,7 @@ impl MarketRuleSet {
             (Some("US"), Some("EQUITY")) => Ok(Self::us_equity()),
             (Some("CRYPTO"), Some("CRYPTO_SPOT")) => Ok(Self::crypto_spot()),
             (Some("CRYPTO"), Some("CRYPTO_PERP")) => Ok(Self::crypto_perp()),
+            (Some("CRYPTO"), Some("CRYPTO_FUTURE")) => Ok(Self::crypto_future()),
             _ => Err(MarketRuleError::UnsupportedSymbol(symbol.to_string())),
         }
     }

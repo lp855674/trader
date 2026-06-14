@@ -1,5 +1,11 @@
 use assert_cmd::Command;
+use feature_store::{
+    FeatureBuildContract, FeatureManifestInput, FeatureRecord, build_feature_manifest,
+    build_feature_manifest_with_contract, load_feature_manifest, load_feature_records_from_parquet,
+    write_feature_manifest, write_feature_records_to_parquet,
+};
 use predicates::str::contains;
+use rust_decimal_macros::dec;
 use std::path::PathBuf;
 
 #[test]
@@ -25,12 +31,257 @@ fn backtest_accepts_config_argument() {
 }
 
 #[test]
+fn backtest_accepts_ema_cross_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", "configs/backtest/ema_cross.toml"])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_price_momentum_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/price_momentum.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_price_channel_breakout_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/price_channel_breakout.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_price_channel_reversion_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/price_channel_reversion.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_rsi_reversion_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/rsi_reversion.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_derives_short_permission_for_crypto_perp_config() {
+    let config = write_crypto_perp_reversion_cli_config();
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn backtest_accepts_multi_symbol_data_inputs() {
     let config = write_multi_symbol_cli_config("cli-backtest-multi-symbol", "backtest");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=2 orders=2"));
+}
+
+#[test]
+fn backtest_accepts_filtered_universe_config() {
+    let config =
+        write_filtered_multi_symbol_cli_config("cli-backtest-filtered-universe", "backtest");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_accepts_ranked_universe_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/ranked_universe_ma_cross.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_accepts_feature_ranked_universe_config() {
+    let config = write_feature_ranked_multi_symbol_cli_config("cli-backtest-feature-ranked");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_accepts_sample_feature_ranked_universe_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/feature_ranked_universe_ma_cross.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_accepts_net_signal_alpha_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/net_signal_alpha_ma_cross.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_majority_vote_alpha_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/majority_vote_alpha_ma_cross.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_category_majority_alpha_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/category_majority_alpha_ma_cross.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_sample_sma_feature_gate_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/sma_feature_gate.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+}
+
+#[test]
+fn backtest_accepts_sample_rsi_feature_gate_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/rsi_feature_gate.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=1 orders=1"));
+}
+
+#[test]
+fn backtest_sample_sma_feature_gate_suppresses_below_threshold() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/sma_feature_gate_suppressed.toml",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed: signals=0 orders=0"));
+}
+
+#[test]
+fn backtest_accepts_sample_multi_symbol_sma_feature_gate_config() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "backtest",
+            "--config",
+            "configs/backtest/multi_symbol_sma_feature_gate.toml",
+        ])
         .assert()
         .success()
         .stdout(contains("backtest completed: signals=2 orders=2"));
@@ -73,6 +324,916 @@ fn import_bars_can_write_parquet_output() {
 
     assert!(output.exists());
     std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn feature_manifest_command_writes_json_summary() {
+    let parquet = temp_output("trader-cli-features", "parquet");
+    let manifest = temp_output("trader-cli-feature-manifest", "json");
+    write_feature_records_to_parquet(
+        &parquet,
+        &[
+            FeatureRecord::new(
+                "research-1",
+                "US:NASDAQ:AAPL:EQUITY",
+                1,
+                "quality_score",
+                dec!(0.8),
+                "v1",
+            ),
+            FeatureRecord::new(
+                "research-1",
+                "US:NASDAQ:MSFT:EQUITY",
+                1,
+                "quality_score",
+                dec!(0.7),
+                "v1",
+            ),
+        ],
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "feature-manifest",
+            "--parquet",
+            parquet.to_str().unwrap(),
+            "--output",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote feature manifest: records=2"));
+
+    let summary = load_feature_manifest(&manifest).unwrap();
+    assert_eq!(summary.record_count, 2);
+    assert_eq!(summary.run_ids, vec!["research-1"]);
+    assert_eq!(summary.feature_names, vec!["quality_score"]);
+    assert_eq!(summary.versions, vec!["v1"]);
+
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest).unwrap();
+}
+
+#[test]
+fn feature_build_sma_command_writes_features_and_manifest() {
+    let bars = temp_output("trader-cli-feature-sma-bars", "csv");
+    let output = temp_output("trader-cli-feature-sma", "parquet");
+    let manifest = temp_output("trader-cli-feature-sma", "json");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,12,12,12,12,1\n3,14,14,14,14,1\n",
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "feature-build-sma",
+            "--source",
+            "csv",
+            "--input",
+            bars.to_str().unwrap(),
+            "--symbol",
+            "US:NASDAQ:AAPL:EQUITY",
+            "--run-id",
+            "research-run-1",
+            "--feature-name",
+            "sma_close_2",
+            "--period",
+            "2",
+            "--version",
+            "v1",
+            "--output",
+            output.to_str().unwrap(),
+            "--manifest-output",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote sma features: records=2"));
+
+    let records = load_feature_records_from_parquet(&output).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].ts_ms, 2);
+    assert_eq!(records[0].value, dec!(11));
+    assert_eq!(records[1].ts_ms, 3);
+    assert_eq!(records[1].value, dec!(13));
+
+    let summary = load_feature_manifest(&manifest).unwrap();
+    assert_eq!(summary.record_count, 2);
+    assert_eq!(summary.run_ids, vec!["research-run-1"]);
+    assert_eq!(summary.symbols, vec!["US:NASDAQ:AAPL:EQUITY"]);
+    assert_eq!(summary.feature_names, vec!["sma_close_2"]);
+    assert_eq!(summary.versions, vec!["v1"]);
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_file(manifest).unwrap();
+}
+
+#[test]
+fn feature_build_indicator_command_writes_ema_features_and_manifest() {
+    let bars = temp_output("trader-cli-feature-ema-bars", "csv");
+    let output = temp_output("trader-cli-feature-ema", "parquet");
+    let manifest = temp_output("trader-cli-feature-ema", "json");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,12,12,12,12,1\n3,14,14,14,14,1\n",
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "feature-build-indicator",
+            "--indicator",
+            "ema",
+            "--source",
+            "csv",
+            "--input",
+            bars.to_str().unwrap(),
+            "--symbol",
+            "US:NASDAQ:AAPL:EQUITY",
+            "--run-id",
+            "research-run-ema",
+            "--feature-name",
+            "ema_close_1",
+            "--period",
+            "1",
+            "--version",
+            "v1",
+            "--output",
+            output.to_str().unwrap(),
+            "--manifest-output",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote ema features: records=3"));
+
+    let records = load_feature_records_from_parquet(&output).unwrap();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].ts_ms, 1);
+    assert_eq!(records[0].value, dec!(10));
+    assert_eq!(records[1].ts_ms, 2);
+    assert_eq!(records[1].value, dec!(12));
+    assert_eq!(records[2].ts_ms, 3);
+    assert_eq!(records[2].value, dec!(14));
+
+    let summary = load_feature_manifest(&manifest).unwrap();
+    assert_eq!(summary.record_count, 3);
+    assert_eq!(summary.run_ids, vec!["research-run-ema"]);
+    assert_eq!(summary.symbols, vec!["US:NASDAQ:AAPL:EQUITY"]);
+    assert_eq!(summary.feature_names, vec!["ema_close_1"]);
+    assert_eq!(summary.versions, vec!["v1"]);
+    let build_contract = summary.build_contract.unwrap();
+    assert_eq!(build_contract.builder, "feature-build-indicator");
+    assert_eq!(build_contract.indicator, "ema");
+    assert_eq!(build_contract.value_column, "close");
+    assert_eq!(build_contract.period, 1);
+    assert_eq!(build_contract.run_id, "research-run-ema");
+    assert_eq!(build_contract.feature_name, "ema_close_1");
+    assert_eq!(build_contract.version, "v1");
+    assert_eq!(
+        build_contract.inputs,
+        vec![FeatureManifestInput {
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            source: "csv".to_string(),
+            path: bars.to_string_lossy().to_string(),
+            content_hash: build_contract.inputs[0].content_hash.clone(),
+            bar_count: Some(3),
+            first_ts_ms: Some(1),
+            last_ts_ms: Some(3),
+        }]
+    );
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_file(manifest).unwrap();
+}
+
+#[test]
+fn feature_build_indicator_command_writes_rsi_features_and_manifest() {
+    let bars = temp_output("trader-cli-feature-rsi-bars", "csv");
+    let output = temp_output("trader-cli-feature-rsi", "parquet");
+    let manifest = temp_output("trader-cli-feature-rsi", "json");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,9,9,9,9,1\n3,8,8,8,8,1\n4,7,7,7,7,1\n",
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "feature-build-indicator",
+            "--indicator",
+            "rsi",
+            "--source",
+            "csv",
+            "--input",
+            bars.to_str().unwrap(),
+            "--symbol",
+            "US:NASDAQ:AAPL:EQUITY",
+            "--run-id",
+            "research-run-rsi",
+            "--feature-name",
+            "rsi_close_3",
+            "--period",
+            "3",
+            "--version",
+            "v1",
+            "--output",
+            output.to_str().unwrap(),
+            "--manifest-output",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote rsi features: records=1"));
+
+    let records = load_feature_records_from_parquet(&output).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].ts_ms, 4);
+    assert_eq!(records[0].value, dec!(0));
+
+    let summary = load_feature_manifest(&manifest).unwrap();
+    assert_eq!(summary.record_count, 1);
+    assert_eq!(summary.run_ids, vec!["research-run-rsi"]);
+    assert_eq!(summary.symbols, vec!["US:NASDAQ:AAPL:EQUITY"]);
+    assert_eq!(summary.feature_names, vec!["rsi_close_3"]);
+    assert_eq!(summary.versions, vec!["v1"]);
+    let build_contract = summary.build_contract.unwrap();
+    assert_eq!(build_contract.builder, "feature-build-indicator");
+    assert_eq!(build_contract.indicator, "rsi");
+    assert_eq!(build_contract.value_column, "close");
+    assert_eq!(build_contract.period, 3);
+    assert_eq!(build_contract.run_id, "research-run-rsi");
+    assert_eq!(build_contract.feature_name, "rsi_close_3");
+    assert_eq!(build_contract.version, "v1");
+    assert_eq!(build_contract.inputs.len(), 1);
+    assert_eq!(build_contract.inputs[0].bar_count, Some(4));
+    assert_eq!(build_contract.inputs[0].first_ts_ms, Some(1));
+    assert_eq!(build_contract.inputs[0].last_ts_ms, Some(4));
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_file(manifest).unwrap();
+}
+
+#[test]
+fn feature_build_indicator_command_writes_multi_symbol_features_from_config() {
+    let config = write_multi_symbol_cli_config("cli-feature-multi-symbol", "backtest");
+    let output = temp_output("trader-cli-feature-multi-symbol", "parquet");
+    let manifest = temp_output("trader-cli-feature-multi-symbol", "json");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "feature-build-indicator",
+            "--indicator",
+            "sma",
+            "--inputs-config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "research-run-multi",
+            "--feature-name",
+            "sma_close_2",
+            "--period",
+            "2",
+            "--version",
+            "v1",
+            "--output",
+            output.to_str().unwrap(),
+            "--manifest-output",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("wrote sma features: records=4"));
+
+    let records = load_feature_records_from_parquet(&output).unwrap();
+    assert_eq!(records.len(), 4);
+    assert_eq!(records[0].key.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(records[0].ts_ms, 2);
+    assert_eq!(records[0].value, dec!(10.5));
+    assert_eq!(records[1].key.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(records[1].ts_ms, 3);
+    assert_eq!(records[1].value, dec!(15.5));
+    assert_eq!(records[2].key.symbol, "US:NASDAQ:MSFT:EQUITY");
+    assert_eq!(records[2].ts_ms, 2);
+    assert_eq!(records[2].value, dec!(30.5));
+    assert_eq!(records[3].key.symbol, "US:NASDAQ:MSFT:EQUITY");
+    assert_eq!(records[3].ts_ms, 3);
+    assert_eq!(records[3].value, dec!(35.5));
+
+    let summary = load_feature_manifest(&manifest).unwrap();
+    assert_eq!(summary.record_count, 4);
+    assert_eq!(summary.run_ids, vec!["research-run-multi"]);
+    assert_eq!(
+        summary.symbols,
+        vec!["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+    );
+    assert_eq!(summary.feature_names, vec!["sma_close_2"]);
+    assert_eq!(summary.versions, vec!["v1"]);
+    let build_contract = summary.build_contract.unwrap();
+    assert_eq!(build_contract.builder, "feature-build-indicator");
+    assert_eq!(build_contract.indicator, "sma");
+    assert_eq!(build_contract.value_column, "close");
+    assert_eq!(build_contract.period, 2);
+    assert_eq!(build_contract.run_id, "research-run-multi");
+    assert_eq!(build_contract.feature_name, "sma_close_2");
+    assert_eq!(build_contract.version, "v1");
+    assert_eq!(build_contract.inputs.len(), 2);
+    assert_eq!(build_contract.inputs[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(build_contract.inputs[0].source, "csv");
+    assert_eq!(build_contract.inputs[1].symbol, "US:NASDAQ:MSFT:EQUITY");
+    assert_eq!(build_contract.inputs[1].source, "csv");
+
+    std::fs::remove_file(output).unwrap();
+    std::fs::remove_file(manifest).unwrap();
+}
+
+#[test]
+fn paper_preflight_rejects_alpha_gate_manifest_version_mismatch() {
+    let bars = temp_output("trader-cli-alpha-gate-bars", "csv");
+    let parquet = temp_output("trader-cli-alpha-gate-features", "parquet");
+    let manifest_path = temp_output("trader-cli-alpha-gate-manifest", "json");
+    let config = temp_output("trader-cli-alpha-gate", "toml");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    let records = vec![FeatureRecord::new(
+        "research-run-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        1,
+        "quality_score",
+        dec!(0.8),
+        "v1",
+    )];
+    write_feature_records_to_parquet(&parquet, &records).unwrap();
+    let manifest = build_feature_manifest(&parquet, &records);
+    write_feature_manifest(&manifest_path, &manifest).unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-alpha-gate-manifest"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.alpha_gate]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-run-1"
+            feature_name = "quality_score"
+            version = "v2"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&bars),
+            toml_path(&parquet),
+            toml_path(&manifest_path)
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("version v2"));
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest_path).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn paper_preflight_rejects_alpha_gate_manifest_parquet_path_mismatch() {
+    let bars = temp_output("trader-cli-alpha-gate-path-bars", "csv");
+    let parquet = temp_output("trader-cli-alpha-gate-path-features", "parquet");
+    let manifest_path = temp_output("trader-cli-alpha-gate-path-manifest", "json");
+    let config = temp_output("trader-cli-alpha-gate-path", "toml");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    let records = vec![FeatureRecord::new(
+        "research-run-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        1,
+        "quality_score",
+        dec!(0.8),
+        "v1",
+    )];
+    write_feature_records_to_parquet(&parquet, &records).unwrap();
+    let manifest = build_feature_manifest("datasets/features/other.parquet", &records);
+    write_feature_manifest(&manifest_path, &manifest).unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-alpha-gate-manifest-path"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.alpha_gate]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-run-1"
+            feature_name = "quality_score"
+            version = "v1"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&bars),
+            toml_path(&parquet),
+            toml_path(&manifest_path)
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("parquet_path"));
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest_path).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn paper_preflight_rejects_alpha_gate_manifest_source_bars_mismatch() {
+    let configured_bars = temp_output("trader-cli-alpha-gate-configured-bars", "csv");
+    let research_bars = temp_output("trader-cli-alpha-gate-research-bars", "csv");
+    let parquet = temp_output("trader-cli-alpha-gate-source-features", "parquet");
+    let manifest_path = temp_output("trader-cli-alpha-gate-source-manifest", "json");
+    let config = temp_output("trader-cli-alpha-gate-source", "toml");
+    std::fs::write(
+        &configured_bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &research_bars,
+        "ts_ms,open,high,low,close,volume\n1,9,9,9,9,1\n2,10,10,10,10,1\n3,19,19,19,19,1\n",
+    )
+    .unwrap();
+    let records = vec![FeatureRecord::new(
+        "research-run-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        1,
+        "quality_score",
+        dec!(0.8),
+        "v1",
+    )];
+    write_feature_records_to_parquet(&parquet, &records).unwrap();
+    let manifest = build_feature_manifest_with_contract(
+        &parquet,
+        &records,
+        FeatureBuildContract {
+            builder: "feature-build-indicator".to_string(),
+            indicator: "sma".to_string(),
+            value_column: "close".to_string(),
+            period: 2,
+            run_id: "research-run-1".to_string(),
+            feature_name: "quality_score".to_string(),
+            version: "v1".to_string(),
+            inputs: vec![FeatureManifestInput {
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                source: "csv".to_string(),
+                path: toml_path(&research_bars),
+                content_hash: None,
+                bar_count: None,
+                first_ts_ms: None,
+                last_ts_ms: None,
+            }],
+        },
+    );
+    write_feature_manifest(&manifest_path, &manifest).unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-alpha-gate-manifest-source"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.alpha_gate]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-run-1"
+            feature_name = "quality_score"
+            version = "v1"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&configured_bars),
+            toml_path(&parquet),
+            toml_path(&manifest_path)
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("build inputs"));
+
+    std::fs::remove_file(configured_bars).unwrap();
+    std::fs::remove_file(research_bars).unwrap();
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest_path).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn paper_preflight_rejects_alpha_gate_manifest_build_contract_mismatch() {
+    let bars = temp_output("trader-cli-alpha-gate-build-bars", "csv");
+    let parquet = temp_output("trader-cli-alpha-gate-build-features", "parquet");
+    let manifest_path = temp_output("trader-cli-alpha-gate-build-manifest", "json");
+    let config = temp_output("trader-cli-alpha-gate-build", "toml");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    let records = vec![FeatureRecord::new(
+        "research-run-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        2,
+        "quality_score",
+        dec!(0.8),
+        "v1",
+    )];
+    write_feature_records_to_parquet(&parquet, &records).unwrap();
+    let manifest = build_feature_manifest_with_contract(
+        &parquet,
+        &records,
+        FeatureBuildContract {
+            builder: "feature-build-indicator".to_string(),
+            indicator: "sma".to_string(),
+            value_column: "close".to_string(),
+            period: 2,
+            run_id: "research-run-1".to_string(),
+            feature_name: "quality_score".to_string(),
+            version: "v1".to_string(),
+            inputs: vec![FeatureManifestInput {
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                source: "csv".to_string(),
+                path: toml_path(&bars),
+                content_hash: None,
+                bar_count: None,
+                first_ts_ms: None,
+                last_ts_ms: None,
+            }],
+        },
+    );
+    write_feature_manifest(&manifest_path, &manifest).unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-alpha-gate-manifest-build"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.alpha_gate]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-run-1"
+            feature_name = "quality_score"
+            version = "v1"
+            build_indicator = "ema"
+            build_period = 2
+            build_value_column = "close"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&bars),
+            toml_path(&parquet),
+            toml_path(&manifest_path)
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("build contract"))
+        .stderr(contains("indicator"));
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest_path).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn paper_preflight_rejects_alpha_gate_manifest_when_source_bars_content_changes() {
+    let bars = temp_output("trader-cli-alpha-gate-content-bars", "csv");
+    let parquet = temp_output("trader-cli-alpha-gate-content-features", "parquet");
+    let manifest_path = temp_output("trader-cli-alpha-gate-content-manifest", "json");
+    let config = temp_output("trader-cli-alpha-gate-content", "toml");
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,12,12,12,12,1\n3,14,14,14,14,1\n",
+    )
+    .unwrap();
+
+    let mut build_command = Command::cargo_bin("trader").unwrap();
+    build_command
+        .current_dir(workspace_root())
+        .args([
+            "feature-build-indicator",
+            "--indicator",
+            "sma",
+            "--source",
+            "csv",
+            "--input",
+            bars.to_str().unwrap(),
+            "--symbol",
+            "US:NASDAQ:AAPL:EQUITY",
+            "--run-id",
+            "research-run-1",
+            "--feature-name",
+            "quality_score",
+            "--period",
+            "2",
+            "--version",
+            "v1",
+            "--output",
+            parquet.to_str().unwrap(),
+            "--manifest-output",
+            manifest_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    std::fs::write(
+        &bars,
+        "ts_ms,open,high,low,close,volume\n1,100,100,100,100,1\n2,120,120,120,120,1\n3,140,140,140,140,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-alpha-gate-manifest-content"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.alpha_gate]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-run-1"
+            feature_name = "quality_score"
+            version = "v1"
+            build_indicator = "sma"
+            build_period = 2
+            build_value_column = "close"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&bars),
+            toml_path(&parquet),
+            toml_path(&manifest_path)
+        ),
+    )
+    .unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["paper-preflight", "--config", config.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(contains("content_hash"));
+
+    std::fs::remove_file(bars).unwrap();
+    std::fs::remove_file(parquet).unwrap();
+    std::fs::remove_file(manifest_path).unwrap();
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
@@ -685,6 +1846,72 @@ fn write_ibkr_cli_config_with_order_submit(
     config
 }
 
+fn write_crypto_perp_reversion_cli_config() -> PathBuf {
+    let bars_path = temp_output("trader-cli-crypto-perp-reversion", "csv");
+    let db_path = temp_output("trader-cli-crypto-perp-reversion", "sqlite");
+    let config = temp_output("trader-cli-crypto-perp-reversion", "toml");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "backtest"
+            run_id = "crypto-perp-reversion"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "price_channel_reversion"
+            alpha = "price_channel_reversion"
+            symbols = ["CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"]
+            fast_window = 1
+            slow_window = 2
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USDT"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&db_path),
+            toml_path(&bars_path)
+        ),
+    )
+    .unwrap();
+    config
+}
+
 fn write_multi_symbol_cli_config(run_id: &str, runtime_mode: &str) -> PathBuf {
     let aapl_path = temp_output("trader-cli-aapl", "csv");
     let msft_path = temp_output("trader-cli-msft", "csv");
@@ -759,6 +1986,208 @@ fn write_multi_symbol_cli_config(run_id: &str, runtime_mode: &str) -> PathBuf {
             toml_path(&db_path),
             toml_path(&aapl_path),
             toml_path(&msft_path)
+        ),
+    )
+    .unwrap();
+    config
+}
+
+fn write_filtered_multi_symbol_cli_config(run_id: &str, runtime_mode: &str) -> PathBuf {
+    let aapl_path = temp_output("trader-cli-filtered-aapl", "csv");
+    let msft_path = temp_output("trader-cli-filtered-msft", "csv");
+    let db_path = temp_output("trader-cli-filtered", "sqlite");
+    std::fs::write(
+        &aapl_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &msft_path,
+        "ts_ms,open,high,low,close,volume\n1,30,30,30,30,1\n2,31,31,31,31,1\n3,40,40,40,40,1\n",
+    )
+    .unwrap();
+
+    let config = temp_output("trader-cli-filtered", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "{runtime_mode}"
+            run_id = "{run_id}"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            [[data.inputs]]
+            symbol = "US:NASDAQ:AAPL:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [[data.inputs]]
+            symbol = "US:NASDAQ:MSFT:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            universe = "filtered"
+            symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.universe_filter]
+            exclude_symbols = ["US:NASDAQ:MSFT:EQUITY"]
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&db_path),
+            toml_path(&aapl_path),
+            toml_path(&msft_path)
+        ),
+    )
+    .unwrap();
+    config
+}
+
+fn write_feature_ranked_multi_symbol_cli_config(run_id: &str) -> PathBuf {
+    let aapl_path = temp_output("trader-cli-feature-ranked-aapl", "csv");
+    let msft_path = temp_output("trader-cli-feature-ranked-msft", "csv");
+    let db_path = temp_output("trader-cli-feature-ranked", "sqlite");
+    let feature_path = temp_output("trader-cli-feature-ranked", "parquet");
+    let manifest_path = temp_output("trader-cli-feature-ranked", "json");
+    std::fs::write(
+        &aapl_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &msft_path,
+        "ts_ms,open,high,low,close,volume\n1,30,30,30,30,1\n2,31,31,31,31,1\n3,40,40,40,40,1\n",
+    )
+    .unwrap();
+    let records = vec![
+        FeatureRecord::new(
+            "research-rank",
+            "US:NASDAQ:AAPL:EQUITY",
+            1,
+            "quality_score",
+            dec!(0.1),
+            "v1",
+        ),
+        FeatureRecord::new(
+            "research-rank",
+            "US:NASDAQ:MSFT:EQUITY",
+            1,
+            "quality_score",
+            dec!(0.9),
+            "v1",
+        ),
+    ];
+    write_feature_records_to_parquet(&feature_path, &records).unwrap();
+    let manifest = build_feature_manifest(&feature_path, &records);
+    write_feature_manifest(&manifest_path, &manifest).unwrap();
+
+    let config = temp_output("trader-cli-feature-ranked", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "backtest"
+            run_id = "{run_id}"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            [[data.inputs]]
+            symbol = "US:NASDAQ:AAPL:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [[data.inputs]]
+            symbol = "US:NASDAQ:MSFT:EQUITY"
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            universe = "feature_ranked"
+            symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [strategy.universe_filter]
+            max_symbols = 1
+            require_current_data = true
+
+            [strategy.universe_rank]
+            source = "parquet"
+            path = "{}"
+            manifest_path = "{}"
+            run_id = "research-rank"
+            feature_name = "quality_score"
+            version = "v1"
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&db_path),
+            toml_path(&aapl_path),
+            toml_path(&msft_path),
+            toml_path(&feature_path),
+            toml_path(&manifest_path)
         ),
     )
     .unwrap();

@@ -1,3 +1,4 @@
+use portfolio::TargetPosition;
 use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskError, RiskPolicy};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -124,6 +125,60 @@ fn rejects_projected_buy_when_exposure_would_exceed_limit() {
     );
 }
 
+#[test]
+fn rejects_projected_sell_order_without_position_context_when_exposure_would_exceed_limit() {
+    let policy = PortfolioRiskPolicy::new(dec!(1000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(900), Decimal::ZERO, false);
+    let mut order = buy_order(dec!(2));
+    order.side = OrderSide::Sell;
+
+    assert_eq!(
+        policy
+            .check_projected_order(&order, dec!(100), &state)
+            .unwrap_err(),
+        RiskError::MaxExposure
+    );
+}
+
+#[test]
+fn rejects_projected_short_target_when_exposure_would_exceed_limit() {
+    let policy =
+        PortfolioRiskPolicy::new(dec!(100), dec!(0.2), dec!(2), dec!(500)).with_shorting(true);
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(0), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy
+            .check_projected_target(&target(dec!(-2)), dec!(0), dec!(100), &state)
+            .unwrap_err(),
+        RiskError::MaxExposure
+    );
+}
+
+#[test]
+fn rejects_short_target_when_shorting_is_disabled() {
+    let policy = PortfolioRiskPolicy::new(dec!(1000), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(0), Decimal::ZERO, false);
+
+    assert_eq!(
+        policy
+            .check_projected_target(&target(dec!(-1)), dec!(0), dec!(100), &state)
+            .unwrap_err(),
+        RiskError::ShortSellingDisabled
+    );
+}
+
+#[test]
+fn allows_projected_sell_target_that_reduces_long_exposure() {
+    let policy = PortfolioRiskPolicy::new(dec!(150), dec!(0.2), dec!(2), dec!(500));
+    let state = PortfolioRiskState::new(dec!(1000), dec!(1000), dec!(100), Decimal::ZERO, false);
+
+    assert!(
+        policy
+            .check_projected_target(&target(dec!(0)), dec!(1), dec!(100), &state)
+            .is_ok()
+    );
+}
+
 fn buy_order(qty: Decimal) -> OrderRequest {
     OrderRequest {
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
@@ -132,5 +187,12 @@ fn buy_order(qty: Decimal) -> OrderRequest {
         qty,
         price: None,
         account_id: "paper".to_string(),
+    }
+}
+
+fn target(target_qty: Decimal) -> TargetPosition {
+    TargetPosition {
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        target_qty,
     }
 }

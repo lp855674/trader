@@ -19,12 +19,15 @@ use data::{Bar, MarketSlice};
 use events::EventBus;
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
-use std::{error::Error, fmt, time::Duration};
+use std::{collections::BTreeSet, error::Error, fmt, time::Duration};
 use storage::{
     Db, PaperExecutionCommand, PaperFailedOrderCommand, PaperFinalStateCommand, PaperOrderCommand,
     PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
 };
-use strategies::{StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode};
+use strategies::{
+    StrategyAlphaComponentConfig, StrategyAlphaConflictResolution, StrategyAlphaGateConfig,
+    StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode, StrategyUniverseFilterConfig,
+};
 use tokio::sync::mpsc;
 use trader_core::OrderRequest;
 
@@ -42,6 +45,10 @@ pub struct PaperSettings {
     pub universe_name: String,
     pub alpha_name: String,
     pub symbols: Vec<String>,
+    pub universe_filter: StrategyUniverseFilterConfig,
+    pub alpha_components: Vec<StrategyAlphaComponentConfig>,
+    pub alpha_conflict_resolution: StrategyAlphaConflictResolution,
+    pub alpha_gate: Option<StrategyAlphaGateConfig>,
     pub symbol: String,
     pub account_id: String,
     pub order_qty: Decimal,
@@ -54,6 +61,8 @@ pub struct PaperSettings {
     pub max_leverage: Decimal,
     pub max_margin_used: Decimal,
     pub trading_halted: bool,
+    pub allow_short: bool,
+    pub shortable_symbols: BTreeSet<String>,
     pub initial_cash: Decimal,
     pub base_currency: String,
     pub slippage_bps: Decimal,
@@ -86,6 +95,10 @@ impl PaperSettings {
             universe_name: "static".to_string(),
             alpha_name: "moving_average_cross".to_string(),
             symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
+            universe_filter: StrategyUniverseFilterConfig::default(),
+            alpha_components: Vec::new(),
+            alpha_conflict_resolution: StrategyAlphaConflictResolution::HighestConfidence,
+            alpha_gate: None,
             symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
             account_id: "paper".to_string(),
             order_qty: Decimal::ONE,
@@ -98,6 +111,8 @@ impl PaperSettings {
             max_leverage: Decimal::from(10),
             max_margin_used: Decimal::ZERO,
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_cash: Decimal::from(100_000),
             base_currency: "USD".to_string(),
             slippage_bps: Decimal::ZERO,
@@ -222,6 +237,19 @@ impl PaperRuntime {
         session.finish().await
     }
 
+    pub async fn run_market_slice_stream_with_cancel(
+        &self,
+        mut market_slices: mpsc::Receiver<MarketSlice>,
+        cancel: CancellationFlag,
+    ) -> anyhow::Result<BacktestSummary> {
+        let mut session = PaperRunSession::new(self)?;
+        while let Some(market_slice) = market_slices.recv().await {
+            self.wait_before_bar(&cancel).await?;
+            session.process_market_slice(market_slice).await?;
+        }
+        session.finish().await
+    }
+
     async fn wait_before_bar(&self, cancel: &CancellationFlag) -> anyhow::Result<()> {
         if cancel.is_cancelled() {
             return Err(PaperRunError::Cancelled.into());
@@ -314,6 +342,10 @@ impl<'a> PaperRunSession<'a> {
                 universe_name: runtime.settings.universe_name.clone(),
                 alpha_name: runtime.settings.alpha_name.clone(),
                 symbols: runtime.settings.assembly_symbols(),
+                universe_filter: runtime.settings.universe_filter.clone(),
+                alpha_components: runtime.settings.alpha_components.clone(),
+                alpha_conflict_resolution: runtime.settings.alpha_conflict_resolution,
+                alpha_gate: runtime.settings.alpha_gate.clone(),
                 fast_window: runtime.settings.fast_window,
                 slow_window: runtime.settings.slow_window,
             },
@@ -335,9 +367,11 @@ impl<'a> PaperRunSession<'a> {
                 max_leverage: runtime.settings.max_leverage,
                 max_margin_used: runtime.settings.max_margin_used,
                 trading_halted: runtime.settings.trading_halted,
+                allow_short: runtime.settings.allow_short,
+                shortable_symbols: runtime.settings.shortable_symbols.clone(),
                 initial_cash: runtime.settings.initial_cash,
             },
-            Box::new(assembly.universe),
+            assembly.universe,
             assembly.alpha,
         );
         if let Some(event_bus) = &runtime.event_bus {

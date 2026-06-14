@@ -1,4 +1,7 @@
-use indicators::{ExponentialMovingAverage, SimpleMovingAverage, indicator_ema, indicator_sma};
+use indicators::{
+    ExponentialMovingAverage, RelativeStrengthIndex, SimpleMovingAverage, indicator_ema,
+    indicator_rsi, indicator_sma,
+};
 use rust_decimal_macros::dec;
 
 #[test]
@@ -27,6 +30,7 @@ fn exponential_moving_average_uses_standard_smoothing_factor() {
 fn indicator_helpers_reject_zero_period() {
     assert!(SimpleMovingAverage::new(0).is_err());
     assert!(ExponentialMovingAverage::new(0).is_err());
+    assert!(RelativeStrengthIndex::new(0).is_err());
 }
 
 #[test]
@@ -38,4 +42,26 @@ fn indicator_helpers_calculate_batch_values() {
         Some(dec!(36.666666666666666666666666667))
     );
     assert_eq!(indicator_ema(&values, 3).unwrap(), Some(dec!(41.250000)));
+}
+
+#[test]
+fn relative_strength_index_reports_oversold_and_overbought_levels() {
+    let mut oversold = RelativeStrengthIndex::new(3).unwrap();
+    assert_eq!(oversold.update(dec!(10)), None);
+    assert_eq!(oversold.update(dec!(9)), None);
+    assert_eq!(oversold.update(dec!(8)), None);
+    assert_eq!(oversold.update(dec!(7)), Some(dec!(0)));
+
+    let mut overbought = RelativeStrengthIndex::new(3).unwrap();
+    assert_eq!(overbought.update(dec!(10)), None);
+    assert_eq!(overbought.update(dec!(11)), None);
+    assert_eq!(overbought.update(dec!(12)), None);
+    assert_eq!(overbought.update(dec!(13)), Some(dec!(100)));
+}
+
+#[test]
+fn indicator_rsi_calculates_batch_value() {
+    let values = [dec!(10), dec!(9), dec!(8), dec!(7)];
+
+    assert_eq!(indicator_rsi(&values, 3).unwrap(), Some(dec!(0)));
 }

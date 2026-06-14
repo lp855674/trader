@@ -882,6 +882,79 @@ fn configured_bar_inputs(app_config: &config::AppConfig) -> Result<Vec<data::Bar
         .collect())
 }
 
+fn feature_manifest_input_from_bar_input(
+    input: &data::BarInput,
+) -> feature_store::FeatureManifestInput {
+    feature_store::FeatureManifestInput {
+        symbol: input.symbol.clone(),
+        source: input.source.clone(),
+        path: input.path.clone(),
+        content_hash: None,
+        bar_count: None,
+        first_ts_ms: None,
+        last_ts_ms: None,
+    }
+}
+
+fn feature_manifest_input_from_bar_input_and_bars(
+    input: &data::BarInput,
+    bars: &[data::Bar],
+) -> Result<feature_store::FeatureManifestInput, ApiError> {
+    let mut manifest_input = feature_manifest_input_from_bar_input(input);
+    manifest_input.content_hash =
+        Some(stable_file_content_hash(&input.path).map_err(|error| ApiError(error.into()))?);
+    manifest_input.bar_count = Some(bars.len());
+    manifest_input.first_ts_ms = bars.first().map(|bar| bar.ts_ms);
+    manifest_input.last_ts_ms = bars.last().map(|bar| bar.ts_ms);
+    Ok(manifest_input)
+}
+
+fn stable_file_content_hash(path: &str) -> Result<String, std::io::Error> {
+    let bytes = std::fs::read(path)?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Ok(format!("fnv1a64:{hash:016x}"))
+}
+
+fn validate_feature_manifest_input_contract(
+    manifest: &feature_store::FeatureManifest,
+    app_config: &config::AppConfig,
+) -> Result<(), ApiError> {
+    let inputs = configured_bar_inputs(app_config)?;
+    let mut manifest_inputs = Vec::with_capacity(inputs.len());
+    for input in &inputs {
+        let bars = data::load_bars(&input.source, &input.path)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        manifest_inputs.push(feature_manifest_input_from_bar_input_and_bars(
+            input, &bars,
+        )?);
+    }
+    feature_store::validate_feature_manifest_for_input_contract(manifest, &manifest_inputs)
+        .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+    Ok(())
+}
+
+fn validate_feature_manifest_build_contract(
+    manifest: &feature_store::FeatureManifest,
+    indicator: Option<String>,
+    period: Option<usize>,
+    value_column: Option<String>,
+) -> Result<(), ApiError> {
+    feature_store::validate_feature_manifest_for_build_contract(
+        manifest,
+        &feature_store::FeatureBuildContractExpectation {
+            indicator,
+            value_column,
+            period,
+        },
+    )
+    .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+    Ok(())
+}
+
 fn primary_strategy_symbol(app_config: &config::AppConfig) -> String {
     app_config
         .strategy
@@ -898,6 +971,10 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
+        universe_filter: strategy_universe_filter(app_config)?,
+        alpha_components: strategy_alpha_components(app_config),
+        alpha_conflict_resolution: strategy_alpha_conflict_resolution(app_config)?,
+        alpha_gate: strategy_alpha_gate(app_config)?,
         symbol: app_config
             .strategy
             .symbols
@@ -912,6 +989,8 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
         max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
         max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
         trading_halted: app_config.risk.trading_halted,
+        allow_short: app_config.effective_allow_short(),
+        shortable_symbols: app_config.shortable_symbols(),
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
@@ -925,6 +1004,10 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
+        universe_filter: strategy_universe_filter(app_config)?,
+        alpha_components: strategy_alpha_components(app_config),
+        alpha_conflict_resolution: strategy_alpha_conflict_resolution(app_config)?,
+        alpha_gate: strategy_alpha_gate(app_config)?,
         symbol: app_config
             .strategy
             .symbols
@@ -942,6 +1025,8 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
         max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
         trading_halted: app_config.risk.trading_halted,
+        allow_short: app_config.effective_allow_short(),
+        shortable_symbols: app_config.shortable_symbols(),
         initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
@@ -950,6 +1035,143 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiEr
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
     })
+}
+
+fn strategy_universe_filter(
+    app_config: &config::AppConfig,
+) -> Result<strategies::StrategyUniverseFilterConfig, ApiError> {
+    Ok(strategies::StrategyUniverseFilterConfig {
+        include_symbols: app_config.strategy.universe_filter.include_symbols.clone(),
+        exclude_symbols: app_config.strategy.universe_filter.exclude_symbols.clone(),
+        symbol_prefixes: app_config.strategy.universe_filter.symbol_prefixes.clone(),
+        require_current_data: app_config.strategy.universe_filter.require_current_data,
+        max_symbols: app_config.strategy.universe_filter.max_symbols,
+        feature_rank: strategy_universe_rank(app_config)?,
+    })
+}
+
+fn strategy_universe_rank(
+    app_config: &config::AppConfig,
+) -> Result<Option<strategies::StrategyUniverseRankConfig>, ApiError> {
+    let Some(rank) = &app_config.strategy.universe_rank else {
+        return Ok(None);
+    };
+    if rank.source != "parquet" {
+        return Err(ApiError(anyhow::anyhow!(
+            "unsupported universe rank feature source {}; expected parquet",
+            rank.source
+        )));
+    }
+    if let Some(manifest_path) = &rank.manifest_path {
+        let manifest = feature_store::load_feature_manifest(manifest_path)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        feature_store::validate_feature_manifest_for_contract(
+            &manifest,
+            &rank.path,
+            &rank.run_id,
+            &app_config.strategy.symbols,
+            &rank.feature_name,
+            rank.version.as_deref(),
+        )
+        .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        validate_feature_manifest_input_contract(&manifest, app_config)?;
+        validate_feature_manifest_build_contract(
+            &manifest,
+            rank.build_indicator.clone(),
+            rank.build_period,
+            rank.build_value_column.clone(),
+        )?;
+    }
+    Ok(Some(strategies::StrategyUniverseRankConfig {
+        run_id: rank.run_id.clone(),
+        feature_name: rank.feature_name.clone(),
+        version: rank.version.clone(),
+        descending: rank.descending,
+        records: feature_store::load_feature_records_from_parquet(&rank.path)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
+    }))
+}
+
+fn strategy_alpha_components(
+    app_config: &config::AppConfig,
+) -> Vec<strategies::StrategyAlphaComponentConfig> {
+    app_config
+        .strategy
+        .alpha_components
+        .iter()
+        .map(|component| strategies::StrategyAlphaComponentConfig {
+            name: component.name.clone(),
+            category: component.category.clone(),
+            fast_window: component.fast_window,
+            slow_window: component.slow_window,
+            weight: component.weight,
+        })
+        .collect()
+}
+
+fn strategy_alpha_conflict_resolution(
+    app_config: &config::AppConfig,
+) -> Result<strategies::StrategyAlphaConflictResolution, ApiError> {
+    match app_config.strategy.alpha_conflict_resolution.as_str() {
+        "highest_confidence" => Ok(strategies::StrategyAlphaConflictResolution::HighestConfidence),
+        "net_signal" => Ok(strategies::StrategyAlphaConflictResolution::NetSignal),
+        "majority_vote" => Ok(strategies::StrategyAlphaConflictResolution::MajorityVote),
+        "category_majority" => Ok(strategies::StrategyAlphaConflictResolution::CategoryMajority),
+        other => Err(ApiError(anyhow::anyhow!(
+            "unknown alpha conflict resolution {other}"
+        ))),
+    }
+}
+
+fn strategy_alpha_gate(
+    app_config: &config::AppConfig,
+) -> Result<Option<strategies::StrategyAlphaGateConfig>, ApiError> {
+    let Some(gate) = &app_config.strategy.alpha_gate else {
+        return Ok(None);
+    };
+    if gate.source != "parquet" {
+        return Err(ApiError(anyhow::anyhow!(
+            "unsupported alpha gate feature source {}; expected parquet",
+            gate.source
+        )));
+    }
+    if let Some(manifest_path) = &gate.manifest_path {
+        let manifest = feature_store::load_feature_manifest(manifest_path)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        feature_store::validate_feature_manifest_for_contract(
+            &manifest,
+            &gate.path,
+            &gate.run_id,
+            &app_config.strategy.symbols,
+            &gate.feature_name,
+            gate.version.as_deref(),
+        )
+        .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        validate_feature_manifest_input_contract(&manifest, app_config)?;
+        validate_feature_manifest_build_contract(
+            &manifest,
+            gate.build_indicator.clone(),
+            gate.build_period,
+            gate.build_value_column.clone(),
+        )?;
+    }
+    Ok(Some(strategies::StrategyAlphaGateConfig {
+        run_id: gate.run_id.clone(),
+        feature_name: gate.feature_name.clone(),
+        version: gate.version.clone(),
+        min_value: gate
+            .min_value
+            .as_deref()
+            .map(Decimal::from_str)
+            .transpose()?,
+        max_value: gate
+            .max_value
+            .as_deref()
+            .map(Decimal::from_str)
+            .transpose()?,
+        records: feature_store::load_feature_records_from_parquet(&gate.path)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
+    }))
 }
 
 fn broker_kind(kind: config::BrokerKind) -> BrokerKind {

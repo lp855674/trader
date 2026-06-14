@@ -76,6 +76,7 @@ async fn paper_runtime_persists_realized_and_unrealized_pnl() {
     db.migrate().await.unwrap();
     let mut settings = PaperSettings::sample();
     settings.initial_cash = dec!(100000);
+    settings.allow_short = true;
     let bars = vec![
         Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
         Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),

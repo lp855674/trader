@@ -11,7 +11,7 @@ use portfolio::equal_weight_target;
 use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use strategies::StrategyRuntimeMode;
 use trader_core::{OrderRequest, OrderSide};
 use universe::{StaticUniverseSelector, UniverseContext, UniverseSelector};
@@ -32,6 +32,8 @@ pub struct AlgorithmEngineSettings {
     pub max_leverage: Decimal,
     pub max_margin_used: Decimal,
     pub trading_halted: bool,
+    pub allow_short: bool,
+    pub shortable_symbols: BTreeSet<String>,
     pub initial_cash: Decimal,
 }
 
@@ -207,7 +209,8 @@ impl AlgorithmEngine {
             settings.max_drawdown,
             settings.max_leverage,
             settings.max_margin_used,
-        );
+        )
+        .with_shorting(settings.allow_short);
         Self {
             peak_equity: settings.initial_cash,
             settings,
@@ -245,10 +248,8 @@ impl AlgorithmEngine {
             });
         };
 
-        let context = UniverseContext {
-            primary_symbol: self.settings.symbol.clone(),
-            bar: primary_bar.clone(),
-        };
+        let context = UniverseContext::new(self.settings.symbol.clone(), primary_bar.clone())
+            .with_available_symbols(market_slice.symbols());
         let selected = self.universe.select(&context)?;
         let universe_event = self.event(
             EngineEventKind::UniverseSelected,
@@ -338,7 +339,8 @@ impl AlgorithmEngine {
         let Some(order) = order else {
             return Ok(None);
         };
-        MarketRuleSet::for_symbol(&order.symbol)?.validate_order(&order, bar.close)?;
+        let market_rules = MarketRuleSet::for_symbol(&order.symbol)?;
+        market_rules.validate_order(&order, bar.close)?;
         events.push(self.event(
             EngineEventKind::MarketRuleValidated,
             bar.ts_ms,
@@ -353,17 +355,24 @@ impl AlgorithmEngine {
 
         let gross_exposure = self
             .account_book
-            .market_value_with_prices(&self.last_prices);
+            .gross_exposure_with_prices(&self.last_prices);
+        let current_margin_used = self.margin_used_with_prices()?;
+        let current_symbol_margin = position_margin(&market_rules, current_qty, bar.close);
+        let target_symbol_margin = position_margin(&market_rules, target.target_qty, bar.close);
+        let projected_margin_used =
+            (current_margin_used - current_symbol_margin).max(Decimal::ZERO) + target_symbol_margin;
         let equity = self.account_book.equity_with_prices(&self.last_prices);
         let portfolio_state = PortfolioRiskState::new(
             equity,
             self.peak_equity,
             gross_exposure,
-            Decimal::ZERO,
+            projected_margin_used,
             self.settings.trading_halted,
         );
-        self.portfolio_risk
-            .check_projected_order(&order, bar.close, &portfolio_state)?;
+        let symbol_risk = self.portfolio_risk.clone().with_shorting(
+            self.settings.allow_short || self.settings.shortable_symbols.contains(&target.symbol),
+        );
+        symbol_risk.check_projected_target(&target, current_qty, bar.close, &portfolio_state)?;
         RiskPolicy::new(
             self.settings.max_order_qty,
             self.settings.max_order_notional,
@@ -501,13 +510,17 @@ impl AlgorithmEngine {
         let market_value = self
             .account_book
             .market_value_with_prices(&self.last_prices);
+        let gross_exposure = self
+            .account_book
+            .gross_exposure_with_prices(&self.last_prices);
         let equity = self.account_book.equity_with_prices(&self.last_prices);
+        let margin_used = self.margin_used_with_prices()?;
         self.portfolio_risk
             .check_portfolio(&PortfolioRiskState::new(
                 equity,
                 self.peak_equity,
-                market_value,
-                Decimal::ZERO,
+                gross_exposure,
+                margin_used,
                 self.settings.trading_halted,
             ))?;
         if equity > self.peak_equity {
@@ -564,6 +577,26 @@ impl AlgorithmEngine {
             let _ = event_bus.publish(envelope);
         }
     }
+
+    fn margin_used_with_prices(&self) -> anyhow::Result<Decimal> {
+        self.account_book
+            .positions()
+            .into_iter()
+            .filter(|position| position.qty != Decimal::ZERO)
+            .try_fold(Decimal::ZERO, |total, position| {
+                let price = self
+                    .last_prices
+                    .get(&position.symbol)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO);
+                let rules = MarketRuleSet::for_symbol(&position.symbol)?;
+                Ok(total + position_margin(&rules, position.qty, price))
+            })
+    }
+}
+
+fn position_margin(rules: &MarketRuleSet, qty: Decimal, reference_price: Decimal) -> Decimal {
+    qty.abs() * reference_price * rules.initial_margin_rate
 }
 
 fn order_payload(

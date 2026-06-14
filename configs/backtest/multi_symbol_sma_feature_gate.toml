@@ -1,0 +1,62 @@
+[runtime]
+mode = "backtest"
+run_id = "sample-multi-symbol-sma-feature-gate"
+
+[database]
+url = "sqlite://data/multi_symbol_sma_feature_gate.sqlite"
+
+[data]
+[[data.inputs]]
+symbol = "US:NASDAQ:AAPL:EQUITY"
+source = "csv"
+path = "datasets/sample/aapl_1d.csv"
+
+[[data.inputs]]
+symbol = "US:NASDAQ:MSFT:EQUITY"
+source = "csv"
+path = "datasets/sample/msft_1d.csv"
+
+[strategy]
+name = "moving_average_cross"
+symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+fast_window = 2
+slow_window = 3
+
+[strategy.alpha_gate]
+source = "parquet"
+path = "datasets/features/multi_symbol_sma_2.parquet"
+manifest_path = "datasets/features/multi_symbol_sma_2.manifest.json"
+run_id = "research-sample-multi-sma"
+feature_name = "sma_close_2"
+version = "v1"
+build_indicator = "sma"
+build_period = 2
+build_value_column = "close"
+min_value = "100"
+
+[portfolio]
+initial_cash = "100000"
+base_currency = "USD"
+order_qty = "1"
+max_abs_qty = "100"
+
+[risk]
+max_order_notional = "1000000"
+min_cash_after_order = "0"
+max_exposure = "1000000"
+max_drawdown = "1"
+max_leverage = "10"
+max_margin_used = "0"
+trading_halted = false
+
+[broker]
+kind = "simulated"
+mode = "paper"
+
+[paper]
+account_id = "paper"
+slippage_bps = "25"
+fee_bps = "10"
+
+[live]
+enabled = false

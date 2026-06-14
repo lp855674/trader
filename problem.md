@@ -16,7 +16,17 @@
 - 后续切片 REST run config 契约：`GET /api/v1/runs` 与 `GET /api/v1/runs/{run_id}` 已返回结构化 JSON `config`，不再把 storage 内部 `config_json` 字符串直接暴露给客户端。
 - 后续切片边界门禁跨平台收口：DB 边界、storage DTO 边界、API read model 边界均已补齐 bash 版本，并接入 Linux/macOS `scripts/verify`；Windows `verify.ps1` 与 bash `verify` 执行同一类架构门禁。
 - 后续切片 feature_store Parquet adapter：`feature_store` 已提供 Parquet-backed repository 和 feature record round-trip 读写，Decimal feature value 以字符串保存并读回为 `Decimal`；该切片不引入 SQL，不绕过 storage SQL 边界。
-- 后续切片 Universe / Alpha 真实多标的能力：`data::MarketSlice` / `SymbolBar` 已表示同一时间点多标的行情；`StaticUniverseSelector` 返回配置的完整 symbol 集合；`StrategyRegistry::assemble_alpha` 会为多标的 moving average alpha 建立 per-symbol 独立状态；`AlgorithmEngine::on_market_slice`、Backtest `run_market_slices` 和 Paper `run_market_slices` 会按每个有行情 symbol 生成订单、成交和持仓，并按全组合价格表计算权益、敞口和未实现盈亏。CLI / REST 的 Backtest 与 Paper 入口已支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；旧 `[data] source/path` 单文件配置保持兼容包装。
+- 后续切片 Universe / Alpha 真实多标的能力：`data::MarketSlice` / `SymbolBar` 已表示同一时间点多标的行情；`StaticUniverseSelector` 返回配置的完整 symbol 集合；`StrategyRegistry::assemble_alpha` 会为多标的 moving average alpha 建立 per-symbol 独立状态；`AlgorithmEngine::on_market_slice`、Backtest `run_market_slices` 和 Paper `run_market_slices` 会按每个有行情 symbol 生成订单、成交和持仓，并按全组合价格表计算权益、敞口和未实现盈亏。CLI / REST 的 Backtest 与 Paper 入口已支持 `[[data.inputs]]`，可直接把多个 symbol 映射到各自 CSV / Parquet 文件并合并为 `MarketSlice`；Paper runtime 也支持 channel-based `MarketSlice` stream；旧 `[data] source/path` 单文件配置保持兼容包装。
+- 后续切片配置化 Universe 选择：`universe = "filtered"`、`universe = "ranked"` 与 `universe = "feature_ranked"` 已接入 StrategyRegistry、Backtest、Paper、CLI 和 REST；`[strategy.universe_filter]` 支持通用的 `include_symbols`、`exclude_symbols`、`symbol_prefixes`、`require_current_data` 与 `max_symbols`，可在候选 symbols 和当前 MarketSlice 可用数据上动态收缩 universe；`ranked` 使用 `symbols` 配置顺序作为 rank，并用 `max_symbols` 截取前 N 个通过过滤条件的标的；`feature_ranked` 通过 `[strategy.universe_rank]` 从只读 Feature Parquet 读取不晚于当前 bar 的最新 feature value 排名，支持 manifest 与 version 校验，运行时只使用内存 feature records，不引入 SQL，不限定具体市场或业务模块。
+- 后续切片配置化 Alpha 组合：`[[strategy.alpha_components]]` 已接入 config、StrategyRegistry、Backtest、Paper、CLI 和 REST；每个 component 支持独立 `fast_window`、`slow_window`、`weight` 与可选 `category`，权重会缩放 signal confidence。当前冲突策略支持 `alpha_conflict_resolution = "highest_confidence"` 选择加权 confidence 最高的信号，支持 `alpha_conflict_resolution = "net_signal"` 将正负方向按已加权 confidence 抵消后只输出净方向，支持 `alpha_conflict_resolution = "majority_vote"` 按 component 方向票数选择多数方向，也支持 `alpha_conflict_resolution = "category_majority"` 先在 category 内净信号聚合、再跨 category 多数投票，未配置 `category` 时默认按 component `name` 分组。仓库内已提供 `configs/backtest/weighted_alpha_ma_cross.toml`、`configs/backtest/net_signal_alpha_ma_cross.toml`、`configs/backtest/majority_vote_alpha_ma_cross.toml` 和 `configs/backtest/category_majority_alpha_ma_cross.toml` 四类样例。
+- 后续切片 Alpha 模型注册扩展：Strategy/Alpha registry 已新增 `exponential_moving_average_cross`、`price_momentum`、`price_channel_breakout`、`price_channel_reversion` 和 `relative_strength_index_reversion`；EMA 交叉复用 Decimal `ExponentialMovingAverage` 指标，价格动量使用 Decimal close 价格斜率比较，价格通道突破使用 Decimal close 价格通道判断，价格通道均值回归复用同一通道判断生成反向信号，RSI 均值回归复用 Decimal `RelativeStrengthIndex` 指标并在 RSI 低于 `100 - slow_window` 时 Buy、高于 `slow_window` 时 Sell。它们分别接入 Backtest、CLI 与 REST 样例 `configs/backtest/ema_cross.toml`、`configs/backtest/price_momentum.toml`、`configs/backtest/price_channel_breakout.toml`、`configs/backtest/price_channel_reversion.toml`、`configs/backtest/rsi_reversion.toml`；`moving_average_cross` 继续作为 SMA 交叉模型保留。
+- 后续切片 Sell / 短仓语义：Portfolio target 已从旧 MVP 的 “Sell 只打平” 改为 signed target quantity：`Buy` 目标为正仓位，`Sell` 目标为负仓位，`CloseLong` / `CloseShort` 目标为 0；Accounting 支持负持仓、卖空开仓、买入回补和短仓未实现盈亏；Risk 使用目标仓位投影 gross exposure，避免 Sell/short 绕过敞口限制，同时允许真实减仓卖出降低敞口。
+- 后续切片短仓权限风控：`[risk] allow_short` 已接入 config、CLI、REST、Backtest、Paper、Algorithm 和 Risk；显式 `true` 允许所有策略 symbol 产生负目标仓位，显式 `false` 全部禁止。未配置时按 `strategy.symbols` 逐标的保守派生：`CRYPTO_PERP` / `CRYPTO_FUTURE` symbol 默认允许 short，股票、crypto spot 或无法识别的 symbol 默认禁止。混合 Universe 不再被全局 bool 一起压成禁止，crypto derivative 可以 short，非 shortable 标的仍由 Risk 拒绝。该规则是通用风控开关，不限定具体策略或模块；可能产生股票短仓的样例配置已显式设置 `allow_short = true`。
+- 后续切片衍生品保证金风控：`market_rules` 已为 `CRYPTO_PERP` / `CRYPTO_FUTURE` 提供 10% 初始保证金率，股票与 crypto spot 初始保证金率为 0；`AlgorithmEngine` 在目标仓位投影时按全组合持仓价格表计算 projected `margin_used` 并交给 `Risk` 的 `max_margin_used` 校验。`max_margin_used = 0` 保持兼容语义，表示不启用绝对保证金上限；配置为正数时会拒绝超过上限的衍生品目标仓位。
+- 后续切片 Alpha feature gate：`[strategy.alpha_gate]` 已接入 config、StrategyRegistry、Backtest、Paper、CLI 和 REST；当前支持只读 Parquet feature source，按 `run_id + symbol + feature_name` 读取不晚于当前 bar 的最新 feature，并支持可选 `version` 约束研究特征批次；缺失、不匹配版本或不满足 `min_value` / `max_value` 区间时抑制 Alpha 信号。该切片复用 `feature_store`，不引入 SQL，不透传 `SqlitePool`。
+- 后续切片 feature manifest：`feature_store` 已提供通用 `FeatureManifest`，可从 Feature Parquet records 汇总 `schema_version`、`parquet_path`、`record_count`、`run_ids`、`symbols`、`feature_names` 和 `versions`，并支持 JSON round-trip；CLI 已提供 `trader feature-manifest --parquet <path> --output <manifest.json>` 生成 manifest；`[strategy.alpha_gate].manifest_path` 可让 CLI / REST 在装配 Backtest / Paper settings 前校验 manifest 的 `parquet_path`、schema、`run_id`、策略 symbols、`feature_name` 和 `version` 是否覆盖当前 gate。该切片只描述 Parquet 研究特征元数据，不引入 SQL，不绕过 storage 边界。
+- 后续切片 feature 生成入口：CLI 已提供通用 `trader feature-build-indicator --indicator sma|ema|rsi`，可从 CSV / Parquet bars 的 close 价格生成 SMA / EMA / RSI feature Parquet，并同步写 manifest；既支持 `--source/--input/--symbol` 单标的输入，也支持 `--inputs-config <config.toml>` 复用现有 `[[data.inputs]]` 多标的配置生成合并 feature Parquet。旧 `trader feature-build-sma` 保持兼容并复用同一生成路径。仓库内已提供单标的 `configs/backtest/sma_feature_gate.toml`、负向阈值抑制样例 `configs/backtest/sma_feature_gate_suppressed.toml`、`datasets/features/aapl_sma_2.parquet`、`datasets/features/aapl_sma_2.manifest.json`，RSI gate 样例 `configs/backtest/rsi_feature_gate.toml`、`datasets/features/aapl_rsi_3.parquet`、`datasets/features/aapl_rsi_3.manifest.json`，多标的 `configs/backtest/multi_symbol_sma_feature_gate.toml`、`datasets/features/multi_symbol_sma_2.parquet`、`datasets/features/multi_symbol_sma_2.manifest.json`，以及 feature 排名 Universe 样例 `configs/backtest/feature_ranked_universe_ma_cross.toml`、`datasets/features/multi_symbol_sma_1.parquet`、`datasets/features/multi_symbol_sma_1.manifest.json`，覆盖 `bars -> feature-build-indicator -> feature manifest -> feature-ranked universe / alpha gate -> backtest` 的本地研究闭环。该命令复用 `data::load_bars`、`indicators` 和 `feature_store` schema，不引入 SQL，不绕过 storage 边界。
+- 后续切片 feature manifest 构建契约治理：`FeatureManifest` 已支持可选 `build_contract`，用于记录 feature builder、indicator、value_column、period、run_id、feature_name、version 以及生成 feature 时使用的 bars inputs。`feature-build-indicator` 与兼容入口 `feature-build-sma` 会自动写入该契约；旧 manifest 不带 `build_contract` 时仍兼容加载。CLI / REST 在 `[strategy.alpha_gate].manifest_path` 或 `[strategy.universe_rank].manifest_path` 装配边界会继续校验 Parquet / run_id / symbol / feature / version，并在 manifest 带 `build_contract` 时额外校验当前 Backtest / Paper 的 data inputs 与生成 feature 的 source bars 一致。bars input 可携带 `content_hash`、`bar_count`、`first_ts_ms`、`last_ts_ms` 快照；CLI / REST 会重新加载当前 bars 并复算快照，能拒绝同一路径下文件内容或时间范围已变化但 manifest 仍旧的漂移。配置可选 `build_indicator`、`build_period`、`build_value_column` 后，装配边界也会校验 manifest 构建参数，避免研究/训练特征和回测行情源或生成方式漂移。仓库内 feature gate / feature-ranked universe 样例已写入这些期望字段，样例 manifest 也已补齐 `build_contract` 与输入快照。该治理仍是文件元数据检查，不引入 SQL 或 storage 边界外持久化。
 - 后续切片 Binance client 演进：`BinanceSpotTestnetAdapter` 已抽出 `BinanceHttpClient` 边界，默认仍使用 `ReqwestBinanceHttpClient`；read-only 与下单调用已可通过 fake client 验证，后续替换 Rust SDK 时不需要改 Paper runtime 主链路。
 - 后续切片 IBKR client 稳定性：`IbkrPaperGatewayAdapter` 已抽出 `IbkrGatewayClient` 边界，默认仍使用 `IbapiIbkrGatewayClient`；账号校验、open orders、executions、next order id、place/cancel order 已可通过 fake Gateway client 做无网络验证。
 
@@ -241,7 +251,7 @@ Replay runtime 本身并没有消费 `ReplayController` 的 pause/resume/seek/sp
 
 ## P5：Universe / Alpha 动态装配（主链路已接入，后续扩展保留）
 
-当前状态：`strategy.universe`、`strategy.alpha`、`strategy.symbols` 已进入 Backtest / Paper runtime 的实际 `StrategyRegistry::assemble_alpha` 链路；`[[data.inputs]]` 已把 CLI / REST 配置入口接到多标的 `MarketSlice`。当前仍保留更复杂 Universe selector、多 Alpha、feature store 研究流水线作为后续切片。
+当前状态：`strategy.universe`、`strategy.alpha`、`strategy.symbols` 已进入 Backtest / Paper runtime 的实际 `StrategyRegistry::assemble_alpha` 链路；`[[data.inputs]]` 已把 CLI / REST 配置入口接到多标的 `MarketSlice`；Universe 已支持 static、filtered、ranked 和 feature_ranked 四类 selector；`[[strategy.alpha_components]]` 已接入最高置信度、净信号、多数投票和按 category 分层投票四类冲突处理；`[strategy.alpha_gate]` 已接入只读 feature gate；Strategy/Alpha registry 已支持 SMA 交叉、EMA 交叉、价格动量、价格通道突破、价格通道均值回归与 RSI 均值回归六个模型；Sell 信号现在会生成负目标仓位并可在 Backtest/Paper 主链路形成短仓，Risk 使用 gross exposure 与衍生品 initial margin 做目标仓位投影，并通过通用 `[risk] allow_short` 的显式覆盖值或按 symbol 派生的 shortable 集合控制是否允许 short。当前仍保留更复杂 Universe selector、更多 Alpha 模型和完整研究流水线作为后续切片。
 
 ### 现状
 
@@ -249,7 +259,7 @@ Replay runtime 本身并没有消费 `ReplayController` 的 pause/resume/seek/sp
 
 ### 真正缺口
 
-Universe 仍以静态 symbol 为主，Alpha 组合也偏最小策略示例。距离多市场动态筛选、多 Alpha 权重/冲突处理和研究流水线还有差距。
+Universe 已支持静态、过滤、配置顺序排序与 Feature Parquet 排序四类 selector，Alpha 组合已支持最高置信度、净信号、多数投票和按 category 分层投票四类冲突处理，Alpha registry 已支持 SMA / EMA 均线交叉、价格动量、价格通道突破、价格通道均值回归和 RSI 均值回归模型。距离多市场动态筛选、更多非均线 Alpha 模型和研究流水线还有差距。
 
 ### 风险
 
@@ -264,15 +274,17 @@ Universe 仍以静态 symbol 为主，Alpha 组合也偏最小策略示例。距
 
 - 配置化 Universe selector。
 - 更复杂的 Universe selector。
-- Alpha 权重/冲突处理策略。
-- Strategy/Alpha registry 的配置化装配。
-- feature store 与 Parquet 研究数据接入。
+- 更多非均线 Alpha 模型与注册能力。
+- Strategy/Alpha registry 的更多模型注册。
+- feature store 研究流水线继续扩展，例如 feature 生成、版本治理和训练/回测一致性检查。
 
 ### 验收标准
 
 - 一个配置可以选择 universe selector 和 alpha model。
 - 多标的输入不会破坏当前单标的 smoke。
 - 事件 payload 能表达 symbol、portfolio target、risk decision 和 order intent 的多标的上下文。
+- 负目标仓位必须由通用 `[risk] allow_short` 显式覆盖值或按 symbol 派生的 crypto derivative shortable 集合放行；未开启且当前 symbol 不在 shortable 集合中时 Backtest/Paper 主链路会拒绝 short 决策。
+- 衍生品目标仓位必须按 market rules 的初始保证金率投影 `margin_used`；`max_margin_used` 为正数时 Backtest/Paper 主链路会拒绝超过保证金上限的目标仓位。
 
 ## 后续路线
 

@@ -35,6 +35,56 @@ enum Command {
         #[arg(long)]
         output_parquet: Option<String>,
     },
+    FeatureManifest {
+        #[arg(long)]
+        parquet: String,
+        #[arg(long)]
+        output: String,
+    },
+    FeatureBuildSma {
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        feature_name: String,
+        #[arg(long)]
+        period: usize,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        manifest_output: String,
+    },
+    FeatureBuildIndicator {
+        #[arg(long)]
+        indicator: String,
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        input: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        inputs_config: Option<String>,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        feature_name: String,
+        #[arg(long)]
+        period: usize,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        manifest_output: String,
+    },
     Backtest {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -190,6 +240,32 @@ enum KlineOutputFormat {
     Csv,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FeatureIndicatorKind {
+    Sma,
+    Ema,
+    Rsi,
+}
+
+impl FeatureIndicatorKind {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "sma" => Ok(Self::Sma),
+            "ema" => Ok(Self::Ema),
+            "rsi" => Ok(Self::Rsi),
+            other => bail!("unsupported indicator {other}; expected sma, ema or rsi"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Sma => "sma",
+            Self::Ema => "ema",
+            Self::Rsi => "rsi",
+        }
+    }
+}
+
 struct ReportData {
     run_id: String,
     run_status: String,
@@ -288,10 +364,17 @@ fn local_fills_from_storage(fills: Vec<storage::StoredFill>) -> Vec<LocalFill> {
     fills.into_iter().map(LocalFill::from).collect()
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(8 * 1024 * 1024)
+        .build()?;
+    runtime.block_on(run_command(cli.command))
+}
+
+async fn run_command(command: Command) -> Result<()> {
+    match command {
         Command::Init => println!("initialized"),
         Command::Migrate { config } => {
             let (_, db) = load_db(&config).await?;
@@ -310,6 +393,81 @@ async fn main() -> Result<()> {
             } else {
                 println!("imported bars: {}", bars.len());
             }
+        }
+        Command::FeatureManifest { parquet, output } => {
+            let records = feature_store::load_feature_records_from_parquet(&parquet)?;
+            let manifest = feature_store::build_feature_manifest(&parquet, &records);
+            ensure_file_parent(&output)?;
+            feature_store::write_feature_manifest(&output, &manifest)?;
+            println!(
+                "wrote feature manifest: records={} output={}",
+                manifest.record_count, output
+            );
+        }
+        Command::FeatureBuildSma {
+            source,
+            input,
+            symbol,
+            run_id,
+            feature_name,
+            period,
+            version,
+            output,
+            manifest_output,
+        } => {
+            let record_count = build_indicator_features(
+                FeatureIndicatorKind::Sma,
+                IndicatorBuild {
+                    builder: "feature-build-sma".to_string(),
+                    inputs: vec![data::BarInput::new(symbol, source, input)],
+                    run_id,
+                    feature_name,
+                    period,
+                    version,
+                    output: output.clone(),
+                    manifest_output: manifest_output.clone(),
+                },
+            )?;
+            println!(
+                "wrote sma features: records={} output={} manifest={}",
+                record_count, output, manifest_output
+            );
+        }
+        Command::FeatureBuildIndicator {
+            indicator,
+            source,
+            input,
+            symbol,
+            inputs_config,
+            run_id,
+            feature_name,
+            period,
+            version,
+            output,
+            manifest_output,
+        } => {
+            let indicator = FeatureIndicatorKind::parse(&indicator)?;
+            let inputs = indicator_inputs(source, input, symbol, inputs_config)?;
+            let record_count = build_indicator_features(
+                indicator,
+                IndicatorBuild {
+                    builder: "feature-build-indicator".to_string(),
+                    inputs,
+                    run_id,
+                    feature_name,
+                    period,
+                    version,
+                    output: output.clone(),
+                    manifest_output: manifest_output.clone(),
+                },
+            )?;
+            println!(
+                "wrote {} features: records={} output={} manifest={}",
+                indicator.label(),
+                record_count,
+                output,
+                manifest_output
+            );
         }
         Command::Backtest { config } => {
             let (app_config, db) = load_db(&config).await?;
@@ -1970,6 +2128,191 @@ fn ensure_database_parent(database_url: &str) -> Result<()> {
     Ok(())
 }
 
+fn ensure_file_parent(path: &str) -> Result<()> {
+    if let Some(parent) = Path::new(path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+struct IndicatorBuild {
+    builder: String,
+    inputs: Vec<data::BarInput>,
+    run_id: String,
+    feature_name: String,
+    period: usize,
+    version: String,
+    output: String,
+    manifest_output: String,
+}
+
+fn build_indicator_features(
+    indicator: FeatureIndicatorKind,
+    build: IndicatorBuild,
+) -> Result<usize> {
+    let mut records = Vec::new();
+    let mut manifest_inputs = Vec::new();
+    for input in &build.inputs {
+        let bars = data::load_bars(&input.source, &input.path)?;
+        manifest_inputs.push(feature_manifest_input_from_bar_input_and_bars(
+            input, &bars,
+        )?);
+        records.extend(indicator_feature_records(
+            indicator,
+            bars,
+            &input.symbol,
+            &build.run_id,
+            &build.feature_name,
+            build.period,
+            &build.version,
+        )?);
+    }
+    ensure_file_parent(&build.output)?;
+    feature_store::write_feature_records_to_parquet(&build.output, &records)?;
+    let manifest = feature_store::build_feature_manifest_with_contract(
+        &build.output,
+        &records,
+        feature_store::FeatureBuildContract {
+            builder: build.builder,
+            indicator: indicator.label().to_string(),
+            value_column: "close".to_string(),
+            period: build.period,
+            run_id: build.run_id,
+            feature_name: build.feature_name,
+            version: build.version,
+            inputs: manifest_inputs,
+        },
+    );
+    ensure_file_parent(&build.manifest_output)?;
+    feature_store::write_feature_manifest(&build.manifest_output, &manifest)?;
+    Ok(records.len())
+}
+
+fn feature_manifest_input_from_bar_input(
+    input: &data::BarInput,
+) -> feature_store::FeatureManifestInput {
+    feature_store::FeatureManifestInput {
+        symbol: input.symbol.clone(),
+        source: input.source.clone(),
+        path: input.path.clone(),
+        content_hash: None,
+        bar_count: None,
+        first_ts_ms: None,
+        last_ts_ms: None,
+    }
+}
+
+fn feature_manifest_input_from_bar_input_and_bars(
+    input: &data::BarInput,
+    bars: &[data::Bar],
+) -> Result<feature_store::FeatureManifestInput> {
+    let mut manifest_input = feature_manifest_input_from_bar_input(input);
+    manifest_input.content_hash = Some(stable_file_content_hash(&input.path)?);
+    manifest_input.bar_count = Some(bars.len());
+    manifest_input.first_ts_ms = bars.first().map(|bar| bar.ts_ms);
+    manifest_input.last_ts_ms = bars.last().map(|bar| bar.ts_ms);
+    Ok(manifest_input)
+}
+
+fn stable_file_content_hash(path: &str) -> Result<String> {
+    let bytes = std::fs::read(path)?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Ok(format!("fnv1a64:{hash:016x}"))
+}
+
+fn indicator_inputs(
+    source: Option<String>,
+    input: Option<String>,
+    symbol: Option<String>,
+    inputs_config: Option<String>,
+) -> Result<Vec<data::BarInput>> {
+    match (source, input, symbol, inputs_config) {
+        (None, None, None, Some(config_path)) => {
+            let app_config = config::AppConfig::from_toml_file(config_path)?;
+            configured_bar_inputs(&app_config)
+        }
+        (Some(source), Some(input), Some(symbol), None) => {
+            Ok(vec![data::BarInput::new(symbol, source, input)])
+        }
+        _ => bail!(
+            "feature-build-indicator requires either --inputs-config or all of --source, --input and --symbol"
+        ),
+    }
+}
+
+fn indicator_feature_records(
+    indicator: FeatureIndicatorKind,
+    bars: Vec<data::Bar>,
+    symbol: &str,
+    run_id: &str,
+    feature_name: &str,
+    period: usize,
+    version: &str,
+) -> Result<Vec<feature_store::FeatureRecord>> {
+    match indicator {
+        FeatureIndicatorKind::Sma => {
+            let mut average = indicators::SimpleMovingAverage::new(period)?;
+            Ok(bars
+                .into_iter()
+                .filter_map(|bar| {
+                    average.update(bar.close).map(|value| {
+                        feature_store::FeatureRecord::new(
+                            run_id.to_string(),
+                            symbol.to_string(),
+                            bar.ts_ms,
+                            feature_name.to_string(),
+                            value,
+                            version.to_string(),
+                        )
+                    })
+                })
+                .collect())
+        }
+        FeatureIndicatorKind::Ema => {
+            let mut average = indicators::ExponentialMovingAverage::new(period)?;
+            Ok(bars
+                .into_iter()
+                .filter_map(|bar| {
+                    average.update(bar.close).map(|value| {
+                        feature_store::FeatureRecord::new(
+                            run_id.to_string(),
+                            symbol.to_string(),
+                            bar.ts_ms,
+                            feature_name.to_string(),
+                            value,
+                            version.to_string(),
+                        )
+                    })
+                })
+                .collect())
+        }
+        FeatureIndicatorKind::Rsi => {
+            let mut index = indicators::RelativeStrengthIndex::new(period)?;
+            Ok(bars
+                .into_iter()
+                .filter_map(|bar| {
+                    index.update(bar.close).map(|value| {
+                        feature_store::FeatureRecord::new(
+                            run_id.to_string(),
+                            symbol.to_string(),
+                            bar.ts_ms,
+                            feature_name.to_string(),
+                            value,
+                            version.to_string(),
+                        )
+                    })
+                })
+                .collect())
+        }
+    }
+}
+
 fn sqlite_file_path(database_url: &str) -> Option<&str> {
     if database_url == "sqlite::memory:" || database_url == "sqlite://:memory:" {
         return None;
@@ -1986,6 +2329,10 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings>
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
+        universe_filter: strategy_universe_filter(app_config)?,
+        alpha_components: strategy_alpha_components(app_config),
+        alpha_conflict_resolution: strategy_alpha_conflict_resolution(app_config)?,
+        alpha_gate: strategy_alpha_gate(app_config)?,
         symbol: app_config
             .strategy
             .symbols
@@ -2000,6 +2347,8 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings>
         max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
         max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
         trading_halted: app_config.risk.trading_halted,
+        allow_short: app_config.effective_allow_short(),
+        shortable_symbols: app_config.shortable_symbols(),
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
@@ -2013,6 +2362,10 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
+        universe_filter: strategy_universe_filter(app_config)?,
+        alpha_components: strategy_alpha_components(app_config),
+        alpha_conflict_resolution: strategy_alpha_conflict_resolution(app_config)?,
+        alpha_gate: strategy_alpha_gate(app_config)?,
         symbol: app_config
             .strategy
             .symbols
@@ -2030,6 +2383,8 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         max_leverage: Decimal::from_str(&app_config.risk.max_leverage)?,
         max_margin_used: Decimal::from_str(&app_config.risk.max_margin_used)?,
         trading_halted: app_config.risk.trading_halted,
+        allow_short: app_config.effective_allow_short(),
+        shortable_symbols: app_config.shortable_symbols(),
         initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
@@ -2038,6 +2393,168 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
     })
+}
+
+fn strategy_universe_filter(
+    app_config: &config::AppConfig,
+) -> Result<strategies::StrategyUniverseFilterConfig> {
+    Ok(strategies::StrategyUniverseFilterConfig {
+        include_symbols: app_config.strategy.universe_filter.include_symbols.clone(),
+        exclude_symbols: app_config.strategy.universe_filter.exclude_symbols.clone(),
+        symbol_prefixes: app_config.strategy.universe_filter.symbol_prefixes.clone(),
+        require_current_data: app_config.strategy.universe_filter.require_current_data,
+        max_symbols: app_config.strategy.universe_filter.max_symbols,
+        feature_rank: strategy_universe_rank(app_config)?,
+    })
+}
+
+fn strategy_universe_rank(
+    app_config: &config::AppConfig,
+) -> Result<Option<strategies::StrategyUniverseRankConfig>> {
+    let Some(rank) = &app_config.strategy.universe_rank else {
+        return Ok(None);
+    };
+    if rank.source != "parquet" {
+        bail!(
+            "unsupported universe rank feature source {}; expected parquet",
+            rank.source
+        );
+    }
+    if let Some(manifest_path) = &rank.manifest_path {
+        let manifest = feature_store::load_feature_manifest(manifest_path)?;
+        feature_store::validate_feature_manifest_for_contract(
+            &manifest,
+            &rank.path,
+            &rank.run_id,
+            &app_config.strategy.symbols,
+            &rank.feature_name,
+            rank.version.as_deref(),
+        )?;
+        validate_feature_manifest_input_contract(&manifest, app_config)?;
+        validate_feature_manifest_build_contract(
+            &manifest,
+            rank.build_indicator.clone(),
+            rank.build_period,
+            rank.build_value_column.clone(),
+        )?;
+    }
+    Ok(Some(strategies::StrategyUniverseRankConfig {
+        run_id: rank.run_id.clone(),
+        feature_name: rank.feature_name.clone(),
+        version: rank.version.clone(),
+        descending: rank.descending,
+        records: feature_store::load_feature_records_from_parquet(&rank.path)?,
+    }))
+}
+
+fn strategy_alpha_components(
+    app_config: &config::AppConfig,
+) -> Vec<strategies::StrategyAlphaComponentConfig> {
+    app_config
+        .strategy
+        .alpha_components
+        .iter()
+        .map(|component| strategies::StrategyAlphaComponentConfig {
+            name: component.name.clone(),
+            category: component.category.clone(),
+            fast_window: component.fast_window,
+            slow_window: component.slow_window,
+            weight: component.weight,
+        })
+        .collect()
+}
+
+fn strategy_alpha_conflict_resolution(
+    app_config: &config::AppConfig,
+) -> Result<strategies::StrategyAlphaConflictResolution> {
+    match app_config.strategy.alpha_conflict_resolution.as_str() {
+        "highest_confidence" => Ok(strategies::StrategyAlphaConflictResolution::HighestConfidence),
+        "net_signal" => Ok(strategies::StrategyAlphaConflictResolution::NetSignal),
+        "majority_vote" => Ok(strategies::StrategyAlphaConflictResolution::MajorityVote),
+        "category_majority" => Ok(strategies::StrategyAlphaConflictResolution::CategoryMajority),
+        other => bail!("unknown alpha conflict resolution {other}"),
+    }
+}
+
+fn strategy_alpha_gate(
+    app_config: &config::AppConfig,
+) -> Result<Option<strategies::StrategyAlphaGateConfig>> {
+    let Some(gate) = &app_config.strategy.alpha_gate else {
+        return Ok(None);
+    };
+    if gate.source != "parquet" {
+        bail!(
+            "unsupported alpha gate feature source {}; expected parquet",
+            gate.source
+        );
+    }
+    if let Some(manifest_path) = &gate.manifest_path {
+        let manifest = feature_store::load_feature_manifest(manifest_path)?;
+        feature_store::validate_feature_manifest_for_contract(
+            &manifest,
+            &gate.path,
+            &gate.run_id,
+            &app_config.strategy.symbols,
+            &gate.feature_name,
+            gate.version.as_deref(),
+        )?;
+        validate_feature_manifest_input_contract(&manifest, app_config)?;
+        validate_feature_manifest_build_contract(
+            &manifest,
+            gate.build_indicator.clone(),
+            gate.build_period,
+            gate.build_value_column.clone(),
+        )?;
+    }
+    Ok(Some(strategies::StrategyAlphaGateConfig {
+        run_id: gate.run_id.clone(),
+        feature_name: gate.feature_name.clone(),
+        version: gate.version.clone(),
+        min_value: gate
+            .min_value
+            .as_deref()
+            .map(Decimal::from_str)
+            .transpose()?,
+        max_value: gate
+            .max_value
+            .as_deref()
+            .map(Decimal::from_str)
+            .transpose()?,
+        records: feature_store::load_feature_records_from_parquet(&gate.path)?,
+    }))
+}
+
+fn validate_feature_manifest_input_contract(
+    manifest: &feature_store::FeatureManifest,
+    app_config: &config::AppConfig,
+) -> Result<()> {
+    let inputs = configured_bar_inputs(app_config)?;
+    let mut manifest_inputs = Vec::with_capacity(inputs.len());
+    for input in &inputs {
+        let bars = data::load_bars(&input.source, &input.path)?;
+        manifest_inputs.push(feature_manifest_input_from_bar_input_and_bars(
+            input, &bars,
+        )?);
+    }
+    feature_store::validate_feature_manifest_for_input_contract(manifest, &manifest_inputs)?;
+    Ok(())
+}
+
+fn validate_feature_manifest_build_contract(
+    manifest: &feature_store::FeatureManifest,
+    indicator: Option<String>,
+    period: Option<usize>,
+    value_column: Option<String>,
+) -> Result<()> {
+    feature_store::validate_feature_manifest_for_build_contract(
+        manifest,
+        &feature_store::FeatureBuildContractExpectation {
+            indicator,
+            value_column,
+            period,
+        },
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

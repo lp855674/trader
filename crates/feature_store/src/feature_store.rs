@@ -4,7 +4,7 @@ use polars::prelude::*;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     path::{Path, PathBuf},
     str::FromStr,
@@ -38,6 +38,57 @@ pub struct FeatureRecord {
     pub ts_ms: i64,
     pub value: Decimal,
     pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FeatureManifestInput {
+    pub symbol: String,
+    pub source: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_ts_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ts_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeatureBuildContract {
+    pub builder: String,
+    pub indicator: String,
+    pub value_column: String,
+    pub period: usize,
+    pub run_id: String,
+    pub feature_name: String,
+    pub version: String,
+    pub inputs: Vec<FeatureManifestInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeatureBuildContractExpectation {
+    pub indicator: Option<String>,
+    pub value_column: Option<String>,
+    pub period: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeatureManifest {
+    pub schema_version: u32,
+    pub parquet_path: String,
+    pub record_count: usize,
+    pub run_ids: Vec<String>,
+    pub symbols: Vec<String>,
+    pub feature_names: Vec<String>,
+    pub versions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_contract: Option<FeatureBuildContract>,
+}
+
+impl FeatureManifest {
+    pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 }
 
 impl FeatureRecord {
@@ -109,6 +160,8 @@ pub enum FeatureStoreError {
     Io(#[from] std::io::Error),
     #[error("failed to read or write feature parquet file: {0}")]
     Parquet(#[from] polars::error::PolarsError),
+    #[error("failed to read or write feature manifest json: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("failed to parse decimal feature value {value}: {source}")]
     Decimal {
         value: String,
@@ -118,6 +171,43 @@ pub enum FeatureStoreError {
     MissingColumn(&'static str),
     #[error("feature parquet row {row} column {column} is null")]
     NullValue { row: usize, column: &'static str },
+    #[error("feature manifest schema_version {found} is unsupported; expected {expected}")]
+    UnsupportedManifestSchema { found: u32, expected: u32 },
+    #[error("feature manifest does not contain run_id {0}")]
+    ManifestMissingRunId(String),
+    #[error("feature manifest does not contain symbol {0}")]
+    ManifestMissingSymbol(String),
+    #[error("feature manifest does not contain feature_name {0}")]
+    ManifestMissingFeatureName(String),
+    #[error("feature manifest does not contain version {0}")]
+    ManifestMissingVersion(String),
+    #[error(
+        "feature manifest parquet_path {found} does not match configured feature path {expected}"
+    )]
+    ManifestParquetPathMismatch { found: String, expected: String },
+    #[error(
+        "feature manifest build inputs do not match configured data inputs; expected {expected:?}, found {found:?}"
+    )]
+    ManifestBuildInputsMismatch {
+        expected: Vec<FeatureManifestInput>,
+        found: Vec<FeatureManifestInput>,
+    },
+    #[error(
+        "feature manifest build input {field} does not match expected value {expected}; found {found}"
+    )]
+    ManifestBuildInputSnapshotMismatch {
+        field: &'static str,
+        expected: String,
+        found: String,
+    },
+    #[error(
+        "feature manifest build contract {field} does not match expected value {expected}; found {found}"
+    )]
+    ManifestBuildContractMismatch {
+        field: &'static str,
+        expected: String,
+        found: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +303,218 @@ pub fn write_feature_records_to_parquet(
     Ok(())
 }
 
+pub fn build_feature_manifest(
+    parquet_path: impl AsRef<Path>,
+    records: &[FeatureRecord],
+) -> FeatureManifest {
+    let mut run_ids = BTreeSet::new();
+    let mut symbols = BTreeSet::new();
+    let mut feature_names = BTreeSet::new();
+    let mut versions = BTreeSet::new();
+
+    for record in records {
+        run_ids.insert(record.key.run_id.clone());
+        symbols.insert(record.key.symbol.clone());
+        feature_names.insert(record.key.name.clone());
+        versions.insert(record.version.clone());
+    }
+
+    FeatureManifest {
+        schema_version: FeatureManifest::CURRENT_SCHEMA_VERSION,
+        parquet_path: parquet_path.as_ref().display().to_string(),
+        record_count: records.len(),
+        run_ids: run_ids.into_iter().collect(),
+        symbols: symbols.into_iter().collect(),
+        feature_names: feature_names.into_iter().collect(),
+        versions: versions.into_iter().collect(),
+        build_contract: None,
+    }
+}
+
+pub fn build_feature_manifest_with_contract(
+    parquet_path: impl AsRef<Path>,
+    records: &[FeatureRecord],
+    build_contract: FeatureBuildContract,
+) -> FeatureManifest {
+    let mut manifest = build_feature_manifest(parquet_path, records);
+    manifest.build_contract = Some(build_contract);
+    manifest
+}
+
+pub fn write_feature_manifest(
+    path: impl AsRef<Path>,
+    manifest: &FeatureManifest,
+) -> Result<(), FeatureStoreError> {
+    let file = File::create(path)?;
+    serde_json::to_writer_pretty(file, manifest)?;
+    Ok(())
+}
+
+pub fn load_feature_manifest(path: impl AsRef<Path>) -> Result<FeatureManifest, FeatureStoreError> {
+    let file = File::open(path)?;
+    Ok(serde_json::from_reader(file)?)
+}
+
+pub fn validate_feature_manifest_for_gate(
+    manifest: &FeatureManifest,
+    expected_parquet_path: &str,
+    run_id: &str,
+    symbols: &[String],
+    feature_name: &str,
+    version: Option<&str>,
+) -> Result<(), FeatureStoreError> {
+    validate_feature_manifest_for_contract(
+        manifest,
+        expected_parquet_path,
+        run_id,
+        symbols,
+        feature_name,
+        version,
+    )
+}
+
+pub fn validate_feature_manifest_for_contract(
+    manifest: &FeatureManifest,
+    expected_parquet_path: &str,
+    run_id: &str,
+    symbols: &[String],
+    feature_name: &str,
+    version: Option<&str>,
+) -> Result<(), FeatureStoreError> {
+    if manifest.schema_version != FeatureManifest::CURRENT_SCHEMA_VERSION {
+        return Err(FeatureStoreError::UnsupportedManifestSchema {
+            found: manifest.schema_version,
+            expected: FeatureManifest::CURRENT_SCHEMA_VERSION,
+        });
+    }
+    if normalize_path_string(&manifest.parquet_path) != normalize_path_string(expected_parquet_path)
+    {
+        return Err(FeatureStoreError::ManifestParquetPathMismatch {
+            found: manifest.parquet_path.clone(),
+            expected: expected_parquet_path.to_string(),
+        });
+    }
+    if !contains_value(&manifest.run_ids, run_id) {
+        return Err(FeatureStoreError::ManifestMissingRunId(run_id.to_string()));
+    }
+    for symbol in symbols {
+        if !contains_value(&manifest.symbols, symbol) {
+            return Err(FeatureStoreError::ManifestMissingSymbol(symbol.clone()));
+        }
+    }
+    if !contains_value(&manifest.feature_names, feature_name) {
+        return Err(FeatureStoreError::ManifestMissingFeatureName(
+            feature_name.to_string(),
+        ));
+    }
+    if let Some(version) = version
+        && !contains_value(&manifest.versions, version)
+    {
+        return Err(FeatureStoreError::ManifestMissingVersion(
+            version.to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_feature_manifest_for_input_contract(
+    manifest: &FeatureManifest,
+    expected_inputs: &[FeatureManifestInput],
+) -> Result<(), FeatureStoreError> {
+    let Some(build_contract) = &manifest.build_contract else {
+        return Ok(());
+    };
+    let expected = normalized_manifest_inputs(expected_inputs);
+    let found = normalized_manifest_inputs(&build_contract.inputs);
+    if input_contract_keys(&found) != input_contract_keys(&expected) {
+        return Err(FeatureStoreError::ManifestBuildInputsMismatch { expected, found });
+    }
+    for found_input in &found {
+        let Some(expected_input) = expected
+            .iter()
+            .find(|input| input.same_source_as(found_input))
+        else {
+            return Err(FeatureStoreError::ManifestBuildInputsMismatch { expected, found });
+        };
+        validate_optional_input_snapshot(
+            "content_hash",
+            found_input.content_hash.as_deref(),
+            expected_input.content_hash.as_deref(),
+        )?;
+        validate_optional_input_snapshot(
+            "bar_count",
+            found_input
+                .bar_count
+                .map(|value| value.to_string())
+                .as_deref(),
+            expected_input
+                .bar_count
+                .map(|value| value.to_string())
+                .as_deref(),
+        )?;
+        validate_optional_input_snapshot(
+            "first_ts_ms",
+            found_input
+                .first_ts_ms
+                .map(|value| value.to_string())
+                .as_deref(),
+            expected_input
+                .first_ts_ms
+                .map(|value| value.to_string())
+                .as_deref(),
+        )?;
+        validate_optional_input_snapshot(
+            "last_ts_ms",
+            found_input
+                .last_ts_ms
+                .map(|value| value.to_string())
+                .as_deref(),
+            expected_input
+                .last_ts_ms
+                .map(|value| value.to_string())
+                .as_deref(),
+        )?;
+    }
+    Ok(())
+}
+
+pub fn validate_feature_manifest_for_build_contract(
+    manifest: &FeatureManifest,
+    expectation: &FeatureBuildContractExpectation,
+) -> Result<(), FeatureStoreError> {
+    let Some(build_contract) = &manifest.build_contract else {
+        return Ok(());
+    };
+    if let Some(expected) = &expectation.indicator
+        && build_contract.indicator != *expected
+    {
+        return Err(FeatureStoreError::ManifestBuildContractMismatch {
+            field: "indicator",
+            expected: expected.clone(),
+            found: build_contract.indicator.clone(),
+        });
+    }
+    if let Some(expected) = &expectation.value_column
+        && build_contract.value_column != *expected
+    {
+        return Err(FeatureStoreError::ManifestBuildContractMismatch {
+            field: "value_column",
+            expected: expected.clone(),
+            found: build_contract.value_column.clone(),
+        });
+    }
+    if let Some(expected) = expectation.period
+        && build_contract.period != expected
+    {
+        return Err(FeatureStoreError::ManifestBuildContractMismatch {
+            field: "period",
+            expected: expected.to_string(),
+            found: build_contract.period.to_string(),
+        });
+    }
+    Ok(())
+}
+
 pub fn load_feature_records_from_parquet(
     path: impl AsRef<Path>,
 ) -> Result<Vec<FeatureRecord>, FeatureStoreError> {
@@ -275,4 +577,67 @@ fn parse_decimal(
         value: value.to_string(),
         source,
     })
+}
+
+fn contains_value(values: &[String], expected: &str) -> bool {
+    values.iter().any(|value| value == expected)
+}
+
+fn normalize_path_string(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+impl FeatureManifestInput {
+    fn same_source_as(&self, other: &Self) -> bool {
+        self.symbol == other.symbol && self.source == other.source && self.path == other.path
+    }
+}
+
+fn normalized_manifest_inputs(inputs: &[FeatureManifestInput]) -> Vec<FeatureManifestInput> {
+    let mut normalized = inputs
+        .iter()
+        .map(|input| FeatureManifestInput {
+            symbol: input.symbol.clone(),
+            source: input.source.clone(),
+            path: normalize_path_string(&input.path),
+            content_hash: input.content_hash.clone(),
+            bar_count: input.bar_count,
+            first_ts_ms: input.first_ts_ms,
+            last_ts_ms: input.last_ts_ms,
+        })
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized
+}
+
+fn input_contract_keys(inputs: &[FeatureManifestInput]) -> Vec<FeatureManifestInput> {
+    inputs
+        .iter()
+        .map(|input| FeatureManifestInput {
+            symbol: input.symbol.clone(),
+            source: input.source.clone(),
+            path: input.path.clone(),
+            content_hash: None,
+            bar_count: None,
+            first_ts_ms: None,
+            last_ts_ms: None,
+        })
+        .collect()
+}
+
+fn validate_optional_input_snapshot(
+    field: &'static str,
+    found: Option<&str>,
+    expected: Option<&str>,
+) -> Result<(), FeatureStoreError> {
+    if let Some(found) = found
+        && Some(found) != expected
+    {
+        return Err(FeatureStoreError::ManifestBuildInputSnapshotMismatch {
+            field,
+            expected: expected.unwrap_or("<missing>").to_string(),
+            found: found.to_string(),
+        });
+    }
+    Ok(())
 }

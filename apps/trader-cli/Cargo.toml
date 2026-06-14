@@ -17,12 +17,15 @@ chrono.workspace = true
 clap.workspace = true
 config.workspace = true
 data.workspace = true
+feature_store.workspace = true
+indicators.workspace = true
 metrics.workspace = true
 paper.workspace = true
 replay.workspace = true
 rust_decimal.workspace = true
 serde_json.workspace = true
 storage.workspace = true
+strategies.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 

@@ -61,6 +61,35 @@ fn account_sell_decreases_position_and_increases_cash() {
 }
 
 #[test]
+fn account_sell_opens_short_position_and_increases_cash() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+
+    book.sell("AAPL", dec!(2), dec!(100), dec!(1)).unwrap();
+    let position = book.position("AAPL").unwrap();
+
+    assert_eq!(book.cash(), dec!(10199));
+    assert_eq!(position.qty, dec!(-2));
+    assert_eq!(position.avg_price, dec!(100));
+    assert_eq!(book.market_value("AAPL", dec!(90)), dec!(-180));
+    assert_eq!(book.equity("AAPL", dec!(90)), dec!(10019));
+    assert_eq!(book.unrealized_pnl("AAPL", dec!(90)), dec!(20));
+}
+
+#[test]
+fn account_buy_closes_short_position_and_realizes_pnl() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+    book.sell("AAPL", dec!(2), dec!(100), dec!(0)).unwrap();
+
+    book.buy("AAPL", dec!(1), dec!(90), dec!(0.5));
+    let position = book.position("AAPL").unwrap();
+
+    assert_eq!(book.cash(), dec!(10109.5));
+    assert_eq!(position.qty, dec!(-1));
+    assert_eq!(position.avg_price, dec!(100));
+    assert_eq!(book.realized_pnl(), dec!(9.5));
+}
+
+#[test]
 fn account_unrealized_pnl_uses_mark_price() {
     let mut book = AccountBook::new("paper", dec!(10000));
     book.buy("AAPL", dec!(2), dec!(100), dec!(1));
@@ -88,4 +117,14 @@ fn account_values_multiple_positions_with_symbol_prices() {
             .collect::<Vec<_>>(),
         vec!["AAPL".to_string(), "MSFT".to_string()]
     );
+}
+
+#[test]
+fn account_gross_exposure_uses_absolute_short_market_value() {
+    let mut book = AccountBook::new("paper", dec!(10000));
+    book.sell("AAPL", dec!(2), dec!(100), dec!(0)).unwrap();
+    let prices = BTreeMap::from([("AAPL".to_string(), dec!(90))]);
+
+    assert_eq!(book.market_value_with_prices(&prices), dec!(-180));
+    assert_eq!(book.gross_exposure_with_prices(&prices), dec!(180));
 }

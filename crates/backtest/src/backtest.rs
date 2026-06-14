@@ -5,11 +5,15 @@ use data::{Bar, MarketSlice};
 use events::EventBus;
 use rust_decimal::Decimal;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use storage::{
     BacktestCompletedRun, BacktestFilledExecutionCommand, BacktestPositionCommand, Db,
     RuntimeEventCommand,
 };
-use strategies::{StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode};
+use strategies::{
+    StrategyAlphaComponentConfig, StrategyAlphaConflictResolution, StrategyAlphaGateConfig,
+    StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode, StrategyUniverseFilterConfig,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
@@ -24,6 +28,10 @@ pub struct BacktestSettings {
     pub universe_name: String,
     pub alpha_name: String,
     pub symbols: Vec<String>,
+    pub universe_filter: StrategyUniverseFilterConfig,
+    pub alpha_components: Vec<StrategyAlphaComponentConfig>,
+    pub alpha_conflict_resolution: StrategyAlphaConflictResolution,
+    pub alpha_gate: Option<StrategyAlphaGateConfig>,
     pub symbol: String,
     pub account_id: String,
     pub order_qty: Decimal,
@@ -33,6 +41,8 @@ pub struct BacktestSettings {
     pub max_leverage: Decimal,
     pub max_margin_used: Decimal,
     pub trading_halted: bool,
+    pub allow_short: bool,
+    pub shortable_symbols: BTreeSet<String>,
     pub initial_equity: Decimal,
     pub fast_window: usize,
     pub slow_window: usize,
@@ -46,6 +56,10 @@ impl BacktestSettings {
             universe_name: "static".to_string(),
             alpha_name: "moving_average_cross".to_string(),
             symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
+            universe_filter: StrategyUniverseFilterConfig::default(),
+            alpha_components: Vec::new(),
+            alpha_conflict_resolution: StrategyAlphaConflictResolution::HighestConfidence,
+            alpha_gate: None,
             symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
             account_id: "backtest".to_string(),
             order_qty: Decimal::ONE,
@@ -55,6 +69,8 @@ impl BacktestSettings {
             max_leverage: Decimal::from(10),
             max_margin_used: Decimal::ZERO,
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_equity: Decimal::from(100_000),
             fast_window: 2,
             slow_window: 3,
@@ -110,6 +126,10 @@ impl BacktestRuntime {
                 universe_name: self.settings.universe_name.clone(),
                 alpha_name: self.settings.alpha_name.clone(),
                 symbols: self.settings.assembly_symbols(),
+                universe_filter: self.settings.universe_filter.clone(),
+                alpha_components: self.settings.alpha_components.clone(),
+                alpha_conflict_resolution: self.settings.alpha_conflict_resolution,
+                alpha_gate: self.settings.alpha_gate.clone(),
                 fast_window: self.settings.fast_window,
                 slow_window: self.settings.slow_window,
             },
@@ -131,9 +151,11 @@ impl BacktestRuntime {
                 max_leverage: self.settings.max_leverage,
                 max_margin_used: self.settings.max_margin_used,
                 trading_halted: self.settings.trading_halted,
+                allow_short: self.settings.allow_short,
+                shortable_symbols: self.settings.shortable_symbols.clone(),
                 initial_cash: self.settings.initial_equity,
             },
-            Box::new(assembly.universe),
+            assembly.universe,
             assembly.alpha,
         );
         if let Some(event_bus) = &self.event_bus {

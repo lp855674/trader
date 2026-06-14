@@ -38,6 +38,7 @@ fn rejects_notional_below_minimum() {
         min_qty: Decimal::ONE,
         min_notional: Decimal::from(100),
         allow_market_orders: true,
+        initial_margin_rate: Decimal::ZERO,
     };
     let order = market_order(Decimal::ONE);
 
@@ -95,6 +96,17 @@ fn selects_crypto_perp_rules_from_symbol() {
     assert_eq!(rules.lot_size, Decimal::new(1, 3));
     assert_eq!(rules.tick_size, Decimal::new(1, 2));
     assert_eq!(rules.min_notional, Decimal::from(5));
+    assert_eq!(rules.initial_margin_rate, Decimal::new(1, 1));
+}
+
+#[test]
+fn selects_crypto_future_rules_from_symbol() {
+    let rules = MarketRuleSet::for_symbol("CRYPTO:BINANCE:BTCUSDT_240628:CRYPTO_FUTURE").unwrap();
+
+    assert_eq!(rules.lot_size, Decimal::new(1, 3));
+    assert_eq!(rules.tick_size, Decimal::new(1, 2));
+    assert_eq!(rules.min_notional, Decimal::from(5));
+    assert_eq!(rules.initial_margin_rate, Decimal::new(1, 1));
 }
 
 #[test]

@@ -10,15 +10,22 @@ fn buy_signal_targets_configured_long_quantity() {
 }
 
 #[test]
-fn sell_signal_closes_long_position_for_mvp() {
+fn sell_signal_targets_configured_short_quantity() {
     let target = equal_weight_target(&signal(SignalSide::Sell), dec!(2));
 
-    assert_eq!(target.target_qty, dec!(0));
+    assert_eq!(target.target_qty, dec!(-2));
 }
 
 #[test]
 fn close_long_signal_targets_flat_position() {
     let target = equal_weight_target(&signal(SignalSide::CloseLong), dec!(2));
+
+    assert_eq!(target.target_qty, dec!(0));
+}
+
+#[test]
+fn close_short_signal_targets_flat_position() {
+    let target = equal_weight_target(&signal(SignalSide::CloseShort), dec!(2));
 
     assert_eq!(target.target_qty, dec!(0));
 }

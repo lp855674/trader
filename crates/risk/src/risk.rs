@@ -25,6 +25,8 @@ pub enum RiskError {
     MaxLeverage,
     #[error("portfolio margin exceeds max margin")]
     MaxMargin,
+    #[error("short selling is disabled")]
+    ShortSellingDisabled,
 }
 
 pub fn check_max_position(target: &TargetPosition, max_abs_qty: Decimal) -> Result<(), RiskError> {
@@ -111,6 +113,7 @@ pub struct PortfolioRiskPolicy {
     pub max_drawdown: Decimal,
     pub max_leverage: Decimal,
     pub max_margin_used: Decimal,
+    pub allow_short: bool,
 }
 
 impl PortfolioRiskPolicy {
@@ -125,7 +128,13 @@ impl PortfolioRiskPolicy {
             max_drawdown,
             max_leverage,
             max_margin_used,
+            allow_short: false,
         }
+    }
+
+    pub fn with_shorting(mut self, allow_short: bool) -> Self {
+        self.allow_short = allow_short;
+        self
     }
 
     pub fn check_portfolio(&self, state: &PortfolioRiskState) -> Result<(), RiskError> {
@@ -147,7 +156,7 @@ impl PortfolioRiskPolicy {
                 return Err(RiskError::MaxLeverage);
             }
         }
-        if state.margin_used > self.max_margin_used {
+        if self.max_margin_used > Decimal::ZERO && state.margin_used > self.max_margin_used {
             return Err(RiskError::MaxMargin);
         }
         Ok(())
@@ -160,10 +169,28 @@ impl PortfolioRiskPolicy {
         state: &PortfolioRiskState,
     ) -> Result<(), RiskError> {
         let order_notional = order.qty * order.price.unwrap_or(reference_price);
-        let projected_exposure = match order.side {
-            OrderSide::Buy => state.gross_exposure + order_notional,
-            OrderSide::Sell => (state.gross_exposure - order_notional).max(Decimal::ZERO),
-        };
+        let projected_exposure = state.gross_exposure + order_notional;
+        self.check_portfolio(&PortfolioRiskState {
+            gross_exposure: projected_exposure,
+            ..state.clone()
+        })
+    }
+
+    pub fn check_projected_target(
+        &self,
+        target: &TargetPosition,
+        current_qty: Decimal,
+        reference_price: Decimal,
+        state: &PortfolioRiskState,
+    ) -> Result<(), RiskError> {
+        if target.target_qty < Decimal::ZERO && !self.allow_short {
+            return Err(RiskError::ShortSellingDisabled);
+        }
+        let current_symbol_exposure = current_qty.abs() * reference_price;
+        let target_symbol_exposure = target.target_qty.abs() * reference_price;
+        let projected_exposure = (state.gross_exposure - current_symbol_exposure)
+            .max(Decimal::ZERO)
+            + target_symbol_exposure;
         self.check_portfolio(&PortfolioRiskState {
             gross_exposure: projected_exposure,
             ..state.clone()

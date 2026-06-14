@@ -12,6 +12,7 @@ path = "src/feature_store.rs"
 polars.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

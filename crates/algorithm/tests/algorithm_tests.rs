@@ -6,6 +6,7 @@ use alpha::{AlphaModel, CompositeAlphaModel};
 use data::{Bar, MarketSlice, SymbolBar};
 use events::{EventBus, SignalEvent, SignalSide};
 use rust_decimal_macros::dec;
+use std::collections::BTreeSet;
 use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
 use universe::StaticUniverseSelector;
 
@@ -28,6 +29,8 @@ fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
             max_leverage: dec!(10),
             max_margin_used: dec!(0),
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
         },
         Box::new(strategy),
@@ -84,6 +87,8 @@ fn algorithm_engine_uses_highest_confidence_composite_alpha_signal() {
             max_leverage: dec!(10),
             max_margin_used: dec!(0),
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
         },
         Box::new(strategy),
@@ -96,6 +101,187 @@ fn algorithm_engine_uses_highest_confidence_composite_alpha_signal() {
         .expect("composite alpha should emit a decision");
 
     assert_eq!(decision.order.unwrap().side, trader_core::OrderSide::Buy);
+}
+
+#[test]
+fn algorithm_engine_applies_sell_signal_as_short_position() {
+    let strategy = CompositeAlphaModel::new(vec![Box::new(FixedAlphaModel::new(
+        "short-alpha",
+        SignalSide::Sell,
+        0.9,
+    ))]);
+    let mut engine = AlgorithmEngine::new(
+        AlgorithmEngineSettings {
+            run_id: "run-short".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: true,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+        },
+        Box::new(strategy),
+    );
+
+    let decision = engine
+        .on_bar(bar(1, dec!(100)))
+        .unwrap()
+        .decision
+        .expect("sell alpha should emit a short order");
+    let order = decision.order.unwrap();
+    assert_eq!(order.side, trader_core::OrderSide::Sell);
+    assert_eq!(order.qty, dec!(1));
+
+    let applied = engine
+        .apply_execution(
+            &order,
+            &algorithm::ExecutionReport {
+                broker_order_id: "short-fill".to_string(),
+                status: "FILLED".to_string(),
+                price: dec!(100),
+                qty: dec!(1),
+                fee: dec!(0),
+            },
+            1,
+        )
+        .unwrap();
+
+    assert_eq!(applied.snapshot.cash, dec!(100100));
+    assert_eq!(applied.snapshot.market_value, dec!(-100));
+    assert_eq!(applied.snapshot.equity, dec!(100000));
+    assert_eq!(applied.snapshot.position_qty, dec!(-1));
+    assert_eq!(applied.snapshot.positions[0].qty, dec!(-1));
+}
+
+#[test]
+fn algorithm_engine_allows_short_only_for_configured_symbols_in_mixed_universe() {
+    let mut shortable_symbols = BTreeSet::new();
+    shortable_symbols.insert("CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string());
+    let mut engine = AlgorithmEngine::new_with_universe(
+        AlgorithmEngineSettings {
+            run_id: "run-mixed-short".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols,
+            initial_cash: dec!(100000),
+        },
+        Box::new(StaticUniverseSelector::new(vec![
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        ])),
+        Box::new(SymbolSellAlphaModel),
+    );
+
+    let perp_step = engine
+        .on_market_slice(MarketSlice::new(
+            1,
+            vec![SymbolBar::new(
+                "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                bar(1, dec!(100)),
+            )],
+        ))
+        .unwrap();
+    let perp_order = perp_step.decisions[0].order.as_ref().unwrap();
+    assert_eq!(perp_order.symbol, "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP");
+    assert_eq!(perp_order.side, trader_core::OrderSide::Sell);
+
+    let mut blocked_engine = AlgorithmEngine::new_with_universe(
+        AlgorithmEngineSettings {
+            run_id: "run-mixed-equity-short".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::from([
+                "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string()
+            ]),
+            initial_cash: dec!(100000),
+        },
+        Box::new(StaticUniverseSelector::new(vec![
+            "US:NASDAQ:AAPL:EQUITY".to_string(),
+        ])),
+        Box::new(SymbolSellAlphaModel),
+    );
+
+    let error = blocked_engine
+        .on_market_slice(MarketSlice::new(
+            1,
+            vec![SymbolBar::new("US:NASDAQ:AAPL:EQUITY", bar(1, dec!(100)))],
+        ))
+        .unwrap_err();
+    assert!(error.to_string().contains("short selling is disabled"));
+}
+
+#[test]
+fn algorithm_engine_rejects_derivative_target_above_margin_limit() {
+    let symbol = "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP";
+    let mut engine = AlgorithmEngine::new_with_universe(
+        AlgorithmEngineSettings {
+            run_id: "run-margin".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: symbol.to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(9),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::from([symbol.to_string()]),
+            initial_cash: dec!(100000),
+        },
+        Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
+        Box::new(SymbolSellAlphaModel),
+    );
+
+    let error = engine
+        .on_market_slice(MarketSlice::new(
+            1,
+            vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
+        ))
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("portfolio margin exceeds max margin")
+    );
 }
 
 #[test]
@@ -116,6 +302,8 @@ fn algorithm_engine_generates_orders_for_each_selected_symbol_in_market_slice() 
             max_leverage: dec!(10),
             max_margin_used: dec!(0),
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
         },
         Box::new(StaticUniverseSelector::new(vec![
@@ -171,6 +359,8 @@ fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
             max_leverage: dec!(10),
             max_margin_used: dec!(0),
             trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
         },
         Box::new(strategy),
@@ -235,6 +425,7 @@ struct FixedAlphaModel {
 }
 
 struct SymbolEchoAlphaModel;
+struct SymbolSellAlphaModel;
 
 impl AlphaModel for SymbolEchoAlphaModel {
     fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
@@ -246,6 +437,22 @@ impl AlphaModel for SymbolEchoAlphaModel {
             strategy_id: "echo".to_string(),
             symbol: symbol.to_string(),
             side: SignalSide::Buy,
+            confidence: 0.9,
+            ts: chrono::Utc::now(),
+        })
+    }
+}
+
+impl AlphaModel for SymbolSellAlphaModel {
+    fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
+        None
+    }
+
+    fn on_bar_for_symbol(&mut self, symbol: &str, _bar: &Bar) -> Option<SignalEvent> {
+        Some(SignalEvent {
+            strategy_id: "sell".to_string(),
+            symbol: symbol.to_string(),
+            side: SignalSide::Sell,
             confidence: 0.9,
             ts: chrono::Utc::now(),
         })
