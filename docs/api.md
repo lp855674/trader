@@ -30,6 +30,8 @@ GET  /api/v1/fills
 GET  /api/v1/positions
 GET  /api/v1/account-balances
 GET  /api/v1/portfolio/snapshots
+GET  /api/v1/cash/snapshots
+GET  /api/v1/positions/snapshots
 GET  /api/v1/metrics
 GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
@@ -423,6 +425,8 @@ Accounts
 Portfolio
   GET  /api/v1/portfolio
   GET  /api/v1/portfolio/snapshots
+  GET  /api/v1/cash/snapshots
+  GET  /api/v1/positions/snapshots
 
 Metrics
   GET  /api/v1/metrics
@@ -1677,6 +1681,67 @@ Query 参数：
   "request_id": "req_001",
   "ts": 1700000000000
 }
+```
+
+---
+
+## 17.3 查询现金快照
+
+```http
+GET /api/v1/cash/snapshots
+```
+
+当前 V1 根据服务配置中的 `runtime.run_id` 查询，返回数组：
+
+```json
+[
+  {
+    "id": 1,
+    "run_id": "sample-ma-cross",
+    "ts_ms": 1700000000000,
+    "currency": "USD",
+    "cash": "99980",
+    "available_cash": "99980",
+    "frozen_cash": "0",
+    "created_at_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 17.4 查询持仓快照
+
+```http
+GET /api/v1/positions/snapshots
+```
+
+当前 V1 根据服务配置中的 `runtime.run_id` 查询，返回数组：
+
+```json
+[
+  {
+    "id": 1,
+    "run_id": "sample-ma-cross",
+    "ts_ms": 1700000000000,
+    "market": "US",
+    "exchange": "NASDAQ",
+    "symbol": "US:NASDAQ:AAPL:EQUITY",
+    "asset_class": "EQUITY",
+    "position_side": null,
+    "qty": "1",
+    "available_qty": "1",
+    "avg_price": "20",
+    "entry_price": "20",
+    "market_price": null,
+    "mark_price": null,
+    "market_value": null,
+    "unrealized_pnl": null,
+    "realized_pnl": null,
+    "currency": "USD",
+    "created_at_ms": 1700000000000
+  }
+]
 ```
 
 ---

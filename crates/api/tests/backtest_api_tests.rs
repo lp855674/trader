@@ -1416,6 +1416,8 @@ async fn post_paper_run_populates_query_routes() {
         "/api/v1/fills",
         "/api/v1/account-balances",
         "/api/v1/portfolio/snapshots",
+        "/api/v1/cash/snapshots",
+        "/api/v1/positions/snapshots",
     ] {
         let response = app
             .clone()

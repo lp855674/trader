@@ -132,6 +132,41 @@ struct AccountBalanceResponse {
 }
 
 #[derive(Serialize)]
+struct CashSnapshotResponse {
+    id: i64,
+    run_id: String,
+    ts_ms: i64,
+    currency: String,
+    cash: String,
+    available_cash: String,
+    frozen_cash: String,
+    created_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct PositionSnapshotResponse {
+    id: i64,
+    run_id: String,
+    ts_ms: i64,
+    market: String,
+    exchange: String,
+    symbol: String,
+    asset_class: String,
+    position_side: Option<String>,
+    qty: String,
+    available_qty: String,
+    avg_price: Option<String>,
+    entry_price: Option<String>,
+    market_price: Option<String>,
+    mark_price: Option<String>,
+    market_value: Option<String>,
+    unrealized_pnl: Option<String>,
+    realized_pnl: Option<String>,
+    currency: String,
+    created_at_ms: i64,
+}
+
+#[derive(Serialize)]
 struct PortfolioSnapshotResponse {
     id: String,
     run_id: String,
@@ -205,6 +240,8 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/positions", get(list_positions))
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
+        .route("/api/v1/cash/snapshots", get(list_cash_snapshots))
+        .route("/api/v1/positions/snapshots", get(list_position_snapshots))
         .route("/api/v1/metrics", get(metrics_summary))
         .route("/api/v1/brokers/status", get(broker_status))
         .route("/api/v1/brokers/account/{account_id}", get(broker_account))
@@ -620,6 +657,63 @@ async fn list_account_balances(
         })
         .collect();
     Ok(Json(balances))
+}
+
+async fn list_cash_snapshots(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<CashSnapshotResponse>>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let snapshots = state
+        .db
+        .list_cash_snapshots(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|snapshot| CashSnapshotResponse {
+            id: snapshot.id,
+            run_id: snapshot.run_id,
+            ts_ms: snapshot.ts_ms,
+            currency: snapshot.currency,
+            cash: snapshot.cash,
+            available_cash: snapshot.available_cash,
+            frozen_cash: snapshot.frozen_cash,
+            created_at_ms: snapshot.created_at_ms,
+        })
+        .collect();
+    Ok(Json(snapshots))
+}
+
+async fn list_position_snapshots(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PositionSnapshotResponse>>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let snapshots = state
+        .db
+        .list_position_snapshots(&app_config.runtime.run_id)
+        .await?
+        .into_iter()
+        .map(|snapshot| PositionSnapshotResponse {
+            id: snapshot.id,
+            run_id: snapshot.run_id,
+            ts_ms: snapshot.ts_ms,
+            market: snapshot.market,
+            exchange: snapshot.exchange,
+            symbol: snapshot.symbol,
+            asset_class: snapshot.asset_class,
+            position_side: snapshot.position_side,
+            qty: snapshot.qty,
+            available_qty: snapshot.available_qty,
+            avg_price: snapshot.avg_price,
+            entry_price: snapshot.entry_price,
+            market_price: snapshot.market_price,
+            mark_price: snapshot.mark_price,
+            market_value: snapshot.market_value,
+            unrealized_pnl: snapshot.unrealized_pnl,
+            realized_pnl: snapshot.realized_pnl,
+            currency: snapshot.currency,
+            created_at_ms: snapshot.created_at_ms,
+        })
+        .collect();
+    Ok(Json(snapshots))
 }
 
 async fn list_portfolio_snapshots(
