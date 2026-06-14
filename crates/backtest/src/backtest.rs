@@ -25,6 +25,7 @@ pub struct BacktestSummary {
 pub struct BacktestSettings {
     pub run_id: String,
     pub strategy_name: String,
+    pub config_json: String,
     pub universe_name: String,
     pub alpha_name: String,
     pub symbols: Vec<String>,
@@ -53,6 +54,7 @@ impl BacktestSettings {
         Self {
             run_id: "sample-ma-cross".to_string(),
             strategy_name: "moving_average_cross".to_string(),
+            config_json: "{}".to_string(),
             universe_name: "static".to_string(),
             alpha_name: "moving_average_cross".to_string(),
             symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
@@ -215,7 +217,7 @@ impl BacktestRuntime {
                 strategy_name: self.settings.strategy_name.clone(),
                 started_at_ms,
                 ended_at_ms,
-                config_json: "{}".to_string(),
+                config_json: self.settings.config_json.clone(),
             })
             .await?;
 

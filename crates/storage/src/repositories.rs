@@ -332,6 +332,15 @@ pub struct StoredConfigRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunConfigSnapshotCommand {
+    pub run_id: String,
+    pub content: String,
+    pub format: String,
+    pub checksum: Option<String>,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewSystemLog {
     pub id: String,
     pub run_id: Option<String>,
@@ -1965,6 +1974,23 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    pub async fn record_run_config_snapshot(
+        &self,
+        command: RunConfigSnapshotCommand,
+    ) -> StorageResult<()> {
+        self.upsert_config(NewConfigRecord {
+            id: format!("run:{}", command.run_id),
+            name: command.run_id,
+            config_type: "RUN".to_string(),
+            content: command.content,
+            format: command.format,
+            checksum: command.checksum,
+            created_at_ms: command.ts_ms,
+            updated_at_ms: command.ts_ms,
+        })
+        .await
     }
 
     pub async fn get_config_by_name(

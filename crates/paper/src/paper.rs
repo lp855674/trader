@@ -42,6 +42,7 @@ pub struct PaperRuntime {
 pub struct PaperSettings {
     pub run_id: String,
     pub strategy_name: String,
+    pub config_json: String,
     pub universe_name: String,
     pub alpha_name: String,
     pub symbols: Vec<String>,
@@ -87,11 +88,17 @@ impl fmt::Display for PaperRunError {
 
 impl Error for PaperRunError {}
 
+fn payload_response(payload_json: &str) -> serde_json::Value {
+    serde_json::from_str(payload_json)
+        .unwrap_or_else(|_| serde_json::Value::String(payload_json.to_string()))
+}
+
 impl PaperSettings {
     pub fn sample() -> Self {
         Self {
             run_id: "sample-ma-cross".to_string(),
             strategy_name: "moving_average_cross".to_string(),
+            config_json: "{}".to_string(),
             universe_name: "static".to_string(),
             alpha_name: "moving_average_cross".to_string(),
             symbols: vec!["US:NASDAQ:AAPL:EQUITY".to_string()],
@@ -400,7 +407,7 @@ impl<'a> PaperRunSession<'a> {
                     name: settings.strategy_name.clone(),
                     mode: "paper".to_string(),
                     started_at_ms: market_slice.ts_ms,
-                    config: serde_json::json!({}),
+                    config: payload_response(&settings.config_json),
                 })
                 .await?;
             self.started_at_ms = Some(market_slice.ts_ms);
@@ -589,7 +596,7 @@ impl<'a> PaperRunSession<'a> {
                 base_currency: settings.base_currency.clone(),
                 started_at_ms,
                 ended_at_ms: self.ended_at_ms,
-                config_json: "{}".to_string(),
+                config_json: settings.config_json.clone(),
                 cash: self.last_snapshot.cash,
                 market_value: self.last_snapshot.market_value,
                 equity: self.last_snapshot.equity,

@@ -1180,6 +1180,7 @@ async fn run_routes_return_structured_config_objects() {
     let run: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(run.get("config_json").is_none());
     assert!(run.get("config").unwrap().is_object());
+    assert_eq!(run["config"]["runtime"]["run_id"], "sample-ma-cross");
 }
 
 #[tokio::test]
@@ -1474,6 +1475,33 @@ async fn post_paper_run_populates_query_routes() {
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_ne!(bytes.as_ref(), b"[]");
     }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/configs/sample-ma-cross")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(config["name"], "sample-ma-cross");
+    assert_eq!(config["config_type"], "RUN");
+    assert_eq!(config["format"], "TOML");
+    assert!(config["content"].as_str().unwrap().contains("[runtime]"));
+    assert!(
+        config["content"]
+            .as_str()
+            .unwrap()
+            .contains("run_id = \"sample-ma-cross\"")
+    );
+    assert!(config["checksum"].as_str().unwrap().starts_with("fnv1a64:"));
 }
 
 #[tokio::test]

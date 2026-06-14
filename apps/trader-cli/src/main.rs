@@ -2326,6 +2326,7 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings>
     Ok(BacktestSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        config_json: "{}".to_string(),
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
@@ -2359,6 +2360,7 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
     Ok(PaperSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        config_json: "{}".to_string(),
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),

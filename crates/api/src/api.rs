@@ -221,6 +221,18 @@ struct RiskEventResponse {
     payload: serde_json::Value,
 }
 
+#[derive(Serialize)]
+struct ConfigResponse {
+    id: String,
+    name: String,
+    config_type: String,
+    content: String,
+    format: String,
+    checksum: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -247,6 +259,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/brokers/account/{account_id}", get(broker_account))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
+        .route("/api/v1/configs/{name}", get(get_config))
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
         .route(
@@ -336,10 +349,42 @@ async fn paper_preflight(
     }))
 }
 
+async fn persist_run_config_snapshot(
+    state: &AppState,
+    app_config: &config::AppConfig,
+    timestamp_ms: i64,
+) -> Result<String, ApiError> {
+    let content = std::fs::read_to_string(&state.config_path).map_err(|source| {
+        ApiError(anyhow::anyhow!(
+            "failed to read config snapshot {}: {source}",
+            state.config_path
+        ))
+    })?;
+    let config_value: toml::Value = toml::from_str(&content)
+        .map_err(|error| ApiError(anyhow::anyhow!("failed to parse config snapshot: {error}")))?;
+    let config_json = serde_json::to_value(config_value)
+        .map_err(|error| ApiError(anyhow::anyhow!("failed to encode config snapshot: {error}")))?;
+
+    state
+        .db
+        .record_run_config_snapshot(storage::RunConfigSnapshotCommand {
+            run_id: app_config.runtime.run_id.clone(),
+            content: content.clone(),
+            format: "TOML".to_string(),
+            checksum: Some(stable_bytes_hash(content.as_bytes())),
+            ts_ms: timestamp_ms,
+        })
+        .await?;
+
+    Ok(config_json.to_string())
+}
+
 async fn run_backtest(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
+    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
     insert_event(
         &state.db,
         &app_config.runtime.run_id,
@@ -348,10 +393,13 @@ async fn run_backtest(
     )
     .await?;
     let market_slices = load_configured_market_slices(&app_config)?;
-    let summary = BacktestRuntime::new(state.db.clone(), backtest_settings(&app_config)?)
-        .with_event_bus(state.event_bus.clone())
-        .run_market_slices(market_slices)
-        .await?;
+    let summary = BacktestRuntime::new(
+        state.db.clone(),
+        backtest_settings_with_config_json(&app_config, config_json)?,
+    )
+    .with_event_bus(state.event_bus.clone())
+    .run_market_slices(market_slices)
+    .await?;
     let payload = serde_json::json!({
         "run_id": &app_config.runtime.run_id,
         "signals": summary.signals,
@@ -372,8 +420,9 @@ async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let settings = paper_settings(&app_config)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
+    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    let settings = paper_settings_with_config_json(&app_config, config_json.clone())?;
 
     state
         .db
@@ -382,7 +431,7 @@ async fn run_paper(
             name: settings.strategy_name.clone(),
             mode: "paper".to_string(),
             started_at_ms,
-            config: serde_json::json!({}),
+            config: payload_response(config_json),
         })
         .await?;
     insert_event(
@@ -468,6 +517,7 @@ async fn run_replay(
 ) -> Result<(StatusCode, Json<ReplaySummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
+    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
     state
         .db
         .start_strategy_run(storage::StrategyRunStartCommand {
@@ -475,7 +525,7 @@ async fn run_replay(
             name: app_config.strategy.name.clone(),
             mode: "replay".to_string(),
             started_at_ms,
-            config: serde_json::json!({}),
+            config: payload_response(config_json),
         })
         .await?;
     let replay_controller = Arc::new(Mutex::new(ReplayController::new(
@@ -781,6 +831,16 @@ async fn get_run(
     Ok(Json(run_response(run)).into_response())
 }
 
+async fn get_config(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(config) = state.db.get_config_by_name(&name).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(config_response(config)).into_response())
+}
+
 async fn list_events(State(state): State<AppState>) -> Result<Json<Vec<EventResponse>>, ApiError> {
     let events = state
         .db
@@ -851,6 +911,19 @@ fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
 
 fn payload_response(payload_json: String) -> serde_json::Value {
     serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::String(payload_json))
+}
+
+fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
+    ConfigResponse {
+        id: config.id,
+        name: config.name,
+        config_type: config.config_type,
+        content: config.content,
+        format: config.format,
+        checksum: config.checksum,
+        created_at_ms: config.created_at_ms,
+        updated_at_ms: config.updated_at_ms,
+    }
 }
 
 fn event_response(event: storage::EventRecord) -> EventResponse {
@@ -1131,12 +1204,16 @@ fn feature_manifest_input_from_bar_input_and_bars(
 
 fn stable_file_content_hash(path: &str) -> Result<String, std::io::Error> {
     let bytes = std::fs::read(path)?;
+    Ok(stable_bytes_hash(&bytes))
+}
+
+fn stable_bytes_hash(bytes: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {
-        hash ^= u64::from(byte);
+        hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    Ok(format!("fnv1a64:{hash:016x}"))
+    format!("fnv1a64:{hash:016x}")
 }
 
 fn validate_feature_manifest_input_contract(
@@ -1184,10 +1261,14 @@ fn primary_strategy_symbol(app_config: &config::AppConfig) -> String {
         .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string())
 }
 
-fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings, ApiError> {
+fn backtest_settings_with_config_json(
+    app_config: &config::AppConfig,
+    config_json: String,
+) -> Result<BacktestSettings, ApiError> {
     Ok(BacktestSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        config_json,
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),
@@ -1218,9 +1299,17 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings,
 }
 
 fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings, ApiError> {
+    paper_settings_with_config_json(app_config, "{}".to_string())
+}
+
+fn paper_settings_with_config_json(
+    app_config: &config::AppConfig,
+    config_json: String,
+) -> Result<PaperSettings, ApiError> {
     Ok(PaperSettings {
         run_id: app_config.runtime.run_id.clone(),
         strategy_name: app_config.strategy.name.clone(),
+        config_json,
         universe_name: app_config.strategy.universe.clone(),
         alpha_name: app_config.strategy.alpha.clone(),
         symbols: app_config.strategy.symbols.clone(),

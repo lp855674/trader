@@ -35,6 +35,7 @@ GET  /api/v1/positions/snapshots
 GET  /api/v1/metrics
 GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
+GET  /api/v1/configs/{name}
 GET  /api/v1/runs/{run_id}/status
 POST /api/v1/runs/{run_id}/cancel
 GET  /api/v1/events
@@ -2049,6 +2050,8 @@ Query 参数：
 
 # 21. Config API
 
+当前 V1 只实现 `GET /api/v1/configs/{name}`。API 启动 Backtest、Paper 或 Replay 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照；`name` 使用 `runtime.run_id`。
+
 ---
 
 ## 21.1 查询配置列表
@@ -2088,7 +2091,22 @@ GET /api/v1/configs
 GET /api/v1/configs/{name}
 ```
 
-响应：
+当前 V1 响应为未包 envelope 的单个对象：
+
+```json
+{
+  "id": "run:sample-ma-cross",
+  "name": "sample-ma-cross",
+  "config_type": "RUN",
+  "format": "TOML",
+  "content": "[runtime]\nmode = \"paper\"\nrun_id = \"sample-ma-cross\"\n",
+  "checksum": "fnv1a64:0000000000000000",
+  "created_at_ms": 1700000000000,
+  "updated_at_ms": 1700000000000
+}
+```
+
+目标响应：
 
 ```json
 {

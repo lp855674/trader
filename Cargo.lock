@@ -198,6 +198,7 @@ dependencies = [
  "strategies",
  "tokio",
  "tokio-tungstenite 0.26.2",
+ "toml",
  "tower",
  "uuid",
 ]
