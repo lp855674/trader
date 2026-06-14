@@ -1549,6 +1549,59 @@ async fn completed_paper_run_status_is_preserved_after_late_cancel() {
 }
 
 #[tokio::test]
+async fn cancel_does_not_overwrite_terminal_run_status_while_manager_is_still_active() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(storage::StrategyRunStartCommand {
+        run_id: "terminal-run".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.update_strategy_run_status("terminal-run", "completed", Some(2), None)
+        .await
+        .unwrap();
+
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    state
+        .runtime_manager
+        .spawn("terminal-run".to_string(), |cancel| async move {
+            while !cancel.is_cancelled() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+    let app = router_with_state(state.clone());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/runs/terminal-run/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        bytes
+            .as_ref()
+            .windows("completed".len())
+            .any(|window| window == b"completed")
+    );
+
+    state.runtime_manager.cancel("terminal-run").await;
+    state.runtime_manager.wait_for_idle("terminal-run").await;
+}
+
+#[tokio::test]
 async fn failed_paper_run_records_failed_status_and_error() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

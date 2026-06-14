@@ -27,7 +27,7 @@
         "symbol": "US:NASDAQ:AAPL:EQUITY",
         "source": "csv",
         "path": "datasets/sample/aapl_rsi_reversion_1d.csv",
-        "content_hash": "fnv1a64:f7eb841b7ca04471",
+        "content_hash": "fnv1a64:c02a391e14fbe160",
         "bar_count": 4,
         "first_ts_ms": 1704067200000,
         "last_ts_ms": 1704326400000

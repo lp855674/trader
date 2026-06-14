@@ -37,7 +37,7 @@
         "symbol": "US:NASDAQ:MSFT:EQUITY",
         "source": "csv",
         "path": "datasets/sample/msft_1d.csv",
-        "content_hash": "fnv1a64:bea3aa38b5b17d57",
+        "content_hash": "fnv1a64:789d1943be821b77",
         "bar_count": 3,
         "first_ts_ms": 1704067200000,
         "last_ts_ms": 1704240000000
