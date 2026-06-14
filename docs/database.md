@@ -8,6 +8,45 @@ Target Markets: A股 / 港股 / 美股 / 数字货币
 
 ---
 
+# Current Implementation Status
+
+The current implemented SQLite schema is split across migrations:
+
+`migrations/0001_init.sql` contains the MVP trading-state schema:
+
+- `strategy_runs`
+- `instruments`
+- `orders`
+- `fills`
+- `positions`
+- `account_balances`
+- `portfolio_snapshots`
+- `event_store`
+
+`migrations/0002_audit_projections.sql` adds query projections derived from `event_store`:
+
+- `order_events`
+- `risk_events`
+- `insights`
+- `portfolio_targets`
+
+`migrations/0003_market_rules.sql` adds versionable market-reference and rule tables:
+
+- `market_calendars`
+- `trading_sessions`
+- `fee_rules`
+- `lot_size_rules`
+- `price_limit_rules`
+
+`migrations/0004_contract_accounting.sql` adds the storage boundary for contract positions and funding rates:
+
+- `crypto_positions`
+- `funding_rates`
+
+The complete schema below is the target production schema. A table appearing in the target schema does not mean it is implemented in the current migration.
+
+---
+
 # 1. 设计目标
 
 Trader 的数据库设计分为两层：

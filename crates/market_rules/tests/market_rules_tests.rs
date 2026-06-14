@@ -1,4 +1,4 @@
-use market_rules::{MarketRuleError, MarketRuleSet};
+use market_rules::{MarketRuleError, MarketRuleProvider, MarketRuleSet, StaticMarketRuleProvider};
 use rust_decimal::Decimal;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
@@ -75,6 +75,15 @@ fn selects_hk_equity_rules_from_symbol() {
 #[test]
 fn selects_us_equity_rules_from_symbol() {
     let rules = MarketRuleSet::for_symbol("US:NASDAQ:AAPL:EQUITY").unwrap();
+
+    assert_eq!(rules.lot_size, Decimal::ONE);
+    assert_eq!(rules.tick_size, Decimal::new(1, 2));
+}
+
+#[test]
+fn static_market_rule_provider_uses_existing_symbol_rules() {
+    let provider = StaticMarketRuleProvider;
+    let rules = provider.rules_for_symbol("US:NASDAQ:AAPL:EQUITY").unwrap();
 
     assert_eq!(rules.lot_size, Decimal::ONE);
     assert_eq!(rules.tick_size, Decimal::new(1, 2));

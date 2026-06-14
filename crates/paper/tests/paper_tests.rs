@@ -259,6 +259,17 @@ async fn paper_runtime_can_use_injected_order_executor() {
             .payload_json
             .contains("\"broker_order_id\":\"external-1\"")
     }));
+    let order_events = db.list_order_events("sample-ma-cross").await.unwrap();
+    assert!(
+        order_events.iter().any(
+            |event| event.event_type == "broker.order.submitted" && event.status == "SUBMITTED"
+        )
+    );
+    assert!(
+        order_events
+            .iter()
+            .any(|event| event.event_type == "broker.order.filled" && event.status == "FILLED")
+    );
 }
 
 #[tokio::test]

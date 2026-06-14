@@ -21,4 +21,10 @@ async fn backtest_persists_orders_and_positions() {
     assert_eq!(summary.signals, 1);
     assert_eq!(db.list_orders("sample-ma-cross").await.unwrap().len(), 1);
     assert_eq!(db.list_positions("sample-ma-cross").await.unwrap().len(), 1);
+    let insights = db.list_insights("sample-ma-cross").await.unwrap();
+    assert_eq!(insights.len(), 1);
+    assert_eq!(insights[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    let targets = db.list_portfolio_targets("sample-ma-cross").await.unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].target_qty, "1");
 }

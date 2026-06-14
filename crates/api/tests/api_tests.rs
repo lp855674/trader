@@ -2,7 +2,7 @@ use api::router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use std::path::PathBuf;
-use storage::Db;
+use storage::{Db, RuntimeEventCommand, StrategyRunStartCommand};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -99,6 +99,102 @@ async fn paper_preflight_returns_configured_dry_run_summary() {
     assert!(body.contains("\"broker_mode\":\"paper\""));
     assert!(body.contains("\"bars\":3"));
     assert!(body.contains("\"order_submit_enabled\":false"));
+}
+
+#[tokio::test]
+async fn run_order_events_route_returns_audit_projection() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 1,
+        category: "broker.order.submitted".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "status": "SUBMITTED"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/order-events")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"run_id\":\"run-a\""));
+    assert!(body.contains("\"event_type\":\"broker.order.submitted\""));
+    assert!(body.contains("\"payload\":{\"run_id\":\"run-a\",\"status\":\"SUBMITTED\"}"));
+}
+
+#[tokio::test]
+async fn run_risk_events_route_returns_audit_projection() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 2,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "decision": "rejected",
+            "reason": "max_exposure",
+            "threshold": "1000",
+            "observed_value": "1200"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/risk-events")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"run_id\":\"run-a\""));
+    assert!(body.contains("\"risk_type\":\"pre_trade\""));
+    assert!(body.contains("\"decision\":\"rejected\""));
+    assert!(body.contains("\"reason\":\"max_exposure\""));
 }
 
 #[tokio::test]

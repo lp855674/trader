@@ -153,6 +153,39 @@ struct EventResponse {
     payload: serde_json::Value,
 }
 
+#[derive(Serialize)]
+struct OrderEventResponse {
+    id: String,
+    event_id: String,
+    run_id: String,
+    order_id: Option<String>,
+    client_order_id: Option<String>,
+    broker_order_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    status: String,
+    event_type: String,
+    message: Option<String>,
+    ts_ms: i64,
+    payload: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct RiskEventResponse {
+    id: String,
+    event_id: String,
+    run_id: String,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    risk_type: String,
+    decision: String,
+    reason: Option<String>,
+    threshold: Option<String>,
+    observed_value: Option<String>,
+    ts_ms: i64,
+    payload: serde_json::Value,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -179,6 +212,14 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
+        .route(
+            "/api/v1/runs/{run_id}/order-events",
+            get(list_run_order_events),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/risk-events",
+            get(list_run_risk_events),
+        )
         .route("/api/v1/runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
         .route("/api/v1/replay/{run_id}/pause", post(pause_replay))
@@ -671,6 +712,34 @@ async fn list_run_events(
     Ok(Json(events))
 }
 
+async fn list_run_order_events(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<OrderEventResponse>>, ApiError> {
+    let events = state
+        .db
+        .list_order_events(&run_id)
+        .await?
+        .into_iter()
+        .map(order_event_response)
+        .collect();
+    Ok(Json(events))
+}
+
+async fn list_run_risk_events(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
+    let events = state
+        .db
+        .list_risk_events(&run_id)
+        .await?
+        .into_iter()
+        .map(risk_event_response)
+        .collect();
+    Ok(Json(events))
+}
+
 fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
     let config = serde_json::from_str(&run.config_json)
         .unwrap_or(serde_json::Value::String(run.config_json));
@@ -686,15 +755,52 @@ fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
     }
 }
 
+fn payload_response(payload_json: String) -> serde_json::Value {
+    serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::String(payload_json))
+}
+
 fn event_response(event: storage::EventRecord) -> EventResponse {
-    let payload = serde_json::from_str(&event.payload_json)
-        .unwrap_or(serde_json::Value::String(event.payload_json));
     EventResponse {
         event_id: event.event_id,
         ts_ms: event.ts_ms,
         source: event.source,
         category: event.category,
-        payload,
+        payload: payload_response(event.payload_json),
+    }
+}
+
+fn order_event_response(event: storage::StoredOrderEvent) -> OrderEventResponse {
+    OrderEventResponse {
+        id: event.id,
+        event_id: event.event_id,
+        run_id: event.run_id,
+        order_id: event.order_id,
+        client_order_id: event.client_order_id,
+        broker_order_id: event.broker_order_id,
+        account_id: event.account_id,
+        symbol: event.symbol,
+        status: event.status,
+        event_type: event.event_type,
+        message: event.message,
+        ts_ms: event.ts_ms,
+        payload: payload_response(event.payload_json),
+    }
+}
+
+fn risk_event_response(event: storage::StoredRiskEvent) -> RiskEventResponse {
+    RiskEventResponse {
+        id: event.id,
+        event_id: event.event_id,
+        run_id: event.run_id,
+        account_id: event.account_id,
+        symbol: event.symbol,
+        risk_type: event.risk_type,
+        decision: event.decision,
+        reason: event.reason,
+        threshold: event.threshold,
+        observed_value: event.observed_value,
+        ts_ms: event.ts_ms,
+        payload: payload_response(event.payload_json),
     }
 }
 

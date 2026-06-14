@@ -30,6 +30,122 @@ pub struct InstrumentRecord {
     pub tradable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewLotSizeRule {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub lot_size: String,
+    pub min_qty: String,
+    pub min_notional: String,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredLotSizeRule {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub lot_size: String,
+    pub min_qty: String,
+    pub min_notional: String,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewPriceLimitRule {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub tick_size: String,
+    pub limit_up_bps: Option<String>,
+    pub limit_down_bps: Option<String>,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredPriceLimitRule {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub tick_size: String,
+    pub limit_up_bps: Option<String>,
+    pub limit_down_bps: Option<String>,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewCryptoPosition {
+    pub run_id: String,
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub margin_mode: String,
+    pub position_side: String,
+    pub leverage: String,
+    pub qty: String,
+    pub avg_price: String,
+    pub margin_used: String,
+    pub funding_fee: String,
+    pub realized_pnl: String,
+    pub unrealized_pnl: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredCryptoPosition {
+    pub run_id: String,
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub margin_mode: String,
+    pub position_side: String,
+    pub leverage: String,
+    pub qty: String,
+    pub avg_price: String,
+    pub margin_used: String,
+    pub funding_fee: String,
+    pub realized_pnl: String,
+    pub unrealized_pnl: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewFundingRate {
+    pub id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub funding_time_ms: i64,
+    pub funding_rate: String,
+    pub mark_price: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredFundingRate {
+    pub id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub funding_time_ms: i64,
+    pub funding_rate: String,
+    pub mark_price: Option<String>,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewStrategyRun {
     pub id: String,
@@ -209,6 +325,122 @@ pub struct EventRecord {
     pub ts_ms: i64,
     pub source: String,
     pub category: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewOrderEvent {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub order_id: Option<String>,
+    pub client_order_id: Option<String>,
+    pub broker_order_id: Option<String>,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub status: String,
+    pub event_type: String,
+    pub message: Option<String>,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredOrderEvent {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub order_id: Option<String>,
+    pub client_order_id: Option<String>,
+    pub broker_order_id: Option<String>,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub status: String,
+    pub event_type: String,
+    pub message: Option<String>,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewRiskEvent {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub risk_type: String,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub threshold: Option<String>,
+    pub observed_value: Option<String>,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredRiskEvent {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub risk_type: String,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub threshold: Option<String>,
+    pub observed_value: Option<String>,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewInsight {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub strategy: String,
+    pub symbol: String,
+    pub side: String,
+    pub confidence: String,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredInsight {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub strategy: String,
+    pub symbol: String,
+    pub side: String,
+    pub confidence: String,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewPortfolioTarget {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub target_qty: String,
+    pub ts_ms: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredPortfolioTarget {
+    pub id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub target_qty: String,
+    pub ts_ms: i64,
     pub payload_json: String,
 }
 
@@ -479,6 +711,139 @@ fn paper_order_event_payload(
     })
 }
 
+fn string_field(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn value_field_as_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload.get(key).and_then(|value| match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    })
+}
+
+fn order_event_projection(
+    event_id: &str,
+    ts_ms: i64,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Option<NewOrderEvent> {
+    if !category.starts_with("broker.order.") && !category.starts_with("algorithm.oms.") {
+        return None;
+    }
+
+    let payload = serde_json::from_str::<serde_json::Value>(payload_json).ok()?;
+    let status = string_field(&payload, "status").unwrap_or_else(|| {
+        category
+            .rsplit('.')
+            .next()
+            .unwrap_or("unknown")
+            .to_uppercase()
+    });
+
+    Some(NewOrderEvent {
+        id: Uuid::new_v4().to_string(),
+        event_id: event_id.to_string(),
+        run_id: string_field(&payload, "run_id").unwrap_or_else(|| source.to_string()),
+        order_id: string_field(&payload, "order_id"),
+        client_order_id: string_field(&payload, "client_order_id"),
+        broker_order_id: string_field(&payload, "broker_order_id"),
+        account_id: string_field(&payload, "account_id"),
+        symbol: string_field(&payload, "symbol"),
+        status,
+        event_type: category.to_string(),
+        message: string_field(&payload, "message").or_else(|| string_field(&payload, "error")),
+        ts_ms,
+        payload_json: payload_json.to_string(),
+    })
+}
+
+fn risk_event_projection(
+    event_id: &str,
+    ts_ms: i64,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Option<NewRiskEvent> {
+    if !category.starts_with("algorithm.risk.") {
+        return None;
+    }
+
+    let payload = serde_json::from_str::<serde_json::Value>(payload_json).ok()?;
+    let decision = string_field(&payload, "decision")
+        .or_else(|| string_field(&payload, "status"))
+        .unwrap_or_else(|| category.rsplit('.').next().unwrap_or("unknown").to_string());
+
+    Some(NewRiskEvent {
+        id: Uuid::new_v4().to_string(),
+        event_id: event_id.to_string(),
+        run_id: string_field(&payload, "run_id").unwrap_or_else(|| source.to_string()),
+        account_id: string_field(&payload, "account_id"),
+        symbol: string_field(&payload, "symbol"),
+        risk_type: string_field(&payload, "risk_type").unwrap_or_else(|| "pre_trade".to_string()),
+        decision,
+        reason: string_field(&payload, "reason").or_else(|| string_field(&payload, "error")),
+        threshold: string_field(&payload, "threshold"),
+        observed_value: string_field(&payload, "observed_value"),
+        ts_ms,
+        payload_json: payload_json.to_string(),
+    })
+}
+
+fn insight_projection(
+    event_id: &str,
+    ts_ms: i64,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Option<NewInsight> {
+    if category != "algorithm.alpha.generated" {
+        return None;
+    }
+
+    let payload = serde_json::from_str::<serde_json::Value>(payload_json).ok()?;
+    Some(NewInsight {
+        id: Uuid::new_v4().to_string(),
+        event_id: event_id.to_string(),
+        run_id: string_field(&payload, "run_id").unwrap_or_else(|| source.to_string()),
+        strategy: string_field(&payload, "strategy").unwrap_or_else(|| "unknown".to_string()),
+        symbol: string_field(&payload, "symbol")?,
+        side: string_field(&payload, "side")?,
+        confidence: value_field_as_string(&payload, "confidence")?,
+        ts_ms,
+        payload_json: payload_json.to_string(),
+    })
+}
+
+fn portfolio_target_projection(
+    event_id: &str,
+    ts_ms: i64,
+    source: &str,
+    category: &str,
+    payload_json: &str,
+) -> Option<NewPortfolioTarget> {
+    if category != "algorithm.portfolio.target" {
+        return None;
+    }
+
+    let payload = serde_json::from_str::<serde_json::Value>(payload_json).ok()?;
+    Some(NewPortfolioTarget {
+        id: Uuid::new_v4().to_string(),
+        event_id: event_id.to_string(),
+        run_id: string_field(&payload, "run_id").unwrap_or_else(|| source.to_string()),
+        account_id: string_field(&payload, "account_id").unwrap_or_else(|| "unknown".to_string()),
+        symbol: string_field(&payload, "symbol")?,
+        target_qty: value_field_as_string(&payload, "target_qty")?,
+        ts_ms,
+        payload_json: payload_json.to_string(),
+    })
+}
+
 fn order_side(order: &OrderRequest) -> String {
     format!("{:?}", order.side).to_uppercase()
 }
@@ -545,6 +910,390 @@ impl Db {
                 }
             },
         ))
+    }
+
+    pub async fn insert_lot_size_rule(&self, rule: NewLotSizeRule) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO lot_size_rules (
+                id, market, exchange, asset_class, symbol, lot_size, min_qty,
+                min_notional, effective_from_ms, effective_to_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(rule.id)
+        .bind(rule.market)
+        .bind(rule.exchange)
+        .bind(rule.asset_class)
+        .bind(rule.symbol)
+        .bind(rule.lot_size)
+        .bind(rule.min_qty)
+        .bind(rule.min_notional)
+        .bind(rule.effective_from_ms)
+        .bind(rule.effective_to_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn find_lot_size_rule(
+        &self,
+        market: &str,
+        exchange: &str,
+        asset_class: &str,
+        symbol: &str,
+        at_ms: i64,
+    ) -> StorageResult<Option<StoredLotSizeRule>> {
+        type LotSizeRuleRow = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            i64,
+            Option<i64>,
+        );
+
+        let row = sqlx::query_as::<_, LotSizeRuleRow>(
+            r#"
+            SELECT id, market, exchange, asset_class, symbol, lot_size, min_qty,
+                   min_notional, effective_from_ms, effective_to_ms
+            FROM lot_size_rules
+            WHERE market = ?
+              AND exchange = ?
+              AND asset_class = ?
+              AND (symbol = ? OR symbol IS NULL)
+              AND effective_from_ms <= ?
+              AND (effective_to_ms IS NULL OR effective_to_ms > ?)
+            ORDER BY (symbol = ?) DESC, effective_from_ms DESC, id
+            LIMIT 1
+            "#,
+        )
+        .bind(market)
+        .bind(exchange)
+        .bind(asset_class)
+        .bind(symbol)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(symbol)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                market,
+                exchange,
+                asset_class,
+                symbol,
+                lot_size,
+                min_qty,
+                min_notional,
+                effective_from_ms,
+                effective_to_ms,
+            )| StoredLotSizeRule {
+                id,
+                market,
+                exchange,
+                asset_class,
+                symbol,
+                lot_size,
+                min_qty,
+                min_notional,
+                effective_from_ms,
+                effective_to_ms,
+            },
+        ))
+    }
+
+    pub async fn insert_price_limit_rule(&self, rule: NewPriceLimitRule) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO price_limit_rules (
+                id, market, exchange, asset_class, symbol, tick_size,
+                limit_up_bps, limit_down_bps, effective_from_ms, effective_to_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(rule.id)
+        .bind(rule.market)
+        .bind(rule.exchange)
+        .bind(rule.asset_class)
+        .bind(rule.symbol)
+        .bind(rule.tick_size)
+        .bind(rule.limit_up_bps)
+        .bind(rule.limit_down_bps)
+        .bind(rule.effective_from_ms)
+        .bind(rule.effective_to_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn find_price_limit_rule(
+        &self,
+        market: &str,
+        exchange: &str,
+        asset_class: &str,
+        symbol: &str,
+        at_ms: i64,
+    ) -> StorageResult<Option<StoredPriceLimitRule>> {
+        type PriceLimitRuleRow = (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+            Option<i64>,
+        );
+
+        let row = sqlx::query_as::<_, PriceLimitRuleRow>(
+            r#"
+            SELECT id, market, exchange, asset_class, symbol, tick_size,
+                   limit_up_bps, limit_down_bps, effective_from_ms, effective_to_ms
+            FROM price_limit_rules
+            WHERE market = ?
+              AND exchange = ?
+              AND asset_class = ?
+              AND (symbol = ? OR symbol IS NULL)
+              AND effective_from_ms <= ?
+              AND (effective_to_ms IS NULL OR effective_to_ms > ?)
+            ORDER BY (symbol = ?) DESC, effective_from_ms DESC, id
+            LIMIT 1
+            "#,
+        )
+        .bind(market)
+        .bind(exchange)
+        .bind(asset_class)
+        .bind(symbol)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(symbol)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                market,
+                exchange,
+                asset_class,
+                symbol,
+                tick_size,
+                limit_up_bps,
+                limit_down_bps,
+                effective_from_ms,
+                effective_to_ms,
+            )| StoredPriceLimitRule {
+                id,
+                market,
+                exchange,
+                asset_class,
+                symbol,
+                tick_size,
+                limit_up_bps,
+                limit_down_bps,
+                effective_from_ms,
+                effective_to_ms,
+            },
+        ))
+    }
+
+    pub async fn upsert_crypto_position(&self, position: NewCryptoPosition) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO crypto_positions (
+                run_id, account_id, exchange, symbol, asset_class, margin_mode, position_side,
+                leverage, qty, avg_price, margin_used, funding_fee, realized_pnl,
+                unrealized_pnl, updated_at_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, account_id, exchange, symbol, position_side) DO UPDATE SET
+                asset_class = excluded.asset_class,
+                margin_mode = excluded.margin_mode,
+                leverage = excluded.leverage,
+                qty = excluded.qty,
+                avg_price = excluded.avg_price,
+                margin_used = excluded.margin_used,
+                funding_fee = excluded.funding_fee,
+                realized_pnl = excluded.realized_pnl,
+                unrealized_pnl = excluded.unrealized_pnl,
+                updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(position.run_id)
+        .bind(position.account_id)
+        .bind(position.exchange)
+        .bind(position.symbol)
+        .bind(position.asset_class)
+        .bind(position.margin_mode)
+        .bind(position.position_side)
+        .bind(position.leverage)
+        .bind(position.qty)
+        .bind(position.avg_price)
+        .bind(position.margin_used)
+        .bind(position.funding_fee)
+        .bind(position.realized_pnl)
+        .bind(position.unrealized_pnl)
+        .bind(position.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_crypto_positions(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredCryptoPosition>> {
+        type CryptoPositionRow = (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+        );
+
+        let rows = sqlx::query_as::<_, CryptoPositionRow>(
+            r#"
+            SELECT run_id, account_id, exchange, symbol, asset_class, margin_mode,
+                   position_side, leverage, qty, avg_price, margin_used, funding_fee,
+                   realized_pnl, unrealized_pnl, updated_at_ms
+            FROM crypto_positions
+            WHERE run_id = ?
+            ORDER BY account_id, exchange, symbol, position_side
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    run_id,
+                    account_id,
+                    exchange,
+                    symbol,
+                    asset_class,
+                    margin_mode,
+                    position_side,
+                    leverage,
+                    qty,
+                    avg_price,
+                    margin_used,
+                    funding_fee,
+                    realized_pnl,
+                    unrealized_pnl,
+                    updated_at_ms,
+                )| StoredCryptoPosition {
+                    run_id,
+                    account_id,
+                    exchange,
+                    symbol,
+                    asset_class,
+                    margin_mode,
+                    position_side,
+                    leverage,
+                    qty,
+                    avg_price,
+                    margin_used,
+                    funding_fee,
+                    realized_pnl,
+                    unrealized_pnl,
+                    updated_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn upsert_funding_rate(&self, rate: NewFundingRate) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO funding_rates (
+                id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(exchange, symbol, funding_time_ms) DO UPDATE SET
+                id = excluded.id,
+                funding_rate = excluded.funding_rate,
+                mark_price = excluded.mark_price,
+                source = excluded.source
+            "#,
+        )
+        .bind(rate.id)
+        .bind(rate.exchange)
+        .bind(rate.symbol)
+        .bind(rate.funding_time_ms)
+        .bind(rate.funding_rate)
+        .bind(rate.mark_price)
+        .bind(rate.source)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_funding_rates(
+        &self,
+        exchange: &str,
+        symbol: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> StorageResult<Vec<StoredFundingRate>> {
+        let rows =
+            sqlx::query_as::<_, (String, String, String, i64, String, Option<String>, String)>(
+                r#"
+            SELECT id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source
+            FROM funding_rates
+            WHERE exchange = ?
+              AND symbol = ?
+              AND funding_time_ms >= ?
+              AND funding_time_ms < ?
+            ORDER BY funding_time_ms, id
+            "#,
+            )
+            .bind(exchange)
+            .bind(symbol)
+            .bind(start_ms)
+            .bind(end_ms)
+            .fetch_all(self.pool())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source)| {
+                    StoredFundingRate {
+                        id,
+                        exchange,
+                        symbol,
+                        funding_time_ms,
+                        funding_rate,
+                        mark_price,
+                        source,
+                    }
+                },
+            )
+            .collect())
     }
 
     pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> StorageResult<()> {
@@ -896,6 +1645,12 @@ impl Db {
     }
 
     pub async fn insert_event(&self, event: NewEventRecord) -> StorageResult<()> {
+        let event_id = event.event_id;
+        let ts_ms = event.ts_ms;
+        let source = event.source;
+        let category = event.category;
+        let payload_json = event.payload_json;
+
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO event_store (
@@ -903,11 +1658,132 @@ impl Db {
             ) VALUES (?, ?, ?, ?, ?)
             "#,
         )
+        .bind(&event_id)
+        .bind(ts_ms)
+        .bind(&source)
+        .bind(&category)
+        .bind(&payload_json)
+        .execute(self.pool())
+        .await?;
+
+        if let Some(order_event) =
+            order_event_projection(&event_id, ts_ms, &source, &category, &payload_json)
+        {
+            self.insert_order_event(order_event).await?;
+        }
+        if let Some(risk_event) =
+            risk_event_projection(&event_id, ts_ms, &source, &category, &payload_json)
+        {
+            self.insert_risk_event(risk_event).await?;
+        }
+        if let Some(insight) =
+            insight_projection(&event_id, ts_ms, &source, &category, &payload_json)
+        {
+            self.insert_insight(insight).await?;
+        }
+        if let Some(target) =
+            portfolio_target_projection(&event_id, ts_ms, &source, &category, &payload_json)
+        {
+            self.insert_portfolio_target(target).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn insert_order_event(&self, event: NewOrderEvent) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO order_events (
+                id, event_id, run_id, order_id, client_order_id, broker_order_id,
+                account_id, symbol, status, event_type, message, ts_ms, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(event.id)
         .bind(event.event_id)
+        .bind(event.run_id)
+        .bind(event.order_id)
+        .bind(event.client_order_id)
+        .bind(event.broker_order_id)
+        .bind(event.account_id)
+        .bind(event.symbol)
+        .bind(event.status)
+        .bind(event.event_type)
+        .bind(event.message)
         .bind(event.ts_ms)
-        .bind(event.source)
-        .bind(event.category)
         .bind(event.payload_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_risk_event(&self, event: NewRiskEvent) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO risk_events (
+                id, event_id, run_id, account_id, symbol, risk_type, decision,
+                reason, threshold, observed_value, ts_ms, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(event.id)
+        .bind(event.event_id)
+        .bind(event.run_id)
+        .bind(event.account_id)
+        .bind(event.symbol)
+        .bind(event.risk_type)
+        .bind(event.decision)
+        .bind(event.reason)
+        .bind(event.threshold)
+        .bind(event.observed_value)
+        .bind(event.ts_ms)
+        .bind(event.payload_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_insight(&self, insight: NewInsight) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO insights (
+                id, event_id, run_id, strategy, symbol, side, confidence, ts_ms, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(insight.id)
+        .bind(insight.event_id)
+        .bind(insight.run_id)
+        .bind(insight.strategy)
+        .bind(insight.symbol)
+        .bind(insight.side)
+        .bind(insight.confidence)
+        .bind(insight.ts_ms)
+        .bind(insight.payload_json)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_portfolio_target(&self, target: NewPortfolioTarget) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO portfolio_targets (
+                id, event_id, run_id, account_id, symbol, target_qty, ts_ms, payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(target.id)
+        .bind(target.event_id)
+        .bind(target.run_id)
+        .bind(target.account_id)
+        .bind(target.symbol)
+        .bind(target.target_qty)
+        .bind(target.ts_ms)
+        .bind(target.payload_json)
         .execute(self.pool())
         .await?;
         Ok(())
@@ -1793,6 +2669,196 @@ impl Db {
                     source,
                     category,
                     payload_json,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_order_events(&self, run_id: &str) -> StorageResult<Vec<StoredOrderEvent>> {
+        type OrderEventRow = (
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            i64,
+            String,
+        );
+
+        let rows = sqlx::query_as::<_, OrderEventRow>(
+            r#"
+            SELECT id, event_id, run_id, order_id, client_order_id, broker_order_id,
+                   account_id, symbol, status, event_type, message, ts_ms, payload_json
+            FROM order_events
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| StoredOrderEvent {
+                id: row.0,
+                event_id: row.1,
+                run_id: row.2,
+                order_id: row.3,
+                client_order_id: row.4,
+                broker_order_id: row.5,
+                account_id: row.6,
+                symbol: row.7,
+                status: row.8,
+                event_type: row.9,
+                message: row.10,
+                ts_ms: row.11,
+                payload_json: row.12,
+            })
+            .collect())
+    }
+
+    pub async fn list_risk_events(&self, run_id: &str) -> StorageResult<Vec<StoredRiskEvent>> {
+        type RiskEventRow = (
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            String,
+        );
+
+        let rows = sqlx::query_as::<_, RiskEventRow>(
+            r#"
+            SELECT id, event_id, run_id, account_id, symbol, risk_type, decision,
+                   reason, threshold, observed_value, ts_ms, payload_json
+            FROM risk_events
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| StoredRiskEvent {
+                id: row.0,
+                event_id: row.1,
+                run_id: row.2,
+                account_id: row.3,
+                symbol: row.4,
+                risk_type: row.5,
+                decision: row.6,
+                reason: row.7,
+                threshold: row.8,
+                observed_value: row.9,
+                ts_ms: row.10,
+                payload_json: row.11,
+            })
+            .collect())
+    }
+
+    pub async fn list_insights(&self, run_id: &str) -> StorageResult<Vec<StoredInsight>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+                String,
+            ),
+        >(
+            r#"
+            SELECT id, event_id, run_id, strategy, symbol, side, confidence, ts_ms, payload_json
+            FROM insights
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    event_id,
+                    run_id,
+                    strategy,
+                    symbol,
+                    side,
+                    confidence,
+                    ts_ms,
+                    payload_json,
+                )| {
+                    StoredInsight {
+                        id,
+                        event_id,
+                        run_id,
+                        strategy,
+                        symbol,
+                        side,
+                        confidence,
+                        ts_ms,
+                        payload_json,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_portfolio_targets(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredPortfolioTarget>> {
+        let rows =
+            sqlx::query_as::<_, (String, String, String, String, String, String, i64, String)>(
+                r#"
+            SELECT id, event_id, run_id, account_id, symbol, target_qty, ts_ms, payload_json
+            FROM portfolio_targets
+            WHERE run_id = ?
+            ORDER BY ts_ms, id
+            "#,
+            )
+            .bind(run_id)
+            .fetch_all(self.pool())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, event_id, run_id, account_id, symbol, target_qty, ts_ms, payload_json)| {
+                    StoredPortfolioTarget {
+                        id,
+                        event_id,
+                        run_id,
+                        account_id,
+                        symbol,
+                        target_qty,
+                        ts_ms,
+                        payload_json,
+                    }
                 },
             )
             .collect())

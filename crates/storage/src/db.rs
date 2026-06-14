@@ -38,6 +38,19 @@ impl Db {
         sqlx::raw_sql(include_str!("../../../migrations/0001_init.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0002_audit_projections.sql"
+        ))
+        .execute(&self.pool)
+        .await?;
+        sqlx::raw_sql(include_str!("../../../migrations/0003_market_rules.sql"))
+            .execute(&self.pool)
+            .await?;
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0004_contract_accounting.sql"
+        ))
+        .execute(&self.pool)
+        .await?;
         self.ensure_strategy_runs_error_column().await?;
         Ok(())
     }

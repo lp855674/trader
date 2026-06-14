@@ -1,6 +1,56 @@
 use storage::{Db, NewEventRecord, NewInstrument};
 
 #[tokio::test]
+async fn migration_creates_audit_projection_tables() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let tables = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+
+    assert!(tables.contains(&"order_events".to_string()));
+    assert!(tables.contains(&"risk_events".to_string()));
+    assert!(tables.contains(&"insights".to_string()));
+    assert!(tables.contains(&"portfolio_targets".to_string()));
+}
+
+#[tokio::test]
+async fn migration_creates_market_rule_reference_tables() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let tables = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+
+    assert!(tables.contains(&"market_calendars".to_string()));
+    assert!(tables.contains(&"trading_sessions".to_string()));
+    assert!(tables.contains(&"fee_rules".to_string()));
+    assert!(tables.contains(&"lot_size_rules".to_string()));
+    assert!(tables.contains(&"price_limit_rules".to_string()));
+}
+
+#[tokio::test]
+async fn migration_creates_contract_accounting_tables() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let tables = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+
+    assert!(tables.contains(&"crypto_positions".to_string()));
+    assert!(tables.contains(&"funding_rates".to_string()));
+}
+
+#[tokio::test]
 async fn instrument_round_trip() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

@@ -37,6 +37,8 @@ GET  /api/v1/runs/{run_id}/status
 POST /api/v1/runs/{run_id}/cancel
 GET  /api/v1/events
 GET  /api/v1/runs/{run_id}/events
+GET  /api/v1/runs/{run_id}/order-events
+GET  /api/v1/runs/{run_id}/risk-events
 POST /api/v1/replay/{run_id}/pause
 POST /api/v1/replay/{run_id}/resume
 POST /api/v1/replay/{run_id}/seek/{offset}
@@ -45,6 +47,8 @@ GET  /ws
 ```
 
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
+
+`GET /api/v1/runs/{run_id}/order-events` and `GET /api/v1/runs/{run_id}/risk-events` are read-only audit projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
 
 ```json
 [

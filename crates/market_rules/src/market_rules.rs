@@ -32,6 +32,19 @@ pub struct MarketRuleSet {
     pub initial_margin_rate: Decimal,
 }
 
+pub trait MarketRuleProvider {
+    fn rules_for_symbol(&self, symbol: &str) -> Result<MarketRuleSet, MarketRuleError>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StaticMarketRuleProvider;
+
+impl MarketRuleProvider for StaticMarketRuleProvider {
+    fn rules_for_symbol(&self, symbol: &str) -> Result<MarketRuleSet, MarketRuleError> {
+        MarketRuleSet::for_symbol(symbol)
+    }
+}
+
 impl MarketRuleSet {
     pub fn cn_equity() -> Self {
         Self {

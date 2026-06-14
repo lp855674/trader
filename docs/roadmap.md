@@ -10,6 +10,14 @@ Trader 采用渐进式开发路线。
 
 这不等于生产实盘完成。真实 Futu/Binance/OKX/IB 网络连接、凭证管理、真实资金下单、生产级权限、监控告警和分布式部署仍属于后续 production/live-real-money 阶段。
 
+## Schema Gap Closure
+
+- Keep `event_store` as immutable audit truth.
+- Add `order_events` and `risk_events` as query projections.
+- Add `insights` and `portfolio_targets` for research and post-run analysis.
+- Add market-rule reference tables before claiming configurable multi-market support.
+- Add `crypto_positions` and `funding_rates` before claiming full crypto derivative accounting.
+
 目标：
 
 ```text
