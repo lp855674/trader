@@ -22,7 +22,7 @@ use rust_decimal::Decimal;
 use std::{collections::BTreeSet, error::Error, fmt, time::Duration};
 use storage::{
     Db, PaperExecutionCommand, PaperFailedOrderCommand, PaperFinalStateCommand, PaperOrderCommand,
-    PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
+    PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand, StrategyRunStartCommand,
 };
 use strategies::{
     StrategyAlphaComponentConfig, StrategyAlphaConflictResolution, StrategyAlphaGateConfig,
@@ -391,7 +391,20 @@ impl<'a> PaperRunSession<'a> {
     }
 
     async fn process_market_slice(&mut self, market_slice: MarketSlice) -> anyhow::Result<()> {
-        self.started_at_ms.get_or_insert(market_slice.ts_ms);
+        if self.started_at_ms.is_none() {
+            let settings = &self.runtime.settings;
+            self.runtime
+                .db
+                .start_strategy_run(StrategyRunStartCommand {
+                    run_id: settings.run_id.clone(),
+                    name: settings.strategy_name.clone(),
+                    mode: "paper".to_string(),
+                    started_at_ms: market_slice.ts_ms,
+                    config: serde_json::json!({}),
+                })
+                .await?;
+            self.started_at_ms = Some(market_slice.ts_ms);
+        }
         self.ended_at_ms = market_slice.ts_ms;
         let step = self.engine.on_market_slice(market_slice.clone())?;
         self.last_snapshot = step.snapshot.clone();
@@ -524,11 +537,25 @@ impl<'a> PaperRunSession<'a> {
                 run_id: settings.run_id.clone(),
                 account_id: settings.account_id.clone(),
                 ts_ms,
+                base_currency: settings.base_currency.clone(),
                 cash: self.last_snapshot.cash,
                 market_value: self.last_snapshot.market_value,
                 equity: self.last_snapshot.equity,
                 realized_pnl: self.last_snapshot.realized_pnl,
                 unrealized_pnl: self.last_snapshot.unrealized_pnl,
+                positions: self
+                    .last_snapshot
+                    .positions
+                    .iter()
+                    .map(|position| PositionCommand {
+                        run_id: settings.run_id.clone(),
+                        account_id: settings.account_id.clone(),
+                        symbol: position.symbol.clone(),
+                        qty: position.qty,
+                        avg_price: position.avg_price,
+                        updated_at_ms: ts_ms,
+                    })
+                    .collect(),
             })
             .await?;
         Ok(())

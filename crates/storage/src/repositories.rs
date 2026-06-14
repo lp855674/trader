@@ -836,11 +836,13 @@ pub struct PaperPortfolioSnapshotCommand {
     pub run_id: String,
     pub account_id: String,
     pub ts_ms: i64,
+    pub base_currency: String,
     pub cash: Decimal,
     pub market_value: Decimal,
     pub equity: Decimal,
     pub realized_pnl: Decimal,
     pub unrealized_pnl: Decimal,
+    pub positions: Vec<PositionCommand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -933,6 +935,57 @@ fn value_field_as_string(payload: &serde_json::Value, key: &str) -> Option<Strin
         serde_json::Value::Number(value) => Some(value.to_string()),
         _ => None,
     })
+}
+
+fn position_snapshot_from_command(
+    position: PositionCommand,
+    currency: &str,
+) -> Result<NewPositionSnapshot, StorageError> {
+    let (market, exchange, asset_class) = parse_symbol_parts(&position.symbol)?;
+    Ok(NewPositionSnapshot {
+        run_id: position.run_id,
+        ts_ms: position.updated_at_ms,
+        market,
+        exchange,
+        symbol: position.symbol,
+        asset_class,
+        position_side: None,
+        qty: position.qty.to_string(),
+        available_qty: position.qty.to_string(),
+        avg_price: Some(position.avg_price.to_string()),
+        entry_price: Some(position.avg_price.to_string()),
+        market_price: None,
+        mark_price: None,
+        market_value: None,
+        unrealized_pnl: None,
+        realized_pnl: None,
+        currency: currency.to_string(),
+        created_at_ms: position.updated_at_ms,
+    })
+}
+
+fn parse_symbol_parts(symbol: &str) -> StorageResult<(String, String, String)> {
+    let mut parts = symbol.split(':');
+    let market = parts.next();
+    let exchange = parts.next();
+    let _code = parts.next();
+    let asset_class = parts.next();
+    if parts.next().is_some() {
+        return Err(StorageError::Protocol(format!(
+            "unsupported symbol format {symbol}"
+        )));
+    }
+
+    match (market, exchange, asset_class) {
+        (Some(market), Some(exchange), Some(asset_class)) => Ok((
+            market.to_string(),
+            exchange.to_string(),
+            asset_class.to_string(),
+        )),
+        _ => Err(StorageError::Protocol(format!(
+            "unsupported symbol format {symbol}"
+        ))),
+    }
 }
 
 fn order_event_projection(
@@ -2753,8 +2806,8 @@ impl Db {
     ) -> StorageResult<()> {
         self.insert_portfolio_snapshot(NewPortfolioSnapshot {
             id: format!("{}-snapshot-{}", command.run_id, command.ts_ms),
-            run_id: command.run_id,
-            account_id: command.account_id,
+            run_id: command.run_id.clone(),
+            account_id: command.account_id.clone(),
             ts_ms: command.ts_ms,
             cash: command.cash.to_string(),
             market_value: command.market_value.to_string(),
@@ -2762,7 +2815,27 @@ impl Db {
             realized_pnl: command.realized_pnl.to_string(),
             unrealized_pnl: command.unrealized_pnl.to_string(),
         })
-        .await
+        .await?;
+
+        self.insert_cash_snapshot(NewCashSnapshot {
+            run_id: command.run_id.clone(),
+            ts_ms: command.ts_ms,
+            currency: command.base_currency.clone(),
+            cash: command.cash.to_string(),
+            available_cash: command.cash.to_string(),
+            frozen_cash: Decimal::ZERO.to_string(),
+            created_at_ms: command.ts_ms,
+        })
+        .await?;
+
+        for position in command.positions {
+            self.insert_position_snapshot(position_snapshot_from_command(
+                position,
+                &command.base_currency,
+            )?)
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn complete_paper_run(&self, command: PaperFinalStateCommand) -> StorageResult<()> {
@@ -2781,7 +2854,7 @@ impl Db {
         self.upsert_account_balance(NewAccountBalance {
             run_id: command.run_id.clone(),
             account_id: command.account_id.clone(),
-            asset: command.base_currency,
+            asset: command.base_currency.clone(),
             total: command.cash.to_string(),
             available: command.cash.to_string(),
             frozen: Decimal::ZERO.to_string(),
@@ -2799,11 +2872,11 @@ impl Db {
         })
         .await?;
 
-        for position in command.positions {
+        for position in &command.positions {
             self.upsert_position(NewPosition {
-                run_id: position.run_id,
-                account_id: position.account_id,
-                symbol: position.symbol,
+                run_id: position.run_id.clone(),
+                account_id: position.account_id.clone(),
+                symbol: position.symbol.clone(),
                 qty: position.qty.to_string(),
                 avg_price: position.avg_price.to_string(),
                 updated_at_ms: position.updated_at_ms,
@@ -2813,8 +2886,8 @@ impl Db {
 
         self.insert_portfolio_snapshot(NewPortfolioSnapshot {
             id: format!("{}-snapshot-final", command.run_id),
-            run_id: command.run_id,
-            account_id: command.account_id,
+            run_id: command.run_id.clone(),
+            account_id: command.account_id.clone(),
             ts_ms: command.ended_at_ms,
             cash: command.cash.to_string(),
             market_value: command.market_value.to_string(),
@@ -2822,7 +2895,27 @@ impl Db {
             realized_pnl: command.realized_pnl.to_string(),
             unrealized_pnl: command.unrealized_pnl.to_string(),
         })
-        .await
+        .await?;
+
+        self.insert_cash_snapshot(NewCashSnapshot {
+            run_id: command.run_id.clone(),
+            ts_ms: command.ended_at_ms,
+            currency: command.base_currency.clone(),
+            cash: command.cash.to_string(),
+            available_cash: command.cash.to_string(),
+            frozen_cash: Decimal::ZERO.to_string(),
+            created_at_ms: command.ended_at_ms,
+        })
+        .await?;
+
+        for position in command.positions {
+            self.insert_position_snapshot(position_snapshot_from_command(
+                position,
+                &command.base_currency,
+            )?)
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn insert_runtime_events(

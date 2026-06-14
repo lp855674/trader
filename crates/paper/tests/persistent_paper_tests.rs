@@ -42,6 +42,44 @@ async fn paper_runtime_persists_account_and_portfolio_state() {
 }
 
 #[tokio::test]
+async fn paper_runtime_persists_cash_and_position_snapshots() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let settings = PaperSettings::sample();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    let portfolio_snapshots = db.list_portfolio_snapshots(&settings.run_id).await.unwrap();
+    let cash_snapshots = db.list_cash_snapshots(&settings.run_id).await.unwrap();
+    assert_eq!(cash_snapshots.len(), portfolio_snapshots.len());
+    let final_cash = cash_snapshots.last().unwrap();
+    assert_eq!(final_cash.currency, "USD");
+    assert_eq!(final_cash.cash, "99980");
+    assert_eq!(final_cash.available_cash, "99980");
+    assert_eq!(final_cash.frozen_cash, "0");
+
+    let position_snapshots = db.list_position_snapshots(&settings.run_id).await.unwrap();
+    assert!(!position_snapshots.is_empty());
+    let final_position = position_snapshots.last().unwrap();
+    assert_eq!(final_position.market, "US");
+    assert_eq!(final_position.exchange, "NASDAQ");
+    assert_eq!(final_position.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(final_position.asset_class, "EQUITY");
+    assert_eq!(final_position.qty, "1");
+    assert_eq!(final_position.available_qty, "1");
+    assert_eq!(final_position.avg_price.as_deref(), Some("20"));
+    assert_eq!(final_position.currency, "USD");
+}
+
+#[tokio::test]
 async fn paper_runtime_uses_initial_cash_and_broker_settings() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

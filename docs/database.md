@@ -54,6 +54,8 @@ The current implemented SQLite schema is split across migrations:
 
 The current migrations cover the 24 target SQLite tables below, plus `event_store` as the immutable audit truth. A table existing in migration means the storage boundary exists; it does not mean every runtime path already writes it automatically.
 
+Paper runtime writes `portfolio_snapshots`, `cash_snapshots`, and `position_snapshots` during local paper runs. Live/reconciliation snapshot capture is still a separate production-hardening task.
+
 ---
 
 # 1. 设计目标
