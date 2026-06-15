@@ -1502,6 +1502,34 @@ async fn post_paper_run_populates_query_routes() {
             .contains("run_id = \"sample-ma-cross\"")
     );
     assert!(config["checksum"].as_str().unwrap().starts_with("fnv1a64:"));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/runs/sample-ma-cross/system-logs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let logs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let logs = logs.as_array().unwrap();
+    assert!(
+        logs.iter()
+            .any(|log| log["message"] == "paper run accepted")
+    );
+    let completed = logs
+        .iter()
+        .find(|log| log["message"] == "paper run completed")
+        .unwrap();
+    assert_eq!(completed["level"], "INFO");
+    assert_eq!(completed["target"], "api.run");
+    assert_eq!(completed["fields"]["orders"], 1);
 }
 
 #[tokio::test]

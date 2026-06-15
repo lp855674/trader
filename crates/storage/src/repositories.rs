@@ -364,6 +364,16 @@ pub struct StoredSystemLog {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SystemLogCommand {
+    pub run_id: Option<String>,
+    pub ts_ms: i64,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub fields: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewStrategyRun {
     pub id: String,
@@ -2058,6 +2068,20 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    pub async fn record_system_log(&self, command: SystemLogCommand) -> StorageResult<()> {
+        self.insert_system_log(NewSystemLog {
+            id: Uuid::new_v4().to_string(),
+            run_id: command.run_id,
+            ts_ms: command.ts_ms,
+            level: command.level,
+            target: command.target,
+            message: command.message,
+            fields_json: command.fields.map(|fields| fields.to_string()),
+            created_at_ms: command.ts_ms,
+        })
+        .await
     }
 
     pub async fn list_system_logs(

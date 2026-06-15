@@ -42,6 +42,7 @@ GET  /api/v1/events
 GET  /api/v1/runs/{run_id}/events
 GET  /api/v1/runs/{run_id}/order-events
 GET  /api/v1/runs/{run_id}/risk-events
+GET  /api/v1/runs/{run_id}/system-logs
 POST /api/v1/replay/{run_id}/pause
 POST /api/v1/replay/{run_id}/resume
 POST /api/v1/replay/{run_id}/seek/{offset}
@@ -383,6 +384,7 @@ System
 Runtime
   GET  /api/v1/runs
   GET  /api/v1/runs/{run_id}
+  GET  /api/v1/runs/{run_id}/system-logs
   POST /api/v1/runs/{run_id}/stop
 
 Strategy
@@ -602,7 +604,37 @@ GET /api/v1/runs/{run_id}
 
 ---
 
-## 9.3 停止运行
+## 9.3 查询运行系统日志
+
+```http
+GET /api/v1/runs/{run_id}/system-logs
+```
+
+当前 V1 返回 API 启动 Backtest、Paper、Replay 时写入的运行生命周期日志。`fields` 是结构化 JSON，不返回 `fields_json` 字符串：
+
+```json
+[
+  {
+    "id": "3e68fef2-3c54-4e0e-8f22-1ad1f901f000",
+    "run_id": "sample-ma-cross",
+    "ts_ms": 1700000000000,
+    "level": "INFO",
+    "target": "api.run",
+    "message": "paper run completed",
+    "fields": {
+      "mode": "paper",
+      "status": "completed",
+      "signals": 1,
+      "orders": 1
+    },
+    "created_at_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 9.4 停止运行
 
 ```http
 POST /api/v1/runs/{run_id}/stop

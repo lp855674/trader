@@ -233,6 +233,18 @@ struct ConfigResponse {
     updated_at_ms: i64,
 }
 
+#[derive(Serialize)]
+struct SystemLogResponse {
+    id: String,
+    run_id: Option<String>,
+    ts_ms: i64,
+    level: String,
+    target: String,
+    message: String,
+    fields: serde_json::Value,
+    created_at_ms: i64,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -269,6 +281,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runs/{run_id}/risk-events",
             get(list_run_risk_events),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/system-logs",
+            get(list_run_system_logs),
         )
         .route("/api/v1/runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
@@ -379,6 +395,25 @@ async fn persist_run_config_snapshot(
     Ok(config_json.to_string())
 }
 
+async fn record_system_log(
+    db: &storage::Db,
+    run_id: &str,
+    level: &str,
+    message: &str,
+    fields: serde_json::Value,
+) -> Result<(), ApiError> {
+    db.record_system_log(storage::SystemLogCommand {
+        run_id: Some(run_id.to_string()),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        level: level.to_string(),
+        target: "api.run".to_string(),
+        message: message.to_string(),
+        fields: Some(fields),
+    })
+    .await?;
+    Ok(())
+}
+
 async fn run_backtest(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
@@ -390,6 +425,17 @@ async fn run_backtest(
         &app_config.runtime.run_id,
         "backtest.started",
         &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+    )
+    .await?;
+    record_system_log(
+        &state.db,
+        &app_config.runtime.run_id,
+        "INFO",
+        "backtest run started",
+        serde_json::json!({
+            "mode": "backtest",
+            "status": "running"
+        }),
     )
     .await?;
     let market_slices = load_configured_market_slices(&app_config)?;
@@ -411,6 +457,19 @@ async fn run_backtest(
         &app_config.runtime.run_id,
         "backtest.completed",
         &payload,
+    )
+    .await?;
+    record_system_log(
+        &state.db,
+        &app_config.runtime.run_id,
+        "INFO",
+        "backtest run completed",
+        serde_json::json!({
+            "mode": "backtest",
+            "status": "completed",
+            "signals": summary.signals,
+            "orders": summary.orders
+        }),
     )
     .await?;
     Ok((StatusCode::CREATED, Json(summary)))
@@ -439,6 +498,17 @@ async fn run_paper(
         &settings.run_id,
         "paper.started",
         &serde_json::json!({ "run_id": &settings.run_id }).to_string(),
+    )
+    .await?;
+    record_system_log(
+        &state.db,
+        &settings.run_id,
+        "INFO",
+        "paper run accepted",
+        serde_json::json!({
+            "mode": "paper",
+            "status": "running"
+        }),
     )
     .await?;
 
@@ -474,6 +544,19 @@ async fn run_paper(
                     .to_string();
                     let _ =
                         insert_event(&db, &task_settings.run_id, "paper.completed", &payload).await;
+                    let _ = record_system_log(
+                        &db,
+                        &task_settings.run_id,
+                        "INFO",
+                        "paper run completed",
+                        serde_json::json!({
+                            "mode": "paper",
+                            "status": "completed",
+                            "signals": summary.signals,
+                            "orders": summary.orders
+                        }),
+                    )
+                    .await;
                 }
                 Err(error) => {
                     if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
@@ -497,6 +580,18 @@ async fn run_paper(
                             Some(&error.to_string()),
                         )
                         .await;
+                    let _ = record_system_log(
+                        &db,
+                        &task_settings.run_id,
+                        "ERROR",
+                        "paper run failed",
+                        serde_json::json!({
+                            "mode": "paper",
+                            "status": status,
+                            "error": error.to_string()
+                        }),
+                    )
+                    .await;
                 }
             }
         })
@@ -544,6 +639,17 @@ async fn run_replay(
         &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
     )
     .await?;
+    record_system_log(
+        &state.db,
+        &app_config.runtime.run_id,
+        "INFO",
+        "replay run started",
+        serde_json::json!({
+            "mode": "replay",
+            "status": "running"
+        }),
+    )
+    .await?;
 
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
     let summary = ReplayRuntime::new_for_run(app_config.runtime.run_id.clone(), 100_000)
@@ -571,6 +677,19 @@ async fn run_replay(
         &app_config.runtime.run_id,
         "replay.completed",
         &payload,
+    )
+    .await?;
+    record_system_log(
+        &state.db,
+        &app_config.runtime.run_id,
+        "INFO",
+        "replay run completed",
+        serde_json::json!({
+            "mode": "replay",
+            "status": "completed",
+            "bars": summary.bars,
+            "speed": summary.speed
+        }),
     )
     .await?;
 
@@ -894,6 +1013,20 @@ async fn list_run_risk_events(
     Ok(Json(events))
 }
 
+async fn list_run_system_logs(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<SystemLogResponse>>, ApiError> {
+    let logs = state
+        .db
+        .list_system_logs(Some(&run_id))
+        .await?
+        .into_iter()
+        .map(system_log_response)
+        .collect();
+    Ok(Json(logs))
+}
+
 fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
     let config = serde_json::from_str(&run.config_json)
         .unwrap_or(serde_json::Value::String(run.config_json));
@@ -923,6 +1056,22 @@ fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
         checksum: config.checksum,
         created_at_ms: config.created_at_ms,
         updated_at_ms: config.updated_at_ms,
+    }
+}
+
+fn system_log_response(log: storage::StoredSystemLog) -> SystemLogResponse {
+    SystemLogResponse {
+        id: log.id,
+        run_id: log.run_id,
+        ts_ms: log.ts_ms,
+        level: log.level,
+        target: log.target,
+        message: log.message,
+        fields: log
+            .fields_json
+            .map(payload_response)
+            .unwrap_or_else(|| serde_json::json!({})),
+        created_at_ms: log.created_at_ms,
     }
 }
 
