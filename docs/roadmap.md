@@ -19,7 +19,7 @@ Trader 采用渐进式开发路线。
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime; live/reconciliation snapshot capture remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config approval/release lifecycle remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; broader production log indexing remains follow-up work.
-- `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary; automatic ingestion remains follow-up work.
+- `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; automatic ingestion remains follow-up work.
 
 目标：
 

@@ -4,7 +4,8 @@ use axum::http::{Request, StatusCode};
 use rust_decimal::Decimal;
 use std::path::PathBuf;
 use storage::{
-    CryptoPositionCommand, Db, FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand,
+    CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
+    FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand,
 };
 use tower::ServiceExt;
 
@@ -336,6 +337,146 @@ async fn funding_rates_route_returns_filtered_decimal_series() {
     assert_eq!(rate["mark_price"], "65001.0000");
     assert_eq!(rate["source"], "testnet");
     assert!(rate["funding_rate"].is_string());
+}
+
+#[tokio::test]
+async fn crypto_market_meta_route_returns_filtered_decimal_metadata() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_crypto_market_meta(CryptoMarketMetaCommand {
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USDT".to_string(),
+        instrument_type: "PERP".to_string(),
+        contract_type: Some("LINEAR".to_string()),
+        contract_size: Some(dec("1")),
+        settlement_asset: Some("USDT".to_string()),
+        min_notional: Some(dec("10")),
+        min_qty: Some(dec("0.001")),
+        max_qty: Some(dec("100")),
+        price_precision: Some(2),
+        qty_precision: Some(3),
+        price_tick: Some(dec("0.10")),
+        qty_step: Some(dec("0.001")),
+        maker_fee_rate: Some(dec("0.0002")),
+        taker_fee_rate: Some(dec("0.0004")),
+        funding_interval_hours: Some(8),
+        max_leverage: Some(dec("50")),
+        margin_modes: Some(vec!["CROSS".to_string(), "ISOLATED".to_string()]),
+        is_inverse: false,
+        is_active: true,
+        created_at_ms: 10,
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/crypto-market-meta?exchange=BINANCE&symbol=BTCUSDT_PERP")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let metas: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let metas = metas.as_array().unwrap();
+    assert_eq!(metas.len(), 1);
+    let meta = &metas[0];
+    assert_eq!(meta["exchange"], "BINANCE");
+    assert_eq!(meta["symbol"], "BTCUSDT_PERP");
+    assert_eq!(meta["instrument_type"], "PERP");
+    assert_eq!(meta["contract_type"], "LINEAR");
+    assert_eq!(meta["contract_size"], "1");
+    assert_eq!(meta["min_notional"], "10");
+    assert_eq!(meta["price_tick"], "0.10");
+    assert_eq!(meta["qty_step"], "0.001");
+    assert_eq!(meta["max_leverage"], "50");
+    assert_eq!(meta["margin_modes"][0], "CROSS");
+    assert_eq!(meta["is_inverse"], false);
+    assert_eq!(meta["is_active"], true);
+    assert_eq!(meta["updated_at_ms"], 11);
+    assert!(meta["min_qty"].is_string());
+}
+
+#[tokio::test]
+async fn corporate_actions_route_returns_filtered_actions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_corporate_action_meta(CorporateActionMetaCommand {
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        action_type: "SPLIT".to_string(),
+        ex_date_ms: 1000,
+        record_date_ms: Some(1100),
+        payable_date_ms: Some(1200),
+        ratio: Some("4:1".to_string()),
+        cash_amount: None,
+        currency: None,
+        source: Some("fixture".to_string()),
+        created_at_ms: 1300,
+        updated_at_ms: 1300,
+    })
+    .await
+    .unwrap();
+    db.record_corporate_action_meta(CorporateActionMetaCommand {
+        market: "US".to_string(),
+        exchange: "NYSE".to_string(),
+        symbol: "US:NYSE:IBM:EQUITY".to_string(),
+        action_type: "DIVIDEND".to_string(),
+        ex_date_ms: 1000,
+        record_date_ms: None,
+        payable_date_ms: None,
+        ratio: None,
+        cash_amount: Some(dec("1.25")),
+        currency: Some("USD".to_string()),
+        source: Some("fixture".to_string()),
+        created_at_ms: 1300,
+        updated_at_ms: 1300,
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri(
+                "/api/v1/corporate-actions?market=US&symbol=US:NASDAQ:AAPL:EQUITY&start_ms=0&end_ms=2000",
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let actions: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let actions = actions.as_array().unwrap();
+    assert_eq!(actions.len(), 1);
+    let action = &actions[0];
+    assert_eq!(action["market"], "US");
+    assert_eq!(action["exchange"], "NASDAQ");
+    assert_eq!(action["symbol"], "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(action["action_type"], "SPLIT");
+    assert_eq!(action["ex_date_ms"], 1000);
+    assert_eq!(action["record_date_ms"], 1100);
+    assert_eq!(action["payable_date_ms"], 1200);
+    assert_eq!(action["ratio"], "4:1");
+    assert!(action["cash_amount"].is_null());
+    assert_eq!(action["source"], "fixture");
 }
 
 #[tokio::test]

@@ -29,6 +29,8 @@ GET  /api/v1/orders
 GET  /api/v1/fills
 GET  /api/v1/positions
 GET  /api/v1/funding-rates
+GET  /api/v1/crypto-market-meta
+GET  /api/v1/corporate-actions
 GET  /api/v1/account-balances
 GET  /api/v1/portfolio/snapshots
 GET  /api/v1/cash/snapshots
@@ -57,6 +59,8 @@ REST event query responses use an API-owned response model. `payload` is returne
 `GET /api/v1/runs/{run_id}/order-events` and `GET /api/v1/runs/{run_id}/risk-events` are read-only audit projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. The current runtime does not yet write complete contract accounting lifecycle data to these tables.
+
+`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Automatic exchange/corporate-action ingestion is still follow-up work.
 
 ```json
 [
@@ -449,6 +453,8 @@ Market Data
   GET  /api/v1/candles
   GET  /api/v1/ticks
   GET  /api/v1/funding-rates
+  GET  /api/v1/crypto-market-meta
+  GET  /api/v1/corporate-actions
   GET  /api/v1/open-interest
 
 Config
@@ -2025,7 +2031,96 @@ Query 参数：
 
 ---
 
-## 20.5 查询 Open Interest
+## 20.5 查询数字货币市场元数据
+
+```http
+GET /api/v1/crypto-market-meta
+```
+
+Query 参数：
+
+| 参数       | 类型     | 说明 |
+| -------- | ------ | ---- |
+| exchange | string | 交易所 |
+| symbol   | string | 合约或交易对 |
+
+当前本地实现查询 `crypto_market_meta` storage boundary。没有匹配记录时返回空数组；自动交易所元数据 ingestion 仍是后续工作。响应为数组：
+
+```json
+[
+  {
+    "id": 1,
+    "exchange": "BINANCE",
+    "symbol": "BTCUSDT_PERP",
+    "base_asset": "BTC",
+    "quote_asset": "USDT",
+    "instrument_type": "PERP",
+    "contract_type": "LINEAR",
+    "contract_size": "1",
+    "settlement_asset": "USDT",
+    "min_notional": "10",
+    "min_qty": "0.001",
+    "max_qty": "100",
+    "price_precision": 2,
+    "qty_precision": 3,
+    "price_tick": "0.10",
+    "qty_step": "0.001",
+    "maker_fee_rate": "0.0002",
+    "taker_fee_rate": "0.0004",
+    "funding_interval_hours": 8,
+    "max_leverage": "50",
+    "margin_modes": ["CROSS", "ISOLATED"],
+    "is_inverse": false,
+    "is_active": true,
+    "created_at_ms": 1700000000000,
+    "updated_at_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 20.6 查询公司行动元数据
+
+```http
+GET /api/v1/corporate-actions
+```
+
+Query 参数：
+
+| 参数       | 类型      | 说明 |
+| -------- | ------- | ---- |
+| market   | string  | 市场 |
+| symbol   | string  | 标的 |
+| start_ms | integer | 开始时间 |
+| end_ms   | integer | 结束时间 |
+
+当前本地实现查询 `corporate_actions_meta` storage boundary，返回 `[start_ms, end_ms)` 时间窗口内的数据。自动公司行动 ingestion 仍是后续工作。响应为数组：
+
+```json
+[
+  {
+    "id": 1,
+    "market": "US",
+    "exchange": "NASDAQ",
+    "symbol": "US:NASDAQ:AAPL:EQUITY",
+    "action_type": "SPLIT",
+    "ex_date_ms": 1700000000000,
+    "record_date_ms": 1700086400000,
+    "payable_date_ms": 1700172800000,
+    "ratio": "4:1",
+    "cash_amount": null,
+    "currency": null,
+    "source": "exchange",
+    "created_at_ms": 1700000000000,
+    "updated_at_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 20.7 查询 Open Interest
 
 ```http
 GET /api/v1/open-interest

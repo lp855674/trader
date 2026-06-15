@@ -834,6 +834,51 @@ pub struct FundingRateCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CryptoMarketMetaCommand {
+    pub exchange: String,
+    pub symbol: String,
+    pub base_asset: String,
+    pub quote_asset: String,
+    pub instrument_type: String,
+    pub contract_type: Option<String>,
+    pub contract_size: Option<Decimal>,
+    pub settlement_asset: Option<String>,
+    pub min_notional: Option<Decimal>,
+    pub min_qty: Option<Decimal>,
+    pub max_qty: Option<Decimal>,
+    pub price_precision: Option<i64>,
+    pub qty_precision: Option<i64>,
+    pub price_tick: Option<Decimal>,
+    pub qty_step: Option<Decimal>,
+    pub maker_fee_rate: Option<Decimal>,
+    pub taker_fee_rate: Option<Decimal>,
+    pub funding_interval_hours: Option<i64>,
+    pub max_leverage: Option<Decimal>,
+    pub margin_modes: Option<Vec<String>>,
+    pub is_inverse: bool,
+    pub is_active: bool,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorporateActionMetaCommand {
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub action_type: String,
+    pub ex_date_ms: i64,
+    pub record_date_ms: Option<i64>,
+    pub payable_date_ms: Option<i64>,
+    pub ratio: Option<String>,
+    pub cash_amount: Option<Decimal>,
+    pub currency: Option<String>,
+    pub source: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioSnapshotCommand {
     pub id: String,
     pub run_id: String,
@@ -2790,6 +2835,69 @@ impl Db {
             funding_rate: command.funding_rate.to_string(),
             mark_price: command.mark_price.map(|price| price.to_string()),
             source: command.source,
+        })
+        .await
+    }
+
+    pub async fn record_crypto_market_meta(
+        &self,
+        command: CryptoMarketMetaCommand,
+    ) -> StorageResult<()> {
+        let margin_modes = command
+            .margin_modes
+            .map(|modes| serde_json::to_string(&modes))
+            .transpose()
+            .map_err(|error| {
+                StorageError::Protocol(format!("failed to encode margin modes: {error}"))
+            })?;
+
+        self.upsert_crypto_market_meta(NewCryptoMarketMeta {
+            exchange: command.exchange,
+            symbol: command.symbol,
+            base_asset: command.base_asset,
+            quote_asset: command.quote_asset,
+            instrument_type: command.instrument_type,
+            contract_type: command.contract_type,
+            contract_size: command.contract_size.map(|value| value.to_string()),
+            settlement_asset: command.settlement_asset,
+            min_notional: command.min_notional.map(|value| value.to_string()),
+            min_qty: command.min_qty.map(|value| value.to_string()),
+            max_qty: command.max_qty.map(|value| value.to_string()),
+            price_precision: command.price_precision,
+            qty_precision: command.qty_precision,
+            price_tick: command.price_tick.map(|value| value.to_string()),
+            qty_step: command.qty_step.map(|value| value.to_string()),
+            maker_fee_rate: command.maker_fee_rate.map(|value| value.to_string()),
+            taker_fee_rate: command.taker_fee_rate.map(|value| value.to_string()),
+            funding_interval_hours: command.funding_interval_hours,
+            max_leverage: command.max_leverage.map(|value| value.to_string()),
+            margin_modes,
+            is_inverse: command.is_inverse,
+            is_active: command.is_active,
+            created_at_ms: command.created_at_ms,
+            updated_at_ms: command.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_corporate_action_meta(
+        &self,
+        command: CorporateActionMetaCommand,
+    ) -> StorageResult<()> {
+        self.insert_corporate_action_meta(NewCorporateActionMeta {
+            market: command.market,
+            exchange: command.exchange,
+            symbol: command.symbol,
+            action_type: command.action_type,
+            ex_date_ms: command.ex_date_ms,
+            record_date_ms: command.record_date_ms,
+            payable_date_ms: command.payable_date_ms,
+            ratio: command.ratio,
+            cash_amount: command.cash_amount.map(|value| value.to_string()),
+            currency: command.currency,
+            source: command.source,
+            created_at_ms: command.created_at_ms,
+            updated_at_ms: command.updated_at_ms,
         })
         .await
     }

@@ -159,6 +159,67 @@ struct FundingRatesQuery {
 }
 
 #[derive(Serialize)]
+struct CryptoMarketMetaResponse {
+    id: i64,
+    exchange: String,
+    symbol: String,
+    base_asset: String,
+    quote_asset: String,
+    instrument_type: String,
+    contract_type: Option<String>,
+    contract_size: Option<String>,
+    settlement_asset: Option<String>,
+    min_notional: Option<String>,
+    min_qty: Option<String>,
+    max_qty: Option<String>,
+    price_precision: Option<i64>,
+    qty_precision: Option<i64>,
+    price_tick: Option<String>,
+    qty_step: Option<String>,
+    maker_fee_rate: Option<String>,
+    taker_fee_rate: Option<String>,
+    funding_interval_hours: Option<i64>,
+    max_leverage: Option<String>,
+    margin_modes: serde_json::Value,
+    is_inverse: bool,
+    is_active: bool,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Deserialize)]
+struct CryptoMarketMetaQuery {
+    exchange: String,
+    symbol: String,
+}
+
+#[derive(Serialize)]
+struct CorporateActionResponse {
+    id: i64,
+    market: String,
+    exchange: String,
+    symbol: String,
+    action_type: String,
+    ex_date_ms: i64,
+    record_date_ms: Option<i64>,
+    payable_date_ms: Option<i64>,
+    ratio: Option<String>,
+    cash_amount: Option<String>,
+    currency: Option<String>,
+    source: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Deserialize)]
+struct CorporateActionsQuery {
+    market: String,
+    symbol: String,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+#[derive(Serialize)]
 struct AccountBalanceResponse {
     run_id: String,
     account_id: String,
@@ -301,6 +362,8 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
         .route("/api/v1/funding-rates", get(list_funding_rates))
+        .route("/api/v1/crypto-market-meta", get(list_crypto_market_meta))
+        .route("/api/v1/corporate-actions", get(list_corporate_actions))
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/cash/snapshots", get(list_cash_snapshots))
@@ -877,6 +940,34 @@ async fn list_funding_rates(
     Ok(Json(rates))
 }
 
+async fn list_crypto_market_meta(
+    State(state): State<AppState>,
+    Query(query): Query<CryptoMarketMetaQuery>,
+) -> Result<Json<Vec<CryptoMarketMetaResponse>>, ApiError> {
+    let metas = state
+        .db
+        .find_crypto_market_meta(&query.exchange, &query.symbol)
+        .await?
+        .into_iter()
+        .map(crypto_market_meta_response)
+        .collect();
+    Ok(Json(metas))
+}
+
+async fn list_corporate_actions(
+    State(state): State<AppState>,
+    Query(query): Query<CorporateActionsQuery>,
+) -> Result<Json<Vec<CorporateActionResponse>>, ApiError> {
+    let actions = state
+        .db
+        .list_corporate_actions(&query.market, &query.symbol, query.start_ms, query.end_ms)
+        .await?
+        .into_iter()
+        .map(corporate_action_response)
+        .collect();
+    Ok(Json(actions))
+}
+
 async fn list_account_balances(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
@@ -1159,6 +1250,60 @@ fn funding_rate_response(rate: storage::StoredFundingRate) -> FundingRateRespons
         funding_rate: rate.funding_rate,
         mark_price: rate.mark_price,
         source: rate.source,
+    }
+}
+
+fn crypto_market_meta_response(meta: storage::StoredCryptoMarketMeta) -> CryptoMarketMetaResponse {
+    CryptoMarketMetaResponse {
+        id: meta.id,
+        exchange: meta.exchange,
+        symbol: meta.symbol,
+        base_asset: meta.base_asset,
+        quote_asset: meta.quote_asset,
+        instrument_type: meta.instrument_type,
+        contract_type: meta.contract_type,
+        contract_size: meta.contract_size,
+        settlement_asset: meta.settlement_asset,
+        min_notional: meta.min_notional,
+        min_qty: meta.min_qty,
+        max_qty: meta.max_qty,
+        price_precision: meta.price_precision,
+        qty_precision: meta.qty_precision,
+        price_tick: meta.price_tick,
+        qty_step: meta.qty_step,
+        maker_fee_rate: meta.maker_fee_rate,
+        taker_fee_rate: meta.taker_fee_rate,
+        funding_interval_hours: meta.funding_interval_hours,
+        max_leverage: meta.max_leverage,
+        margin_modes: meta
+            .margin_modes
+            .map(payload_response)
+            .unwrap_or(serde_json::Value::Null),
+        is_inverse: meta.is_inverse,
+        is_active: meta.is_active,
+        created_at_ms: meta.created_at_ms,
+        updated_at_ms: meta.updated_at_ms,
+    }
+}
+
+fn corporate_action_response(
+    action: storage::StoredCorporateActionMeta,
+) -> CorporateActionResponse {
+    CorporateActionResponse {
+        id: action.id,
+        market: action.market,
+        exchange: action.exchange,
+        symbol: action.symbol,
+        action_type: action.action_type,
+        ex_date_ms: action.ex_date_ms,
+        record_date_ms: action.record_date_ms,
+        payable_date_ms: action.payable_date_ms,
+        ratio: action.ratio,
+        cash_amount: action.cash_amount,
+        currency: action.currency,
+        source: action.source,
+        created_at_ms: action.created_at_ms,
+        updated_at_ms: action.updated_at_ms,
     }
 }
 
