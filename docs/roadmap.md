@@ -15,7 +15,7 @@ Trader 采用渐进式开发路线。
 - Keep `event_store` as immutable audit truth.
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
-- `crypto_positions` and `funding_rates` exist as storage boundary; runtime accounting still needs funding settlement and reconciliation before claiming full crypto derivative accounting.
+- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API query surface; runtime accounting still needs funding settlement and reconciliation before claiming full crypto derivative accounting.
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime; live/reconciliation snapshot capture remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config approval/release lifecycle remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; broader production log indexing remains follow-up work.

@@ -804,6 +804,36 @@ pub struct PositionCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CryptoPositionCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub margin_mode: String,
+    pub position_side: String,
+    pub leverage: Decimal,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub margin_used: Decimal,
+    pub funding_fee: Decimal,
+    pub realized_pnl: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingRateCommand {
+    pub id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub funding_time_ms: i64,
+    pub funding_rate: Decimal,
+    pub mark_price: Option<Decimal>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioSnapshotCommand {
     pub id: String,
     pub run_id: String,
@@ -2723,6 +2753,43 @@ impl Db {
             qty: command.qty.to_string(),
             avg_price: command.avg_price.to_string(),
             updated_at_ms: command.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_crypto_position(
+        &self,
+        command: CryptoPositionCommand,
+    ) -> StorageResult<()> {
+        self.upsert_crypto_position(NewCryptoPosition {
+            run_id: command.run_id,
+            account_id: command.account_id,
+            exchange: command.exchange,
+            symbol: command.symbol,
+            asset_class: command.asset_class,
+            margin_mode: command.margin_mode,
+            position_side: command.position_side,
+            leverage: command.leverage.to_string(),
+            qty: command.qty.to_string(),
+            avg_price: command.avg_price.to_string(),
+            margin_used: command.margin_used.to_string(),
+            funding_fee: command.funding_fee.to_string(),
+            realized_pnl: command.realized_pnl.to_string(),
+            unrealized_pnl: command.unrealized_pnl.to_string(),
+            updated_at_ms: command.updated_at_ms,
+        })
+        .await
+    }
+
+    pub async fn record_funding_rate(&self, command: FundingRateCommand) -> StorageResult<()> {
+        self.upsert_funding_rate(NewFundingRate {
+            id: command.id,
+            exchange: command.exchange,
+            symbol: command.symbol,
+            funding_time_ms: command.funding_time_ms,
+            funding_rate: command.funding_rate.to_string(),
+            mark_price: command.mark_price.map(|price| price.to_string()),
+            source: command.source,
         })
         .await
     }

@@ -5,7 +5,7 @@ mod ws;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -23,7 +23,7 @@ use paper::{
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use runtime::{LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -118,6 +118,44 @@ struct PositionResponse {
     qty: String,
     avg_price: String,
     updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct CryptoPositionResponse {
+    run_id: String,
+    account_id: String,
+    exchange: String,
+    symbol: String,
+    asset_class: String,
+    margin_mode: String,
+    position_side: String,
+    leverage: String,
+    qty: String,
+    avg_price: String,
+    margin_used: String,
+    funding_fee: String,
+    realized_pnl: String,
+    unrealized_pnl: String,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct FundingRateResponse {
+    id: String,
+    exchange: String,
+    symbol: String,
+    funding_time_ms: i64,
+    funding_rate: String,
+    mark_price: Option<String>,
+    source: String,
+}
+
+#[derive(Deserialize)]
+struct FundingRatesQuery {
+    exchange: String,
+    symbol: String,
+    start_ms: i64,
+    end_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -262,6 +300,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/orders", get(list_orders))
         .route("/api/v1/fills", get(list_fills))
         .route("/api/v1/positions", get(list_positions))
+        .route("/api/v1/funding-rates", get(list_funding_rates))
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/cash/snapshots", get(list_cash_snapshots))
@@ -285,6 +324,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runs/{run_id}/system-logs",
             get(list_run_system_logs),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/crypto-positions",
+            get(list_run_crypto_positions),
         )
         .route("/api/v1/runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/runs/{run_id}/cancel", post(cancel_run))
@@ -806,6 +849,34 @@ async fn list_positions(
     Ok(Json(positions))
 }
 
+async fn list_run_crypto_positions(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<CryptoPositionResponse>>, ApiError> {
+    let positions = state
+        .db
+        .list_crypto_positions(&run_id)
+        .await?
+        .into_iter()
+        .map(crypto_position_response)
+        .collect();
+    Ok(Json(positions))
+}
+
+async fn list_funding_rates(
+    State(state): State<AppState>,
+    Query(query): Query<FundingRatesQuery>,
+) -> Result<Json<Vec<FundingRateResponse>>, ApiError> {
+    let rates = state
+        .db
+        .list_funding_rates(&query.exchange, &query.symbol, query.start_ms, query.end_ms)
+        .await?
+        .into_iter()
+        .map(funding_rate_response)
+        .collect();
+    Ok(Json(rates))
+}
+
 async fn list_account_balances(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
@@ -1056,6 +1127,38 @@ fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
         checksum: config.checksum,
         created_at_ms: config.created_at_ms,
         updated_at_ms: config.updated_at_ms,
+    }
+}
+
+fn crypto_position_response(position: storage::StoredCryptoPosition) -> CryptoPositionResponse {
+    CryptoPositionResponse {
+        run_id: position.run_id,
+        account_id: position.account_id,
+        exchange: position.exchange,
+        symbol: position.symbol,
+        asset_class: position.asset_class,
+        margin_mode: position.margin_mode,
+        position_side: position.position_side,
+        leverage: position.leverage,
+        qty: position.qty,
+        avg_price: position.avg_price,
+        margin_used: position.margin_used,
+        funding_fee: position.funding_fee,
+        realized_pnl: position.realized_pnl,
+        unrealized_pnl: position.unrealized_pnl,
+        updated_at_ms: position.updated_at_ms,
+    }
+}
+
+fn funding_rate_response(rate: storage::StoredFundingRate) -> FundingRateResponse {
+    FundingRateResponse {
+        id: rate.id,
+        exchange: rate.exchange,
+        symbol: rate.symbol,
+        funding_time_ms: rate.funding_time_ms,
+        funding_rate: rate.funding_rate,
+        mark_price: rate.mark_price,
+        source: rate.source,
     }
 }
 

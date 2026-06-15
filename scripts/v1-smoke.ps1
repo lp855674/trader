@@ -12,8 +12,9 @@ $targetDir = $env:TRADER_SMOKE_TARGET_DIR
 $stdoutPath = Join-Path $env:TEMP "trader-v1-server-$id.out.log"
 $stderrPath = Join-Path $env:TEMP "trader-v1-server-$id.err.log"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
-$traderExe = Join-Path $repoRoot "target/debug/trader.exe"
-$serverExe = Join-Path $repoRoot "target/debug/trader-server.exe"
+$targetRoot = if ($targetDir) { $targetDir } else { Join-Path $repoRoot "target" }
+$traderExe = Join-Path $targetRoot "debug/trader.exe"
+$serverExe = Join-Path $targetRoot "debug/trader-server.exe"
 
 $template = Get-Content "configs/backtest/ma_cross.toml" -Raw
 $config = $template -replace 'url = "sqlite://data/trader.sqlite"', "url = `"$databaseUrl`""
@@ -104,6 +105,7 @@ try {
         Write-Host "V1 target: default workspace target"
     }
 
+    Invoke-CheckedCargo @("build", "-p", "trader-cli", "-p", "trader-server")
     Invoke-CheckedTrader @("check-config", "--config", $configPath)
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
     Invoke-CheckedTrader @("import-bars", "--config", $configPath, "--output-parquet", $parquetPath)
@@ -160,9 +162,13 @@ try {
     $fills = Invoke-RestMethod "$baseUrl/api/v1/fills"
     $snapshots = Invoke-RestMethod "$baseUrl/api/v1/portfolio/snapshots"
     $metrics = Invoke-RestMethod "$baseUrl/api/v1/metrics"
+    $cryptoPositions = Invoke-WebRequest -UseBasicParsing "$baseUrl/api/v1/runs/$($paper.run_id)/crypto-positions"
+    $fundingRates = Invoke-WebRequest -UseBasicParsing "$baseUrl/api/v1/funding-rates?exchange=BINANCE&symbol=BTCUSDT_PERP&start_ms=0&end_ms=1"
     Assert-True (@($fills).Count -ge 1) "expected fills"
     Assert-True (@($snapshots).Count -ge 1) "expected portfolio snapshots"
     Assert-True ($metrics.fill_count -ge 1) "expected metrics fill_count"
+    Assert-True ($cryptoPositions.Content.Trim() -eq "[]") "expected no crypto positions before contract runtime accounting"
+    Assert-True ($fundingRates.Content.Trim() -eq "[]") "expected no seeded funding rates"
 
     $replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays"
     Assert-True ($replay.bars -ge 1) "expected replay bars"

@@ -28,6 +28,7 @@ GET  /api/v1/brokers/account/{account_id}
 GET  /api/v1/orders
 GET  /api/v1/fills
 GET  /api/v1/positions
+GET  /api/v1/funding-rates
 GET  /api/v1/account-balances
 GET  /api/v1/portfolio/snapshots
 GET  /api/v1/cash/snapshots
@@ -43,6 +44,7 @@ GET  /api/v1/runs/{run_id}/events
 GET  /api/v1/runs/{run_id}/order-events
 GET  /api/v1/runs/{run_id}/risk-events
 GET  /api/v1/runs/{run_id}/system-logs
+GET  /api/v1/runs/{run_id}/crypto-positions
 POST /api/v1/replay/{run_id}/pause
 POST /api/v1/replay/{run_id}/resume
 POST /api/v1/replay/{run_id}/seek/{offset}
@@ -53,6 +55,8 @@ GET  /ws
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
 
 `GET /api/v1/runs/{run_id}/order-events` and `GET /api/v1/runs/{run_id}/risk-events` are read-only audit projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
+
+`GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. The current runtime does not yet write complete contract accounting lifecycle data to these tables.
 
 ```json
 [
@@ -385,6 +389,7 @@ Runtime
   GET  /api/v1/runs
   GET  /api/v1/runs/{run_id}
   GET  /api/v1/runs/{run_id}/system-logs
+  GET  /api/v1/runs/{run_id}/crypto-positions
   POST /api/v1/runs/{run_id}/stop
 
 Strategy
@@ -419,7 +424,7 @@ Fills
 
 Positions
   GET  /api/v1/positions
-  GET  /api/v1/crypto-positions
+  GET  /api/v1/runs/{run_id}/crypto-positions
 
 Accounts
   GET  /api/v1/account-balances
@@ -1474,53 +1479,39 @@ Query 参数：
 ## 15.2 查询数字货币合约持仓
 
 ```http
-GET /api/v1/crypto-positions
+GET /api/v1/runs/{run_id}/crypto-positions
 ```
 
-Query 参数：
+Path 参数：
 
 | 参数            | 类型     | 说明                 |
 | ------------- | ------ | ------------------ |
 | run_id        | string | 运行 ID              |
-| exchange      | string | 交易所                |
-| symbol        | string | 合约                 |
-| position_side | string | LONG / SHORT / NET |
 
-响应：
+当前本地实现按 `run_id` 查询 `crypto_positions` storage boundary。它是只读查询面；runtime accounting 尚未完整写入真实合约生命周期。
+
+响应为数组：
 
 ```json
-{
-  "success": true,
-  "data": {
-    "items": [
-      {
-        "run_id": "run_001",
-        "exchange": "BINANCE",
-        "symbol": "BTCUSDT",
-        "asset_class": "CRYPTO_PERP",
-        "position_side": "LONG",
-        "qty": "0.1",
-        "available_qty": "0.1",
-        "entry_price": "68000",
-        "mark_price": "69000",
-        "liquidation_price": "52000",
-        "leverage": "5",
-        "margin_mode": "ISOLATED",
-        "margin_asset": "USDT",
-        "initial_margin": "1360",
-        "maintenance_margin": "200",
-        "unrealized_pnl": "100",
-        "realized_pnl": "0",
-        "funding_fee": "-1.2",
-        "margin_ratio": "0.12",
-        "updated_ts": 1700000000000
-      }
-    ]
-  },
-  "error": null,
-  "request_id": "req_001",
-  "ts": 1700000000000
-}
+[
+  {
+    "run_id": "run_001",
+    "account_id": "paper",
+    "exchange": "BINANCE",
+    "symbol": "BTCUSDT_PERP",
+    "asset_class": "CRYPTO_PERP",
+    "margin_mode": "cross",
+    "position_side": "short",
+    "leverage": "3.5",
+    "qty": "-0.250",
+    "avg_price": "65001.0000",
+    "margin_used": "1625.025",
+    "funding_fee": "-1.50",
+    "realized_pnl": "2.00",
+    "unrealized_pnl": "20.0001",
+    "updated_at_ms": 1700000000000
+  }
+]
 ```
 
 ---
@@ -2013,30 +2004,23 @@ Query 参数：
 | -------- | ------- | ---- |
 | exchange | string  | 交易所  |
 | symbol   | string  | 合约   |
-| start_ts | integer | 开始时间 |
-| end_ts   | integer | 结束时间 |
+| start_ms | integer | 开始时间 |
+| end_ms   | integer | 结束时间 |
 
-响应：
+当前本地实现查询 `funding_rates` storage boundary，返回 `[start_ms, end_ms)` 时间窗口内的数据。响应为数组：
 
 ```json
-{
-  "success": true,
-  "data": {
-    "items": [
-      {
-        "exchange": "BINANCE",
-        "symbol": "BTCUSDT",
-        "funding_time": 1700000000000,
-        "funding_rate": "0.0001",
-        "mark_price": "68000",
-        "index_price": "67980"
-      }
-    ]
-  },
-  "error": null,
-  "request_id": "req_001",
-  "ts": 1700000000000
-}
+[
+  {
+    "id": "funding_001",
+    "exchange": "BINANCE",
+    "symbol": "BTCUSDT_PERP",
+    "funding_time_ms": 1700000000000,
+    "funding_rate": "0.0001",
+    "mark_price": "68000",
+    "source": "exchange"
+  }
+]
 ```
 
 ---

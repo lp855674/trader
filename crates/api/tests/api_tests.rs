@@ -1,8 +1,11 @@
 use api::router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use rust_decimal::Decimal;
 use std::path::PathBuf;
-use storage::{Db, RuntimeEventCommand, StrategyRunStartCommand};
+use storage::{
+    CryptoPositionCommand, Db, FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand,
+};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -198,6 +201,144 @@ async fn run_risk_events_route_returns_audit_projection() {
 }
 
 #[tokio::test]
+async fn run_crypto_positions_route_returns_contract_position_projection() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_crypto_position(CryptoPositionCommand {
+        run_id: "run-contract".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "cross".to_string(),
+        position_side: "short".to_string(),
+        leverage: dec("3.5"),
+        qty: dec("-0.250"),
+        avg_price: dec("65001.0000"),
+        margin_used: dec("1625.025"),
+        funding_fee: dec("-1.50"),
+        realized_pnl: dec("2.00"),
+        unrealized_pnl: dec("20.0001"),
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+    db.record_crypto_position(CryptoPositionCommand {
+        run_id: "other-run".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "ETHUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "isolated".to_string(),
+        position_side: "long".to_string(),
+        leverage: dec("2"),
+        qty: dec("1.000"),
+        avg_price: dec("3500.0000"),
+        margin_used: dec("1750.0000"),
+        funding_fee: dec("0"),
+        realized_pnl: dec("0"),
+        unrealized_pnl: dec("0"),
+        updated_at_ms: 12,
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-contract/crypto-positions")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let positions: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let positions = positions.as_array().unwrap();
+    assert_eq!(positions.len(), 1);
+    let position = &positions[0];
+    assert_eq!(position["run_id"], "run-contract");
+    assert_eq!(position["account_id"], "paper");
+    assert_eq!(position["exchange"], "BINANCE");
+    assert_eq!(position["symbol"], "BTCUSDT_PERP");
+    assert_eq!(position["asset_class"], "CRYPTO_PERP");
+    assert_eq!(position["margin_mode"], "cross");
+    assert_eq!(position["position_side"], "short");
+    assert_eq!(position["leverage"], "3.5");
+    assert_eq!(position["qty"], "-0.250");
+    assert_eq!(position["avg_price"], "65001.0000");
+    assert_eq!(position["margin_used"], "1625.025");
+    assert_eq!(position["funding_fee"], "-1.50");
+    assert_eq!(position["realized_pnl"], "2.00");
+    assert_eq!(position["unrealized_pnl"], "20.0001");
+    assert_eq!(position["updated_at_ms"], 11);
+    assert!(position["qty"].is_string());
+}
+
+#[tokio::test]
+async fn funding_rates_route_returns_filtered_decimal_series() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_funding_rate(FundingRateCommand {
+        id: "funding-1".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        funding_time_ms: 1000,
+        funding_rate: dec("0.0002"),
+        mark_price: Some(dec("65001.0000")),
+        source: "testnet".to_string(),
+    })
+    .await
+    .unwrap();
+    db.record_funding_rate(FundingRateCommand {
+        id: "funding-outside-window".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        funding_time_ms: 2500,
+        funding_rate: dec("0.0003"),
+        mark_price: Some(dec("65002.0000")),
+        source: "testnet".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri(
+                "/api/v1/funding-rates?exchange=BINANCE&symbol=BTCUSDT_PERP&start_ms=0&end_ms=2000",
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rates: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rates = rates.as_array().unwrap();
+    assert_eq!(rates.len(), 1);
+    let rate = &rates[0];
+    assert_eq!(rate["id"], "funding-1");
+    assert_eq!(rate["exchange"], "BINANCE");
+    assert_eq!(rate["symbol"], "BTCUSDT_PERP");
+    assert_eq!(rate["funding_time_ms"], 1000);
+    assert_eq!(rate["funding_rate"], "0.0002");
+    assert_eq!(rate["mark_price"], "65001.0000");
+    assert_eq!(rate["source"], "testnet");
+    assert!(rate["funding_rate"].is_string());
+}
+
+#[tokio::test]
 async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -241,6 +382,10 @@ async fn live_runtime_routes_start_report_status_and_stop() {
     assert_eq!(response.status(), StatusCode::OK);
 
     wait_for_body_fragment(app, "/api/v1/live-runs/sample-ma-cross/status", "stopped").await;
+}
+
+fn dec(value: &str) -> Decimal {
+    value.parse().unwrap()
 }
 
 fn workspace_root() -> std::path::PathBuf {
