@@ -2123,6 +2123,57 @@ impl Db {
         ))
     }
 
+    pub async fn list_configs(&self) -> StorageResult<Vec<StoredConfigRecord>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, name, config_type, content, format, checksum, created_at, updated_at
+            FROM configs
+            ORDER BY updated_at DESC, id
+            "#,
+        )
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    name,
+                    config_type,
+                    content,
+                    format,
+                    checksum,
+                    created_at_ms,
+                    updated_at_ms,
+                )| {
+                    StoredConfigRecord {
+                        id,
+                        name,
+                        config_type,
+                        content,
+                        format,
+                        checksum,
+                        created_at_ms,
+                        updated_at_ms,
+                    }
+                },
+            )
+            .collect())
+    }
+
     pub async fn insert_system_log(&self, log: NewSystemLog) -> StorageResult<()> {
         sqlx::query(
             r#"

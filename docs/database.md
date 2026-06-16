@@ -54,7 +54,7 @@ The current implemented SQLite schema is split across migrations:
 
 The current migrations cover the 24 target SQLite tables below, plus `event_store` as the immutable audit truth. A table existing in migration means the storage boundary exists; it does not mean every runtime path already writes it automatically.
 
-Paper runtime writes `portfolio_snapshots`, `cash_snapshots`, and `position_snapshots` during local paper runs. API-launched Backtest, Paper, and Replay runs write a `RUN` config snapshot to `configs`, store the parsed config in `strategy_runs.config_json`, and index run lifecycle messages in `system_logs`. `crypto_positions`, `funding_rates`, `crypto_market_meta`, and `corporate_actions_meta` have read-only API query routes, but full contract runtime accounting and automatic reference-data ingestion are not wired yet. Live/reconciliation snapshot capture, config approval/release lifecycle, and broader production log indexing are still separate production-hardening tasks.
+Paper runtime writes `portfolio_snapshots`, `cash_snapshots`, and `position_snapshots` during local paper runs. API-launched Backtest, Paper, and Replay runs write a `RUN` config snapshot to `configs`, store the parsed config in `strategy_runs.config_json`, expose config snapshots through read-only API query routes, and index run lifecycle messages in `system_logs`. `crypto_positions`, `funding_rates`, `crypto_market_meta`, and `corporate_actions_meta` have read-only API query routes, but full contract runtime accounting and automatic reference-data ingestion are not wired yet. Live/reconciliation snapshot capture, config approval/release lifecycle, and broader production log indexing are still separate production-hardening tasks.
 
 ---
 

@@ -1508,6 +1508,30 @@ async fn post_paper_run_populates_query_routes() {
         .oneshot(
             Request::builder()
                 .method("GET")
+                .uri("/api/v1/configs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let configs: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let configs = configs.as_array().unwrap();
+    assert!(configs.iter().any(|config| {
+        config["name"] == "sample-ma-cross"
+            && config["config_type"] == "RUN"
+            && config["format"] == "TOML"
+            && config["content"].as_str().unwrap().contains("[runtime]")
+            && config["checksum"].as_str().unwrap().starts_with("fnv1a64:")
+    }));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
                 .uri("/api/v1/runs/sample-ma-cross/system-logs")
                 .body(Body::empty())
                 .unwrap(),

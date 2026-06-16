@@ -635,6 +635,26 @@ async fn reference_snapshot_and_ops_records_round_trip() {
     assert_eq!(config.content, "order_submit_enabled = true");
     assert_eq!(config.checksum.as_deref(), Some("sha256:new"));
 
+    db.record_run_config_snapshot(storage::RunConfigSnapshotCommand {
+        run_id: "run-reference".to_string(),
+        content: "[runtime]\nrun_id = \"run-reference\"\n".to_string(),
+        format: "TOML".to_string(),
+        checksum: Some("sha256:run".to_string()),
+        ts_ms: 32,
+    })
+    .await
+    .unwrap();
+    let configs = db.list_configs().await.unwrap();
+    assert_eq!(
+        configs
+            .iter()
+            .map(|config| config.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run-reference", "paper-binance"]
+    );
+    assert_eq!(configs[0].config_type, "RUN");
+    assert_eq!(configs[1].config_type, "BROKER");
+
     db.insert_system_log(NewSystemLog {
         id: "log-1".to_string(),
         run_id: Some("run-reference".to_string()),

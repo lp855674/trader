@@ -373,6 +373,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/brokers/account/{account_id}", get(broker_account))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
+        .route("/api/v1/configs", get(list_configs))
         .route("/api/v1/configs/{name}", get(get_config))
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
@@ -1120,6 +1121,19 @@ async fn get_config(
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     Ok(Json(config_response(config)).into_response())
+}
+
+async fn list_configs(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ConfigResponse>>, ApiError> {
+    let configs = state
+        .db
+        .list_configs()
+        .await?
+        .into_iter()
+        .map(config_response)
+        .collect();
+    Ok(Json(configs))
 }
 
 async fn list_events(State(state): State<AppState>) -> Result<Json<Vec<EventResponse>>, ApiError> {
