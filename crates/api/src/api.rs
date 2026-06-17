@@ -321,6 +321,31 @@ struct RiskEventResponse {
 }
 
 #[derive(Serialize)]
+struct InsightResponse {
+    id: String,
+    event_id: String,
+    run_id: String,
+    strategy: String,
+    symbol: String,
+    side: String,
+    confidence: String,
+    ts_ms: i64,
+    payload: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct PortfolioTargetResponse {
+    id: String,
+    event_id: String,
+    run_id: String,
+    account_id: String,
+    symbol: String,
+    target_qty: String,
+    ts_ms: i64,
+    payload: serde_json::Value,
+}
+
+#[derive(Serialize)]
 struct ConfigResponse {
     id: String,
     name: String,
@@ -384,6 +409,11 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runs/{run_id}/risk-events",
             get(list_run_risk_events),
+        )
+        .route("/api/v1/runs/{run_id}/insights", get(list_run_insights))
+        .route(
+            "/api/v1/runs/{run_id}/portfolio-targets",
+            get(list_run_portfolio_targets),
         )
         .route(
             "/api/v1/runs/{run_id}/system-logs",
@@ -1189,6 +1219,34 @@ async fn list_run_risk_events(
     Ok(Json(events))
 }
 
+async fn list_run_insights(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<InsightResponse>>, ApiError> {
+    let insights = state
+        .db
+        .list_insights(&run_id)
+        .await?
+        .into_iter()
+        .map(insight_response)
+        .collect();
+    Ok(Json(insights))
+}
+
+async fn list_run_portfolio_targets(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<PortfolioTargetResponse>>, ApiError> {
+    let targets = state
+        .db
+        .list_portfolio_targets(&run_id)
+        .await?
+        .into_iter()
+        .map(portfolio_target_response)
+        .collect();
+    Ok(Json(targets))
+}
+
 async fn list_run_system_logs(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -1379,6 +1437,33 @@ fn risk_event_response(event: storage::StoredRiskEvent) -> RiskEventResponse {
         observed_value: event.observed_value,
         ts_ms: event.ts_ms,
         payload: payload_response(event.payload_json),
+    }
+}
+
+fn insight_response(insight: storage::StoredInsight) -> InsightResponse {
+    InsightResponse {
+        id: insight.id,
+        event_id: insight.event_id,
+        run_id: insight.run_id,
+        strategy: insight.strategy,
+        symbol: insight.symbol,
+        side: insight.side,
+        confidence: insight.confidence,
+        ts_ms: insight.ts_ms,
+        payload: payload_response(insight.payload_json),
+    }
+}
+
+fn portfolio_target_response(target: storage::StoredPortfolioTarget) -> PortfolioTargetResponse {
+    PortfolioTargetResponse {
+        id: target.id,
+        event_id: target.event_id,
+        run_id: target.run_id,
+        account_id: target.account_id,
+        symbol: target.symbol,
+        target_qty: target.target_qty,
+        ts_ms: target.ts_ms,
+        payload: payload_response(target.payload_json),
     }
 }
 

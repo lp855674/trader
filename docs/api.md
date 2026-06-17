@@ -46,6 +46,8 @@ GET  /api/v1/events
 GET  /api/v1/runs/{run_id}/events
 GET  /api/v1/runs/{run_id}/order-events
 GET  /api/v1/runs/{run_id}/risk-events
+GET  /api/v1/runs/{run_id}/insights
+GET  /api/v1/runs/{run_id}/portfolio-targets
 GET  /api/v1/runs/{run_id}/system-logs
 GET  /api/v1/runs/{run_id}/crypto-positions
 POST /api/v1/replay/{run_id}/pause
@@ -57,7 +59,7 @@ GET  /ws
 
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
 
-`GET /api/v1/runs/{run_id}/order-events` and `GET /api/v1/runs/{run_id}/risk-events` are read-only audit projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
+`GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. The current runtime does not yet write complete contract accounting lifecycle data to these tables.
 
@@ -646,7 +648,68 @@ GET /api/v1/runs/{run_id}/system-logs
 
 ---
 
-## 9.4 停止运行
+## 9.4 查询策略信号投影
+
+```http
+GET /api/v1/runs/{run_id}/insights
+```
+
+当前 V1 返回由 `algorithm.alpha.generated` 运行事件派生的只读策略信号投影。`payload` 是结构化 JSON，不返回 `payload_json` 字符串：
+
+```json
+[
+  {
+    "id": "insight_001",
+    "event_id": "event_001",
+    "run_id": "sample-ma-cross",
+    "strategy": "moving_average_cross",
+    "symbol": "US:NASDAQ:AAPL:EQUITY",
+    "side": "BUY",
+    "confidence": "0.75",
+    "ts_ms": 1700000000000,
+    "payload": {
+      "run_id": "sample-ma-cross",
+      "symbol": "US:NASDAQ:AAPL:EQUITY",
+      "side": "BUY",
+      "confidence": "0.75"
+    }
+  }
+]
+```
+
+---
+
+## 9.5 查询组合目标投影
+
+```http
+GET /api/v1/runs/{run_id}/portfolio-targets
+```
+
+当前 V1 返回由 `algorithm.portfolio.target` 运行事件派生的只读组合目标投影。它用于运行后分析，不是下单接口：
+
+```json
+[
+  {
+    "id": "target_001",
+    "event_id": "event_002",
+    "run_id": "sample-ma-cross",
+    "account_id": "paper",
+    "symbol": "US:NASDAQ:AAPL:EQUITY",
+    "target_qty": "10",
+    "ts_ms": 1700000000000,
+    "payload": {
+      "run_id": "sample-ma-cross",
+      "account_id": "paper",
+      "symbol": "US:NASDAQ:AAPL:EQUITY",
+      "target_qty": "10"
+    }
+  }
+]
+```
+
+---
+
+## 9.6 停止运行
 
 ```http
 POST /api/v1/runs/{run_id}/stop

@@ -202,6 +202,107 @@ async fn run_risk_events_route_returns_audit_projection() {
 }
 
 #[tokio::test]
+async fn run_insights_route_returns_strategy_decisions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "backtest".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 2,
+        category: "algorithm.alpha.generated".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "strategy": "moving_average_cross",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "side": "BUY",
+            "confidence": "0.75"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/insights")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"run_id\":\"run-a\""));
+    assert!(body.contains("\"strategy\":\"moving_average_cross\""));
+    assert!(body.contains("\"symbol\":\"US:NASDAQ:AAPL:EQUITY\""));
+    assert!(body.contains("\"confidence\":\"0.75\""));
+    assert!(body.contains("\"payload\":{"));
+}
+
+#[tokio::test]
+async fn run_portfolio_targets_route_returns_target_positions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "backtest".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 3,
+        category: "algorithm.portfolio.target".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "target_qty": "10"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/portfolio-targets")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"run_id\":\"run-a\""));
+    assert!(body.contains("\"account_id\":\"paper\""));
+    assert!(body.contains("\"symbol\":\"US:NASDAQ:AAPL:EQUITY\""));
+    assert!(body.contains("\"target_qty\":\"10\""));
+    assert!(body.contains("\"payload\":{"));
+}
+
+#[tokio::test]
 async fn run_crypto_positions_route_returns_contract_position_projection() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
