@@ -13,7 +13,13 @@ use paper::{
 };
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
-use std::{collections::BTreeSet, io::Write, path::Path, str::FromStr, time::Duration};
+use std::{
+    collections::BTreeSet,
+    io::Write,
+    path::Path,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 #[derive(Parser)]
 #[command(name = "trader")]
@@ -229,6 +235,10 @@ enum Command {
         #[command(subcommand)]
         command: FundingCommand,
     },
+    Ingest {
+        #[command(subcommand)]
+        command: IngestCommand,
+    },
     CheckConfig {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -262,6 +272,34 @@ enum FundingCommand {
         from_ms: Option<i64>,
         #[arg(long = "to")]
         to_ms: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum IngestCommand {
+    BinanceMeta {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long, default_value = "binance")]
+        exchange: String,
+    },
+    FundingRates {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long, default_value = "binance")]
+        exchange: String,
+        #[arg(long)]
+        symbol: String,
+    },
+    CorporateActions {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        symbol: String,
+    },
+    Status {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
     },
 }
 
@@ -1289,6 +1327,61 @@ async fn run_command(command: Command) -> Result<()> {
                 }
             }
         },
+        Command::Ingest { command } => match command {
+            IngestCommand::BinanceMeta { config, exchange } => {
+                ensure_supported_ingestion_exchange(&exchange)?;
+                let (_, db) = load_db(&config).await?;
+                db.migrate().await?;
+                let client = reqwest::Client::new();
+                let started = Instant::now();
+                let result =
+                    data::ingestion::binance_meta::ingest_binance_market_meta(&db, &client).await?;
+                log_and_print_ingestion(&db, result, started).await?;
+            }
+            IngestCommand::FundingRates {
+                config,
+                exchange,
+                symbol,
+            } => {
+                ensure_supported_ingestion_exchange(&exchange)?;
+                let (_, db) = load_db(&config).await?;
+                db.migrate().await?;
+                let client = reqwest::Client::new();
+                let started = Instant::now();
+                let result = data::ingestion::binance_funding::ingest_binance_funding_rates(
+                    &db, &client, &symbol,
+                )
+                .await?;
+                log_and_print_ingestion(&db, result, started).await?;
+            }
+            IngestCommand::CorporateActions { config, symbol } => {
+                let (_, db) = load_db(&config).await?;
+                db.migrate().await?;
+                let client = reqwest::Client::new();
+                let started = Instant::now();
+                let result = data::ingestion::corporate_actions::ingest_yahoo_corporate_actions(
+                    &db, &client, &symbol,
+                )
+                .await?;
+                log_and_print_ingestion(&db, result, started).await?;
+            }
+            IngestCommand::Status { config } => {
+                let (_, db) = load_db(&config).await?;
+                db.migrate().await?;
+                let statuses = data::ingestion::tracker::last_ingestions(&db).await?;
+                for status in statuses {
+                    println!(
+                        "ingestion_status: source={} table={} ts_ms={} rows_fetched={} rows_upserted={} duration_ms={}",
+                        status.source,
+                        status.table,
+                        status.ts_ms,
+                        status.rows_fetched,
+                        status.rows_upserted,
+                        status.duration_ms
+                    );
+                }
+            }
+        },
         Command::CheckConfig { config } => {
             config::AppConfig::from_toml_file(config)?;
             println!("config ok");
@@ -2147,6 +2240,28 @@ async fn insert_event(
     })
     .await?;
     Ok(())
+}
+
+async fn log_and_print_ingestion(
+    db: &storage::Db,
+    result: data::ingestion::IngestionResult,
+    started: Instant,
+) -> Result<()> {
+    let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    data::ingestion::tracker::IngestionTracker::log_ingestion(db, &result, duration_ms).await?;
+    println!(
+        "ingestion_completed: source={} table={} rows_fetched={} rows_upserted={} duration_ms={}",
+        result.source, result.table, result.rows_fetched, result.rows_upserted, duration_ms
+    );
+    Ok(())
+}
+
+fn ensure_supported_ingestion_exchange(exchange: &str) -> Result<()> {
+    if exchange.eq_ignore_ascii_case("binance") {
+        Ok(())
+    } else {
+        bail!("unsupported ingestion exchange {exchange}; expected binance")
+    }
 }
 
 async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {

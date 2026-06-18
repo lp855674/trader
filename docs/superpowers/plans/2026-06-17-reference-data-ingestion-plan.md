@@ -355,7 +355,7 @@ git commit -m "feat: corporate actions ingestion"
 - Create: `crates/data/src/ingestion/tracker.rs`
 - Modify: `apps/trader-cli/src/main.rs`
 
-- [ ] **Step 1: Implement ingestion tracker**
+- [x] **Step 1: Implement ingestion tracker**
 
 ```rust
 pub struct IngestionTracker;
@@ -370,7 +370,7 @@ impl IngestionTracker {
 }
 ```
 
-- [ ] **Step 2: Add CLI commands**
+- [x] **Step 2: Add CLI commands**
 
 ```
 trader ingest binance-meta [--exchange binance]
@@ -379,14 +379,14 @@ trader ingest corporate-actions [--symbol AAPL]
 trader ingest status
 ```
 
-- [ ] **Step 3: Add CLI tests**
+- [x] **Step 3: Add CLI tests**
 
 ```rust
 #[test]
 fn ingest_status_shows_last_fetch_time() { ... }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add crates/data apps/trader-cli

@@ -1818,6 +1818,23 @@ fn funding_list_prints_filtered_funding_rates() {
     std::fs::remove_file(config).unwrap();
 }
 
+#[test]
+fn ingest_status_shows_last_fetch_time() {
+    let config = seed_ingestion_cli_storage();
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["ingest", "status", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("ingestion_status: source=binance"))
+        .stdout(contains("table=funding_rates"))
+        .stdout(contains("rows_fetched=3"))
+        .stdout(contains("rows_upserted=2"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
 fn run_paper() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -1975,6 +1992,37 @@ fn seed_contract_cli_storage() -> PathBuf {
             funding_rate: dec!(0.0003),
             mark_price: Some(dec!(51000)),
             source: "seed".to_string(),
+        })
+        .await
+        .unwrap();
+    });
+
+    config
+}
+
+fn seed_ingestion_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-ingestion-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.record_system_log(storage::SystemLogCommand {
+            run_id: None,
+            ts_ms: 1234,
+            level: "INFO".to_string(),
+            target: "ingestion".to_string(),
+            message: "ingested 2 rows into funding_rates from binance".to_string(),
+            fields: Some(serde_json::json!({
+                "source": "binance",
+                "table": "funding_rates",
+                "rows_fetched": 3,
+                "rows_upserted": 2,
+                "duration_ms": 25
+            })),
         })
         .await
         .unwrap();

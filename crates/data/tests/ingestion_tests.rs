@@ -1,7 +1,9 @@
 use data::ingestion::{
+    IngestionResult,
     binance_funding::{filter_funding_rates_after, parse_binance_funding_history},
     binance_meta::parse_binance_market_meta,
     corporate_actions::parse_yahoo_corporate_actions,
+    tracker::{IngestionTracker, last_ingestions},
 };
 
 #[test]
@@ -144,4 +146,32 @@ fn ingestion_parses_yahoo_corporate_actions() {
     assert_eq!(dividend.cash_amount.as_deref(), Some("0.25"));
     assert_eq!(dividend.source.as_deref(), Some("yahoo_chart"));
     assert_eq!(split.ratio.as_deref(), Some("4:1"));
+}
+
+#[tokio::test]
+async fn ingestion_tracker_logs_status() {
+    let db = storage::Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    IngestionTracker::log_ingestion(
+        &db,
+        &IngestionResult {
+            source: "binance".to_string(),
+            table: "funding_rates".to_string(),
+            rows_fetched: 3,
+            rows_upserted: 2,
+        },
+        25,
+    )
+    .await
+    .unwrap();
+
+    let statuses = last_ingestions(&db).await.unwrap();
+
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].source, "binance");
+    assert_eq!(statuses[0].table, "funding_rates");
+    assert_eq!(statuses[0].rows_fetched, 3);
+    assert_eq!(statuses[0].rows_upserted, 2);
+    assert_eq!(statuses[0].duration_ms, 25);
 }

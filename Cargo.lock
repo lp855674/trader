@@ -981,6 +981,7 @@ dependencies = [
  "serde_json",
  "storage",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -4900,6 +4901,7 @@ dependencies = [
  "paper",
  "predicates",
  "replay",
+ "reqwest",
  "rust_decimal",
  "rust_decimal_macros",
  "serde_json",

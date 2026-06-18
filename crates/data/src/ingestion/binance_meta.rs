@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use std::str::FromStr;
 
-use crate::ingestion::{CryptoMarketMeta, IngestionError};
+use crate::ingestion::{CryptoMarketMeta, IngestionError, IngestionResult};
 
 const BINANCE_SPOT_EXCHANGE_INFO_URL: &str = "https://api.binance.com/api/v3/exchangeInfo";
 
@@ -65,6 +66,75 @@ pub async fn fetch_binance_market_meta(
     parse_binance_market_meta(&payload, chrono::Utc::now().timestamp_millis())
 }
 
+pub async fn ingest_binance_market_meta(
+    db: &storage::Db,
+    client: &reqwest::Client,
+) -> Result<IngestionResult, IngestionError> {
+    let records = fetch_binance_market_meta(client).await?;
+    let rows_fetched = records.len();
+
+    for record in records {
+        db.record_crypto_market_meta(storage::CryptoMarketMetaCommand {
+            exchange: record.exchange,
+            symbol: record.symbol,
+            base_asset: record.base_asset,
+            quote_asset: record.quote_asset,
+            instrument_type: record.instrument_type,
+            contract_type: record.contract_type,
+            contract_size: record
+                .contract_size
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            settlement_asset: record.settlement_asset,
+            min_notional: record
+                .min_notional
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            min_qty: record.min_qty.as_deref().map(parse_decimal).transpose()?,
+            max_qty: record.max_qty.as_deref().map(parse_decimal).transpose()?,
+            price_precision: record.price_precision,
+            qty_precision: record.qty_precision,
+            price_tick: record
+                .price_tick
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            qty_step: record.qty_step.as_deref().map(parse_decimal).transpose()?,
+            maker_fee_rate: record
+                .maker_fee_rate
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            taker_fee_rate: record
+                .taker_fee_rate
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            funding_interval_hours: record.funding_interval_hours,
+            max_leverage: record
+                .max_leverage
+                .as_deref()
+                .map(parse_decimal)
+                .transpose()?,
+            margin_modes: record.margin_modes,
+            is_inverse: record.is_inverse,
+            is_active: record.is_active,
+            created_at_ms: record.created_at_ms,
+            updated_at_ms: record.updated_at_ms,
+        })
+        .await?;
+    }
+
+    Ok(IngestionResult {
+        source: "binance".to_string(),
+        table: "crypto_market_meta".to_string(),
+        rows_fetched,
+        rows_upserted: rows_fetched,
+    })
+}
+
 pub fn parse_binance_market_meta(
     payload: &str,
     fetched_at_ms: i64,
@@ -75,6 +145,13 @@ pub fn parse_binance_market_meta(
         .into_iter()
         .map(|symbol| symbol.into_market_meta(fetched_at_ms))
         .collect())
+}
+
+fn parse_decimal(value: &str) -> Result<rust_decimal::Decimal, IngestionError> {
+    rust_decimal::Decimal::from_str(value).map_err(|source| IngestionError::Decimal {
+        value: value.to_string(),
+        source,
+    })
 }
 
 impl BinanceSymbolInfo {
