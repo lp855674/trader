@@ -441,12 +441,204 @@ async fn contract_accounting_records_round_trip_decimal_strings() {
     .unwrap();
 
     let rates = db
-        .list_funding_rates("BINANCE", "BTCUSDT_PERP", 0, 2000)
+        .list_funding_rates("BINANCE", Some("BTCUSDT_PERP"), Some(0), Some(2000))
         .await
         .unwrap();
     assert_eq!(rates.len(), 1);
     assert_eq!(rates[0].funding_rate, "0.0002");
     assert_eq!(rates[0].mark_price.as_deref(), Some("65001.0000"));
+}
+
+#[tokio::test]
+async fn crypto_position_lifecycle_gets_open_update_and_close_state() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.upsert_crypto_position(NewCryptoPosition {
+        run_id: "run-lifecycle".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "ETHUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "isolated".to_string(),
+        position_side: "long".to_string(),
+        leverage: "5".to_string(),
+        qty: "1.25".to_string(),
+        avg_price: "3500.125".to_string(),
+        margin_used: "875.03125".to_string(),
+        funding_fee: "0".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "12.50".to_string(),
+        updated_at_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let opened = db
+        .get_crypto_position("run-lifecycle", "paper", "BINANCE", "ETHUSDT_PERP", "long")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opened.qty, "1.25");
+    assert_eq!(opened.avg_price, "3500.125");
+
+    db.upsert_crypto_position(NewCryptoPosition {
+        run_id: "run-lifecycle".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "ETHUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "isolated".to_string(),
+        position_side: "long".to_string(),
+        leverage: "5".to_string(),
+        qty: "2.00".to_string(),
+        avg_price: "3520.000".to_string(),
+        margin_used: "1408.000".to_string(),
+        funding_fee: "-0.42".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "25.00".to_string(),
+        updated_at_ms: 200,
+    })
+    .await
+    .unwrap();
+
+    db.upsert_crypto_position(NewCryptoPosition {
+        run_id: "run-lifecycle".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "ETHUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "isolated".to_string(),
+        position_side: "long".to_string(),
+        leverage: "5".to_string(),
+        qty: "0".to_string(),
+        avg_price: "0".to_string(),
+        margin_used: "0".to_string(),
+        funding_fee: "-0.42".to_string(),
+        realized_pnl: "38.75".to_string(),
+        unrealized_pnl: "0".to_string(),
+        updated_at_ms: 300,
+    })
+    .await
+    .unwrap();
+
+    let closed = db
+        .get_crypto_position("run-lifecycle", "paper", "BINANCE", "ETHUSDT_PERP", "long")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed.qty, "0");
+    assert_eq!(closed.margin_used, "0");
+    assert_eq!(closed.realized_pnl, "38.75");
+
+    let all_positions = db.list_crypto_positions("run-lifecycle").await.unwrap();
+    assert_eq!(all_positions.len(), 1);
+}
+
+#[tokio::test]
+async fn funding_rate_queries_support_optional_filters_and_latest_lookup() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    for (id, symbol, funding_time_ms, funding_rate) in [
+        ("funding-btc-1", "BTCUSDT_PERP", 1_000, "0.0001"),
+        ("funding-eth-1", "ETHUSDT_PERP", 2_000, "0.0003"),
+        ("funding-btc-2", "BTCUSDT_PERP", 3_000, "0.0002"),
+    ] {
+        db.upsert_funding_rate(NewFundingRate {
+            id: id.to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: symbol.to_string(),
+            funding_time_ms,
+            funding_rate: funding_rate.to_string(),
+            mark_price: Some("65000.00".to_string()),
+            source: "testnet".to_string(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let all_binance = db
+        .list_funding_rates("BINANCE", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(all_binance.len(), 3);
+
+    let btc_window = db
+        .list_funding_rates("BINANCE", Some("BTCUSDT_PERP"), Some(1_500), Some(4_000))
+        .await
+        .unwrap();
+    assert_eq!(btc_window.len(), 1);
+    assert_eq!(btc_window[0].id, "funding-btc-2");
+
+    let latest = db
+        .get_latest_funding_rate("BINANCE", "BTCUSDT_PERP")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest.funding_time_ms, 3_000);
+    assert_eq!(latest.funding_rate, "0.0002");
+}
+
+#[tokio::test]
+async fn funding_settlement_persists_position_funding_fee_and_realized_pnl() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.upsert_crypto_position(NewCryptoPosition {
+        run_id: "run-funding-settlement".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "cross".to_string(),
+        position_side: "long".to_string(),
+        leverage: "3".to_string(),
+        qty: "0.5".to_string(),
+        avg_price: "65000".to_string(),
+        margin_used: "10833.333333333333333333333333".to_string(),
+        funding_fee: "0".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+        updated_at_ms: 1_000,
+    })
+    .await
+    .unwrap();
+
+    db.upsert_crypto_position(NewCryptoPosition {
+        run_id: "run-funding-settlement".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "cross".to_string(),
+        position_side: "long".to_string(),
+        leverage: "3".to_string(),
+        qty: "0.5".to_string(),
+        avg_price: "65000".to_string(),
+        margin_used: "10833.333333333333333333333333".to_string(),
+        funding_fee: "-3.25".to_string(),
+        realized_pnl: "-3.25".to_string(),
+        unrealized_pnl: "0".to_string(),
+        updated_at_ms: 2_000,
+    })
+    .await
+    .unwrap();
+
+    let settled = db
+        .get_crypto_position(
+            "run-funding-settlement",
+            "paper",
+            "BINANCE",
+            "BTCUSDT_PERP",
+            "long",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settled.funding_fee, "-3.25");
+    assert_eq!(settled.realized_pnl, "-3.25");
+    assert_eq!(settled.updated_at_ms, 2_000);
 }
 
 #[tokio::test]

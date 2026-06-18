@@ -3,7 +3,7 @@ use chrono::{TimeZone, Utc};
 use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use trader_core::OrderRequest;
 use uuid::Uuid;
 
@@ -1582,6 +1582,90 @@ impl Db {
             .collect())
     }
 
+    pub async fn get_crypto_position(
+        &self,
+        run_id: &str,
+        account_id: &str,
+        exchange: &str,
+        symbol: &str,
+        position_side: &str,
+    ) -> StorageResult<Option<StoredCryptoPosition>> {
+        type CryptoPositionRow = (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+        );
+
+        let row = sqlx::query_as::<_, CryptoPositionRow>(
+            r#"
+            SELECT run_id, account_id, exchange, symbol, asset_class, margin_mode,
+                   position_side, leverage, qty, avg_price, margin_used, funding_fee,
+                   realized_pnl, unrealized_pnl, updated_at_ms
+            FROM crypto_positions
+            WHERE run_id = ?
+              AND account_id = ?
+              AND exchange = ?
+              AND symbol = ?
+              AND position_side = ?
+            "#,
+        )
+        .bind(run_id)
+        .bind(account_id)
+        .bind(exchange)
+        .bind(symbol)
+        .bind(position_side)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(
+                run_id,
+                account_id,
+                exchange,
+                symbol,
+                asset_class,
+                margin_mode,
+                position_side,
+                leverage,
+                qty,
+                avg_price,
+                margin_used,
+                funding_fee,
+                realized_pnl,
+                unrealized_pnl,
+                updated_at_ms,
+            )| StoredCryptoPosition {
+                run_id,
+                account_id,
+                exchange,
+                symbol,
+                asset_class,
+                margin_mode,
+                position_side,
+                leverage,
+                qty,
+                avg_price,
+                margin_used,
+                funding_fee,
+                realized_pnl,
+                unrealized_pnl,
+                updated_at_ms,
+            },
+        ))
+    }
+
     pub async fn upsert_funding_rate(&self, rate: NewFundingRate) -> StorageResult<()> {
         sqlx::query(
             r#"
@@ -1611,26 +1695,35 @@ impl Db {
     pub async fn list_funding_rates(
         &self,
         exchange: &str,
-        symbol: &str,
-        start_ms: i64,
-        end_ms: i64,
+        symbol: Option<&str>,
+        start_ms: Option<i64>,
+        end_ms: Option<i64>,
     ) -> StorageResult<Vec<StoredFundingRate>> {
-        let rows =
-            sqlx::query_as::<_, (String, String, String, i64, String, Option<String>, String)>(
-                r#"
+        let mut query = QueryBuilder::<Sqlite>::new(
+            r#"
             SELECT id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source
             FROM funding_rates
-            WHERE exchange = ?
-              AND symbol = ?
-              AND funding_time_ms >= ?
-              AND funding_time_ms < ?
-            ORDER BY funding_time_ms, id
             "#,
-            )
-            .bind(exchange)
-            .bind(symbol)
-            .bind(start_ms)
-            .bind(end_ms)
+        );
+        query.push(" WHERE exchange = ");
+        query.push_bind(exchange);
+
+        if let Some(symbol) = symbol {
+            query.push(" AND symbol = ");
+            query.push_bind(symbol);
+        }
+        if let Some(start_ms) = start_ms {
+            query.push(" AND funding_time_ms >= ");
+            query.push_bind(start_ms);
+        }
+        if let Some(end_ms) = end_ms {
+            query.push(" AND funding_time_ms < ");
+            query.push_bind(end_ms);
+        }
+
+        query.push(" ORDER BY funding_time_ms, id");
+        let rows = query
+            .build_query_as::<(String, String, String, i64, String, Option<String>, String)>()
             .fetch_all(self.pool())
             .await?;
 
@@ -1650,6 +1743,42 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn get_latest_funding_rate(
+        &self,
+        exchange: &str,
+        symbol: &str,
+    ) -> StorageResult<Option<StoredFundingRate>> {
+        let row =
+            sqlx::query_as::<_, (String, String, String, i64, String, Option<String>, String)>(
+                r#"
+            SELECT id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source
+            FROM funding_rates
+            WHERE exchange = ?
+              AND symbol = ?
+            ORDER BY funding_time_ms DESC, id DESC
+            LIMIT 1
+            "#,
+            )
+            .bind(exchange)
+            .bind(symbol)
+            .fetch_optional(self.pool())
+            .await?;
+
+        Ok(row.map(
+            |(id, exchange, symbol, funding_time_ms, funding_rate, mark_price, source)| {
+                StoredFundingRate {
+                    id,
+                    exchange,
+                    symbol,
+                    funding_time_ms,
+                    funding_rate,
+                    mark_price,
+                    source,
+                }
+            },
+        ))
     }
 
     pub async fn upsert_crypto_market_meta(&self, meta: NewCryptoMarketMeta) -> StorageResult<()> {

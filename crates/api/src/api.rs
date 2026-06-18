@@ -153,9 +153,9 @@ struct FundingRateResponse {
 #[derive(Deserialize)]
 struct FundingRatesQuery {
     exchange: String,
-    symbol: String,
-    start_ms: i64,
-    end_ms: i64,
+    symbol: Option<String>,
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -963,7 +963,12 @@ async fn list_funding_rates(
 ) -> Result<Json<Vec<FundingRateResponse>>, ApiError> {
     let rates = state
         .db
-        .list_funding_rates(&query.exchange, &query.symbol, query.start_ms, query.end_ms)
+        .list_funding_rates(
+            &query.exchange,
+            query.symbol.as_deref(),
+            query.start_ms,
+            query.end_ms,
+        )
         .await?
         .into_iter()
         .map(funding_rate_response)
