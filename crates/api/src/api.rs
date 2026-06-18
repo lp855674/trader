@@ -369,6 +369,21 @@ struct SystemLogResponse {
     created_at_ms: i64,
 }
 
+#[derive(Serialize)]
+struct IngestionStatusResponse {
+    sources: Vec<IngestionSourceStatusResponse>,
+}
+
+#[derive(Serialize)]
+struct IngestionSourceStatusResponse {
+    name: String,
+    table: String,
+    ts_ms: i64,
+    rows_fetched: usize,
+    rows_upserted: usize,
+    duration_ms: i64,
+}
+
 pub fn router() -> Router {
     Router::new().route("/api/v1/health", get(health))
 }
@@ -389,6 +404,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/funding-rates", get(list_funding_rates))
         .route("/api/v1/crypto-market-meta", get(list_crypto_market_meta))
         .route("/api/v1/corporate-actions", get(list_corporate_actions))
+        .route("/api/v1/ingestion/status", get(ingestion_status))
         .route("/api/v1/account-balances", get(list_account_balances))
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
         .route("/api/v1/cash/snapshots", get(list_cash_snapshots))
@@ -435,6 +451,25 @@ pub fn router_with_state(state: AppState) -> Router {
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn ingestion_status(
+    State(state): State<AppState>,
+) -> Result<Json<IngestionStatusResponse>, ApiError> {
+    let statuses = data::ingestion::tracker::last_ingestions(&state.db).await?;
+    Ok(Json(IngestionStatusResponse {
+        sources: statuses
+            .into_iter()
+            .map(|status| IngestionSourceStatusResponse {
+                name: status.source,
+                table: status.table,
+                ts_ms: status.ts_ms,
+                rows_fetched: status.rows_fetched,
+                rows_upserted: status.rows_upserted,
+                duration_ms: status.duration_ms,
+            })
+            .collect(),
+    }))
 }
 
 async fn broker_status() -> Result<Json<Vec<BrokerStatus>>, ApiError> {
@@ -2215,6 +2250,12 @@ impl From<config::ConfigError> for ApiError {
 
 impl From<data::DataError> for ApiError {
     fn from(error: data::DataError) -> Self {
+        Self(error.into())
+    }
+}
+
+impl From<data::ingestion::IngestionError> for ApiError {
+    fn from(error: data::ingestion::IngestionError) -> Self {
         Self(error.into())
     }
 }

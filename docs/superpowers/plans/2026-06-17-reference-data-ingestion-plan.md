@@ -405,7 +405,7 @@ git commit -m "feat: ingestion tracker and CLI commands"
 - Modify: `crates/api/tests/api_tests.rs`
 - Modify: `docs/api.md`
 
-- [ ] **Step 1: Add ingestion config**
+- [x] **Step 1: Add ingestion config**
 
 ```toml
 [ingestion]
@@ -415,7 +415,7 @@ fetch_interval_minutes = 60
 symbols = ["BTCUSDT", "ETHUSDT"]
 ```
 
-- [ ] **Step 2: Implement scheduled ingestion**
+- [x] **Step 2: Implement scheduled ingestion**
 
 ```rust
 pub async fn run_scheduled_ingestion(db: &Db, config: &IngestionConfig) -> Result<(), IngestionError> {
@@ -427,7 +427,7 @@ pub async fn run_scheduled_ingestion(db: &Db, config: &IngestionConfig) -> Resul
 }
 ```
 
-- [ ] **Step 3: Add API status endpoint**
+- [x] **Step 3: Add API status endpoint**
 
 ```
 GET /api/v1/ingestion/status
@@ -448,12 +448,12 @@ Response:
 }
 ```
 
-- [ ] **Step 4: Add tests and docs**
+- [x] **Step 4: Add tests and docs**
 
 - API test for ingestion status endpoint.
 - `docs/api.md` documentation.
 
-- [ ] **Step 5: Run full acceptance**
+- [x] **Step 5: Run full acceptance**
 
 ```powershell
 cargo test -p data ingestion
@@ -464,7 +464,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/data crates/config crates/api apps/trader-cli docs/api.md

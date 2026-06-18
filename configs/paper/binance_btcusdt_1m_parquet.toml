@@ -46,3 +46,9 @@ fee_bps = "10"
 
 [live]
 enabled = false
+
+[ingestion]
+enabled = true
+sources = ["binance"]
+fetch_interval_minutes = 60
+symbols = ["BTCUSDT"]

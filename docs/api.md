@@ -31,6 +31,7 @@ GET  /api/v1/positions
 GET  /api/v1/funding-rates
 GET  /api/v1/crypto-market-meta
 GET  /api/v1/corporate-actions
+GET  /api/v1/ingestion/status
 GET  /api/v1/account-balances
 GET  /api/v1/portfolio/snapshots
 GET  /api/v1/cash/snapshots
@@ -63,7 +64,24 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
-`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Automatic exchange/corporate-action ingestion is still follow-up work.
+`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`.
+
+`GET /api/v1/ingestion/status` response:
+
+```json
+{
+  "sources": [
+    {
+      "name": "binance",
+      "table": "funding_rates",
+      "ts_ms": 1700000000000,
+      "rows_fetched": 3,
+      "rows_upserted": 2,
+      "duration_ms": 25
+    }
+  ]
+}
+```
 
 ```json
 [

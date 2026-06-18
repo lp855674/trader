@@ -74,6 +74,71 @@ fn parses_backtest_config() {
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert!(!config.broker.order_submit_enabled);
     assert!(!config.live.enabled);
+    assert!(!config.ingestion.enabled);
+    assert_eq!(config.ingestion.fetch_interval_minutes, 60);
+}
+
+#[test]
+fn parses_ingestion_config() {
+    let config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "ingestion-config"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+
+        [ingestion]
+        enabled = true
+        sources = ["binance", "yahoo"]
+        fetch_interval_minutes = 30
+        symbols = ["BTCUSDT", "AAPL"]
+        "#,
+    )
+    .unwrap();
+
+    assert!(config.ingestion.enabled);
+    assert_eq!(config.ingestion.sources, vec!["binance", "yahoo"]);
+    assert_eq!(config.ingestion.fetch_interval_minutes, 30);
+    assert_eq!(config.ingestion.symbols, vec!["BTCUSDT", "AAPL"]);
 }
 
 #[test]

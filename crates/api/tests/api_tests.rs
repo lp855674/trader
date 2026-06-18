@@ -5,7 +5,7 @@ use rust_decimal::Decimal;
 use std::path::PathBuf;
 use storage::{
     CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
-    FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand,
+    FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
 };
 use tower::ServiceExt;
 
@@ -578,6 +578,52 @@ async fn corporate_actions_route_returns_filtered_actions() {
     assert_eq!(action["ratio"], "4:1");
     assert!(action["cash_amount"].is_null());
     assert_eq!(action["source"], "fixture");
+}
+
+#[tokio::test]
+async fn ingestion_status_route_returns_tracker_status() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_system_log(SystemLogCommand {
+        run_id: None,
+        ts_ms: 1234,
+        level: "INFO".to_string(),
+        target: "ingestion".to_string(),
+        message: "ingested 2 rows into funding_rates from binance".to_string(),
+        fields: Some(serde_json::json!({
+            "source": "binance",
+            "table": "funding_rates",
+            "rows_fetched": 3,
+            "rows_upserted": 2,
+            "duration_ms": 25
+        })),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/ingestion/status")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let sources = body["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["name"], "binance");
+    assert_eq!(sources[0]["table"], "funding_rates");
+    assert_eq!(sources[0]["rows_fetched"], 3);
+    assert_eq!(sources[0]["rows_upserted"], 2);
+    assert_eq!(sources[0]["duration_ms"], 25);
 }
 
 #[tokio::test]

@@ -10,6 +10,7 @@ path = "src/data.rs"
 
 [dependencies]
 chrono.workspace = true
+config.workspace = true
 csv = "1"
 polars.workspace = true
 reqwest.workspace = true

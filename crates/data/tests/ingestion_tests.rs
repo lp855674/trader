@@ -1,5 +1,5 @@
 use data::ingestion::{
-    IngestionResult,
+    IngestionResult, run_scheduled_ingestion,
     binance_funding::{filter_funding_rates_after, parse_binance_funding_history},
     binance_meta::parse_binance_market_meta,
     corporate_actions::parse_yahoo_corporate_actions,
@@ -174,4 +174,16 @@ async fn ingestion_tracker_logs_status() {
     assert_eq!(statuses[0].rows_fetched, 3);
     assert_eq!(statuses[0].rows_upserted, 2);
     assert_eq!(statuses[0].duration_ms, 25);
+}
+
+#[tokio::test]
+async fn ingestion_scheduled_disabled_returns_no_work() {
+    let db = storage::Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let client = reqwest::Client::new();
+    let config = config::IngestionConfig::default();
+
+    let results = run_scheduled_ingestion(&db, &client, &config).await.unwrap();
+
+    assert!(results.is_empty());
 }

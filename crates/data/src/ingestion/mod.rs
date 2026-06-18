@@ -3,6 +3,8 @@ pub mod binance_meta;
 pub mod corporate_actions;
 pub mod tracker;
 
+use std::time::Instant;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CryptoMarketMeta {
     pub exchange: String,
@@ -80,4 +82,62 @@ pub struct IngestionResult {
     pub table: String,
     pub rows_fetched: usize,
     pub rows_upserted: usize,
+}
+
+pub async fn run_scheduled_ingestion(
+    db: &storage::Db,
+    client: &reqwest::Client,
+    config: &config::IngestionConfig,
+) -> Result<Vec<IngestionResult>, IngestionError> {
+    if !config.enabled {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    for source in &config.sources {
+        match source.as_str() {
+            "binance" => {
+                let started = Instant::now();
+                let result = binance_meta::ingest_binance_market_meta(db, client).await?;
+                tracker::IngestionTracker::log_ingestion(db, &result, elapsed_millis_i64(started))
+                    .await?;
+                results.push(result);
+
+                for symbol in &config.symbols {
+                    let started = Instant::now();
+                    let result =
+                        binance_funding::ingest_binance_funding_rates(db, client, symbol).await?;
+                    tracker::IngestionTracker::log_ingestion(
+                        db,
+                        &result,
+                        elapsed_millis_i64(started),
+                    )
+                    .await?;
+                    results.push(result);
+                }
+            }
+            "yahoo" => {
+                for symbol in &config.symbols {
+                    let started = Instant::now();
+                    let result =
+                        corporate_actions::ingest_yahoo_corporate_actions(db, client, symbol)
+                            .await?;
+                    tracker::IngestionTracker::log_ingestion(
+                        db,
+                        &result,
+                        elapsed_millis_i64(started),
+                    )
+                    .await?;
+                    results.push(result);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(results)
+}
+
+fn elapsed_millis_i64(started: Instant) -> i64 {
+    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)
 }

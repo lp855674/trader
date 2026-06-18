@@ -54,6 +54,8 @@ pub struct AppConfig {
     pub broker: BrokerConfig,
     pub paper: PaperConfig,
     pub live: LiveConfig,
+    #[serde(default)]
+    pub ingestion: IngestionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -226,6 +228,33 @@ pub struct PaperConfig {
 pub struct LiveConfig {
     pub enabled: bool,
     pub heartbeat_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IngestionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default = "default_ingestion_fetch_interval_minutes")]
+    pub fetch_interval_minutes: u64,
+    #[serde(default)]
+    pub symbols: Vec<String>,
+}
+
+impl Default for IngestionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sources: Vec::new(),
+            fetch_interval_minutes: default_ingestion_fetch_interval_minutes(),
+            symbols: Vec::new(),
+        }
+    }
+}
+
+fn default_ingestion_fetch_interval_minutes() -> u64 {
+    60
 }
 
 impl AppConfig {
