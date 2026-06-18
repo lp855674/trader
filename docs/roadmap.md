@@ -15,11 +15,34 @@ Trader 采用渐进式开发路线。
 - Keep `event_store` as immutable audit truth.
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
-- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API query surface; runtime accounting still needs funding settlement and reconciliation before claiming full crypto derivative accounting.
+- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, and Binance reconciliation has drift-detection tests. Production crypto derivative accounting still needs real broker reconciliation scheduling, IBKR contract reconciliation, and reference-data ingestion.
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime; live/reconciliation snapshot capture remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config approval/release lifecycle remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; broader production log indexing remains follow-up work.
 - `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; automatic ingestion remains follow-up work.
+
+## Contract Runtime Accounting Milestone
+
+Current status:
+
+```text
+1. Storage boundary: complete
+2. Simulated accounting: complete for paper CRYPTO_PERP / CRYPTO_FUTURE fills
+3. Funding settlement: complete for simulated paper funding events
+4. Broker reconciliation: Binance drift detection covered by broker tests
+5. Contract risk checks: leverage, margin ratio, notional, liquidation buffer, funding bounds
+6. CLI/API readback: complete for contract positions and funding rates
+```
+
+Remaining:
+
+```text
+1. Reference-data ingestion for exchange contract metadata and historical funding rates
+2. Scheduled broker reported position snapshots
+3. IBKR contract reconciliation
+4. Live/reconciliation snapshot persistence
+5. Production alerts and audit reports for reconciliation drift
+```
 
 目标：
 

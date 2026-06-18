@@ -54,7 +54,7 @@ The current implemented SQLite schema is split across migrations:
 
 The current migrations cover the 24 target SQLite tables below, plus `event_store` as the immutable audit truth. A table existing in migration means the storage boundary exists; it does not mean every runtime path already writes it automatically.
 
-Paper runtime writes `portfolio_snapshots`, `cash_snapshots`, and `position_snapshots` during local paper runs. API-launched Backtest, Paper, and Replay runs write a `RUN` config snapshot to `configs`, store the parsed config in `strategy_runs.config_json`, expose config snapshots through read-only API query routes, and index run lifecycle messages in `system_logs`. `crypto_positions`, `funding_rates`, `crypto_market_meta`, and `corporate_actions_meta` have read-only API query routes, but full contract runtime accounting and automatic reference-data ingestion are not wired yet. Live/reconciliation snapshot capture, config approval/release lifecycle, and broader production log indexing are still separate production-hardening tasks.
+Paper runtime writes `portfolio_snapshots`, `cash_snapshots`, `position_snapshots`, and simulated contract `crypto_positions` during local paper runs. Simulated funding settlement updates contract funding and realized PnL fields. API-launched Backtest, Paper, and Replay runs write a `RUN` config snapshot to `configs`, store the parsed config in `strategy_runs.config_json`, expose config snapshots through read-only API query routes, and index run lifecycle messages in `system_logs`. `crypto_positions`, `funding_rates`, `crypto_market_meta`, and `corporate_actions_meta` have read-only API query routes; contract positions and funding rates also have CLI readback commands. Automatic reference-data ingestion, live/reconciliation snapshot capture, config approval/release lifecycle, IBKR contract reconciliation, and broader production log indexing are still separate production-hardening tasks.
 
 ---
 
@@ -941,26 +941,21 @@ ON crypto_market_meta(instrument_type);
 
 ```sql
 CREATE TABLE IF NOT EXISTS funding_rates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
+    id TEXT PRIMARY KEY,
     exchange TEXT NOT NULL,
     symbol TEXT NOT NULL,
-
-    funding_time INTEGER NOT NULL,
+    funding_time_ms INTEGER NOT NULL,
     funding_rate TEXT NOT NULL,
-
     mark_price TEXT,
-    index_price TEXT,
+    source TEXT NOT NULL,
 
-    created_at INTEGER NOT NULL,
-
-    UNIQUE(exchange, symbol, funding_time)
+    UNIQUE(exchange, symbol, funding_time_ms)
 );
 ```
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_funding_rates_symbol_time
-ON funding_rates(exchange, symbol, funding_time);
+ON funding_rates(exchange, symbol, funding_time_ms);
 ```
 
 ---
@@ -1378,46 +1373,23 @@ CRYPTO_FUTURE
 
 ```sql
 CREATE TABLE IF NOT EXISTS crypto_positions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     run_id TEXT NOT NULL,
-
+    account_id TEXT NOT NULL,
     exchange TEXT NOT NULL,
     symbol TEXT NOT NULL,
-
     asset_class TEXT NOT NULL,
-
-    position_side TEXT NOT NULL,
-
-    qty TEXT NOT NULL,
-    available_qty TEXT NOT NULL,
-
-    entry_price TEXT NOT NULL,
-    mark_price TEXT,
-    liquidation_price TEXT,
-
-    leverage TEXT,
     margin_mode TEXT NOT NULL,
-
-    margin_asset TEXT,
-    initial_margin TEXT,
-    maintenance_margin TEXT,
-
-    unrealized_pnl TEXT,
-    realized_pnl TEXT,
-
+    position_side TEXT NOT NULL,
+    leverage TEXT NOT NULL,
+    qty TEXT NOT NULL,
+    avg_price TEXT NOT NULL,
+    margin_used TEXT NOT NULL,
     funding_fee TEXT NOT NULL DEFAULT '0',
+    realized_pnl TEXT NOT NULL DEFAULT '0',
+    unrealized_pnl TEXT NOT NULL DEFAULT '0',
+    updated_at_ms INTEGER NOT NULL,
 
-    margin_ratio TEXT,
-
-    updated_ts INTEGER NOT NULL,
-
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-
-    UNIQUE(run_id, exchange, symbol, position_side),
-
-    FOREIGN KEY(run_id) REFERENCES strategy_runs(id)
+    PRIMARY KEY (run_id, account_id, exchange, symbol, position_side)
 );
 ```
 
