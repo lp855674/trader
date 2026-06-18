@@ -377,6 +377,43 @@ fn algorithm_engine_rejects_derivative_target_above_margin_limit() {
 }
 
 #[test]
+fn algorithm_engine_rejects_contract_order_exceeding_max_leverage() {
+    let symbol = "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP";
+    let mut engine = AlgorithmEngine::new_with_universe(
+        AlgorithmEngineSettings {
+            run_id: "run-contract-leverage".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: symbol.to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(126),
+            max_margin_used: dec!(1000000),
+            trading_halted: false,
+            allow_short: true,
+            shortable_symbols: BTreeSet::from([symbol.to_string()]),
+            initial_cash: dec!(100000),
+        },
+        Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
+        Box::new(SymbolEchoAlphaModel),
+    );
+
+    let error = engine
+        .on_market_slice(MarketSlice::new(
+            1,
+            vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
+        ))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("contract leverage exceeds max"));
+}
+
+#[test]
 fn algorithm_engine_generates_orders_for_each_selected_symbol_in_market_slice() {
     let mut engine = AlgorithmEngine::new_with_universe(
         AlgorithmEngineSettings {

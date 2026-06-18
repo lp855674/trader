@@ -12,3 +12,6 @@ path = "src/market_rules.rs"
 rust_decimal.workspace = true
 thiserror.workspace = true
 trader_core.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true

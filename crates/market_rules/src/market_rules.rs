@@ -22,6 +22,87 @@ pub enum MarketRuleError {
     UnsupportedSymbol(String),
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ContractRiskError {
+    #[error("contract leverage exceeds max leverage")]
+    MaxLeverage,
+    #[error("contract margin ratio is below minimum")]
+    InsufficientMargin,
+    #[error("contract position notional exceeds max notional")]
+    MaxPositionNotional,
+    #[error("contract liquidation buffer is below minimum")]
+    LiquidationBuffer,
+    #[error("contract funding rate is outside allowed bounds")]
+    FundingRateBounds,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractRiskLimits {
+    pub max_leverage: Decimal,
+    pub min_margin_ratio: Decimal,
+    pub max_position_notional: Decimal,
+    pub liquidation_buffer_bps: Decimal,
+    pub max_abs_funding_rate: Decimal,
+}
+
+impl ContractRiskLimits {
+    pub fn crypto_perp() -> Self {
+        Self {
+            max_leverage: Decimal::from(125),
+            min_margin_ratio: Decimal::new(105, 2),
+            max_position_notional: Decimal::from(10_000_000),
+            liquidation_buffer_bps: Decimal::from(100),
+            max_abs_funding_rate: Decimal::new(1, 2),
+        }
+    }
+
+    pub fn crypto_future() -> Self {
+        Self::crypto_perp()
+    }
+
+    pub fn for_symbol(symbol: &str) -> Option<Self> {
+        let mut parts = symbol.split(':');
+        let market = parts.next();
+        let _exchange = parts.next();
+        let _code = parts.next();
+        let asset_class = parts.next();
+        if parts.next().is_some() {
+            return None;
+        }
+        match (market, asset_class) {
+            (Some("CRYPTO"), Some("CRYPTO_PERP")) => Some(Self::crypto_perp()),
+            (Some("CRYPTO"), Some("CRYPTO_FUTURE")) => Some(Self::crypto_future()),
+            _ => None,
+        }
+    }
+
+    pub fn validate(
+        &self,
+        leverage: Decimal,
+        position_notional: Decimal,
+        margin_ratio: Decimal,
+        liquidation_buffer_bps: Decimal,
+        funding_rate: Decimal,
+    ) -> Result<(), ContractRiskError> {
+        if leverage > self.max_leverage {
+            return Err(ContractRiskError::MaxLeverage);
+        }
+        if margin_ratio < self.min_margin_ratio {
+            return Err(ContractRiskError::InsufficientMargin);
+        }
+        if position_notional > self.max_position_notional {
+            return Err(ContractRiskError::MaxPositionNotional);
+        }
+        if liquidation_buffer_bps < self.liquidation_buffer_bps {
+            return Err(ContractRiskError::LiquidationBuffer);
+        }
+        if funding_rate.abs() > self.max_abs_funding_rate {
+            return Err(ContractRiskError::FundingRateBounds);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketRuleSet {
     pub lot_size: Decimal,

@@ -5,7 +5,7 @@ use alpha::AlphaModel;
 use data::{Bar, MarketSlice};
 use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
-use market_rules::MarketRuleSet;
+use market_rules::{ContractRiskLimits, MarketRuleSet};
 use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
 use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
@@ -666,6 +666,23 @@ impl AlgorithmEngine {
         };
         let market_rules = MarketRuleSet::for_symbol(&order.symbol)?;
         market_rules.validate_order(&order, bar.close)?;
+        if let Some(contract_limits) = ContractRiskLimits::for_symbol(&order.symbol) {
+            let target_notional = target.target_qty.abs() * bar.close;
+            let projected_margin = position_margin(&market_rules, target.target_qty, bar.close);
+            let equity = self.account_book.equity_with_prices(&self.last_prices);
+            let margin_ratio = if projected_margin == Decimal::ZERO {
+                Decimal::MAX
+            } else {
+                equity / projected_margin
+            };
+            contract_limits.validate(
+                self.settings.max_leverage,
+                target_notional,
+                margin_ratio,
+                contract_limits.liquidation_buffer_bps,
+                Decimal::ZERO,
+            )?;
+        }
         events.push(self.event(
             EngineEventKind::MarketRuleValidated,
             bar.ts_ms,

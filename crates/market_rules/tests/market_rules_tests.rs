@@ -1,5 +1,9 @@
-use market_rules::{MarketRuleError, MarketRuleProvider, MarketRuleSet, StaticMarketRuleProvider};
+use market_rules::{
+    ContractRiskError, ContractRiskLimits, MarketRuleError, MarketRuleProvider, MarketRuleSet,
+    StaticMarketRuleProvider,
+};
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[test]
@@ -116,6 +120,42 @@ fn selects_crypto_future_rules_from_symbol() {
     assert_eq!(rules.tick_size, Decimal::new(1, 2));
     assert_eq!(rules.min_notional, Decimal::from(5));
     assert_eq!(rules.initial_margin_rate, Decimal::new(1, 1));
+}
+
+#[test]
+fn contract_risk_limits_reject_excessive_leverage() {
+    let limits = ContractRiskLimits::crypto_perp();
+
+    assert_eq!(
+        limits
+            .validate(dec!(126), dec!(1000), dec!(2), dec!(200), dec!(0.0001))
+            .unwrap_err(),
+        ContractRiskError::MaxLeverage
+    );
+}
+
+#[test]
+fn contract_risk_limits_reject_insufficient_margin_ratio() {
+    let limits = ContractRiskLimits::crypto_perp();
+
+    assert_eq!(
+        limits
+            .validate(dec!(10), dec!(1000), dec!(1.01), dec!(200), dec!(0.0001))
+            .unwrap_err(),
+        ContractRiskError::InsufficientMargin
+    );
+}
+
+#[test]
+fn contract_risk_limits_reject_funding_rate_out_of_bounds() {
+    let limits = ContractRiskLimits::crypto_perp();
+
+    assert_eq!(
+        limits
+            .validate(dec!(10), dec!(1000), dec!(2), dec!(200), dec!(0.02))
+            .unwrap_err(),
+        ContractRiskError::FundingRateBounds
+    );
 }
 
 #[test]
