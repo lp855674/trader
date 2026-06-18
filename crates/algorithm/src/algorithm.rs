@@ -177,6 +177,331 @@ pub struct ExecutionReport {
     pub fee: Decimal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositionSide {
+    Long,
+    Short,
+}
+
+impl PositionSide {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Long => "long",
+            Self::Short => "short",
+        }
+    }
+
+    fn from_signed_qty(qty: Decimal) -> Option<Self> {
+        if qty > Decimal::ZERO {
+            Some(Self::Long)
+        } else if qty < Decimal::ZERO {
+            Some(Self::Short)
+        } else {
+            None
+        }
+    }
+
+    fn opposite(self) -> Self {
+        match self {
+            Self::Long => Self::Short,
+            Self::Short => Self::Long,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractFill {
+    pub run_id: String,
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub margin_mode: String,
+    pub side: OrderSide,
+    pub qty: Decimal,
+    pub price: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingRateEvent {
+    pub exchange: String,
+    pub symbol: String,
+    pub funding_time_ms: i64,
+    pub funding_rate: Decimal,
+    pub mark_price: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrokerPositionSnapshot {
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub position_side: PositionSide,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub margin_used: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractPosition {
+    pub run_id: String,
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub asset_class: String,
+    pub margin_mode: String,
+    pub position_side: PositionSide,
+    pub leverage: Decimal,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub margin_used: Decimal,
+    pub funding_fee: Decimal,
+    pub realized_pnl: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconciliationDrift {
+    pub symbol: String,
+    pub position_side: PositionSide,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReconciliationResult {
+    pub drifts: Vec<ReconciliationDrift>,
+}
+
+impl ReconciliationResult {
+    pub fn drift_count(&self) -> usize {
+        self.drifts.len()
+    }
+}
+
+pub type AccountingError = anyhow::Error;
+
+pub trait ContractAccountingBook {
+    fn on_fill<'a>(
+        &'a mut self,
+        fill: &'a ContractFill,
+    ) -> impl std::future::Future<Output = Result<(), AccountingError>> + Send + 'a;
+
+    fn on_funding<'a>(
+        &'a mut self,
+        rate: &'a FundingRateEvent,
+    ) -> impl std::future::Future<Output = Result<(), AccountingError>> + Send + 'a;
+
+    fn on_reconciliation<'a>(
+        &'a mut self,
+        broker_state: &'a BrokerPositionSnapshot,
+    ) -> impl std::future::Future<Output = Result<ReconciliationResult, AccountingError>> + Send + 'a;
+
+    fn get_position(&self, symbol: &str, side: PositionSide) -> Option<&ContractPosition>;
+}
+
+#[derive(Debug, Clone)]
+pub struct SimulatedContractAccounting {
+    account_id: String,
+    default_leverage: Decimal,
+    positions: BTreeMap<(String, PositionSide), ContractPosition>,
+}
+
+impl SimulatedContractAccounting {
+    pub fn new(account_id: String, default_leverage: Decimal) -> Self {
+        Self {
+            account_id,
+            default_leverage,
+            positions: BTreeMap::new(),
+        }
+    }
+
+    pub fn positions(&self) -> impl Iterator<Item = &ContractPosition> {
+        self.positions.values()
+    }
+
+    fn position_mut_for_fill(&mut self, fill: &ContractFill) -> &mut ContractPosition {
+        let signed_qty = signed_fill_qty(fill);
+        let fill_side = PositionSide::from_signed_qty(signed_qty).unwrap_or(PositionSide::Long);
+        let opposite_side = fill_side.opposite();
+        let opposite_key = (fill.symbol.clone(), opposite_side);
+        let target_side = if self
+            .positions
+            .get(&opposite_key)
+            .is_some_and(|position| position.qty != Decimal::ZERO)
+        {
+            opposite_side
+        } else {
+            fill_side
+        };
+        let key = (fill.symbol.clone(), target_side);
+        self.positions
+            .entry(key)
+            .or_insert_with(|| ContractPosition {
+                run_id: fill.run_id.clone(),
+                account_id: self.account_id.clone(),
+                exchange: fill.exchange.clone(),
+                symbol: fill.symbol.clone(),
+                asset_class: fill.asset_class.clone(),
+                margin_mode: fill.margin_mode.clone(),
+                position_side: target_side,
+                leverage: self.default_leverage,
+                qty: Decimal::ZERO,
+                avg_price: Decimal::ZERO,
+                margin_used: Decimal::ZERO,
+                funding_fee: Decimal::ZERO,
+                realized_pnl: Decimal::ZERO,
+                unrealized_pnl: Decimal::ZERO,
+                updated_at_ms: fill.ts_ms,
+            })
+    }
+
+    fn recalculate_margin(position: &mut ContractPosition) {
+        position.margin_used =
+            if position.qty == Decimal::ZERO || position.leverage == Decimal::ZERO {
+                Decimal::ZERO
+            } else {
+                position.qty.abs() * position.avg_price / position.leverage
+            };
+    }
+}
+
+impl ContractAccountingBook for SimulatedContractAccounting {
+    fn on_fill<'a>(
+        &'a mut self,
+        fill: &'a ContractFill,
+    ) -> impl std::future::Future<Output = Result<(), AccountingError>> + Send + 'a {
+        async move {
+            if fill.qty < Decimal::ZERO {
+                anyhow::bail!("contract fill quantity must be non-negative");
+            }
+
+            let signed_qty = signed_fill_qty(fill);
+            let position = self.position_mut_for_fill(fill);
+            let current_qty = position.qty;
+            let next_qty = current_qty + signed_qty;
+
+            if current_qty == Decimal::ZERO || same_sign(current_qty, signed_qty) {
+                let next_abs_qty = next_qty.abs();
+                position.avg_price = if next_abs_qty == Decimal::ZERO {
+                    Decimal::ZERO
+                } else {
+                    ((current_qty.abs() * position.avg_price) + (signed_qty.abs() * fill.price))
+                        / next_abs_qty
+                };
+            } else {
+                let closed_qty = current_qty.abs().min(signed_qty.abs());
+                let direction = if current_qty > Decimal::ZERO {
+                    Decimal::ONE
+                } else {
+                    -Decimal::ONE
+                };
+                position.realized_pnl += (fill.price - position.avg_price) * closed_qty * direction;
+                if next_qty == Decimal::ZERO {
+                    position.avg_price = Decimal::ZERO;
+                }
+            }
+
+            position.realized_pnl -= fill.fee;
+            position.qty = next_qty;
+            position.updated_at_ms = fill.ts_ms;
+            Self::recalculate_margin(position);
+            Ok(())
+        }
+    }
+
+    fn on_funding<'a>(
+        &'a mut self,
+        rate: &'a FundingRateEvent,
+    ) -> impl std::future::Future<Output = Result<(), AccountingError>> + Send + 'a {
+        async move {
+            for position in self
+                .positions
+                .values_mut()
+                .filter(|position| position.symbol == rate.symbol && position.qty != Decimal::ZERO)
+            {
+                let funding_fee = -(position.qty * rate.funding_rate * rate.mark_price);
+                position.funding_fee += funding_fee;
+                position.realized_pnl += funding_fee;
+                position.updated_at_ms = rate.funding_time_ms;
+            }
+            Ok(())
+        }
+    }
+
+    fn on_reconciliation<'a>(
+        &'a mut self,
+        broker_state: &'a BrokerPositionSnapshot,
+    ) -> impl std::future::Future<Output = Result<ReconciliationResult, AccountingError>> + Send + 'a
+    {
+        async move {
+            let mut result = ReconciliationResult::default();
+            let Some(position) =
+                self.get_position(&broker_state.symbol, broker_state.position_side)
+            else {
+                result.drifts.push(ReconciliationDrift {
+                    symbol: broker_state.symbol.clone(),
+                    position_side: broker_state.position_side,
+                    reason: "missing runtime position".to_string(),
+                });
+                return Ok(result);
+            };
+
+            if position.qty != broker_state.qty {
+                result.drifts.push(ReconciliationDrift {
+                    symbol: broker_state.symbol.clone(),
+                    position_side: broker_state.position_side,
+                    reason: format!(
+                        "qty mismatch runtime={} broker={}",
+                        position.qty, broker_state.qty
+                    ),
+                });
+            }
+            if position.avg_price != broker_state.avg_price {
+                result.drifts.push(ReconciliationDrift {
+                    symbol: broker_state.symbol.clone(),
+                    position_side: broker_state.position_side,
+                    reason: format!(
+                        "avg_price mismatch runtime={} broker={}",
+                        position.avg_price, broker_state.avg_price
+                    ),
+                });
+            }
+            if position.margin_used != broker_state.margin_used {
+                result.drifts.push(ReconciliationDrift {
+                    symbol: broker_state.symbol.clone(),
+                    position_side: broker_state.position_side,
+                    reason: format!(
+                        "margin mismatch runtime={} broker={}",
+                        position.margin_used, broker_state.margin_used
+                    ),
+                });
+            }
+            Ok(result)
+        }
+    }
+
+    fn get_position(&self, symbol: &str, side: PositionSide) -> Option<&ContractPosition> {
+        self.positions.get(&(symbol.to_string(), side))
+    }
+}
+
+fn signed_fill_qty(fill: &ContractFill) -> Decimal {
+    match fill.side {
+        OrderSide::Buy => fill.qty,
+        OrderSide::Sell => -fill.qty,
+    }
+}
+
+fn same_sign(left: Decimal, right: Decimal) -> bool {
+    (left > Decimal::ZERO && right > Decimal::ZERO)
+        || (left < Decimal::ZERO && right < Decimal::ZERO)
+}
+
 pub struct AlgorithmEngine {
     settings: AlgorithmEngineSettings,
     universe: Box<dyn UniverseSelector>,

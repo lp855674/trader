@@ -29,3 +29,4 @@ universe.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 rust_decimal_macros.workspace = true
+tokio.workspace = true

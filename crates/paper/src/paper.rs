@@ -9,8 +9,9 @@ pub use ibkr::{
 };
 
 use algorithm::{
-    AccountSnapshot, AlgorithmDecision, AlgorithmEngine, AlgorithmEngineSettings, EngineEvent,
-    ExecutionReport,
+    AccountSnapshot, AlgorithmDecision, AlgorithmEngine, AlgorithmEngineSettings,
+    ContractAccountingBook, ContractFill, ContractPosition, EngineEvent, ExecutionReport,
+    FundingRateEvent, SimulatedContractAccounting,
 };
 use async_trait::async_trait;
 use backtest::BacktestSummary;
@@ -21,8 +22,9 @@ use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{collections::BTreeSet, error::Error, fmt, time::Duration};
 use storage::{
-    Db, PaperExecutionCommand, PaperFailedOrderCommand, PaperFinalStateCommand, PaperOrderCommand,
-    PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand, StrategyRunStartCommand,
+    CryptoPositionCommand, Db, PaperExecutionCommand, PaperFailedOrderCommand,
+    PaperFinalStateCommand, PaperOrderCommand, PaperPortfolioSnapshotCommand, PositionCommand,
+    RuntimeEventCommand, StrategyRunStartCommand,
 };
 use strategies::{
     StrategyAlphaComponentConfig, StrategyAlphaConflictResolution, StrategyAlphaGateConfig,
@@ -68,6 +70,7 @@ pub struct PaperSettings {
     pub base_currency: String,
     pub slippage_bps: Decimal,
     pub fee_bps: Decimal,
+    pub simulated_funding_rate: Option<Decimal>,
     pub fast_window: usize,
     pub slow_window: usize,
     pub bar_delay_ms: u64,
@@ -124,6 +127,7 @@ impl PaperSettings {
             base_currency: "USD".to_string(),
             slippage_bps: Decimal::ZERO,
             fee_bps: Decimal::ZERO,
+            simulated_funding_rate: None,
             fast_window: 2,
             slow_window: 3,
             bar_delay_ms: 0,
@@ -338,6 +342,7 @@ struct PaperRunSession<'a> {
     started_at_ms: Option<i64>,
     ended_at_ms: i64,
     last_snapshot: AccountSnapshot,
+    contract_accounting: SimulatedContractAccounting,
 }
 
 impl<'a> PaperRunSession<'a> {
@@ -394,6 +399,10 @@ impl<'a> PaperRunSession<'a> {
             started_at_ms: None,
             ended_at_ms: 0,
             last_snapshot,
+            contract_accounting: SimulatedContractAccounting::new(
+                runtime.settings.account_id.clone(),
+                runtime.settings.max_leverage,
+            ),
         })
     }
 
@@ -460,9 +469,11 @@ impl<'a> PaperRunSession<'a> {
             self.last_snapshot = applied.snapshot;
             self.persist_execution_result(&decision, &order, &client_order_id, &fill, bar)
                 .await?;
+            self.persist_contract_fill(&order, &fill, bar).await?;
             self.orders += 1;
         }
 
+        self.settle_contract_funding(&market_slice).await?;
         self.persist_snapshot(market_slice.ts_ms).await
     }
 
@@ -530,6 +541,99 @@ impl<'a> PaperRunSession<'a> {
                 qty: fill.qty,
                 fee: fill.fee,
                 ts_ms: bar.ts_ms,
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn persist_contract_fill(
+        &mut self,
+        order: &OrderRequest,
+        fill: &ExecutedPaperOrder,
+        bar: &Bar,
+    ) -> anyhow::Result<()> {
+        if fill.qty == Decimal::ZERO {
+            return Ok(());
+        }
+        let Some((exchange, asset_class)) = contract_symbol_parts(&order.symbol) else {
+            return Ok(());
+        };
+
+        self.contract_accounting
+            .on_fill(&ContractFill {
+                run_id: self.runtime.settings.run_id.clone(),
+                account_id: self.runtime.settings.account_id.clone(),
+                exchange,
+                symbol: order.symbol.clone(),
+                asset_class,
+                margin_mode: "cross".to_string(),
+                side: order.side,
+                qty: fill.qty,
+                price: fill.price,
+                fee: fill.fee,
+                ts_ms: bar.ts_ms,
+            })
+            .await?;
+        self.persist_contract_positions_for_symbol(&order.symbol)
+            .await
+    }
+
+    async fn settle_contract_funding(&mut self, market_slice: &MarketSlice) -> anyhow::Result<()> {
+        let Some(funding_rate) = self.runtime.settings.simulated_funding_rate else {
+            return Ok(());
+        };
+
+        for (symbol, bar) in market_slice.iter() {
+            let Some((exchange, _asset_class)) = contract_symbol_parts(symbol) else {
+                continue;
+            };
+            self.contract_accounting
+                .on_funding(&FundingRateEvent {
+                    exchange,
+                    symbol: symbol.to_string(),
+                    funding_time_ms: bar.ts_ms,
+                    funding_rate,
+                    mark_price: bar.close,
+                })
+                .await?;
+            self.persist_contract_positions_for_symbol(symbol).await?;
+        }
+        Ok(())
+    }
+
+    async fn persist_contract_positions_for_symbol(&self, symbol: &str) -> anyhow::Result<()> {
+        let positions = self
+            .contract_accounting
+            .positions()
+            .filter(|position| position.symbol == symbol)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for position in positions {
+            self.persist_contract_position(position).await?;
+        }
+        Ok(())
+    }
+
+    async fn persist_contract_position(&self, position: ContractPosition) -> anyhow::Result<()> {
+        self.runtime
+            .db
+            .record_crypto_position(CryptoPositionCommand {
+                run_id: position.run_id,
+                account_id: position.account_id,
+                exchange: position.exchange,
+                symbol: position.symbol,
+                asset_class: position.asset_class,
+                margin_mode: position.margin_mode,
+                position_side: position.position_side.as_str().to_string(),
+                leverage: position.leverage,
+                qty: position.qty,
+                avg_price: position.avg_price,
+                margin_used: position.margin_used,
+                funding_fee: position.funding_fee,
+                realized_pnl: position.realized_pnl,
+                unrealized_pnl: position.unrealized_pnl,
+                updated_at_ms: position.updated_at_ms,
             })
             .await?;
         Ok(())
@@ -633,5 +737,21 @@ impl<'a> PaperRunSession<'a> {
             .into_iter()
             .next()
             .unwrap_or_else(|| self.runtime.settings.symbol.clone())
+    }
+}
+
+fn contract_symbol_parts(symbol: &str) -> Option<(String, String)> {
+    let mut parts = symbol.split(':');
+    let market = parts.next()?;
+    let exchange = parts.next()?;
+    let _code = parts.next()?;
+    let asset_class = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if market == "CRYPTO" && matches!(asset_class, "CRYPTO_PERP" | "CRYPTO_FUTURE") {
+        Some((exchange.to_string(), asset_class.to_string()))
+    } else {
+        None
     }
 }

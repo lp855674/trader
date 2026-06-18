@@ -1,6 +1,8 @@
 use algorithm::{
     AccountingUpdatedPayload, AlgorithmEngine, AlgorithmEngineSettings, AlgorithmOrderPayload,
-    AlphaGeneratedPayload, EngineEventKind, UniverseSelectedPayload,
+    AlphaGeneratedPayload, BrokerPositionSnapshot, ContractAccountingBook, ContractFill,
+    EngineEventKind, FundingRateEvent, PositionSide, SimulatedContractAccounting,
+    UniverseSelectedPayload,
 };
 use alpha::{AlphaModel, CompositeAlphaModel};
 use data::{Bar, MarketSlice, SymbolBar};
@@ -8,7 +10,97 @@ use events::{EventBus, SignalEvent, SignalSide};
 use rust_decimal_macros::dec;
 use std::collections::BTreeSet;
 use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
+use trader_core::OrderSide;
 use universe::StaticUniverseSelector;
+
+#[tokio::test]
+async fn contract_accounting_opens_updates_and_closes_long_position() {
+    let mut book = SimulatedContractAccounting::new("paper".to_string(), dec!(5));
+
+    book.on_fill(&contract_fill(OrderSide::Buy, dec!(1), dec!(100), 1))
+        .await
+        .unwrap();
+    book.on_fill(&contract_fill(OrderSide::Buy, dec!(1), dec!(120), 2))
+        .await
+        .unwrap();
+
+    let increased = book
+        .get_position(
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            PositionSide::Long,
+        )
+        .unwrap();
+    assert_eq!(increased.qty, dec!(2));
+    assert_eq!(increased.avg_price, dec!(110));
+    assert_eq!(increased.margin_used, dec!(44));
+
+    book.on_fill(&contract_fill(OrderSide::Sell, dec!(2), dec!(130), 3))
+        .await
+        .unwrap();
+
+    let closed = book
+        .get_position(
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            PositionSide::Long,
+        )
+        .unwrap();
+    assert_eq!(closed.qty, dec!(0));
+    assert_eq!(closed.avg_price, dec!(0));
+    assert_eq!(closed.margin_used, dec!(0));
+    assert_eq!(closed.realized_pnl, dec!(40));
+}
+
+#[tokio::test]
+async fn contract_accounting_settles_funding_into_fee_and_realized_pnl() {
+    let mut book = SimulatedContractAccounting::new("paper".to_string(), dec!(10));
+
+    book.on_fill(&contract_fill(OrderSide::Buy, dec!(0.5), dec!(65000), 1))
+        .await
+        .unwrap();
+    book.on_funding(&FundingRateEvent {
+        exchange: "BINANCE".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        funding_time_ms: 2,
+        funding_rate: dec!(0.0001),
+        mark_price: dec!(65000),
+    })
+    .await
+    .unwrap();
+
+    let position = book
+        .get_position(
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            PositionSide::Long,
+        )
+        .unwrap();
+    assert_eq!(position.funding_fee, dec!(-3.25));
+    assert_eq!(position.realized_pnl, dec!(-3.25));
+}
+
+#[tokio::test]
+async fn contract_accounting_reconciliation_reports_qty_drift() {
+    let mut book = SimulatedContractAccounting::new("paper".to_string(), dec!(5));
+    book.on_fill(&contract_fill(OrderSide::Buy, dec!(1), dec!(100), 1))
+        .await
+        .unwrap();
+
+    let report = book
+        .on_reconciliation(&BrokerPositionSnapshot {
+            account_id: "paper".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+            position_side: PositionSide::Long,
+            qty: dec!(1.25),
+            avg_price: dec!(100),
+            margin_used: dec!(20),
+            ts_ms: 2,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(report.drift_count(), 1);
+    assert!(report.drifts[0].reason.contains("qty mismatch"));
+}
 
 #[test]
 fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
@@ -476,6 +568,27 @@ impl FixedAlphaModel {
 impl AlphaModel for FixedAlphaModel {
     fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
         Some(self.signal.clone())
+    }
+}
+
+fn contract_fill(
+    side: OrderSide,
+    qty: rust_decimal::Decimal,
+    price: rust_decimal::Decimal,
+    ts_ms: i64,
+) -> ContractFill {
+    ContractFill {
+        run_id: "run-contract-accounting".to_string(),
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        margin_mode: "cross".to_string(),
+        side,
+        qty,
+        price,
+        fee: dec!(0),
+        ts_ms,
     }
 }
 

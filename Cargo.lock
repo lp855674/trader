@@ -70,6 +70,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strategies",
+ "tokio",
  "trader-core",
  "universe",
 ]

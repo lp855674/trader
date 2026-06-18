@@ -2391,6 +2391,7 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
         fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,
+        simulated_funding_rate: None,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),

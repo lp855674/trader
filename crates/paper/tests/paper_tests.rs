@@ -83,6 +83,72 @@ async fn paper_runtime_uses_market_rules_for_crypto_spot_symbols() {
 }
 
 #[tokio::test]
+async fn paper_crypto_perp_run_writes_crypto_positions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.symbol = "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string();
+    settings.symbols = vec![settings.symbol.clone()];
+    settings.order_qty = dec!(1);
+    settings.max_margin_used = dec!(1000000);
+    settings.max_abs_qty = dec!(10);
+    settings.max_order_qty = dec!(10);
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(100), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(101), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(120), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let positions = db.list_crypto_positions(&settings.run_id).await.unwrap();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].account_id, "paper");
+    assert_eq!(positions[0].exchange, "BINANCE");
+    assert_eq!(
+        positions[0].symbol,
+        "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"
+    );
+    assert_eq!(positions[0].asset_class, "CRYPTO_PERP");
+    assert_eq!(positions[0].position_side, "long");
+    assert_eq!(positions[0].qty, "1");
+    assert_eq!(positions[0].avg_price, "120");
+}
+
+#[tokio::test]
+async fn paper_crypto_perp_funding_settlement_updates_crypto_position_pnl() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.symbol = "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string();
+    settings.symbols = vec![settings.symbol.clone()];
+    settings.order_qty = dec!(1);
+    settings.max_margin_used = dec!(1000000);
+    settings.max_abs_qty = dec!(10);
+    settings.max_order_qty = dec!(10);
+    settings.simulated_funding_rate = Some(dec!(0.0001));
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(100), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(101), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(120), dec!(1)),
+    ];
+
+    PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    let positions = db.list_crypto_positions(&settings.run_id).await.unwrap();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].funding_fee, "-0.0120");
+    assert_eq!(positions[0].realized_pnl, "-0.0120");
+}
+
+#[tokio::test]
 async fn paper_runtime_rejects_projected_exposure_above_limit() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
