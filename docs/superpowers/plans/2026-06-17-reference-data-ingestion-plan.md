@@ -208,7 +208,7 @@ git commit -m "feat: binance market meta ingestion"
 - Create: `crates/data/src/ingestion/binance_funding.rs`
 - Modify: `crates/storage/src/repositories.rs`
 
-- [ ] **Step 1: Implement funding rate fetch**
+- [x] **Step 1: Implement funding rate fetch**
 
 ```rust
 pub async fn fetch_binance_funding_history(
@@ -223,7 +223,7 @@ pub async fn fetch_binance_funding_history(
 }
 ```
 
-- [ ] **Step 2: Add incremental fetch logic**
+- [x] **Step 2: Add incremental fetch logic**
 
 ```rust
 pub async fn ingest_funding_rates(
@@ -238,7 +238,7 @@ pub async fn ingest_funding_rates(
 }
 ```
 
-- [ ] **Step 3: Add tests**
+- [x] **Step 3: Add tests**
 
 ```rust
 #[tokio::test]
@@ -254,7 +254,7 @@ async fn incremental_fetch_skips_existing() {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add crates/data crates/storage

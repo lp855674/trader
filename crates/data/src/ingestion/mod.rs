@@ -1,3 +1,4 @@
+pub mod binance_funding;
 pub mod binance_meta;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,10 +29,36 @@ pub struct CryptoMarketMeta {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingRate {
+    pub id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub funding_time_ms: i64,
+    pub funding_rate: String,
+    pub mark_price: Option<String>,
+    pub source: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum IngestionError {
     #[error("failed to fetch reference data: {0}")]
     Http(#[from] reqwest::Error),
     #[error("failed to parse reference data: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("failed to parse decimal value {value}: {source}")]
+    Decimal {
+        value: String,
+        source: rust_decimal::Error,
+    },
+    #[error("failed to persist reference data: {0}")]
+    Storage(#[from] storage::StorageError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngestionResult {
+    pub source: String,
+    pub table: String,
+    pub rows_fetched: usize,
+    pub rows_upserted: usize,
 }

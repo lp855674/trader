@@ -1,4 +1,7 @@
-use data::ingestion::binance_meta::parse_binance_market_meta;
+use data::ingestion::{
+    binance_funding::{filter_funding_rates_after, parse_binance_funding_history},
+    binance_meta::parse_binance_market_meta,
+};
 
 #[test]
 fn ingestion_parses_binance_exchange_info_into_market_meta() {
@@ -40,4 +43,64 @@ fn ingestion_parses_binance_exchange_info_into_market_meta() {
     assert!(meta.is_active);
     assert_eq!(meta.created_at_ms, 42);
     assert_eq!(meta.updated_at_ms, 42);
+}
+
+#[test]
+fn ingestion_parses_binance_funding_history() {
+    let payload = r#"
+    [
+      {
+        "symbol": "BTCUSDT",
+        "fundingRate": "0.00010000",
+        "fundingTime": 1710000000000,
+        "markPrice": "65000.12340000"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "fundingRate": "-0.00005000",
+        "fundingTime": 1710003600000
+      }
+    ]
+    "#;
+
+    let rates = parse_binance_funding_history(payload).unwrap();
+
+    assert_eq!(rates.len(), 2);
+    assert_eq!(rates[0].id, "binance-BTCUSDT-1710000000000");
+    assert_eq!(rates[0].exchange, "BINANCE");
+    assert_eq!(rates[0].symbol, "BTCUSDT");
+    assert_eq!(rates[0].funding_time_ms, 1710000000000);
+    assert_eq!(rates[0].funding_rate, "0.00010000");
+    assert_eq!(rates[0].mark_price.as_deref(), Some("65000.12340000"));
+    assert_eq!(rates[0].source, "binance_fapi_fundingRate");
+    assert_eq!(rates[1].mark_price, None);
+}
+
+#[test]
+fn ingestion_filters_funding_rates_after_latest_seen_timestamp() {
+    let rates = vec![
+        data::ingestion::FundingRate {
+            id: "old".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            funding_time_ms: 100,
+            funding_rate: "0.1".to_string(),
+            mark_price: None,
+            source: "fixture".to_string(),
+        },
+        data::ingestion::FundingRate {
+            id: "new".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            funding_time_ms: 200,
+            funding_rate: "0.2".to_string(),
+            mark_price: None,
+            source: "fixture".to_string(),
+        },
+    ];
+
+    let filtered = filter_funding_rates_after(rates, Some(100));
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, "new");
 }
