@@ -221,9 +221,47 @@ enum Command {
         #[arg(long)]
         output: Option<String>,
     },
+    Positions {
+        #[command(subcommand)]
+        command: PositionsCommand,
+    },
+    Funding {
+        #[command(subcommand)]
+        command: FundingCommand,
+    },
     CheckConfig {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PositionsCommand {
+    List {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long)]
+        exchange: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FundingCommand {
+    List {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        exchange: String,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
     },
 }
 
@@ -1187,6 +1225,70 @@ async fn run_command(command: Command) -> Result<()> {
                 print!("{rendered}");
             }
         }
+        Command::Positions { command } => match command {
+            PositionsCommand::List {
+                config,
+                run_id,
+                account,
+                exchange,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let positions = db.list_crypto_positions(&run_id).await?;
+                for position in positions.into_iter().filter(|position| {
+                    account
+                        .as_deref()
+                        .is_none_or(|account| position.account_id == account)
+                        && exchange
+                            .as_deref()
+                            .is_none_or(|exchange| position.exchange == exchange)
+                }) {
+                    println!(
+                        "crypto_position: run_id={} account={} exchange={} symbol={} asset_class={} margin_mode={} side={} leverage={} qty={} avg_price={} margin_used={} funding_fee={} realized_pnl={} unrealized_pnl={} updated_at_ms={}",
+                        position.run_id,
+                        position.account_id,
+                        position.exchange,
+                        position.symbol,
+                        position.asset_class,
+                        position.margin_mode,
+                        position.position_side,
+                        position.leverage,
+                        position.qty,
+                        position.avg_price,
+                        position.margin_used,
+                        position.funding_fee,
+                        position.realized_pnl,
+                        position.unrealized_pnl,
+                        position.updated_at_ms
+                    );
+                }
+            }
+        },
+        Command::Funding { command } => match command {
+            FundingCommand::List {
+                config,
+                exchange,
+                symbol,
+                from_ms,
+                to_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let rates = db
+                    .list_funding_rates(&exchange, symbol.as_deref(), from_ms, to_ms)
+                    .await?;
+                for rate in rates {
+                    println!(
+                        "funding_rate: exchange={} symbol={} funding_time_ms={} funding_rate={} mark_price={} source={} id={}",
+                        rate.exchange,
+                        rate.symbol,
+                        rate.funding_time_ms,
+                        rate.funding_rate,
+                        rate.mark_price.as_deref().unwrap_or(""),
+                        rate.source,
+                        rate.id
+                    );
+                }
+            }
+        },
         Command::CheckConfig { config } => {
             config::AppConfig::from_toml_file(config)?;
             println!("config ok");

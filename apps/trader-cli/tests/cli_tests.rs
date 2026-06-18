@@ -1756,6 +1756,68 @@ fn report_can_export_html() {
     std::fs::remove_file(output).unwrap();
 }
 
+#[test]
+fn positions_list_prints_contract_positions() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "positions",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--account",
+            "paper",
+            "--exchange",
+            "BINANCE",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("crypto_position: run_id=cli-contract-run"))
+        .stdout(contains("symbol=BTCUSDT_PERP"))
+        .stdout(contains("side=LONG"))
+        .stdout(contains("qty=0.25"))
+        .stdout(contains("funding_fee=-1.25"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn funding_list_prints_filtered_funding_rates() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "funding",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--exchange",
+            "BINANCE",
+            "--symbol",
+            "BTCUSDT_PERP",
+            "--from",
+            "0",
+            "--to",
+            "2000",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("funding_rate: exchange=BINANCE"))
+        .stdout(contains("symbol=BTCUSDT_PERP"))
+        .stdout(contains("funding_time_ms=1000"))
+        .stdout(contains("funding_rate=0.0002"))
+        .stdout(contains("mark_price=50000"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
 fn run_paper() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -1840,6 +1902,138 @@ fn write_ibkr_cli_config_with_order_submit(
             [live]
             enabled = false
             "#
+        ),
+    )
+    .unwrap();
+    config
+}
+
+fn seed_contract_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-contract-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.record_crypto_position(storage::CryptoPositionCommand {
+            run_id: "cli-contract-run".to_string(),
+            account_id: "paper".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "BTCUSDT_PERP".to_string(),
+            asset_class: "CRYPTO_PERP".to_string(),
+            margin_mode: "cross".to_string(),
+            position_side: "LONG".to_string(),
+            leverage: dec!(10),
+            qty: dec!(0.25),
+            avg_price: dec!(50000),
+            margin_used: dec!(1250),
+            funding_fee: dec!(-1.25),
+            realized_pnl: dec!(-1.25),
+            unrealized_pnl: dec!(12.5),
+            updated_at_ms: 1500,
+        })
+        .await
+        .unwrap();
+        db.record_crypto_position(storage::CryptoPositionCommand {
+            run_id: "cli-contract-run".to_string(),
+            account_id: "other".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "ETHUSDT_PERP".to_string(),
+            asset_class: "CRYPTO_PERP".to_string(),
+            margin_mode: "cross".to_string(),
+            position_side: "LONG".to_string(),
+            leverage: dec!(5),
+            qty: dec!(1),
+            avg_price: dec!(3000),
+            margin_used: dec!(600),
+            funding_fee: dec!(0),
+            realized_pnl: dec!(0),
+            unrealized_pnl: dec!(0),
+            updated_at_ms: 1500,
+        })
+        .await
+        .unwrap();
+        db.record_funding_rate(storage::FundingRateCommand {
+            id: "funding-cli-1".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "BTCUSDT_PERP".to_string(),
+            funding_time_ms: 1000,
+            funding_rate: dec!(0.0002),
+            mark_price: Some(dec!(50000)),
+            source: "seed".to_string(),
+        })
+        .await
+        .unwrap();
+        db.record_funding_rate(storage::FundingRateCommand {
+            id: "funding-cli-outside".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "BTCUSDT_PERP".to_string(),
+            funding_time_ms: 2500,
+            funding_rate: dec!(0.0003),
+            mark_price: Some(dec!(51000)),
+            source: "seed".to_string(),
+        })
+        .await
+        .unwrap();
+    });
+
+    config
+}
+
+fn write_contract_cli_config(db_path: &std::path::Path) -> PathBuf {
+    let config = temp_output("trader-cli-contract-storage", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-contract-run"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            source = "csv"
+            path = "unused.csv"
+
+            [strategy]
+            name = "price_channel_reversion"
+            symbols = ["CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"]
+            fast_window = 1
+            slow_window = 2
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USDT"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "1000000"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(db_path)
         ),
     )
     .unwrap();

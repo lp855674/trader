@@ -61,7 +61,7 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
 
-`GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. The current runtime does not yet write complete contract accounting lifecycle data to these tables.
+`GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Automatic exchange/corporate-action ingestion is still follow-up work.
 
@@ -1558,7 +1558,13 @@ Path 参数：
 | ------------- | ------ | ------------------ |
 | run_id        | string | 运行 ID              |
 
-当前本地实现按 `run_id` 查询 `crypto_positions` storage boundary。它是只读查询面；runtime accounting 尚未完整写入真实合约生命周期。
+当前本地实现按 `run_id` 查询 `crypto_positions` storage boundary。它是只读查询面；paper runtime 会在模拟合约成交和资金费结算后写入合约持仓状态，Decimal 字段以字符串返回。
+
+CLI 查询：
+
+```powershell
+trader positions list --run-id run_001 --account paper --exchange BINANCE
+```
 
 响应为数组：
 
@@ -2078,6 +2084,12 @@ Query 参数：
 | end_ms   | integer | 结束时间 |
 
 当前本地实现查询 `funding_rates` storage boundary，返回 `[start_ms, end_ms)` 时间窗口内的数据。响应为数组：
+
+CLI 查询：
+
+```powershell
+trader funding list --exchange BINANCE --symbol BTCUSDT_PERP --from 1700000000000 --to 1700100000000
+```
 
 ```json
 [
