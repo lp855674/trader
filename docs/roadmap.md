@@ -15,11 +15,32 @@ Trader 采用渐进式开发路线。
 - Keep `event_store` as immutable audit truth.
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
-- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, and Binance reconciliation has drift-detection tests. Production crypto derivative accounting still needs real broker reconciliation scheduling, IBKR contract reconciliation, and reference-data ingestion.
+- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, Binance funding-rate ingestion can populate historical funding rows, and Binance reconciliation has drift-detection tests. Production crypto derivative accounting still needs real broker reconciliation scheduling and IBKR contract reconciliation.
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime; live/reconciliation snapshot capture remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config approval/release lifecycle remains follow-up work.
 - API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; broader production log indexing remains follow-up work.
-- `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; automatic ingestion remains follow-up work.
+- `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; Binance market metadata and Yahoo corporate actions now have CLI/scheduled ingestion paths plus `/api/v1/ingestion/status`.
+
+## Reference-Data Ingestion Milestone
+
+Current status:
+
+```text
+1. Binance market metadata ingestion: complete for exchangeInfo parsing, idempotent storage, CLI trigger, scheduled coordinator
+2. Binance funding-rate ingestion: complete for fapi funding history parsing, incremental latest-time fetch, idempotent storage, CLI trigger
+3. Corporate actions ingestion: complete for Yahoo chart dividends/splits parsing, idempotent storage, CLI trigger
+4. Ingestion observability: complete for system_logs tracker, CLI status, API status endpoint
+5. Config: ingestion section supports enabled flag, sources, interval, and symbols
+```
+
+Remaining:
+
+```text
+1. Network-backed integration tests gated by explicit credentials/connectivity
+2. Rate-limit/backoff hardening for production runs
+3. Multi-exchange normalized reference-data model
+4. Alerting when reference data becomes stale
+```
 
 ## Contract Runtime Accounting Milestone
 
@@ -37,11 +58,11 @@ Current status:
 Remaining:
 
 ```text
-1. Reference-data ingestion for exchange contract metadata and historical funding rates
-2. Scheduled broker reported position snapshots
-3. IBKR contract reconciliation
-4. Live/reconciliation snapshot persistence
-5. Production alerts and audit reports for reconciliation drift
+1. Scheduled broker reported position snapshots
+2. IBKR contract reconciliation
+3. Live/reconciliation snapshot persistence
+4. Production alerts and audit reports for reconciliation drift
+5. Production hardening for reference-data rate limits and stale-data alerts
 ```
 
 目标：

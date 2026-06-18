@@ -480,15 +480,15 @@ git commit -m "feat: scheduled ingestion and API status"
 - Modify: `docs/分析.md`
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update `docs/分析.md`**
+- [x] **Step 1: Update `docs/分析.md`**
 
 Change reference-data section to reflect automated ingestion capabilities and limitations.
 
-- [ ] **Step 2: Update `docs/roadmap.md`**
+- [x] **Step 2: Update `docs/roadmap.md`**
 
 Add "Reference-Data Ingestion" milestone.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add docs
