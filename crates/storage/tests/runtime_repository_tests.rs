@@ -450,6 +450,88 @@ async fn contract_accounting_records_round_trip_decimal_strings() {
 }
 
 #[tokio::test]
+async fn upsert_crypto_market_meta_idempotent() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.upsert_crypto_market_meta(NewCryptoMarketMeta {
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USDT".to_string(),
+        instrument_type: "SPOT".to_string(),
+        contract_type: None,
+        contract_size: None,
+        settlement_asset: None,
+        min_notional: Some("5".to_string()),
+        min_qty: Some("0.00001".to_string()),
+        max_qty: Some("9000".to_string()),
+        price_precision: Some(2),
+        qty_precision: Some(5),
+        price_tick: Some("0.01".to_string()),
+        qty_step: Some("0.00001".to_string()),
+        maker_fee_rate: None,
+        taker_fee_rate: None,
+        funding_interval_hours: None,
+        max_leverage: None,
+        margin_modes: None,
+        is_inverse: false,
+        is_active: true,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    })
+    .await
+    .unwrap();
+    db.upsert_crypto_market_meta(NewCryptoMarketMeta {
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USDT".to_string(),
+        instrument_type: "SPOT".to_string(),
+        contract_type: None,
+        contract_size: None,
+        settlement_asset: None,
+        min_notional: Some("10".to_string()),
+        min_qty: Some("0.001".to_string()),
+        max_qty: Some("1000".to_string()),
+        price_precision: Some(1),
+        qty_precision: Some(3),
+        price_tick: Some("0.10".to_string()),
+        qty_step: Some("0.001".to_string()),
+        maker_fee_rate: None,
+        taker_fee_rate: None,
+        funding_interval_hours: None,
+        max_leverage: None,
+        margin_modes: None,
+        is_inverse: false,
+        is_active: false,
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    })
+    .await
+    .unwrap();
+
+    let rows = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM crypto_market_meta WHERE exchange = 'BINANCE' AND symbol = 'BTCUSDT'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let meta = db
+        .find_crypto_market_meta("BINANCE", "BTCUSDT")
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(rows, 1);
+    assert_eq!(meta.min_notional.as_deref(), Some("10"));
+    assert_eq!(meta.qty_step.as_deref(), Some("0.001"));
+    assert!(!meta.is_active);
+    assert_eq!(meta.created_at_ms, 10);
+    assert_eq!(meta.updated_at_ms, 20);
+}
+
+#[tokio::test]
 async fn crypto_position_lifecycle_gets_open_update_and_close_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

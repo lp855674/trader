@@ -118,13 +118,13 @@ New gates for this plan:
 - Modify: `crates/storage/tests/storage_tests.rs`
 - Modify: `crates/data/Cargo.toml`
 
-- [ ] **Step 1: Add `reqwest` dependency to `crates/data/Cargo.toml`**
+- [x] **Step 1: Add `reqwest` dependency to `crates/data/Cargo.toml`**
 
 ```toml
 reqwest = { version = "0.12", features = ["json"] }
 ```
 
-- [ ] **Step 2: Define Binance exchangeInfo response types**
+- [x] **Step 2: Define Binance exchangeInfo response types**
 
 ```rust
 #[derive(Deserialize)]
@@ -146,7 +146,7 @@ struct BinanceSymbolInfo {
 }
 ```
 
-- [ ] **Step 3: Implement fetch and parse**
+- [x] **Step 3: Implement fetch and parse**
 
 ```rust
 pub async fn fetch_binance_market_meta(client: &reqwest::Client) -> Result<Vec<NewCryptoMarketMeta>, IngestionError> {
@@ -158,7 +158,7 @@ pub async fn fetch_binance_market_meta(client: &reqwest::Client) -> Result<Vec<N
 }
 ```
 
-- [ ] **Step 4: Add storage upsert**
+- [x] **Step 4: Add storage upsert**
 
 ```rust
 pub async fn upsert_crypto_market_meta(&self, meta: &NewCryptoMarketMeta) -> StorageResult<()> {
@@ -181,7 +181,7 @@ pub async fn upsert_crypto_market_meta(&self, meta: &NewCryptoMarketMeta) -> Sto
 }
 ```
 
-- [ ] **Step 5: Add tests**
+- [x] **Step 5: Add tests**
 
 ```rust
 #[tokio::test]
@@ -192,7 +192,7 @@ async fn upsert_crypto_market_meta_idempotent() {
 }
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/data crates/storage

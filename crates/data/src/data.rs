@@ -2,6 +2,7 @@
 
 mod bar;
 mod csv;
+pub mod ingestion;
 mod parquet;
 
 use std::collections::{BTreeMap, BTreeSet};
