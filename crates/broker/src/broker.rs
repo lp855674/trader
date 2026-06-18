@@ -73,6 +73,152 @@ pub struct BrokerAccountSnapshot {
     pub margin_used: Decimal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerPositionSide {
+    Long,
+    Short,
+}
+
+impl BrokerPositionSide {
+    pub fn from_signed_qty(qty: Decimal) -> Option<Self> {
+        if qty > Decimal::ZERO {
+            Some(Self::Long)
+        } else if qty < Decimal::ZERO {
+            Some(Self::Short)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePositionSnapshot {
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub position_side: BrokerPositionSide,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub margin_used: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerPositionSnapshot {
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub position_side: BrokerPositionSide,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub margin_used: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PositionReconciliationDrift {
+    pub account_id: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub position_side: BrokerPositionSide,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct PositionReconciliationReport {
+    pub drifts: Vec<PositionReconciliationDrift>,
+}
+
+impl PositionReconciliationReport {
+    pub fn drift_count(&self) -> usize {
+        self.drifts.len()
+    }
+}
+
+pub fn reconcile_positions(
+    runtime: &[RuntimePositionSnapshot],
+    broker: &[BrokerPositionSnapshot],
+) -> PositionReconciliationReport {
+    let mut report = PositionReconciliationReport::default();
+
+    for broker_position in broker {
+        let runtime_position = runtime.iter().find(|runtime_position| {
+            runtime_position.account_id == broker_position.account_id
+                && runtime_position.exchange == broker_position.exchange
+                && runtime_position.symbol == broker_position.symbol
+                && runtime_position.position_side == broker_position.position_side
+        });
+        let Some(runtime_position) = runtime_position else {
+            report.drifts.push(PositionReconciliationDrift {
+                account_id: broker_position.account_id.clone(),
+                exchange: broker_position.exchange.clone(),
+                symbol: broker_position.symbol.clone(),
+                position_side: broker_position.position_side,
+                reason: "missing runtime position".to_string(),
+            });
+            continue;
+        };
+
+        if runtime_position.qty != broker_position.qty {
+            report.drifts.push(PositionReconciliationDrift {
+                account_id: broker_position.account_id.clone(),
+                exchange: broker_position.exchange.clone(),
+                symbol: broker_position.symbol.clone(),
+                position_side: broker_position.position_side,
+                reason: format!(
+                    "qty mismatch runtime={} broker={}",
+                    runtime_position.qty, broker_position.qty
+                ),
+            });
+        }
+        if runtime_position.avg_price != broker_position.avg_price {
+            report.drifts.push(PositionReconciliationDrift {
+                account_id: broker_position.account_id.clone(),
+                exchange: broker_position.exchange.clone(),
+                symbol: broker_position.symbol.clone(),
+                position_side: broker_position.position_side,
+                reason: format!(
+                    "avg_price mismatch runtime={} broker={}",
+                    runtime_position.avg_price, broker_position.avg_price
+                ),
+            });
+        }
+        if runtime_position.margin_used != broker_position.margin_used {
+            report.drifts.push(PositionReconciliationDrift {
+                account_id: broker_position.account_id.clone(),
+                exchange: broker_position.exchange.clone(),
+                symbol: broker_position.symbol.clone(),
+                position_side: broker_position.position_side,
+                reason: format!(
+                    "margin mismatch runtime={} broker={}",
+                    runtime_position.margin_used, broker_position.margin_used
+                ),
+            });
+        }
+    }
+
+    for runtime_position in runtime {
+        if broker.iter().any(|broker_position| {
+            broker_position.account_id == runtime_position.account_id
+                && broker_position.exchange == runtime_position.exchange
+                && broker_position.symbol == runtime_position.symbol
+                && broker_position.position_side == runtime_position.position_side
+        }) {
+            continue;
+        }
+        report.drifts.push(PositionReconciliationDrift {
+            account_id: runtime_position.account_id.clone(),
+            exchange: runtime_position.exchange.clone(),
+            symbol: runtime_position.symbol.clone(),
+            position_side: runtime_position.position_side,
+            reason: "missing broker position".to_string(),
+        });
+    }
+
+    report
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BrokerKind {

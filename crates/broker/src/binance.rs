@@ -7,8 +7,8 @@ use std::{fmt, sync::Arc};
 use trader_core::OrderRequest;
 
 use crate::{
-    Broker, BrokerAccountSnapshot, BrokerError, BrokerKind, BrokerOrder, BrokerStatus,
-    PlaceOrderResponse, fake_status,
+    Broker, BrokerAccountSnapshot, BrokerError, BrokerKind, BrokerOrder, BrokerPositionSide,
+    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse, fake_status,
 };
 
 #[derive(Debug, Clone)]
@@ -447,6 +447,18 @@ impl BinanceSpotTestnetAdapter {
             .collect()
     }
 
+    pub fn parse_position_risk_json(
+        account_id: &str,
+        input: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        let response = serde_json::from_str::<Vec<BinancePositionRiskResponse>>(input)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        response
+            .into_iter()
+            .filter_map(|position| position.try_into_snapshot(account_id).transpose())
+            .collect()
+    }
+
     pub fn format_error_body(status: u16, body: &str) -> String {
         match serde_json::from_str::<BinanceErrorResponse>(body) {
             Ok(error) => format!(
@@ -566,6 +578,77 @@ struct BinanceTradeResponse {
     commission: String,
     commission_asset: String,
     time: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinancePositionRiskResponse {
+    symbol: String,
+    position_amt: String,
+    entry_price: String,
+    leverage: String,
+    isolated_margin: String,
+    un_realized_profit: String,
+    position_side: String,
+    update_time: i64,
+}
+
+impl BinancePositionRiskResponse {
+    fn try_into_snapshot(
+        self,
+        account_id: &str,
+    ) -> Result<Option<BrokerPositionSnapshot>, BrokerError> {
+        let qty = self
+            .position_amt
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        if qty == Decimal::ZERO {
+            return Ok(None);
+        }
+        let avg_price = self
+            .entry_price
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let leverage = self
+            .leverage
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let isolated_margin = self
+            .isolated_margin
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let unrealized_pnl = self
+            .un_realized_profit
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let position_side = match self.position_side.as_str() {
+            "LONG" => BrokerPositionSide::Long,
+            "SHORT" => BrokerPositionSide::Short,
+            _ => BrokerPositionSide::from_signed_qty(qty).ok_or_else(|| {
+                BrokerError::Config(format!(
+                    "Binance position {} has zero quantity and no side",
+                    self.symbol
+                ))
+            })?,
+        };
+        let margin_used = if isolated_margin == Decimal::ZERO && leverage != Decimal::ZERO {
+            qty.abs() * avg_price / leverage
+        } else {
+            isolated_margin
+        };
+
+        Ok(Some(BrokerPositionSnapshot {
+            account_id: account_id.to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: format!("CRYPTO:BINANCE:{}_PERP:CRYPTO_PERP", self.symbol),
+            position_side,
+            qty,
+            avg_price,
+            margin_used,
+            unrealized_pnl,
+            ts_ms: self.update_time,
+        }))
+    }
 }
 
 impl BinanceTradeResponse {

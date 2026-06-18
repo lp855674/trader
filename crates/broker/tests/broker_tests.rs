@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use broker::{
     BinanceHttpClient, BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
     BinanceSpotTestnetSettings, Broker, BrokerError, BrokerKind, BrokerOrderStatus,
-    FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest, IbkrOpenOrder,
-    IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
-    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, SimulatedBrokerSettings,
-    simulate_market_fill,
+    BrokerPositionSide, FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest,
+    IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, RuntimePositionSnapshot,
+    SimulatedBrokerSettings, reconcile_positions, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::collections::VecDeque;
@@ -600,6 +600,68 @@ fn binance_account_response_maps_to_asset_balances() {
     assert_eq!(balances[0].total(), dec!(0.0014));
     assert_eq!(balances[1].asset, "USDT");
     assert_eq!(balances[1].total(), dec!(102.5));
+}
+
+#[test]
+fn binance_position_risk_response_maps_to_broker_positions() {
+    let positions = BinanceSpotTestnetAdapter::parse_position_risk_json(
+        "paper",
+        r#"[{"symbol":"BTCUSDT","positionAmt":"0.5","entryPrice":"65000","leverage":"10","isolatedMargin":"3250","unRealizedProfit":"12.5","positionSide":"BOTH","updateTime":1700000000000}]"#,
+    )
+    .unwrap();
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].account_id, "paper");
+    assert_eq!(positions[0].exchange, "BINANCE");
+    assert_eq!(
+        positions[0].symbol,
+        "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"
+    );
+    assert_eq!(positions[0].position_side, BrokerPositionSide::Long);
+    assert_eq!(positions[0].qty, dec!(0.5));
+    assert_eq!(positions[0].avg_price, dec!(65000));
+    assert_eq!(positions[0].margin_used, dec!(3250));
+    assert_eq!(positions[0].unrealized_pnl, dec!(12.5));
+}
+
+#[test]
+fn binance_reconciliation_detects_drift() {
+    let runtime = vec![RuntimePositionSnapshot {
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        position_side: BrokerPositionSide::Long,
+        qty: dec!(0.4),
+        avg_price: dec!(65000),
+        margin_used: dec!(2600),
+    }];
+    let broker = vec![broker::BrokerPositionSnapshot {
+        account_id: "paper".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        position_side: BrokerPositionSide::Long,
+        qty: dec!(0.5),
+        avg_price: dec!(65000),
+        margin_used: dec!(3250),
+        unrealized_pnl: dec!(12.5),
+        ts_ms: 1_700_000_000_000,
+    }];
+
+    let report = reconcile_positions(&runtime, &broker);
+
+    assert_eq!(report.drift_count(), 2);
+    assert!(
+        report
+            .drifts
+            .iter()
+            .any(|drift| drift.reason.contains("qty mismatch"))
+    );
+    assert!(
+        report
+            .drifts
+            .iter()
+            .any(|drift| drift.reason.contains("margin mismatch"))
+    );
 }
 
 #[test]
