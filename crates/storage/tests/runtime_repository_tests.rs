@@ -532,6 +532,66 @@ async fn upsert_crypto_market_meta_idempotent() {
 }
 
 #[tokio::test]
+async fn upsert_corporate_action_idempotent() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.upsert_corporate_action_meta(NewCorporateActionMeta {
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        action_type: "DIVIDEND".to_string(),
+        ex_date_ms: 100,
+        record_date_ms: None,
+        payable_date_ms: None,
+        ratio: None,
+        cash_amount: Some("0.24".to_string()),
+        currency: Some("USD".to_string()),
+        source: Some("fixture".to_string()),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    })
+    .await
+    .unwrap();
+    db.upsert_corporate_action_meta(NewCorporateActionMeta {
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        action_type: "DIVIDEND".to_string(),
+        ex_date_ms: 100,
+        record_date_ms: Some(90),
+        payable_date_ms: Some(120),
+        ratio: None,
+        cash_amount: Some("0.25".to_string()),
+        currency: Some("USD".to_string()),
+        source: Some("fixture-update".to_string()),
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    })
+    .await
+    .unwrap();
+
+    let rows = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM corporate_actions_meta WHERE market = 'US' AND symbol = 'US:NASDAQ:AAPL:EQUITY'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let actions = db
+        .list_corporate_actions("US", "US:NASDAQ:AAPL:EQUITY", 0, 200)
+        .await
+        .unwrap();
+
+    assert_eq!(rows, 1);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].cash_amount.as_deref(), Some("0.25"));
+    assert_eq!(actions[0].payable_date_ms, Some(120));
+    assert_eq!(actions[0].source.as_deref(), Some("fixture-update"));
+    assert_eq!(actions[0].created_at_ms, 10);
+    assert_eq!(actions[0].updated_at_ms, 20);
+}
+
+#[tokio::test]
 async fn crypto_position_lifecycle_gets_open_update_and_close_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

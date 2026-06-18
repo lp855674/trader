@@ -1933,6 +1933,45 @@ impl Db {
         Ok(())
     }
 
+    pub async fn upsert_corporate_action_meta(
+        &self,
+        action: NewCorporateActionMeta,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO corporate_actions_meta (
+                market, exchange, symbol, action_type, ex_date, record_date,
+                payable_date, ratio, cash_amount, currency, source, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(market, exchange, symbol, action_type, ex_date) DO UPDATE SET
+                record_date = excluded.record_date,
+                payable_date = excluded.payable_date,
+                ratio = excluded.ratio,
+                cash_amount = excluded.cash_amount,
+                currency = excluded.currency,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(action.market)
+        .bind(action.exchange)
+        .bind(action.symbol)
+        .bind(action.action_type)
+        .bind(action.ex_date_ms)
+        .bind(action.record_date_ms)
+        .bind(action.payable_date_ms)
+        .bind(action.ratio)
+        .bind(action.cash_amount)
+        .bind(action.currency)
+        .bind(action.source)
+        .bind(action.created_at_ms)
+        .bind(action.updated_at_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_corporate_actions(
         &self,
         market: &str,
@@ -3064,7 +3103,7 @@ impl Db {
         &self,
         command: CorporateActionMetaCommand,
     ) -> StorageResult<()> {
-        self.insert_corporate_action_meta(NewCorporateActionMeta {
+        self.upsert_corporate_action_meta(NewCorporateActionMeta {
             market: command.market,
             exchange: command.exchange,
             symbol: command.symbol,

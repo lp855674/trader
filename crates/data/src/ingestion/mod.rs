@@ -1,5 +1,6 @@
 pub mod binance_funding;
 pub mod binance_meta;
+pub mod corporate_actions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CryptoMarketMeta {
@@ -38,6 +39,23 @@ pub struct FundingRate {
     pub funding_rate: String,
     pub mark_price: Option<String>,
     pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorporateAction {
+    pub market: String,
+    pub exchange: String,
+    pub symbol: String,
+    pub action_type: String,
+    pub ex_date_ms: i64,
+    pub record_date_ms: Option<i64>,
+    pub payable_date_ms: Option<i64>,
+    pub ratio: Option<String>,
+    pub cash_amount: Option<String>,
+    pub currency: Option<String>,
+    pub source: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, thiserror::Error)]

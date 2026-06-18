@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS corporate_actions_meta (
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_symbol_date
 ON corporate_actions_meta(market, symbol, ex_date);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_corporate_actions_unique_action
+ON corporate_actions_meta(market, exchange, symbol, action_type, ex_date);
+
 CREATE TABLE IF NOT EXISTS cash_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,

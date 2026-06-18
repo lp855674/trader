@@ -1,6 +1,7 @@
 use data::ingestion::{
     binance_funding::{filter_funding_rates_after, parse_binance_funding_history},
     binance_meta::parse_binance_market_meta,
+    corporate_actions::parse_yahoo_corporate_actions,
 };
 
 #[test]
@@ -103,4 +104,44 @@ fn ingestion_filters_funding_rates_after_latest_seen_timestamp() {
 
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].id, "new");
+}
+
+#[test]
+fn ingestion_parses_yahoo_corporate_actions() {
+    let payload = r#"
+    {
+      "chart": {
+        "result": [
+          {
+            "events": {
+              "dividends": {
+                "1715731200": { "amount": 0.25, "date": 1715731200 }
+              },
+              "splits": {
+                "1598832000": { "date": 1598832000, "numerator": 4.0, "denominator": 1.0, "splitRatio": "4:1" }
+              }
+            }
+          }
+        ],
+        "error": null
+      }
+    }
+    "#;
+
+    let actions = parse_yahoo_corporate_actions("AAPL", payload, 42).unwrap();
+
+    assert_eq!(actions.len(), 2);
+    let dividend = actions
+        .iter()
+        .find(|action| action.action_type == "DIVIDEND")
+        .unwrap();
+    let split = actions
+        .iter()
+        .find(|action| action.action_type == "SPLIT")
+        .unwrap();
+    assert_eq!(dividend.symbol, "AAPL");
+    assert_eq!(dividend.ex_date_ms, 1715731200000);
+    assert_eq!(dividend.cash_amount.as_deref(), Some("0.25"));
+    assert_eq!(dividend.source.as_deref(), Some("yahoo_chart"));
+    assert_eq!(split.ratio.as_deref(), Some("4:1"));
 }

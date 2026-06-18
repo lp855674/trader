@@ -270,7 +270,7 @@ git commit -m "feat: binance funding rate ingestion"
 - Create: `crates/data/src/ingestion/corporate_actions.rs`
 - Modify: `crates/storage/src/repositories.rs`
 
-- [ ] **Step 1: Define corporate action types**
+- [x] **Step 1: Define corporate action types**
 
 ```rust
 pub enum CorporateActionType {
@@ -295,7 +295,7 @@ pub struct NewCorporateAction {
 }
 ```
 
-- [ ] **Step 2: Implement Yahoo Finance fetcher**
+- [x] **Step 2: Implement Yahoo Finance fetcher**
 
 ```rust
 pub async fn fetch_yahoo_corporate_actions(
@@ -307,7 +307,7 @@ pub async fn fetch_yahoo_corporate_actions(
 }
 ```
 
-- [ ] **Step 3: Add storage upsert**
+- [x] **Step 3: Add storage upsert**
 
 ```rust
 pub async fn upsert_corporate_action(&self, action: &NewCorporateAction) -> StorageResult<()> {
@@ -330,7 +330,7 @@ pub async fn upsert_corporate_action(&self, action: &NewCorporateAction) -> Stor
 }
 ```
 
-- [ ] **Step 4: Add tests**
+- [x] **Step 4: Add tests**
 
 ```rust
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn upsert_corporate_action_idempotent() { ... }
 async fn fetch_yahoo_corporate_actions_returns_data() { ... }
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add crates/data crates/storage
