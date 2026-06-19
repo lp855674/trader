@@ -8,6 +8,19 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, serde_json, chrono, PowerShell CLI.
 
+## Current Status (2026-06-19 Audit)
+
+This plan was only partially implemented. The current repository has a lightweight local lifecycle surface, not the full approval/publish workflow described below. Checked items below only cover the run-binding/readback pieces that landed; the unchecked approval workflow remains open.
+
+| Area | Status | Evidence | Remaining |
+| --- | --- | --- | --- |
+| Run config snapshots | Done for API-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions | CLI-launched runs do not automatically create run config snapshots |
+| Release/readback surface | Done for local MVP | `GET /api/v1/configs/{config_id}/releases`, `GET /api/v1/runs/{run_id}/config-version`, `configs releases`, `runs config-version` | None for lightweight readback |
+| Audit readback | Done for local MVP | `config_audits`, `record_config_audit`, API/CLI audit queries exist | Audit trail is not yet tied to a full state-transition engine |
+| Approval state machine | Not done | No `ConfigState`, draft/pending_review/approved/published/archive transition model or validation exists | Implement storage and API state transitions |
+| Config CRUD/diff/rollback workflow | Not done | No create/list versions by semantic version, structured diff, rollback endpoint or config management CLI exists | Implement full config management workflow |
+| Production rollout governance | Not done | `docs/分析.md` and `docs/api.md` still classify human approval and rollout enforcement as production hardening | Add permissions, multi-environment rollout policy and approvals |
+
 ---
 
 ## Scope
@@ -394,14 +407,14 @@ let config_version = db.get_published_config(&config_name).await?;
 // Store config_name and config_version in strategy_runs.config_json or new column
 ```
 
-- [ ] **Step 2: Record config version at run start**
+- [x] **Step 2: Record config version at run start**
 
 In paper/backtest runtime initialization:
 1. If config name is provided, look up published version.
 2. Record config name + version in run metadata.
 3. If no published version exists, log warning but allow run (backward compatible).
 
-- [ ] **Step 3: Add run-config binding query**
+- [x] **Step 3: Add run-config binding query**
 
 ```rust
 pub async fn get_runs_by_config(&self, config_name: &str, version: Option<u32>) -> StorageResult<Vec<StoredStrategyRun>> {
@@ -409,7 +422,7 @@ pub async fn get_runs_by_config(&self, config_name: &str, version: Option<u32>) 
 }
 ```
 
-- [ ] **Step 4: Add tests**
+- [x] **Step 4: Add tests**
 
 ```rust
 #[tokio::test]

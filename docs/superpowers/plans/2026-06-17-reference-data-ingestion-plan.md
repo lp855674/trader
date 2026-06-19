@@ -8,6 +8,17 @@
 
 **Tech Stack:** Rust workspace, reqwest/ureq for HTTP, SQLx SQLite, serde, serde_json, chrono, PowerShell CLI.
 
+## Current Status (2026-06-19 Audit)
+
+This plan is backfilled and the local MVP scope is complete. The remaining work is production hardening beyond the original local verification surface.
+
+| Area | Status | Evidence | Remaining |
+| --- | --- | --- | --- |
+| Binance market metadata ingestion | Done for local MVP | `ingest_binance_market_meta`, idempotent storage upsert and parser tests exist | Network-backed production tests remain gated by connectivity |
+| Binance funding-rate ingestion | Done for local MVP | Incremental latest-time fetch, parser tests and `funding_rates` storage readback exist | Production backoff/rate-limit policy is not implemented |
+| Yahoo corporate actions ingestion | Done for local MVP | `ingest_yahoo_corporate_actions`, parser tests and idempotent storage upsert exist | Provider hardening and broader action coverage remain future work |
+| Scheduled ingestion/status | Done for local MVP | `[ingestion]` config, `run_scheduled_ingestion`, `ingest status` and `/api/v1/ingestion/status` exist | Stale-data alerting and production retry strategy remain future work |
+
 ---
 
 ## Scope

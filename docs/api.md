@@ -651,7 +651,7 @@ GET /api/v1/runs/{run_id}/system-logs
 GET /api/v1/system-logs
 ```
 
-当前 V1 返回 API 启动 Backtest、Paper、Replay 时写入的运行生命周期日志，以及 ingestion/runtime/system 组件写入的结构化日志。两个端点都支持 `level`、`target`、`from_ms`、`to_ms`、`limit` 过滤；全局端点还支持 `run_id`。`fields` 是结构化 JSON，不返回 `fields_json` 字符串：
+当前 V1 返回 API 启动 Backtest、Paper、Replay、Live 时写入的运行生命周期日志，以及 ingestion/runtime/system 组件写入的结构化日志。两个端点都支持 `level`、`target`、`from_ms`、`to_ms`、`limit` 过滤；全局端点还支持 `run_id`。`fields` 是结构化 JSON，不返回 `fields_json` 字符串：
 
 ```json
 [
@@ -2188,7 +2188,7 @@ Query 参数：
 | exchange | string | 交易所 |
 | symbol   | string | 合约或交易对 |
 
-当前本地实现查询 `crypto_market_meta` storage boundary。没有匹配记录时返回空数组；自动交易所元数据 ingestion 仍是后续工作。响应为数组：
+当前本地实现查询 `crypto_market_meta` storage boundary。没有匹配记录时返回空数组；Binance exchangeInfo ingestion 已可通过 CLI 或 scheduled ingestion 写入该 storage boundary，生产级限流退避和陈旧数据告警仍是后续 hardening。响应为数组：
 
 ```json
 [
@@ -2239,7 +2239,7 @@ Query 参数：
 | start_ms | integer | 开始时间 |
 | end_ms   | integer | 结束时间 |
 
-当前本地实现查询 `corporate_actions_meta` storage boundary，返回 `[start_ms, end_ms)` 时间窗口内的数据。自动公司行动 ingestion 仍是后续工作。响应为数组：
+当前本地实现查询 `corporate_actions_meta` storage boundary，返回 `[start_ms, end_ms)` 时间窗口内的数据。Yahoo corporate actions ingestion 已可通过 CLI 或 scheduled ingestion 写入该 storage boundary，生产级限流退避和陈旧数据告警仍是后续 hardening。响应为数组：
 
 ```json
 [
@@ -2305,7 +2305,7 @@ Query 参数：
 
 # 21. Config API
 
-当前 V1 实现 `GET /api/v1/configs`、`GET /api/v1/configs/{name}`、`GET /api/v1/configs/{config_id}/releases`、`GET /api/v1/configs/{config_id}/audits` 和 `GET /api/v1/runs/{run_id}/config-version`。API 启动 Backtest、Paper 或 Replay 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。人工审批流和生产发布策略 enforcement 仍是后续 production-hardening 工作。
+当前 V1 实现 `GET /api/v1/configs`、`GET /api/v1/configs/{name}`、`GET /api/v1/configs/{config_id}/releases`、`GET /api/v1/configs/{config_id}/audits` 和 `GET /api/v1/runs/{run_id}/config-version`。API 启动 Backtest、Paper、Replay 或 Live 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。人工审批流和生产发布策略 enforcement 仍是后续 production-hardening 工作。
 
 ---
 

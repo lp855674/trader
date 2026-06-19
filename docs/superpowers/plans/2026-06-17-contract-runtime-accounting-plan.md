@@ -8,6 +8,20 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, rust_decimal, Binance API, IBKR API, PowerShell smoke scripts.
 
+## Current Status (2026-06-19 Audit)
+
+This plan file has now been backfilled for the audited local MVP. Checked items below are confirmed implemented; unchecked items remain original production scope or exact plan steps that have not landed.
+
+| Area | Status | Evidence | Remaining |
+| --- | --- | --- | --- |
+| Storage lifecycle | Done for local MVP | `Db::upsert_crypto_position`, `list_crypto_positions`, `get_crypto_position`, `upsert_funding_rate`, `list_funding_rates`, `get_latest_funding_rate`; covered by `runtime_repository_tests` | None for local storage boundary |
+| Simulated contract accounting | Done for local MVP | `SimulatedContractAccounting`, `ContractAccountingBook`, paper runtime persistence, paper tests for crypto perp position and funding PnL | None for simulated paper |
+| Contract risk checks | Done for current scope | `market_rules::ContractRiskLimits` and algorithm tests for leverage, margin and funding bounds | Production liquidation/open-interest data still not wired |
+| CLI/API readback | Done for local MVP | `trader positions list`, `trader funding list`, `GET /api/v1/runs/{run_id}/crypto-positions`, `GET /api/v1/funding-rates` | None for read-only local surface |
+| Binance reconciliation | Partially done | Binance position parsing and reconciliation drift tests exist in `crates/broker` | Scheduled real broker reconciliation remains follow-up |
+| IBKR contract reconciliation | Not done | IBKR adapter still returns "position snapshots are not implemented" for broker snapshots | Implement IBKR position snapshots and contract reconciliation |
+| Production readiness | Not done | `docs/分析.md` still classifies this as not full production accounting | Real broker scheduling, production alerts, exchange metadata such as liquidation/open-interest |
+
 ---
 
 ## Scope
@@ -137,7 +151,7 @@ New gates for this plan:
 - Modify: `crates/storage/tests/storage_tests.rs`
 - Modify: `crates/storage/tests/runtime_repository_tests.rs`
 
-- [ ] **Step 1: Add crypto position upsert method**
+- [x] **Step 1: Add crypto position upsert method**
 
 ```rust
 pub async fn upsert_crypto_position(&self, pos: &NewCryptoPosition) -> StorageResult<()> {
@@ -168,11 +182,11 @@ pub async fn upsert_crypto_position(&self, pos: &NewCryptoPosition) -> StorageRe
 }
 ```
 
-- [ ] **Step 2: Add list and get methods**
+- [x] **Step 2: Add list and get methods**
 
 Add `list_crypto_positions(run_id)` and `get_crypto_position(run_id, account_id, exchange, symbol, position_side)`.
 
-- [ ] **Step 3: Add funding rate upsert and query methods**
+- [x] **Step 3: Add funding rate upsert and query methods**
 
 ```rust
 pub async fn upsert_funding_rate(&self, rate: &NewFundingRate) -> StorageResult<()>
@@ -180,7 +194,7 @@ pub async fn list_funding_rates(&self, exchange: &str, symbol: Option<&str>, fro
 pub async fn get_latest_funding_rate(&self, exchange: &str, symbol: &str) -> StorageResult<Option<StoredFundingRate>>
 ```
 
-- [ ] **Step 4: Add storage tests**
+- [x] **Step 4: Add storage tests**
 
 Tests must assert:
 - Upsert crypto position creates row, then update modifies qty/avg_price without creating duplicate.
@@ -188,7 +202,7 @@ Tests must assert:
 - Funding rate upsert on same (exchange, symbol, time) overwrites.
 - list_funding_rates with time filter returns correct range.
 
-- [ ] **Step 5: Run storage tests**
+- [x] **Step 5: Run storage tests**
 
 ```powershell
 cargo test -p storage crypto_position
@@ -198,7 +212,7 @@ cargo test -p storage funding_settlement
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/storage
@@ -215,7 +229,7 @@ git commit -m "feat: extend crypto position and funding rate storage"
 - Modify: `crates/paper/src/paper.rs`
 - Modify: `crates/paper/tests/paper_tests.rs`
 
-- [ ] **Step 1: Define ContractAccountingBook trait**
+- [x] **Step 1: Define ContractAccountingBook trait**
 
 ```rust
 pub trait ContractAccountingBook {
@@ -226,21 +240,21 @@ pub trait ContractAccountingBook {
 }
 ```
 
-- [ ] **Step 2: Implement SimulatedContractAccounting**
+- [x] **Step 2: Implement SimulatedContractAccounting**
 
 For paper mode:
 - `on_fill`: update qty, avg_price, margin_used. If position closes (qty → 0), calculate realized_pnl.
 - `on_funding`: calculate funding_fee = position_qty × funding_rate × mark_price. Deduct from/add to realized_pnl.
 - `on_reconciliation`: compare against broker snapshot, return drift report.
 
-- [ ] **Step 3: Wire into paper runtime**
+- [x] **Step 3: Wire into paper runtime**
 
 In `crates/paper/src/paper.rs`, after each fill for CRYPTO_PERP/CRYPTO_FUTURE:
 1. Call `accounting.on_fill(fill)`.
 2. Call `db.upsert_crypto_position(&position)`.
 3. On funding event: call `accounting.on_funding(rate)`, then `db.upsert_crypto_position`.
 
-- [ ] **Step 4: Add paper tests**
+- [x] **Step 4: Add paper tests**
 
 ```rust
 #[tokio::test]
@@ -257,7 +271,7 @@ async fn paper_crypto_perp_funding_settlement() {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 cargo test -p paper paper_crypto_perp
@@ -266,7 +280,7 @@ cargo test -p algorithm contract_accounting
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/algorithm crates/paper
@@ -284,14 +298,14 @@ git commit -m "feat: implement simulated contract accounting"
 - Modify: `crates/ibkr/src/ibkr.rs`
 - Modify: `crates/ibkr/tests/ibkr_tests.rs`
 
-- [ ] **Step 1: Add Binance position fetch**
+- [x] **Step 1: Add Binance position fetch**
 
 ```rust
 pub async fn fetch_positions(&self) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>
 pub async fn fetch_funding_history(&self, symbol: &str, start_ms: i64, end_ms: i64) -> Result<Vec<FundingRateRecord>, BrokerError>
 ```
 
-- [ ] **Step 2: Implement reconciliation logic**
+- [x] **Step 2: Implement reconciliation logic**
 
 ```rust
 pub fn reconcile_positions(
@@ -349,7 +363,7 @@ git commit -m "feat: broker position fetch and reconciliation"
 - Modify: `crates/market_rules/src/market_rules.rs`
 - Modify: `crates/algorithm/src/algorithm.rs`
 
-- [ ] **Step 1: Add contract validation rules**
+- [x] **Step 1: Add contract validation rules**
 
 ```rust
 pub struct ContractRiskLimits {
@@ -360,7 +374,7 @@ pub struct ContractRiskLimits {
 }
 ```
 
-- [ ] **Step 2: Add risk check in algorithm execution**
+- [x] **Step 2: Add risk check in algorithm execution**
 
 Before submitting a contract order:
 1. Check leverage ≤ max_leverage.
@@ -369,7 +383,7 @@ Before submitting a contract order:
 4. Check liquidation price has sufficient buffer.
 5. Emit `risk_events` rejection if any check fails.
 
-- [ ] **Step 3: Add tests**
+- [x] **Step 3: Add tests**
 
 ```rust
 #[tokio::test]
@@ -378,7 +392,7 @@ async fn rejects_order_exceeding_max_leverage() { ... }
 async fn rejects_order_insufficient_margin() { ... }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add crates/market_rules crates/algorithm
@@ -396,14 +410,14 @@ git commit -m "feat: contract-specific risk checks"
 - Modify: `crates/api/tests/api_tests.rs`
 - Modify: `docs/api.md`
 
-- [ ] **Step 1: Add API endpoints**
+- [x] **Step 1: Add API endpoints**
 
 ```
 GET /api/v1/runs/{run_id}/crypto-positions
 GET /api/v1/funding-rates?exchange={ex}&symbol={sym}&from_ms={t1}&to_ms={t2}
 ```
 
-- [ ] **Step 2: Add API response structs (owned by API, not leaking storage DTO)**
+- [x] **Step 2: Add API response structs (owned by API, not leaking storage DTO)**
 
 ```rust
 #[derive(Serialize)]
@@ -412,20 +426,20 @@ struct CryptoPositionResponse { ... }
 struct FundingRateResponse { ... }
 ```
 
-- [ ] **Step 3: Add CLI commands**
+- [x] **Step 3: Add CLI commands**
 
 ```
 trader positions list --run-id <id> [--account <acct>] [--exchange <ex>]
 trader funding list --exchange <ex> [--symbol <sym>] [--from <ts>] [--to <ts>]
 ```
 
-- [ ] **Step 4: Add tests and docs**
+- [x] **Step 4: Add tests and docs**
 
 - API tests for new endpoints.
 - `docs/api.md` documentation.
 - Boundary check passes.
 
-- [ ] **Step 5: Run full acceptance**
+- [x] **Step 5: Run full acceptance**
 
 ```powershell
 cargo test -p api
@@ -436,7 +450,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/api apps/trader-cli docs/api.md
@@ -453,18 +467,18 @@ git commit -m "feat: contract position CLI and API"
 - Modify: `docs/database.md`
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update `docs/分析.md`**
+- [x] **Step 1: Update `docs/分析.md`**
 
 Change contract accounting section from "storage boundary exists, runtime not wired" to:
 - Runtime accounting wired for simulated paper and Binance testnet.
 - Reconciliation tests exist for Binance.
 - List remaining gaps: IBKR reconciliation, cross-exchange margin, real-money readiness.
 
-- [ ] **Step 2: Update `docs/database.md`**
+- [x] **Step 2: Update `docs/database.md`**
 
 Update `crypto_positions` field list to include new fields (funding_pnl, liquidation_price if added).
 
-- [ ] **Step 3: Update `docs/roadmap.md`**
+- [x] **Step 3: Update `docs/roadmap.md`**
 
 Add "Contract Runtime Accounting" milestone with stages:
 1. Storage boundary ✅
@@ -474,7 +488,7 @@ Add "Contract Runtime Accounting" milestone with stages:
 5. Full multi-exchange reconciliation (pending)
 6. Production readiness (pending)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add docs

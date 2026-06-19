@@ -8,6 +8,19 @@
 
 **Tech Stack:** Rust workspace, tracing, tracing-subscriber, SQLx SQLite, Axum, tokio, serde, PowerShell CLI.
 
+## Current Status (2026-06-19 Audit)
+
+This plan was only partially implemented. The repository has an operational `system_logs` read/write surface, not the full async tracing collection architecture described below. Checked items below only cover exact pieces that landed; local-MVP readback that does not match the tracing plan is summarized in the status table.
+
+| Area | Status | Evidence | Remaining |
+| --- | --- | --- | --- |
+| System log storage | Done for local MVP | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `list_system_logs_filtered`, `purge_system_logs` | Batch insert/count/text search are not implemented |
+| Runtime/API/ingestion log writes | Done for local MVP | API run lifecycle logs, live runtime source logs and ingestion tracker write `system_logs` | Full-chain logging across all crates is not implemented |
+| CLI/API readback | Done for local MVP | `logs list`, `logs purge`, `GET /api/v1/system-logs`, `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/limit filters | Tail/count/search endpoints are not implemented |
+| Retention | Partially done | CLI purge supports retention-style cleanup by timestamp/target/run | Configured scheduled retention cleanup is not implemented |
+| Async tracing writer | Not done | No `events::log_writer`, `SystemLogLayer`, buffered channel writer or batch flush implementation exists | Implement tracing layer and non-blocking buffered DB writer |
+| External production collection | Not done | Docs classify external production log collectors and alert routing as follow-up | Add collector/shipper integration and alert routing |
+
 ---
 
 ## Scope
@@ -128,7 +141,7 @@ New gates:
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/tests/storage_tests.rs`
 
-- [ ] **Step 1: Define system log types**
+- [x] **Step 1: Define system log types**
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -170,7 +183,7 @@ pub enum LogCategory {
 }
 ```
 
-- [ ] **Step 2: Add insert and query methods**
+- [x] **Step 2: Add insert and query methods**
 
 ```rust
 pub async fn insert_system_log(&self, log: &NewSystemLog) -> StorageResult<()>

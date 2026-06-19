@@ -8,6 +8,19 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, rust_decimal, tokio intervals, PowerShell smoke scripts.
 
+## Current Status (2026-06-19 Audit)
+
+This plan file has now been backfilled for the audited local MVP. Checked items below are confirmed implemented; unchecked items remain original production scope or exact plan steps that have not landed.
+
+| Area | Status | Evidence | Remaining |
+| --- | --- | --- | --- |
+| Snapshot storage | Done for local MVP | `cash_snapshots` and `position_snapshots` repositories support insert/list/latest/filter; covered by `runtime_repository_tests` | None for local storage boundary |
+| Paper runtime snapshots | Done for local MVP | `paper_runtime_persists_cash_and_position_snapshots` verifies paper cash/position snapshot writes | Configurable snapshot cadence is still simpler than the original sketch |
+| Live runtime snapshots | Done for fake broker local MVP | Live runtime writes startup baseline cash snapshots and periodic fake broker cash/position snapshots via `[live].broker_snapshot_interval_ms` | Real broker-reported scheduling remains follow-up |
+| Reconciliation drift projection | Done for fake broker local MVP | Live runtime emits `reconciliation_drift` risk events for cash drift, missing broker position and qty drift | Production alert routing/audit reports remain follow-up |
+| CLI/API readback | Done for local MVP | `snapshots cash`, `snapshots positions`, `reconciliation`, run-scoped API routes and `ops-smoke.ps1` cover API + CLI readback | None for current read-only surface |
+| Production readiness | Not done | Docs still classify real broker snapshots as hardening work | Real broker scheduling, alerting, and external operational runbooks |
+
 ---
 
 ## Scope
@@ -134,7 +147,7 @@ New gates:
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/tests/storage_tests.rs`
 
-- [ ] **Step 1: Add cash snapshot insert/list methods**
+- [x] **Step 1: Add cash snapshot insert/list methods**
 
 ```rust
 pub async fn insert_cash_snapshot(&self, snapshot: &NewCashSnapshot) -> StorageResult<()> {
@@ -158,7 +171,7 @@ pub async fn get_latest_cash_snapshot(&self, run_id: &str, account_id: &str) -> 
 }
 ```
 
-- [ ] **Step 2: Add position snapshot insert/list methods**
+- [x] **Step 2: Add position snapshot insert/list methods**
 
 ```rust
 pub async fn insert_position_snapshot(&self, snapshot: &NewPositionSnapshot) -> StorageResult<()>
@@ -166,7 +179,7 @@ pub async fn list_position_snapshots(&self, run_id: &str, account_id: Option<&st
 pub async fn get_latest_position_snapshot(&self, run_id: &str, account_id: &str, symbol: &str) -> StorageResult<Option<StoredPositionSnapshot>>
 ```
 
-- [ ] **Step 3: Add storage tests**
+- [x] **Step 3: Add storage tests**
 
 ```rust
 #[tokio::test]
@@ -191,7 +204,7 @@ async fn get_latest_returns_most_recent() {
 }
 ```
 
-- [ ] **Step 4: Run storage tests**
+- [x] **Step 4: Run storage tests**
 
 ```powershell
 cargo test -p storage cash_snapshot
@@ -200,7 +213,7 @@ cargo test -p storage position_snapshot
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add crates/storage
@@ -227,7 +240,7 @@ pub struct SnapshotConfig {
 }
 ```
 
-- [ ] **Step 2: Add snapshot helper to paper runtime**
+- [x] **Step 2: Add snapshot helper to paper runtime**
 
 ```rust
 async fn write_fill_snapshots(&self, db: &Db, run_id: &str, account_id: &str, ts_ms: i64) -> StorageResult<()> {
@@ -237,7 +250,7 @@ async fn write_fill_snapshots(&self, db: &Db, run_id: &str, account_id: &str, ts
 }
 ```
 
-- [ ] **Step 3: Wire into paper runtime after each fill**
+- [x] **Step 3: Wire into paper runtime after each fill**
 
 After the existing fill persistence logic:
 
@@ -258,7 +271,7 @@ if let Some(interval_bars) = self.snapshot_config.snapshot_interval_bars {
 }
 ```
 
-- [ ] **Step 5: Add paper tests**
+- [x] **Step 5: Add paper tests**
 
 ```rust
 #[tokio::test]
@@ -310,7 +323,7 @@ git commit -m "feat: wire snapshots into paper runtime"
 - Modify: `crates/algorithm/src/algorithm.rs`
 - Modify: `crates/algorithm/tests/algorithm_tests.rs`
 
-- [ ] **Step 1: Define reconciliation types**
+- [x] **Step 1: Define reconciliation types**
 
 ```rust
 pub struct DriftReport {
@@ -344,7 +357,7 @@ pub enum DriftSeverity {
 }
 ```
 
-- [ ] **Step 2: Implement cash reconciliation**
+- [x] **Step 2: Implement cash reconciliation**
 
 ```rust
 pub fn reconcile_cash(
@@ -362,7 +375,7 @@ pub fn reconcile_cash(
 }
 ```
 
-- [ ] **Step 3: Implement position reconciliation**
+- [x] **Step 3: Implement position reconciliation**
 
 ```rust
 pub fn reconcile_positions(
@@ -376,7 +389,7 @@ pub fn reconcile_positions(
 }
 ```
 
-- [ ] **Step 4: Emit risk events on drift**
+- [x] **Step 4: Emit risk events on drift**
 
 ```rust
 async fn on_reconciliation_drift(&self, report: &DriftReport) -> StorageResult<()> {
@@ -388,7 +401,7 @@ async fn on_reconciliation_drift(&self, report: &DriftReport) -> StorageResult<(
 }
 ```
 
-- [ ] **Step 5: Add tests**
+- [x] **Step 5: Add tests**
 
 ```rust
 #[test]
@@ -488,7 +501,7 @@ git commit -m "feat: wire reconciliation into runtime"
 - Modify: `apps/trader-cli/src/main.rs`
 - Modify: `docs/api.md`
 
-- [ ] **Step 1: Add API endpoints**
+- [x] **Step 1: Add API endpoints**
 
 ```
 GET /api/v1/runs/{run_id}/cash-snapshots?account_id={acct}&from_ms={t1}&to_ms={t2}
@@ -496,7 +509,7 @@ GET /api/v1/runs/{run_id}/position-snapshots?account_id={acct}&symbol={sym}&from
 GET /api/v1/runs/{run_id}/reconciliation
 ```
 
-- [ ] **Step 2: Add API response structs (owned by API)**
+- [x] **Step 2: Add API response structs (owned by API)**
 
 ```rust
 #[derive(Serialize)]
@@ -507,7 +520,7 @@ struct PositionSnapshotResponse { ... }
 struct ReconciliationResponse { ... }
 ```
 
-- [ ] **Step 3: Add CLI commands**
+- [x] **Step 3: Add CLI commands**
 
 ```
 trader snapshots cash --run-id <id> [--account <acct>]
@@ -515,13 +528,13 @@ trader snapshots positions --run-id <id> [--symbol <sym>]
 trader reconciliation --run-id <id>
 ```
 
-- [ ] **Step 4: Add tests, docs, boundary check**
+- [x] **Step 4: Add tests, docs, boundary check**
 
 - API tests for all 3 endpoints.
 - `docs/api.md` documentation.
 - `bash ./scripts/check-api-read-model-boundary` passes.
 
-- [ ] **Step 5: Run full acceptance**
+- [x] **Step 5: Run full acceptance**
 
 ```powershell
 cargo test -p api
@@ -533,7 +546,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/api apps/trader-cli docs/api.md
@@ -549,15 +562,15 @@ git commit -m "feat: snapshot and reconciliation CLI and API"
 - Modify: `docs/分析.md`
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update `docs/分析.md`**
+- [x] **Step 1: Update `docs/分析.md`**
 
 Update snapshot section to reflect automatic capture and reconciliation.
 
-- [ ] **Step 2: Update `docs/roadmap.md`**
+- [x] **Step 2: Update `docs/roadmap.md`**
 
 Add "Live/Reconciliation Snapshot" milestone.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add docs
