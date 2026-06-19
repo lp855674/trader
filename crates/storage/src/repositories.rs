@@ -374,7 +374,7 @@ pub enum ConfigActorRole {
 }
 
 impl ConfigActorRole {
-    fn can_transition_production(self, next: ConfigState) -> bool {
+    fn can_transition_governed_env(self, next: ConfigState) -> bool {
         match next {
             ConfigState::PendingReview | ConfigState::Published | ConfigState::Archived => {
                 self == Self::ReleaseManager
@@ -2994,14 +2994,14 @@ impl Db {
             )));
         };
         let role = ConfigActorRole::from_str(actor_role)?;
-        if current.target_env.as_deref() == Some("production")
-            && !role.can_transition_production(new_state)
-        {
-            return Err(StorageError::Protocol(format!(
-                "production config {} requires role {}",
-                new_state.as_str(),
-                required_config_role(new_state)
-            )));
+        if let Some(target_env) = config_policy_environment(current.target_env.as_deref()) {
+            if !role.can_transition_governed_env(new_state) {
+                return Err(StorageError::Protocol(format!(
+                    "{target_env} config {} requires role {}",
+                    new_state.as_str(),
+                    required_config_role(new_state)
+                )));
+            }
         }
         self.update_config_state(name, version, new_state, changed_by, reason, ts_ms)
             .await
@@ -5370,6 +5370,14 @@ fn required_config_role(state: ConfigState) -> &'static str {
         }
         ConfigState::Approved => "approver",
         ConfigState::Draft => "none",
+    }
+}
+
+fn config_policy_environment(target_env: Option<&str>) -> Option<&str> {
+    match target_env {
+        Some("staging") => Some("staging"),
+        Some("production") => Some("production"),
+        _ => None,
     }
 }
 
