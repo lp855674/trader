@@ -1834,7 +1834,13 @@ CREATE TABLE IF NOT EXISTS configs (
     created_by TEXT,
     state_changed_at INTEGER,
     state_changed_by TEXT,
-    state_change_reason TEXT
+    state_change_reason TEXT,
+    target_env TEXT,
+    rollout TEXT,
+    approved_by TEXT,
+    approved_at INTEGER,
+    published_by TEXT,
+    published_at INTEGER
 );
 ```
 
@@ -1868,6 +1874,12 @@ created_by         创建人
 state_changed_at   最近状态变更时间
 state_changed_by   最近状态变更人
 state_change_reason 最近状态变更原因
+target_env          发布目标环境；production 会启用独立审批约束
+rollout             发布策略标签，例如 canary/full
+approved_by         最近审批人
+approved_at         最近审批时间
+published_by        最近发布人
+published_at        最近发布时间
 ```
 
 ```sql

@@ -325,6 +325,10 @@ enum ConfigsCommand {
         #[arg(long)]
         parent_version: Option<u32>,
         #[arg(long)]
+        target_env: Option<String>,
+        #[arg(long)]
+        rollout: Option<String>,
+        #[arg(long)]
         ts_ms: Option<i64>,
     },
     List {
@@ -1601,6 +1605,8 @@ async fn run_command(command: Command) -> Result<()> {
                 file,
                 created_by,
                 parent_version,
+                target_env,
+                rollout,
                 ts_ms,
             } => {
                 let (_, db) = load_db(&config).await?;
@@ -1611,6 +1617,8 @@ async fn run_command(command: Command) -> Result<()> {
                         content_json,
                         created_by,
                         parent_version,
+                        target_env,
+                        rollout,
                         ts_ms: ts_ms.unwrap_or_else(now_ms),
                     })
                     .await?;
@@ -2904,6 +2912,21 @@ fn print_config_version(config: &storage::ConfigVersion) {
         config.state_change_reason.as_deref().unwrap_or(""),
         config.id
     );
+    if config.target_env.is_some()
+        || config.rollout.is_some()
+        || config.approved_by.is_some()
+        || config.published_by.is_some()
+    {
+        println!(
+            "config_governance: name={} version={} target_env={} rollout={} approved_by={} published_by={}",
+            config.name,
+            config.version,
+            config.target_env.as_deref().unwrap_or(""),
+            config.rollout.as_deref().unwrap_or(""),
+            config.approved_by.as_deref().unwrap_or(""),
+            config.published_by.as_deref().unwrap_or("")
+        );
+    }
 }
 
 fn print_config_diff(diff: &storage::ConfigDiff) {

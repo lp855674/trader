@@ -430,6 +430,8 @@ struct CreateConfigVersionRequest {
     content: serde_json::Value,
     created_by: String,
     parent_version: Option<u32>,
+    target_env: Option<String>,
+    rollout: Option<String>,
     ts_ms: Option<i64>,
 }
 
@@ -467,6 +469,12 @@ struct ConfigVersionResponse {
     state_changed_at_ms: i64,
     state_changed_by: String,
     state_change_reason: Option<String>,
+    target_env: Option<String>,
+    rollout: Option<String>,
+    approved_by: Option<String>,
+    approved_at_ms: Option<i64>,
+    published_by: Option<String>,
+    published_at_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -1465,6 +1473,8 @@ async fn create_config_version(
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
             created_by: request.created_by,
             parent_version: request.parent_version,
+            target_env: request.target_env,
+            rollout: request.rollout,
             ts_ms,
         })
         .await?;
@@ -1797,6 +1807,12 @@ fn config_version_response(config: storage::ConfigVersion) -> ConfigVersionRespo
         state_changed_at_ms: config.state_changed_at_ms,
         state_changed_by: config.state_changed_by,
         state_change_reason: config.state_change_reason,
+        target_env: config.target_env,
+        rollout: config.rollout,
+        approved_by: config.approved_by,
+        approved_at_ms: config.approved_at_ms,
+        published_by: config.published_by,
+        published_at_ms: config.published_at_ms,
     }
 }
 
@@ -2724,8 +2740,12 @@ struct ApiError(anyhow::Error);
 
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        let status = match self.0.downcast_ref::<storage::StorageError>() {
+            Some(storage::StorageError::Protocol(_)) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            status,
             Json(ErrorResponse {
                 error: self.0.to_string(),
             }),

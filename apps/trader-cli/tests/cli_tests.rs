@@ -2140,6 +2140,143 @@ fn config_management_commands_create_transition_show_diff_and_rollback() {
 }
 
 #[test]
+fn config_management_commands_enforce_production_governance() {
+    let config = seed_config_management_cli_storage();
+    let version_one = temp_output("trader-cli-prod-config-v1", "json");
+    std::fs::write(&version_one, r#"{"risk":{"max_order_notional":"1000"}}"#).unwrap();
+
+    let mut create = Command::cargo_bin("trader").unwrap();
+    create
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "create",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--file",
+            version_one.to_str().unwrap(),
+            "--created-by",
+            "release",
+            "--target-env",
+            "production",
+            "--rollout",
+            "canary",
+            "--ts-ms",
+            "100",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_governance: name=prod-risk version=1"))
+        .stdout(contains("target_env=production"))
+        .stdout(contains("rollout=canary"));
+
+    for (subcommand, actor, ts_ms) in [
+        ("submit-review", "release", "200"),
+        ("approve", "release", "300"),
+    ] {
+        let mut transition = Command::cargo_bin("trader").unwrap();
+        transition
+            .current_dir(workspace_root())
+            .args([
+                "configs",
+                subcommand,
+                "--config",
+                config.to_str().unwrap(),
+                "--name",
+                "prod-risk",
+                "--version",
+                "1",
+                "--changed-by",
+                actor,
+                "--reason",
+                subcommand,
+                "--ts-ms",
+                ts_ms,
+            ])
+            .assert()
+            .success();
+    }
+
+    let mut self_publish = Command::cargo_bin("trader").unwrap();
+    self_publish
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "publish",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--reason",
+            "publish",
+            "--ts-ms",
+            "400",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "production config publish requires independent approver",
+        ));
+
+    let mut independent_approve = Command::cargo_bin("trader").unwrap();
+    independent_approve
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "approve",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--version",
+            "1",
+            "--changed-by",
+            "risk-owner",
+            "--reason",
+            "independent",
+            "--ts-ms",
+            "500",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("approved_by=risk-owner"));
+
+    let mut publish = Command::cargo_bin("trader").unwrap();
+    publish
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "publish",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--reason",
+            "publish",
+            "--ts-ms",
+            "600",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("state=published"))
+        .stdout(contains("approved_by=risk-owner"))
+        .stdout(contains("published_by=release"));
+
+    std::fs::remove_file(config).unwrap();
+    std::fs::remove_file(version_one).unwrap();
+}
+
+#[test]
 fn logs_commands_filter_and_purge_system_logs() {
     let config = seed_logs_cli_storage();
 

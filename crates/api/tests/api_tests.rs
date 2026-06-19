@@ -791,6 +791,100 @@ async fn config_crud_routes_create_transition_diff_and_rollback() {
 }
 
 #[tokio::test]
+async fn config_governance_routes_enforce_independent_production_approval() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let (status, created) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/configs",
+        serde_json::json!({
+            "name": "prod-risk",
+            "content": { "risk": { "max_order_notional": "1000" } },
+            "created_by": "release",
+            "target_env": "production",
+            "rollout": "canary",
+            "ts_ms": 100
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["target_env"], "production");
+    assert_eq!(created["rollout"], "canary");
+
+    for (state, actor, ts_ms) in [
+        ("pending_review", "release", 200),
+        ("approved", "release", 300),
+    ] {
+        let (status, body) = request_json(
+            app.clone(),
+            "PUT",
+            "/api/v1/configs/prod-risk/1/state",
+            serde_json::json!({
+                "new_state": state,
+                "changed_by": actor,
+                "reason": state,
+                "ts_ms": ts_ms
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["state"], state);
+    }
+
+    let (status, _) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-risk/1/state",
+        serde_json::json!({
+            "new_state": "published",
+            "changed_by": "release",
+            "reason": "publish",
+            "ts_ms": 400
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, approved) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-risk/1/state",
+        serde_json::json!({
+            "new_state": "approved",
+            "changed_by": "risk-owner",
+            "reason": "independent approval",
+            "ts_ms": 500
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(approved["approved_by"], "risk-owner");
+
+    let (status, published) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-risk/1/state",
+        serde_json::json!({
+            "new_state": "published",
+            "changed_by": "release",
+            "reason": "publish",
+            "ts_ms": 600
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(published["state"], "published");
+    assert_eq!(published["approved_by"], "risk-owner");
+    assert_eq!(published["published_by"], "release");
+}
+
+#[tokio::test]
 async fn backtest_start_binds_run_to_config_snapshot_version() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();

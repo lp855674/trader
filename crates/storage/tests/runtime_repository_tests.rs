@@ -18,6 +18,8 @@ async fn config_versioning_creates_versions_and_selects_published() {
             content_json: r#"{"risk":{"max_order_notional":"1000"},"enabled":true}"#.to_string(),
             created_by: "ops".to_string(),
             parent_version: None,
+            target_env: None,
+            rollout: None,
             ts_ms: 100,
         })
         .await
@@ -28,6 +30,8 @@ async fn config_versioning_creates_versions_and_selects_published() {
             content_json: r#"{"risk":{"max_order_notional":"2000"},"enabled":true}"#.to_string(),
             created_by: "ops".to_string(),
             parent_version: Some(v1),
+            target_env: None,
+            rollout: None,
             ts_ms: 200,
         })
         .await
@@ -113,6 +117,8 @@ async fn config_state_transition_rejects_invalid_edges_and_terminal_archive() {
         content_json: r#"{"risk":{"max_drawdown":"0.2"}}"#.to_string(),
         created_by: "ops".to_string(),
         parent_version: None,
+        target_env: None,
+        rollout: None,
         ts_ms: 100,
     })
     .await
@@ -167,6 +173,8 @@ async fn config_diff_and_rollback_create_new_draft_version() {
         content_json: r#"{"risk":{"max_order_notional":"1000"},"enabled":true}"#.to_string(),
         created_by: "ops".to_string(),
         parent_version: None,
+        target_env: None,
+        rollout: None,
         ts_ms: 100,
     })
     .await
@@ -176,6 +184,8 @@ async fn config_diff_and_rollback_create_new_draft_version() {
         content_json: r#"{"risk":{"max_order_notional":"2000"},"symbols":["AAPL"]}"#.to_string(),
         created_by: "ops".to_string(),
         parent_version: Some(1),
+        target_env: None,
+        rollout: None,
         ts_ms: 200,
     })
     .await
@@ -222,6 +232,8 @@ async fn config_state_change_writes_audit_and_event_store() {
         content_json: r#"{"enabled":true}"#.to_string(),
         created_by: "ops".to_string(),
         parent_version: None,
+        target_env: None,
+        rollout: None,
         ts_ms: 100,
     })
     .await
@@ -252,6 +264,95 @@ async fn config_state_change_writes_audit_and_event_store() {
     assert_eq!(payload["old_state"], "draft");
     assert_eq!(payload["new_state"], "pending_review");
     assert_eq!(payload["changed_by"], "reviewer");
+}
+
+#[tokio::test]
+async fn production_config_publish_requires_independent_approval() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.create_config_version(NewConfigVersion {
+        name: "prod-risk".to_string(),
+        content_json: r#"{"risk":{"max_order_notional":"1000"}}"#.to_string(),
+        created_by: "release".to_string(),
+        parent_version: None,
+        target_env: Some("production".to_string()),
+        rollout: Some("canary".to_string()),
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+    db.update_config_state(
+        "prod-risk",
+        1,
+        ConfigState::PendingReview,
+        "release",
+        Some("request production approval"),
+        200,
+    )
+    .await
+    .unwrap();
+
+    db.update_config_state(
+        "prod-risk",
+        1,
+        ConfigState::Approved,
+        "release",
+        Some("self approve"),
+        300,
+    )
+    .await
+    .unwrap();
+    let self_approved_publish = db
+        .update_config_state(
+            "prod-risk",
+            1,
+            ConfigState::Published,
+            "release",
+            Some("publish production"),
+            400,
+        )
+        .await;
+    assert!(self_approved_publish.is_err());
+
+    db.update_config_state(
+        "prod-risk",
+        1,
+        ConfigState::Approved,
+        "risk-owner",
+        Some("independent approval"),
+        500,
+    )
+    .await
+    .unwrap();
+    db.update_config_state(
+        "prod-risk",
+        1,
+        ConfigState::Published,
+        "release",
+        Some("publish production"),
+        600,
+    )
+    .await
+    .unwrap();
+
+    let config = db.get_config("prod-risk", 1).await.unwrap().unwrap();
+    assert_eq!(config.state, ConfigState::Published);
+    assert_eq!(config.target_env.as_deref(), Some("production"));
+    assert_eq!(config.rollout.as_deref(), Some("canary"));
+    assert_eq!(config.approved_by.as_deref(), Some("risk-owner"));
+    assert_eq!(config.published_by.as_deref(), Some("release"));
+
+    let events = db.list_events_by_source(&config.id).await.unwrap();
+    let publish_event = events
+        .iter()
+        .find(|event| event.payload_json.contains(r#""new_state":"published""#))
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&publish_event.payload_json).unwrap();
+    assert_eq!(payload["target_env"], "production");
+    assert_eq!(payload["rollout"], "canary");
+    assert_eq!(payload["approved_by"], "risk-owner");
+    assert_eq!(payload["published_by"], "release");
 }
 
 #[tokio::test]

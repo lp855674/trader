@@ -86,6 +86,12 @@ impl Db {
             ("state_changed_at", "INTEGER"),
             ("state_changed_by", "TEXT"),
             ("state_change_reason", "TEXT"),
+            ("target_env", "TEXT"),
+            ("rollout", "TEXT"),
+            ("approved_by", "TEXT"),
+            ("approved_at", "INTEGER"),
+            ("published_by", "TEXT"),
+            ("published_at", "INTEGER"),
         ];
 
         for (column_name, column_type) in required_columns {

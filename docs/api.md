@@ -2328,9 +2328,9 @@ Query 参数：
 当前 V1 同时保留两类配置面：
 
 - API 启动 Backtest、Paper、Replay 或 Live 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。
-- 管理型配置使用 `POST /api/v1/configs` 创建不可变版本，支持 `draft -> pending_review -> approved -> published -> archived` 生命周期、JSON diff、rollback 和状态变更审计。
+- 管理型配置使用 `POST /api/v1/configs` 创建不可变版本，支持 `draft -> pending_review -> approved -> published -> archived` 生命周期、JSON diff、rollback、状态变更审计，以及 `target_env=production` 时的独立审批发布约束。
 
-当前接口返回未包 envelope 的 JSON。生产级权限、多环境 rollout policy 和多人审批仍是后续 production-hardening 工作。
+当前接口返回未包 envelope 的 JSON。生产级 RBAC、多环境权限矩阵和多人审批队列仍是后续 production-hardening 工作。
 
 ---
 
@@ -2378,6 +2378,8 @@ POST /api/v1/configs
   },
   "created_by": "ops",
   "parent_version": null,
+  "target_env": "production",
+  "rollout": "canary",
   "ts_ms": 1700000000000
 }
 ```
@@ -2401,7 +2403,13 @@ POST /api/v1/configs
   "created_at_ms": 1700000000000,
   "state_changed_at_ms": 1700000000000,
   "state_changed_by": "ops",
-  "state_change_reason": null
+  "state_change_reason": null,
+  "target_env": "production",
+  "rollout": "canary",
+  "approved_by": null,
+  "approved_at_ms": null,
+  "published_by": null,
+  "published_at_ms": null
 }
 ```
 
@@ -2430,7 +2438,13 @@ GET /api/v1/configs/{name}
     "created_at_ms": 1700000000000,
     "state_changed_at_ms": 1700000000300,
     "state_changed_by": "ops",
-    "state_change_reason": "rollout"
+    "state_change_reason": "rollout",
+    "target_env": "production",
+    "rollout": "canary",
+    "approved_by": "risk-owner",
+    "approved_at_ms": 1700000000200,
+    "published_by": "ops",
+    "published_at_ms": 1700000000300
   }
 ]
 ```
@@ -2463,6 +2477,12 @@ PUT /api/v1/configs/{name}/{version}/state
 - `approved -> published`
 - `approved -> archived`
 - `published -> archived`
+
+当配置的 `target_env` 为 `production` 时，`published` 转换要求：
+
+- 当前版本已经处于 `approved`。
+- `approved_by` 存在。
+- `changed_by` 不能等于 `approved_by`，即发布人不能是最后一次审批人。
 
 请求：
 

@@ -350,6 +350,8 @@ pub struct NewConfigVersion {
     pub content_json: String,
     pub created_by: String,
     pub parent_version: Option<u32>,
+    pub target_env: Option<String>,
+    pub rollout: Option<String>,
     pub ts_ms: i64,
 }
 
@@ -417,6 +419,12 @@ pub struct ConfigVersion {
     pub state_changed_at_ms: i64,
     pub state_changed_by: String,
     pub state_change_reason: Option<String>,
+    pub target_env: Option<String>,
+    pub rollout: Option<String>,
+    pub approved_by: Option<String>,
+    pub approved_at_ms: Option<i64>,
+    pub published_by: Option<String>,
+    pub published_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2783,9 +2791,9 @@ impl Db {
             INSERT INTO configs (
                 id, name, config_type, content, format, checksum, created_at, updated_at,
                 lifecycle_version, state, parent_version, created_by, state_changed_at,
-                state_changed_by, state_change_reason
+                state_changed_by, state_change_reason, target_env, rollout
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&config_id)
@@ -2803,6 +2811,8 @@ impl Db {
         .bind(config.ts_ms)
         .bind(&config.created_by)
         .bind(Option::<String>::None)
+        .bind(&config.target_env)
+        .bind(&config.rollout)
         .execute(self.pool())
         .await?;
 
@@ -2829,7 +2839,8 @@ impl Db {
             SELECT
                 id, name, lifecycle_version, content, state, parent_version,
                 created_by, created_at, state_changed_at, state_changed_by,
-                state_change_reason
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
             FROM configs
             WHERE name = ? AND lifecycle_version = ?
             "#,
@@ -2848,7 +2859,8 @@ impl Db {
             SELECT
                 id, name, lifecycle_version, content, state, parent_version,
                 created_by, created_at, state_changed_at, state_changed_by,
-                state_change_reason
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
             FROM configs
             WHERE name = ? AND lifecycle_version IS NOT NULL
             ORDER BY lifecycle_version DESC
@@ -2868,7 +2880,8 @@ impl Db {
             SELECT
                 id, name, lifecycle_version, content, state, parent_version,
                 created_by, created_at, state_changed_at, state_changed_by,
-                state_change_reason
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
             FROM configs
             WHERE name = ? AND lifecycle_version IS NOT NULL AND state = ?
             ORDER BY lifecycle_version DESC
@@ -2889,7 +2902,8 @@ impl Db {
             SELECT
                 id, name, lifecycle_version, content, state, parent_version,
                 created_by, created_at, state_changed_at, state_changed_by,
-                state_change_reason
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
             FROM configs
             WHERE name = ? AND lifecycle_version IS NOT NULL
             ORDER BY lifecycle_version ASC
@@ -2916,22 +2930,47 @@ impl Db {
                 "config version {name}:{version} does not exist"
             )));
         };
-        if current.state == new_state {
+        let is_reapproval =
+            current.state == ConfigState::Approved && new_state == ConfigState::Approved;
+        if current.state == new_state && !is_reapproval {
             return Ok(());
         }
-        if !current.state.can_transition_to(new_state) {
+        if !is_reapproval && !current.state.can_transition_to(new_state) {
             return Err(StorageError::Protocol(format!(
                 "invalid config state transition {} -> {}",
                 current.state.as_str(),
                 new_state.as_str()
             )));
         }
+        if new_state == ConfigState::Published
+            && current.target_env.as_deref() == Some("production")
+        {
+            let Some(approved_by) = current.approved_by.as_deref() else {
+                return Err(StorageError::Protocol(
+                    "production config publish requires approval".to_string(),
+                ));
+            };
+            if approved_by == changed_by {
+                return Err(StorageError::Protocol(
+                    "production config publish requires independent approver".to_string(),
+                ));
+            }
+        }
+
+        let approved_by = (new_state == ConfigState::Approved).then(|| changed_by.to_string());
+        let approved_at = (new_state == ConfigState::Approved).then_some(ts_ms);
+        let published_by = (new_state == ConfigState::Published).then(|| changed_by.to_string());
+        let published_at = (new_state == ConfigState::Published).then_some(ts_ms);
 
         sqlx::query(
             r#"
             UPDATE configs
             SET state = ?, updated_at = ?, state_changed_at = ?,
-                state_changed_by = ?, state_change_reason = ?
+                state_changed_by = ?, state_change_reason = ?,
+                approved_by = COALESCE(?, approved_by),
+                approved_at = COALESCE(?, approved_at),
+                published_by = COALESCE(?, published_by),
+                published_at = COALESCE(?, published_at)
             WHERE name = ? AND lifecycle_version = ?
             "#,
         )
@@ -2940,6 +2979,10 @@ impl Db {
         .bind(ts_ms)
         .bind(changed_by)
         .bind(reason)
+        .bind(approved_by.as_deref())
+        .bind(approved_at)
+        .bind(published_by.as_deref())
+        .bind(published_at)
         .bind(name)
         .bind(i64::from(version))
         .execute(self.pool())
@@ -2975,6 +3018,18 @@ impl Db {
                 "new_state": new_state.as_str(),
                 "changed_by": changed_by,
                 "reason": reason,
+                "target_env": current.target_env,
+                "rollout": current.rollout,
+                "approved_by": if new_state == ConfigState::Approved {
+                    Some(changed_by)
+                } else {
+                    current.approved_by.as_deref()
+                },
+                "published_by": if new_state == ConfigState::Published {
+                    Some(changed_by)
+                } else {
+                    current.published_by.as_deref()
+                },
             })
             .to_string(),
         })
@@ -3060,6 +3115,8 @@ impl Db {
                 content_json: source.content_json,
                 created_by: actor.to_string(),
                 parent_version: Some(version),
+                target_env: source.target_env,
+                rollout: source.rollout,
                 ts_ms,
             })
             .await?;
@@ -5190,42 +5247,36 @@ impl Db {
     }
 }
 
-type ConfigVersionRow = (
-    String,
-    String,
-    i64,
-    String,
-    String,
-    Option<i64>,
-    String,
-    i64,
-    i64,
-    String,
-    Option<String>,
-);
+#[derive(sqlx::FromRow)]
+struct ConfigVersionRow {
+    id: String,
+    name: String,
+    lifecycle_version: i64,
+    content: String,
+    state: String,
+    parent_version: Option<i64>,
+    created_by: String,
+    created_at: i64,
+    state_changed_at: i64,
+    state_changed_by: String,
+    state_change_reason: Option<String>,
+    target_env: Option<String>,
+    rollout: Option<String>,
+    approved_by: Option<String>,
+    approved_at: Option<i64>,
+    published_by: Option<String>,
+    published_at: Option<i64>,
+}
 
 fn config_version_id(name: &str, version: u32) -> String {
     format!("config:{name}:v{version}")
 }
 
 fn config_version_from_row(row: ConfigVersionRow) -> StorageResult<ConfigVersion> {
-    let (
-        id,
-        name,
-        version,
-        content_json,
-        state,
-        parent_version,
-        created_by,
-        created_at_ms,
-        state_changed_at_ms,
-        state_changed_by,
-        state_change_reason,
-    ) = row;
-
-    let version = u32::try_from(version)
+    let version = u32::try_from(row.lifecycle_version)
         .map_err(|error| StorageError::Protocol(format!("invalid config version: {error}")))?;
-    let parent_version = parent_version
+    let parent_version = row
+        .parent_version
         .map(u32::try_from)
         .transpose()
         .map_err(|error| {
@@ -5233,17 +5284,23 @@ fn config_version_from_row(row: ConfigVersionRow) -> StorageResult<ConfigVersion
         })?;
 
     Ok(ConfigVersion {
-        id,
-        name,
+        id: row.id,
+        name: row.name,
         version,
-        content_json,
-        state: ConfigState::from_str(&state)?,
+        content_json: row.content,
+        state: ConfigState::from_str(&row.state)?,
         parent_version,
-        created_by,
-        created_at_ms,
-        state_changed_at_ms,
-        state_changed_by,
-        state_change_reason,
+        created_by: row.created_by,
+        created_at_ms: row.created_at,
+        state_changed_at_ms: row.state_changed_at,
+        state_changed_by: row.state_changed_by,
+        state_change_reason: row.state_change_reason,
+        target_env: row.target_env,
+        rollout: row.rollout,
+        approved_by: row.approved_by,
+        approved_at_ms: row.approved_at,
+        published_by: row.published_by,
+        published_at_ms: row.published_at,
     })
 }
 
