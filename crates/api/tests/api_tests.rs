@@ -1168,6 +1168,12 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
         "position_missing_runtime",
     )
     .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-snapshot/config-version",
+        "\"run_id\":\"api-live-snapshot\"",
+    )
+    .await;
 
     let response = app
         .clone()

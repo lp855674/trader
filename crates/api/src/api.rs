@@ -966,6 +966,8 @@ async fn start_live_run(
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let run_id = app_config.runtime.run_id.clone();
     let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
+    let started_at_ms = chrono::Utc::now().timestamp_millis();
+    persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
     let db = state.db.clone();
     let task_run_id = run_id.clone();
     state
