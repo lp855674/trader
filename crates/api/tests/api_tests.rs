@@ -688,6 +688,109 @@ async fn config_lifecycle_routes_return_release_audit_and_run_binding_status() {
 }
 
 #[tokio::test]
+async fn config_crud_routes_create_transition_diff_and_rollback() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let (status, v1) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/configs",
+        serde_json::json!({
+            "name": "paper-risk",
+            "content": {
+                "risk": { "max_order_notional": "1000" },
+                "enabled": true
+            },
+            "created_by": "ops",
+            "ts_ms": 100
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(v1["name"], "paper-risk");
+    assert_eq!(v1["version"], 1);
+    assert_eq!(v1["state"], "draft");
+
+    let (status, v2) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/configs",
+        serde_json::json!({
+            "name": "paper-risk",
+            "content": {
+                "risk": { "max_order_notional": "2000" },
+                "symbols": ["AAPL"]
+            },
+            "created_by": "ops",
+            "parent_version": 1,
+            "ts_ms": 200
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(v2["version"], 2);
+
+    let versions = get_json(app.clone(), "/api/v1/configs/paper-risk").await;
+    assert_eq!(versions.as_array().unwrap().len(), 2);
+    assert_eq!(versions[0]["version"], 1);
+    assert_eq!(versions[1]["parent_version"], 1);
+
+    let latest = get_json(app.clone(), "/api/v1/configs/paper-risk/latest").await;
+    assert_eq!(latest["version"], 2);
+    assert_eq!(latest["state"], "draft");
+
+    let specific = get_json(app.clone(), "/api/v1/configs/paper-risk/1").await;
+    assert_eq!(specific["content"]["risk"]["max_order_notional"], "1000");
+
+    for state in ["pending_review", "approved", "published"] {
+        let (status, body) = request_json(
+            app.clone(),
+            "PUT",
+            "/api/v1/configs/paper-risk/1/state",
+            serde_json::json!({
+                "new_state": state,
+                "changed_by": "ops",
+                "reason": format!("set {state}"),
+                "ts_ms": 300
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["state"], state);
+    }
+
+    let published = get_json(app.clone(), "/api/v1/configs/paper-risk/published").await;
+    assert_eq!(published["version"], 1);
+    assert_eq!(published["state"], "published");
+
+    let diff = get_json(app.clone(), "/api/v1/configs/paper-risk/diff?v1=1&v2=2").await;
+    assert_eq!(diff["added"], serde_json::json!(["symbols"]));
+    assert_eq!(diff["removed"], serde_json::json!(["enabled"]));
+    assert_eq!(diff["changed"][0]["path"], "risk.max_order_notional");
+
+    let (status, rollback) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/configs/paper-risk/1/rollback",
+        serde_json::json!({
+            "actor": "ops",
+            "reason": "restore v1",
+            "ts_ms": 400
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(rollback["version"], 3);
+    assert_eq!(rollback["state"], "draft");
+    assert_eq!(rollback["parent_version"], 1);
+}
+
+#[tokio::test]
 async fn backtest_start_binds_run_to_config_snapshot_version() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -1231,4 +1334,31 @@ async fn get_json(app: axum::Router, uri: &str) -> serde_json::Value {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn request_json(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, body)
 }

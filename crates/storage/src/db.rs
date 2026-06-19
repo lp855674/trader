@@ -61,7 +61,52 @@ impl Db {
         ))
         .execute(&self.pool)
         .await?;
+        self.ensure_config_lifecycle_columns().await?;
         self.ensure_strategy_runs_error_column().await?;
+        Ok(())
+    }
+
+    async fn ensure_config_lifecycle_columns(&self) -> StorageResult<()> {
+        let columns = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
+            "PRAGMA table_info(configs)",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let has_column = |column_name: &str| {
+            columns
+                .iter()
+                .any(|(_, name, _, _, _, _)| name == column_name)
+        };
+        let required_columns = [
+            ("lifecycle_version", "INTEGER"),
+            ("state", "TEXT"),
+            ("parent_version", "INTEGER"),
+            ("created_by", "TEXT"),
+            ("state_changed_at", "INTEGER"),
+            ("state_changed_by", "TEXT"),
+            ("state_change_reason", "TEXT"),
+        ];
+
+        for (column_name, column_type) in required_columns {
+            if !has_column(column_name) {
+                sqlx::query(&format!(
+                    "ALTER TABLE configs ADD COLUMN {column_name} {column_type}"
+                ))
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+
+        sqlx::query(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_configs_name_lifecycle_version
+            ON configs(name, lifecycle_version)
+            WHERE lifecycle_version IS NOT NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

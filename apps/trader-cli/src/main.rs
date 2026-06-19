@@ -313,6 +313,116 @@ enum SnapshotsCommand {
 
 #[derive(Subcommand)]
 enum ConfigsCommand {
+    Create {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        file: String,
+        #[arg(long, default_value = "local")]
+        created_by: String,
+        #[arg(long)]
+        parent_version: Option<u32>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
+    List {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+    },
+    Show {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: Option<u32>,
+        #[arg(long)]
+        published: bool,
+    },
+    Diff {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        v1: u32,
+        #[arg(long)]
+        v2: u32,
+    },
+    Rollback {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: u32,
+        #[arg(long, default_value = "local")]
+        actor: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
+    SubmitReview {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: u32,
+        #[arg(long, default_value = "local")]
+        changed_by: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
+    Approve {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: u32,
+        #[arg(long, default_value = "local")]
+        changed_by: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
+    Publish {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: u32,
+        #[arg(long, default_value = "local")]
+        changed_by: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
+    Archive {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: u32,
+        #[arg(long, default_value = "local")]
+        changed_by: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ts_ms: Option<i64>,
+    },
     Releases {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -549,6 +659,15 @@ fn local_fills_from_storage(fills: Vec<storage::StoredFill>) -> Vec<LocalFill> {
 }
 
 fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .name("trader-cli".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run_cli)?
+        .join()
+        .map_err(|_| anyhow::anyhow!("trader CLI thread panicked"))?
+}
+
+fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1476,6 +1595,171 @@ async fn run_command(command: Command) -> Result<()> {
             }
         },
         Command::Configs { command } => match command {
+            ConfigsCommand::Create {
+                config,
+                name,
+                file,
+                created_by,
+                parent_version,
+                ts_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let content_json = compact_json_file(&file)?;
+                let version = db
+                    .create_config_version(storage::NewConfigVersion {
+                        name: name.clone(),
+                        content_json,
+                        created_by,
+                        parent_version,
+                        ts_ms: ts_ms.unwrap_or_else(now_ms),
+                    })
+                    .await?;
+                let config_version = db.get_config(&name, version).await?.ok_or_else(|| {
+                    anyhow::anyhow!("created config version {name}:{version} was not found")
+                })?;
+                print_config_version(&config_version);
+            }
+            ConfigsCommand::List { config, name } => {
+                let (_, db) = load_db(&config).await?;
+                for config_version in db.list_config_versions(&name).await? {
+                    print_config_version(&config_version);
+                }
+            }
+            ConfigsCommand::Show {
+                config,
+                name,
+                version,
+                published,
+            } => {
+                if published && version.is_some() {
+                    bail!("--published cannot be combined with --version");
+                }
+                let (_, db) = load_db(&config).await?;
+                let config_version = if published {
+                    db.get_published_config(&name).await?
+                } else if let Some(version) = version {
+                    db.get_config(&name, version).await?
+                } else {
+                    db.get_latest_config(&name).await?
+                }
+                .ok_or_else(|| anyhow::anyhow!("config {name} was not found"))?;
+                print_config_version(&config_version);
+                println!("config_content: {}", config_version.content_json);
+            }
+            ConfigsCommand::Diff {
+                config,
+                name,
+                v1,
+                v2,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let diff = db.diff_configs(&name, v1, v2).await?;
+                print_config_diff(&diff);
+            }
+            ConfigsCommand::Rollback {
+                config,
+                name,
+                version,
+                actor,
+                reason,
+                ts_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let rollback_version = db
+                    .rollback_config_version(
+                        &name,
+                        version,
+                        &actor,
+                        reason.as_deref(),
+                        ts_ms.unwrap_or_else(now_ms),
+                    )
+                    .await?;
+                let config_version =
+                    db.get_config(&name, rollback_version)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "rollback config version {name}:{rollback_version} was not found"
+                            )
+                        })?;
+                print_config_version(&config_version);
+            }
+            ConfigsCommand::SubmitReview {
+                config,
+                name,
+                version,
+                changed_by,
+                reason,
+                ts_ms,
+            } => {
+                transition_config_state(
+                    &config,
+                    &name,
+                    version,
+                    storage::ConfigState::PendingReview,
+                    &changed_by,
+                    reason.as_deref(),
+                    ts_ms,
+                )
+                .await?;
+            }
+            ConfigsCommand::Approve {
+                config,
+                name,
+                version,
+                changed_by,
+                reason,
+                ts_ms,
+            } => {
+                transition_config_state(
+                    &config,
+                    &name,
+                    version,
+                    storage::ConfigState::Approved,
+                    &changed_by,
+                    reason.as_deref(),
+                    ts_ms,
+                )
+                .await?;
+            }
+            ConfigsCommand::Publish {
+                config,
+                name,
+                version,
+                changed_by,
+                reason,
+                ts_ms,
+            } => {
+                transition_config_state(
+                    &config,
+                    &name,
+                    version,
+                    storage::ConfigState::Published,
+                    &changed_by,
+                    reason.as_deref(),
+                    ts_ms,
+                )
+                .await?;
+            }
+            ConfigsCommand::Archive {
+                config,
+                name,
+                version,
+                changed_by,
+                reason,
+                ts_ms,
+            } => {
+                transition_config_state(
+                    &config,
+                    &name,
+                    version,
+                    storage::ConfigState::Archived,
+                    &changed_by,
+                    reason.as_deref(),
+                    ts_ms,
+                )
+                .await?;
+            }
             ConfigsCommand::Releases { config, config_id } => {
                 let (_, db) = load_db(&config).await?;
                 let releases = db.list_config_releases(&config_id).await?;
@@ -2569,6 +2853,95 @@ fn ensure_supported_ingestion_exchange(exchange: &str) -> Result<()> {
     } else {
         bail!("unsupported ingestion exchange {exchange}; expected binance")
     }
+}
+
+fn compact_json_file(path: &str) -> Result<String> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config content from {path}"))?;
+    let value = serde_json::from_str::<serde_json::Value>(&content)
+        .with_context(|| format!("failed to parse config JSON from {path}"))?;
+    Ok(serde_json::to_string(&value)?)
+}
+
+async fn transition_config_state(
+    config_path: &str,
+    name: &str,
+    version: u32,
+    new_state: storage::ConfigState,
+    changed_by: &str,
+    reason: Option<&str>,
+    ts_ms: Option<i64>,
+) -> Result<()> {
+    let (_, db) = load_db(config_path).await?;
+    db.update_config_state(
+        name,
+        version,
+        new_state,
+        changed_by,
+        reason,
+        ts_ms.unwrap_or_else(now_ms),
+    )
+    .await?;
+    let config_version = db
+        .get_config(name, version)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("config version {name}:{version} was not found"))?;
+    print_config_version(&config_version);
+    Ok(())
+}
+
+fn print_config_version(config: &storage::ConfigVersion) {
+    println!(
+        "config_version: name={} version={} state={} parent_version={} created_by={} created_at_ms={} state_changed_by={} state_changed_at_ms={} reason={} id={}",
+        config.name,
+        config.version,
+        config.state.as_str(),
+        optional_u32(config.parent_version),
+        config.created_by,
+        config.created_at_ms,
+        config.state_changed_by,
+        config.state_changed_at_ms,
+        config.state_change_reason.as_deref().unwrap_or(""),
+        config.id
+    );
+}
+
+fn print_config_diff(diff: &storage::ConfigDiff) {
+    println!(
+        "config_diff: name={} v1={} v2={} added={} removed={} changed={}",
+        diff.name,
+        diff.version_a,
+        diff.version_b,
+        diff.added.len(),
+        diff.removed.len(),
+        diff.changed.len()
+    );
+    for path in &diff.added {
+        println!("config_diff_added: path={path}");
+    }
+    for path in &diff.removed {
+        println!("config_diff_removed: path={path}");
+    }
+    for entry in &diff.changed {
+        println!(
+            "config_diff_changed: path={} before={} after={}",
+            entry.path,
+            json_literal(&entry.before),
+            json_literal(&entry.after)
+        );
+    }
+}
+
+fn optional_u32(value: Option<u32>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+
+fn json_literal(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
 }
 
 async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {

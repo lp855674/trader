@@ -40,7 +40,17 @@ GET  /api/v1/metrics
 GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
 GET  /api/v1/configs
+POST /api/v1/configs
 GET  /api/v1/configs/{name}
+GET  /api/v1/configs/{name}/latest
+GET  /api/v1/configs/{name}/published
+GET  /api/v1/configs/{name}/{version}
+PUT  /api/v1/configs/{name}/{version}/state
+GET  /api/v1/configs/{name}/diff
+POST /api/v1/configs/{name}/{version}/rollback
+GET  /api/v1/configs/{config_id}/releases
+GET  /api/v1/configs/{config_id}/audits
+GET  /api/v1/runs/{run_id}/config-version
 GET  /api/v1/system-logs
 GET  /api/v1/runs/{run_id}/status
 POST /api/v1/runs/{run_id}/cancel
@@ -488,7 +498,17 @@ Market Data
 
 Config
   GET  /api/v1/configs
+  POST /api/v1/configs
   GET  /api/v1/configs/{name}
+  GET  /api/v1/configs/{name}/latest
+  GET  /api/v1/configs/{name}/published
+  GET  /api/v1/configs/{name}/{version}
+  PUT  /api/v1/configs/{name}/{version}/state
+  GET  /api/v1/configs/{name}/diff
+  POST /api/v1/configs/{name}/{version}/rollback
+  GET  /api/v1/configs/{config_id}/releases
+  GET  /api/v1/configs/{config_id}/audits
+  GET  /api/v1/runs/{run_id}/config-version
 ```
 
 ---
@@ -2305,11 +2325,16 @@ Query 参数：
 
 # 21. Config API
 
-当前 V1 实现 `GET /api/v1/configs`、`GET /api/v1/configs/{name}`、`GET /api/v1/configs/{config_id}/releases`、`GET /api/v1/configs/{config_id}/audits` 和 `GET /api/v1/runs/{run_id}/config-version`。API 启动 Backtest、Paper、Replay 或 Live 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。人工审批流和生产发布策略 enforcement 仍是后续 production-hardening 工作。
+当前 V1 同时保留两类配置面：
+
+- API 启动 Backtest、Paper、Replay 或 Live 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。
+- 管理型配置使用 `POST /api/v1/configs` 创建不可变版本，支持 `draft -> pending_review -> approved -> published -> archived` 生命周期、JSON diff、rollback 和状态变更审计。
+
+当前接口返回未包 envelope 的 JSON。生产级权限、多环境 rollout policy 和多人审批仍是后续 production-hardening 工作。
 
 ---
 
-## 21.1 查询配置列表
+## 21.1 查询原始配置列表
 
 ```http
 GET /api/v1/configs
@@ -2334,79 +2359,202 @@ GET /api/v1/configs
 
 ---
 
-## 21.2 查询单个配置
+## 21.2 创建管理型配置版本
 
 ```http
-GET /api/v1/configs/{name}
+POST /api/v1/configs
 ```
 
-当前 V1 响应为未包 envelope 的单个对象：
+请求：
 
 ```json
 {
-  "id": "run:sample-ma-cross",
-  "name": "sample-ma-cross",
-  "config_type": "RUN",
-  "format": "TOML",
-  "content": "[runtime]\nmode = \"paper\"\nrun_id = \"sample-ma-cross\"\n",
-  "checksum": "fnv1a64:0000000000000000",
+  "name": "paper-risk",
+  "content": {
+    "enabled": true,
+    "risk": {
+      "max_order_notional": "1000"
+    }
+  },
+  "created_by": "ops",
+  "parent_version": null,
+  "ts_ms": 1700000000000
+}
+```
+
+响应状态：`201 Created`
+
+```json
+{
+  "id": "config:paper-risk:v1",
+  "name": "paper-risk",
+  "version": 1,
+  "content": {
+    "enabled": true,
+    "risk": {
+      "max_order_notional": "1000"
+    }
+  },
+  "state": "draft",
+  "parent_version": null,
+  "created_by": "ops",
   "created_at_ms": 1700000000000,
-  "updated_at_ms": 1700000000000
+  "state_changed_at_ms": 1700000000000,
+  "state_changed_by": "ops",
+  "state_change_reason": null
 }
 ```
 
 ---
 
-## 21.3 查询配置发布版本
+## 21.3 查询配置版本
+
+```http
+GET /api/v1/configs/{name}
+```
+
+响应：
+
+```json
+[
+  {
+    "id": "config:paper-risk:v1",
+    "name": "paper-risk",
+    "version": 1,
+    "content": {
+      "enabled": true
+    },
+    "state": "published",
+    "parent_version": null,
+    "created_by": "ops",
+    "created_at_ms": 1700000000000,
+    "state_changed_at_ms": 1700000000300,
+    "state_changed_by": "ops",
+    "state_change_reason": "rollout"
+  }
+]
+```
+
+---
+
+## 21.4 查询 latest/published/specific 版本
+
+```http
+GET /api/v1/configs/{name}/latest
+GET /api/v1/configs/{name}/published
+GET /api/v1/configs/{name}/{version}
+```
+
+未找到时返回 `404`。成功响应为单个 `ConfigVersionResponse`。
+
+---
+
+## 21.5 更新配置状态
+
+```http
+PUT /api/v1/configs/{name}/{version}/state
+```
+
+有效转换：
+
+- `draft -> pending_review`
+- `draft -> archived`
+- `pending_review -> approved`
+- `approved -> published`
+- `approved -> archived`
+- `published -> archived`
+
+请求：
+
+```json
+{
+  "new_state": "approved",
+  "changed_by": "ops",
+  "reason": "review passed",
+  "ts_ms": 1700000000300
+}
+```
+
+响应为更新后的 `ConfigVersionResponse`。每次有效状态变更都会写入 `config_audits`、`config_releases` 和 `event_store` 的 `config.state.changed` 事件。
+
+---
+
+## 21.6 Diff 两个配置版本
+
+```http
+GET /api/v1/configs/{name}/diff?v1=1&v2=2
+```
+
+响应：
+
+```json
+{
+  "name": "paper-risk",
+  "version_a": 1,
+  "version_b": 2,
+  "added": ["risk.max_position"],
+  "removed": [],
+  "changed": [
+    {
+      "path": "risk.max_order_notional",
+      "before": "1000",
+      "after": "1500"
+    }
+  ]
+}
+```
+
+---
+
+## 21.7 Rollback 配置版本
+
+```http
+POST /api/v1/configs/{name}/{version}/rollback
+```
+
+Rollback 不会覆盖旧版本；它复制目标版本内容并创建一个新的 `draft` 版本，`parent_version` 指向被 rollback 的版本。
+
+请求：
+
+```json
+{
+  "actor": "ops",
+  "reason": "restore stable config",
+  "ts_ms": 1700000000400
+}
+```
+
+响应状态：`201 Created`，响应体为新 draft 版本的 `ConfigVersionResponse`。
+
+---
+
+## 21.8 查询配置发布和审计记录
 
 ```http
 GET /api/v1/configs/{config_id}/releases
-```
-
-响应：
-
-```json
-[
-  {
-    "id": "run:sample-ma-cross:fnv1a64:0000000000000000",
-    "config_id": "run:sample-ma-cross",
-    "version": "fnv1a64:0000000000000000",
-    "status": "released",
-    "released_by": "runtime",
-    "notes": "run config snapshot",
-    "created_at_ms": 1700000000000,
-    "updated_at_ms": 1700000000000
-  }
-]
-```
-
----
-
-## 21.4 查询配置审计记录
-
-```http
 GET /api/v1/configs/{config_id}/audits
 ```
 
-响应：
+发布响应：
 
 ```json
 [
   {
-    "id": "audit-id",
-    "config_id": "cfg-paper",
-    "version": "v1",
-    "action": "rollback",
-    "actor": "ops",
-    "reason": "restore previous release",
-    "ts_ms": 1700000000000
+    "id": "config:paper-risk:v1:1",
+    "config_id": "config:paper-risk:v1",
+    "version": "1",
+    "status": "published",
+    "released_by": "ops",
+    "notes": "rollout",
+    "created_at_ms": 1700000000000,
+    "updated_at_ms": 1700000000300
   }
 ]
 ```
 
 ---
 
-## 21.5 查询运行绑定的配置版本
+## 21.9 查询运行绑定的配置版本
 
 ```http
 GET /api/v1/runs/{run_id}/config-version
@@ -2420,27 +2568,6 @@ GET /api/v1/runs/{run_id}/config-version
   "config_id": "run:sample-ma-cross",
   "version": "fnv1a64:0000000000000000",
   "bound_at_ms": 1700000000000
-}
-```
-
-目标响应：
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "cfg_001",
-    "name": "server",
-    "config_type": "SYSTEM",
-    "format": "TOML",
-    "content": "...",
-    "checksum": "abc123",
-    "created_at": 1700000000000,
-    "updated_at": 1700000000000
-  },
-  "error": null,
-  "request_id": "req_001",
-  "ts": 1700000000000
 }
 ```
 

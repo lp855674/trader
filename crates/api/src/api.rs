@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
@@ -424,6 +424,51 @@ struct ConfigAuditResponse {
     ts_ms: i64,
 }
 
+#[derive(Deserialize)]
+struct CreateConfigVersionRequest {
+    name: String,
+    content: serde_json::Value,
+    created_by: String,
+    parent_version: Option<u32>,
+    ts_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct UpdateConfigStateRequest {
+    new_state: storage::ConfigState,
+    changed_by: String,
+    reason: Option<String>,
+    ts_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct RollbackConfigRequest {
+    actor: String,
+    reason: Option<String>,
+    ts_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ConfigDiffQuery {
+    v1: u32,
+    v2: u32,
+}
+
+#[derive(Serialize)]
+struct ConfigVersionResponse {
+    id: String,
+    name: String,
+    version: u32,
+    content: serde_json::Value,
+    state: storage::ConfigState,
+    parent_version: Option<u32>,
+    created_by: String,
+    created_at_ms: i64,
+    state_changed_at_ms: i64,
+    state_changed_by: String,
+    state_change_reason: Option<String>,
+}
+
 #[derive(Serialize)]
 struct SystemLogResponse {
     id: String,
@@ -481,8 +526,26 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/brokers/account/{account_id}", get(broker_account))
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{run_id}", get(get_run))
-        .route("/api/v1/configs", get(list_configs))
-        .route("/api/v1/configs/{name}", get(get_config))
+        .route(
+            "/api/v1/configs",
+            get(list_configs).post(create_config_version),
+        )
+        .route("/api/v1/configs/{name}", get(list_config_versions_by_name))
+        .route("/api/v1/configs/{name}/latest", get(get_latest_config))
+        .route(
+            "/api/v1/configs/{name}/published",
+            get(get_published_config),
+        )
+        .route("/api/v1/configs/{name}/diff", get(diff_config_versions))
+        .route("/api/v1/configs/{name}/{version}", get(get_config_version))
+        .route(
+            "/api/v1/configs/{name}/{version}/state",
+            put(update_config_state),
+        )
+        .route(
+            "/api/v1/configs/{name}/{version}/rollback",
+            post(rollback_config_version),
+        )
         .route("/api/v1/system-logs", get(list_system_logs))
         .route(
             "/api/v1/configs/{config_id}/releases",
@@ -1376,16 +1439,6 @@ async fn get_run(
     Ok(Json(run_response(run)).into_response())
 }
 
-async fn get_config(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Result<axum::response::Response, ApiError> {
-    let Some(config) = state.db.get_config_by_name(&name).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
-    Ok(Json(config_response(config)).into_response())
-}
-
 async fn list_configs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ConfigResponse>>, ApiError> {
@@ -1397,6 +1450,133 @@ async fn list_configs(
         .map(config_response)
         .collect();
     Ok(Json(configs))
+}
+
+async fn create_config_version(
+    State(state): State<AppState>,
+    Json(request): Json<CreateConfigVersionRequest>,
+) -> Result<(StatusCode, Json<ConfigVersionResponse>), ApiError> {
+    let ts_ms = request.ts_ms.unwrap_or_else(now_ms);
+    let version = state
+        .db
+        .create_config_version(storage::NewConfigVersion {
+            name: request.name.clone(),
+            content_json: serde_json::to_string(&request.content)
+                .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
+            created_by: request.created_by,
+            parent_version: request.parent_version,
+            ts_ms,
+        })
+        .await?;
+    let config = state
+        .db
+        .get_config(&request.name, version)
+        .await?
+        .ok_or_else(|| ApiError(anyhow::anyhow!("created config version was not found")))?;
+    Ok((StatusCode::CREATED, Json(config_version_response(config))))
+}
+
+async fn list_config_versions_by_name(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<ConfigVersionResponse>>, ApiError> {
+    let versions = state
+        .db
+        .list_config_versions(&name)
+        .await?
+        .into_iter()
+        .map(config_version_response)
+        .collect();
+    Ok(Json(versions))
+}
+
+async fn get_latest_config(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(config) = state.db.get_latest_config(&name).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(config_version_response(config)).into_response())
+}
+
+async fn get_published_config(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(config) = state.db.get_published_config(&name).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(config_version_response(config)).into_response())
+}
+
+async fn get_config_version(
+    State(state): State<AppState>,
+    Path((name, version)): Path<(String, u32)>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(config) = state.db.get_config(&name, version).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(config_version_response(config)).into_response())
+}
+
+async fn update_config_state(
+    State(state): State<AppState>,
+    Path((name, version)): Path<(String, u32)>,
+    Json(request): Json<UpdateConfigStateRequest>,
+) -> Result<Json<ConfigVersionResponse>, ApiError> {
+    let ts_ms = request.ts_ms.unwrap_or_else(now_ms);
+    state
+        .db
+        .update_config_state(
+            &name,
+            version,
+            request.new_state,
+            &request.changed_by,
+            request.reason.as_deref(),
+            ts_ms,
+        )
+        .await?;
+    let config = state
+        .db
+        .get_config(&name, version)
+        .await?
+        .ok_or_else(|| ApiError(anyhow::anyhow!("updated config version was not found")))?;
+    Ok(Json(config_version_response(config)))
+}
+
+async fn diff_config_versions(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<ConfigDiffQuery>,
+) -> Result<Json<storage::ConfigDiff>, ApiError> {
+    Ok(Json(
+        state.db.diff_configs(&name, query.v1, query.v2).await?,
+    ))
+}
+
+async fn rollback_config_version(
+    State(state): State<AppState>,
+    Path((name, version)): Path<(String, u32)>,
+    Json(request): Json<RollbackConfigRequest>,
+) -> Result<(StatusCode, Json<ConfigVersionResponse>), ApiError> {
+    let ts_ms = request.ts_ms.unwrap_or_else(now_ms);
+    let rollback_version = state
+        .db
+        .rollback_config_version(
+            &name,
+            version,
+            &request.actor,
+            request.reason.as_deref(),
+            ts_ms,
+        )
+        .await?;
+    let config = state
+        .db
+        .get_config(&name, rollback_version)
+        .await?
+        .ok_or_else(|| ApiError(anyhow::anyhow!("rollback config version was not found")))?;
+    Ok((StatusCode::CREATED, Json(config_version_response(config))))
 }
 
 async fn list_config_releases(
@@ -1587,6 +1767,10 @@ fn payload_response(payload_json: String) -> serde_json::Value {
     serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::String(payload_json))
 }
 
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
     ConfigResponse {
         id: config.id,
@@ -1597,6 +1781,22 @@ fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
         checksum: config.checksum,
         created_at_ms: config.created_at_ms,
         updated_at_ms: config.updated_at_ms,
+    }
+}
+
+fn config_version_response(config: storage::ConfigVersion) -> ConfigVersionResponse {
+    ConfigVersionResponse {
+        id: config.id,
+        name: config.name,
+        version: config.version,
+        content: payload_response(config.content_json),
+        state: config.state,
+        parent_version: config.parent_version,
+        created_by: config.created_by,
+        created_at_ms: config.created_at_ms,
+        state_changed_at_ms: config.state_changed_at_ms,
+        state_changed_by: config.state_changed_by,
+        state_change_reason: config.state_change_reason,
     }
 }
 

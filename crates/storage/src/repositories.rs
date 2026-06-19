@@ -1,8 +1,10 @@
+use std::{collections::BTreeMap, str::FromStr};
+
 use crate::{Db, StorageError, StorageResult};
 use chrono::{TimeZone, Utc};
 use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
 use rust_decimal::Decimal;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
 use trader_core::OrderRequest;
 use uuid::Uuid;
@@ -340,6 +342,98 @@ pub struct StoredConfigRecord {
     pub checksum: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewConfigVersion {
+    pub name: String,
+    pub content_json: String,
+    pub created_by: String,
+    pub parent_version: Option<u32>,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigState {
+    Draft,
+    PendingReview,
+    Approved,
+    Published,
+    Archived,
+}
+
+impl ConfigState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::PendingReview => "pending_review",
+            Self::Approved => "approved",
+            Self::Published => "published",
+            Self::Archived => "archived",
+        }
+    }
+
+    fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Draft, Self::PendingReview)
+                | (Self::Draft, Self::Archived)
+                | (Self::PendingReview, Self::Approved)
+                | (Self::Approved, Self::Published)
+                | (Self::Approved, Self::Archived)
+                | (Self::Published, Self::Archived)
+        )
+    }
+}
+
+impl FromStr for ConfigState {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "draft" => Ok(Self::Draft),
+            "pending_review" => Ok(Self::PendingReview),
+            "approved" => Ok(Self::Approved),
+            "published" => Ok(Self::Published),
+            "archived" => Ok(Self::Archived),
+            other => Err(StorageError::Protocol(format!(
+                "unknown config state {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigVersion {
+    pub id: String,
+    pub name: String,
+    pub version: u32,
+    pub content_json: String,
+    pub state: ConfigState,
+    pub parent_version: Option<u32>,
+    pub created_by: String,
+    pub created_at_ms: i64,
+    pub state_changed_at_ms: i64,
+    pub state_changed_by: String,
+    pub state_change_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigDiff {
+    pub name: String,
+    pub version_a: u32,
+    pub version_b: u32,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub changed: Vec<ConfigDiffEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigDiffEntry {
+    pub path: String,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2652,6 +2746,343 @@ impl Db {
             .collect())
     }
 
+    pub async fn create_config_version(&self, config: NewConfigVersion) -> StorageResult<u32> {
+        serde_json::from_str::<serde_json::Value>(&config.content_json).map_err(|error| {
+            StorageError::Protocol(format!("invalid config JSON content: {error}"))
+        })?;
+
+        if let Some(parent_version) = config.parent_version {
+            if self
+                .get_config(&config.name, parent_version)
+                .await?
+                .is_none()
+            {
+                return Err(StorageError::Protocol(format!(
+                    "parent config version {}:{} does not exist",
+                    config.name, parent_version
+                )));
+            }
+        }
+
+        let (latest_version,) = sqlx::query_as::<_, (i64,)>(
+            r#"
+            SELECT COALESCE(MAX(lifecycle_version), 0)
+            FROM configs
+            WHERE name = ? AND lifecycle_version IS NOT NULL
+            "#,
+        )
+        .bind(&config.name)
+        .fetch_one(self.pool())
+        .await?;
+        let version = u32::try_from(latest_version + 1)
+            .map_err(|error| StorageError::Protocol(format!("config version overflow: {error}")))?;
+        let config_id = config_version_id(&config.name, version);
+
+        sqlx::query(
+            r#"
+            INSERT INTO configs (
+                id, name, config_type, content, format, checksum, created_at, updated_at,
+                lifecycle_version, state, parent_version, created_by, state_changed_at,
+                state_changed_by, state_change_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&config_id)
+        .bind(&config.name)
+        .bind("MANAGED")
+        .bind(&config.content_json)
+        .bind("JSON")
+        .bind(Option::<String>::None)
+        .bind(config.ts_ms)
+        .bind(config.ts_ms)
+        .bind(i64::from(version))
+        .bind(ConfigState::Draft.as_str())
+        .bind(config.parent_version.map(i64::from))
+        .bind(&config.created_by)
+        .bind(config.ts_ms)
+        .bind(&config.created_by)
+        .bind(Option::<String>::None)
+        .execute(self.pool())
+        .await?;
+
+        self.record_config_release(ConfigReleaseCommand {
+            config_id,
+            version: version.to_string(),
+            status: ConfigState::Draft.as_str().to_string(),
+            released_by: Some(config.created_by),
+            notes: Some("created config draft".to_string()),
+            ts_ms: config.ts_ms,
+        })
+        .await?;
+
+        Ok(version)
+    }
+
+    pub async fn get_config(
+        &self,
+        name: &str,
+        version: u32,
+    ) -> StorageResult<Option<ConfigVersion>> {
+        let row = sqlx::query_as::<_, ConfigVersionRow>(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason
+            FROM configs
+            WHERE name = ? AND lifecycle_version = ?
+            "#,
+        )
+        .bind(name)
+        .bind(i64::from(version))
+        .fetch_optional(self.pool())
+        .await?;
+
+        row.map(config_version_from_row).transpose()
+    }
+
+    pub async fn get_latest_config(&self, name: &str) -> StorageResult<Option<ConfigVersion>> {
+        let row = sqlx::query_as::<_, ConfigVersionRow>(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason
+            FROM configs
+            WHERE name = ? AND lifecycle_version IS NOT NULL
+            ORDER BY lifecycle_version DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(name)
+        .fetch_optional(self.pool())
+        .await?;
+
+        row.map(config_version_from_row).transpose()
+    }
+
+    pub async fn get_published_config(&self, name: &str) -> StorageResult<Option<ConfigVersion>> {
+        let row = sqlx::query_as::<_, ConfigVersionRow>(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason
+            FROM configs
+            WHERE name = ? AND lifecycle_version IS NOT NULL AND state = ?
+            ORDER BY lifecycle_version DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(name)
+        .bind(ConfigState::Published.as_str())
+        .fetch_optional(self.pool())
+        .await?;
+
+        row.map(config_version_from_row).transpose()
+    }
+
+    pub async fn list_config_versions(&self, name: &str) -> StorageResult<Vec<ConfigVersion>> {
+        let rows = sqlx::query_as::<_, ConfigVersionRow>(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason
+            FROM configs
+            WHERE name = ? AND lifecycle_version IS NOT NULL
+            ORDER BY lifecycle_version ASC
+            "#,
+        )
+        .bind(name)
+        .fetch_all(self.pool())
+        .await?;
+
+        rows.into_iter().map(config_version_from_row).collect()
+    }
+
+    pub async fn update_config_state(
+        &self,
+        name: &str,
+        version: u32,
+        new_state: ConfigState,
+        changed_by: &str,
+        reason: Option<&str>,
+        ts_ms: i64,
+    ) -> StorageResult<()> {
+        let Some(current) = self.get_config(name, version).await? else {
+            return Err(StorageError::Protocol(format!(
+                "config version {name}:{version} does not exist"
+            )));
+        };
+        if current.state == new_state {
+            return Ok(());
+        }
+        if !current.state.can_transition_to(new_state) {
+            return Err(StorageError::Protocol(format!(
+                "invalid config state transition {} -> {}",
+                current.state.as_str(),
+                new_state.as_str()
+            )));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE configs
+            SET state = ?, updated_at = ?, state_changed_at = ?,
+                state_changed_by = ?, state_change_reason = ?
+            WHERE name = ? AND lifecycle_version = ?
+            "#,
+        )
+        .bind(new_state.as_str())
+        .bind(ts_ms)
+        .bind(ts_ms)
+        .bind(changed_by)
+        .bind(reason)
+        .bind(name)
+        .bind(i64::from(version))
+        .execute(self.pool())
+        .await?;
+
+        self.record_config_release(ConfigReleaseCommand {
+            config_id: current.id.clone(),
+            version: version.to_string(),
+            status: new_state.as_str().to_string(),
+            released_by: Some(changed_by.to_string()),
+            notes: reason.map(str::to_string),
+            ts_ms,
+        })
+        .await?;
+        self.record_config_audit(ConfigAuditCommand {
+            config_id: current.id.clone(),
+            version: Some(version.to_string()),
+            action: "state_changed".to_string(),
+            actor: Some(changed_by.to_string()),
+            reason: reason.map(str::to_string),
+            ts_ms,
+        })
+        .await?;
+        self.insert_event(NewEventRecord {
+            event_id: Uuid::new_v4().to_string(),
+            ts_ms,
+            source: current.id,
+            category: "config.state.changed".to_string(),
+            payload_json: serde_json::json!({
+                "name": name,
+                "version": version,
+                "old_state": current.state.as_str(),
+                "new_state": new_state.as_str(),
+                "changed_by": changed_by,
+                "reason": reason,
+            })
+            .to_string(),
+        })
+        .await
+    }
+
+    pub async fn diff_configs(
+        &self,
+        name: &str,
+        version_a: u32,
+        version_b: u32,
+    ) -> StorageResult<ConfigDiff> {
+        let config_a = self.get_config(name, version_a).await?.ok_or_else(|| {
+            StorageError::Protocol(format!("config version {name}:{version_a} does not exist"))
+        })?;
+        let config_b = self.get_config(name, version_b).await?.ok_or_else(|| {
+            StorageError::Protocol(format!("config version {name}:{version_b} does not exist"))
+        })?;
+        let value_a =
+            serde_json::from_str::<serde_json::Value>(&config_a.content_json).map_err(|error| {
+                StorageError::Protocol(format!(
+                    "invalid config JSON for {name}:{version_a}: {error}"
+                ))
+            })?;
+        let value_b =
+            serde_json::from_str::<serde_json::Value>(&config_b.content_json).map_err(|error| {
+                StorageError::Protocol(format!(
+                    "invalid config JSON for {name}:{version_b}: {error}"
+                ))
+            })?;
+        let mut flat_a = BTreeMap::new();
+        let mut flat_b = BTreeMap::new();
+        flatten_json("", &value_a, &mut flat_a);
+        flatten_json("", &value_b, &mut flat_b);
+
+        let added = flat_b
+            .keys()
+            .filter(|path| !flat_a.contains_key(*path))
+            .cloned()
+            .collect();
+        let removed = flat_a
+            .keys()
+            .filter(|path| !flat_b.contains_key(*path))
+            .cloned()
+            .collect();
+        let changed = flat_a
+            .iter()
+            .filter_map(|(path, before)| {
+                flat_b.get(path).and_then(|after| {
+                    (before != after).then(|| ConfigDiffEntry {
+                        path: path.clone(),
+                        before: before.clone(),
+                        after: after.clone(),
+                    })
+                })
+            })
+            .collect();
+
+        Ok(ConfigDiff {
+            name: name.to_string(),
+            version_a,
+            version_b,
+            added,
+            removed,
+            changed,
+        })
+    }
+
+    pub async fn rollback_config_version(
+        &self,
+        name: &str,
+        version: u32,
+        actor: &str,
+        reason: Option<&str>,
+        ts_ms: i64,
+    ) -> StorageResult<u32> {
+        let source = self.get_config(name, version).await?.ok_or_else(|| {
+            StorageError::Protocol(format!("config version {name}:{version} does not exist"))
+        })?;
+        let rollback_version = self
+            .create_config_version(NewConfigVersion {
+                name: name.to_string(),
+                content_json: source.content_json,
+                created_by: actor.to_string(),
+                parent_version: Some(version),
+                ts_ms,
+            })
+            .await?;
+        let rollback = self
+            .get_config(name, rollback_version)
+            .await?
+            .ok_or_else(|| {
+                StorageError::Protocol(format!(
+                    "rollback config version {name}:{rollback_version} was not created"
+                ))
+            })?;
+        self.record_config_audit(ConfigAuditCommand {
+            config_id: rollback.id,
+            version: Some(rollback_version.to_string()),
+            action: "rollback".to_string(),
+            actor: Some(actor.to_string()),
+            reason: reason.map(str::to_string),
+            ts_ms,
+        })
+        .await?;
+        Ok(rollback_version)
+    }
+
     pub async fn record_config_release(&self, command: ConfigReleaseCommand) -> StorageResult<()> {
         sqlx::query(
             r#"
@@ -4756,6 +5187,85 @@ impl Db {
         bus.replay(envelopes)
             .map_err(|error| StorageError::Protocol(error.to_string()))?;
         Ok(replayed)
+    }
+}
+
+type ConfigVersionRow = (
+    String,
+    String,
+    i64,
+    String,
+    String,
+    Option<i64>,
+    String,
+    i64,
+    i64,
+    String,
+    Option<String>,
+);
+
+fn config_version_id(name: &str, version: u32) -> String {
+    format!("config:{name}:v{version}")
+}
+
+fn config_version_from_row(row: ConfigVersionRow) -> StorageResult<ConfigVersion> {
+    let (
+        id,
+        name,
+        version,
+        content_json,
+        state,
+        parent_version,
+        created_by,
+        created_at_ms,
+        state_changed_at_ms,
+        state_changed_by,
+        state_change_reason,
+    ) = row;
+
+    let version = u32::try_from(version)
+        .map_err(|error| StorageError::Protocol(format!("invalid config version: {error}")))?;
+    let parent_version = parent_version
+        .map(u32::try_from)
+        .transpose()
+        .map_err(|error| {
+            StorageError::Protocol(format!("invalid parent config version: {error}"))
+        })?;
+
+    Ok(ConfigVersion {
+        id,
+        name,
+        version,
+        content_json,
+        state: ConfigState::from_str(&state)?,
+        parent_version,
+        created_by,
+        created_at_ms,
+        state_changed_at_ms,
+        state_changed_by,
+        state_change_reason,
+    })
+}
+
+fn flatten_json(
+    prefix: &str,
+    value: &serde_json::Value,
+    output: &mut BTreeMap<String, serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, nested) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                flatten_json(&path, nested, output);
+            }
+        }
+        _ => {
+            output.insert(prefix.to_string(), value.clone());
+        }
     }
 }
 

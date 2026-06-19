@@ -8,18 +8,18 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, serde_json, chrono, PowerShell CLI.
 
-## Current Status (2026-06-19 Audit)
+## Current Status (2026-06-19 Implementation Update)
 
-This plan was only partially implemented. The current repository has a lightweight local lifecycle surface, not the full approval/publish workflow described below. Checked items below only cover the run-binding/readback pieces that landed; the unchecked approval workflow remains open.
+The local lifecycle MVP is implemented. Managed configs now support immutable version creation, draft/pending_review/approved/published/archived state transitions, latest/published/specific queries, structured JSON diff, rollback-to-new-draft, API routes, CLI commands, release/audit readback, and event-store logging for state changes. Remaining work is production governance: permissions, multi-environment rollout policy, and deeper approval enforcement.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Run config snapshots | Done for API-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions | CLI-launched runs do not automatically create run config snapshots |
 | Release/readback surface | Done for local MVP | `GET /api/v1/configs/{config_id}/releases`, `GET /api/v1/runs/{run_id}/config-version`, `configs releases`, `runs config-version` | None for lightweight readback |
-| Audit readback | Done for local MVP | `config_audits`, `record_config_audit`, API/CLI audit queries exist | Audit trail is not yet tied to a full state-transition engine |
-| Approval state machine | Not done | No `ConfigState`, draft/pending_review/approved/published/archive transition model or validation exists | Implement storage and API state transitions |
-| Config CRUD/diff/rollback workflow | Not done | No create/list versions by semantic version, structured diff, rollback endpoint or config management CLI exists | Implement full config management workflow |
-| Production rollout governance | Not done | `docs/分析.md` and `docs/api.md` still classify human approval and rollout enforcement as production hardening | Add permissions, multi-environment rollout policy and approvals |
+| Audit readback | Done for local MVP | `config_audits`, `record_config_audit`, API/CLI audit queries exist; state changes also write `event_store` category `config.state.changed` | Production audit reports remain follow-up work |
+| Approval state machine | Done for local MVP | `ConfigState` and validated transitions exist in storage; API and CLI expose state updates | Permissions and multi-user approval are not enforced |
+| Config CRUD/diff/rollback workflow | Done for local MVP | Storage, API, and CLI support create/list/show/latest/published/diff/rollback | UI and rollout policy enforcement remain follow-up work |
+| Production rollout governance | Not done | Docs classify permissions, multi-environment rollout policy, and production approval enforcement as hardening | Add permissions, multi-environment rollout policy and approvals |
 
 ---
 
@@ -74,6 +74,8 @@ Out of scope:
 
 - Modify: `apps/trader-cli/src/main.rs`
   - Add config management commands.
+- Modify: `apps/trader-cli/tests/cli_tests.rs`
+  - Add config management command tests.
 
 ### Runtime
 
@@ -118,7 +120,7 @@ New gates:
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/tests/storage_tests.rs`
 
-- [ ] **Step 1: Define config version types**
+- [x] **Step 1: Define config version types**
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -145,7 +147,7 @@ pub enum ConfigState {
 }
 ```
 
-- [ ] **Step 2: Add create_config_version**
+- [x] **Step 2: Add create_config_version**
 
 ```rust
 pub async fn create_config_version(&self, config: &NewConfigVersion) -> StorageResult<u32> {
@@ -155,7 +157,7 @@ pub async fn create_config_version(&self, config: &NewConfigVersion) -> StorageR
 }
 ```
 
-- [ ] **Step 3: Add get/list methods**
+- [x] **Step 3: Add get/list methods**
 
 ```rust
 pub async fn get_config(&self, name: &str, version: u32) -> StorageResult<Option<ConfigVersion>>
@@ -164,7 +166,7 @@ pub async fn get_published_config(&self, name: &str) -> StorageResult<Option<Con
 pub async fn list_config_versions(&self, name: &str) -> StorageResult<Vec<ConfigVersion>>
 ```
 
-- [ ] **Step 4: Add state transition**
+- [x] **Step 4: Add state transition**
 
 ```rust
 pub async fn update_config_state(
@@ -187,7 +189,7 @@ Valid transitions:
 - Published → Archived
 - Archived → (terminal, no transitions)
 
-- [ ] **Step 5: Add config diff**
+- [x] **Step 5: Add config diff**
 
 ```rust
 pub async fn diff_configs(&self, name: &str, version_a: u32, version_b: u32) -> StorageResult<ConfigDiff> {
@@ -197,7 +199,7 @@ pub async fn diff_configs(&self, name: &str, version_a: u32, version_b: u32) -> 
 }
 ```
 
-- [ ] **Step 6: Add storage tests**
+- [x] **Step 6: Add storage tests**
 
 ```rust
 #[tokio::test]
@@ -226,7 +228,7 @@ async fn config_diff_shows_changes() {
 }
 ```
 
-- [ ] **Step 7: Run storage tests**
+- [x] **Step 7: Run storage tests**
 
 ```powershell
 cargo test -p storage config_versioning
@@ -236,7 +238,7 @@ cargo test -p storage config_diff
 
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add crates/storage
@@ -253,7 +255,7 @@ git commit -m "feat: config versioning and approval storage"
 - Modify: `crates/api/tests/api_tests.rs`
 - Modify: `docs/api.md`
 
-- [ ] **Step 1: Add API endpoints**
+- [x] **Step 1: Add API endpoints**
 
 ```
 POST   /api/v1/configs                          — create new config version
@@ -266,7 +268,7 @@ GET    /api/v1/configs/{name}/diff?v1=1&v2=2      — diff two versions
 POST   /api/v1/configs/{name}/{version}/rollback  — create new version from old
 ```
 
-- [ ] **Step 2: Add API request/response types**
+- [x] **Step 2: Add API request/response types**
 
 ```rust
 #[derive(Deserialize)]
@@ -305,13 +307,13 @@ struct ConfigDiffResponse {
 }
 ```
 
-- [ ] **Step 3: Implement handlers**
+- [x] **Step 3: Implement handlers**
 
 Implement each endpoint handler with proper validation:
 - State transition validation (reject invalid transitions).
 - Rollback: copy content from old version, create as new Draft.
 
-- [ ] **Step 4: Add API tests**
+- [x] **Step 4: Add API tests**
 
 ```rust
 #[tokio::test]
@@ -324,11 +326,11 @@ async fn config_diff_via_api() { ... }
 async fn config_rollback_creates_new_version() { ... }
 ```
 
-- [ ] **Step 5: Document endpoints**
+- [x] **Step 5: Document endpoints**
 
 Add to `docs/api.md` with full endpoint documentation.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```powershell
 cargo test -p api config
@@ -337,7 +339,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add crates/api docs/api.md
@@ -352,7 +354,7 @@ git commit -m "feat: config CRUD and approval API"
 
 - Modify: `apps/trader-cli/src/main.rs`
 
-- [ ] **Step 1: Add CLI commands**
+- [x] **Step 1: Add CLI commands**
 
 ```
 trader config create --name <name> --file <path> [--created-by <user>]
@@ -366,11 +368,11 @@ trader config publish --name <name> --version <v> [--reason <msg>]
 trader config archive --name <name> --version <v> [--reason <msg>]
 ```
 
-- [ ] **Step 2: Implement commands**
+- [x] **Step 2: Implement commands**
 
 Each command calls the storage repository methods. CLI reads config files from disk for `create`.
 
-- [ ] **Step 3: Add CLI tests**
+- [x] **Step 3: Add CLI tests**
 
 ```rust
 #[test]
@@ -379,7 +381,7 @@ fn config_create_and_list() { ... }
 fn config_diff_output() { ... }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add apps/trader-cli
@@ -447,7 +449,7 @@ git commit -m "feat: bind config version to strategy runs"
 
 - Modify: `crates/storage/src/repositories.rs`
 
-- [ ] **Step 1: Log state transitions to event_store**
+- [x] **Step 1: Log state transitions to event_store**
 
 ```rust
 pub async fn update_config_state(&self, ...) -> StorageResult<()> {
@@ -470,7 +472,7 @@ pub async fn update_config_state(&self, ...) -> StorageResult<()> {
 }
 ```
 
-- [ ] **Step 2: Add test**
+- [x] **Step 2: Add test**
 
 ```rust
 #[tokio::test]
@@ -481,7 +483,7 @@ async fn config_state_change_logged_to_event_store() {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add crates/storage
@@ -497,15 +499,15 @@ git commit -m "feat: config state change audit trail"
 - Modify: `docs/分析.md`
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update `docs/分析.md`**
+- [x] **Step 1: Update `docs/分析.md`**
 
 Update config section from "run snapshot dump" to "version management with approval workflow".
 
-- [ ] **Step 2: Update `docs/roadmap.md`**
+- [x] **Step 2: Update `docs/roadmap.md`**
 
 Add "Config Lifecycle" milestone.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add docs

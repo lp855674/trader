@@ -1961,6 +1961,185 @@ fn config_lifecycle_commands_print_release_audit_and_run_binding_status() {
 }
 
 #[test]
+fn config_management_commands_create_transition_show_diff_and_rollback() {
+    let config = seed_config_management_cli_storage();
+    let version_one = temp_output("trader-cli-config-v1", "json");
+    let version_two = temp_output("trader-cli-config-v2", "json");
+    std::fs::write(
+        &version_one,
+        r#"{"enabled":true,"risk":{"max_order_notional":"1000","symbols":["BTCUSDT"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &version_two,
+        r#"{"enabled":true,"risk":{"max_order_notional":"1500","max_position":"2"}}"#,
+    )
+    .unwrap();
+
+    let mut create_one = Command::cargo_bin("trader").unwrap();
+    create_one
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "create",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+            "--file",
+            version_one.to_str().unwrap(),
+            "--created-by",
+            "ops",
+            "--ts-ms",
+            "100",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_version: name=paper-risk"))
+        .stdout(contains("version=1"))
+        .stdout(contains("state=draft"));
+
+    let mut create_two = Command::cargo_bin("trader").unwrap();
+    create_two
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "create",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+            "--file",
+            version_two.to_str().unwrap(),
+            "--created-by",
+            "ops",
+            "--parent-version",
+            "1",
+            "--ts-ms",
+            "200",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("version=2"))
+        .stdout(contains("parent_version=1"));
+
+    let mut list = Command::cargo_bin("trader").unwrap();
+    list.current_dir(workspace_root())
+        .args([
+            "configs",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_version: name=paper-risk version=1"))
+        .stdout(contains("config_version: name=paper-risk version=2"));
+
+    for (subcommand, expected_state, ts_ms) in [
+        ("submit-review", "pending_review", "300"),
+        ("approve", "approved", "400"),
+        ("publish", "published", "500"),
+    ] {
+        let mut transition = Command::cargo_bin("trader").unwrap();
+        transition
+            .current_dir(workspace_root())
+            .args([
+                "configs",
+                subcommand,
+                "--config",
+                config.to_str().unwrap(),
+                "--name",
+                "paper-risk",
+                "--version",
+                "1",
+                "--changed-by",
+                "ops",
+                "--reason",
+                expected_state,
+                "--ts-ms",
+                ts_ms,
+            ])
+            .assert()
+            .success()
+            .stdout(contains("config_version: name=paper-risk version=1"))
+            .stdout(contains(format!("state={expected_state}")));
+    }
+
+    let mut show_published = Command::cargo_bin("trader").unwrap();
+    show_published
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "show",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+            "--published",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("state=published"))
+        .stdout(contains(r#""max_order_notional":"1000""#));
+
+    let mut diff = Command::cargo_bin("trader").unwrap();
+    diff.current_dir(workspace_root())
+        .args([
+            "configs",
+            "diff",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+            "--v1",
+            "1",
+            "--v2",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_diff: name=paper-risk v1=1 v2=2"))
+        .stdout(contains("changed=1"))
+        .stdout(contains("removed=1"))
+        .stdout(contains("added=1"))
+        .stdout(contains(
+            "config_diff_changed: path=risk.max_order_notional",
+        ));
+
+    let mut rollback = Command::cargo_bin("trader").unwrap();
+    rollback
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "rollback",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "paper-risk",
+            "--version",
+            "1",
+            "--actor",
+            "ops",
+            "--reason",
+            "restore",
+            "--ts-ms",
+            "600",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_version: name=paper-risk version=3"))
+        .stdout(contains("state=draft"))
+        .stdout(contains("parent_version=1"));
+
+    std::fs::remove_file(config).unwrap();
+    std::fs::remove_file(version_one).unwrap();
+    std::fs::remove_file(version_two).unwrap();
+}
+
+#[test]
 fn logs_commands_filter_and_purge_system_logs() {
     let config = seed_logs_cli_storage();
 
@@ -2329,6 +2508,21 @@ fn seed_config_lifecycle_cli_storage() -> PathBuf {
         })
         .await
         .unwrap();
+    });
+
+    config
+}
+
+fn seed_config_management_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-config-management-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
     });
 
     config

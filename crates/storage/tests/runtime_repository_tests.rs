@@ -1,10 +1,258 @@
 use rust_decimal::Decimal;
 use storage::{
-    BrokerPositionSnapshotCommand, Db, NewAccountBalance, NewCashSnapshot, NewConfigRecord,
-    NewCorporateActionMeta, NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFill,
-    NewFundingRate, NewLotSizeRule, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
-    NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
+    BrokerPositionSnapshotCommand, ConfigState, Db, NewAccountBalance, NewCashSnapshot,
+    NewConfigRecord, NewConfigVersion, NewCorporateActionMeta, NewCryptoMarketMeta,
+    NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate, NewLotSizeRule, NewOrder,
+    NewOrderEvent, NewPortfolioSnapshot, NewPosition, NewPositionSnapshot, NewPriceLimitRule,
+    NewRiskEvent, NewStrategyRun, NewSystemLog,
 };
+
+#[tokio::test]
+async fn config_versioning_creates_versions_and_selects_published() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let v1 = db
+        .create_config_version(NewConfigVersion {
+            name: "paper-risk".to_string(),
+            content_json: r#"{"risk":{"max_order_notional":"1000"},"enabled":true}"#.to_string(),
+            created_by: "ops".to_string(),
+            parent_version: None,
+            ts_ms: 100,
+        })
+        .await
+        .unwrap();
+    let v2 = db
+        .create_config_version(NewConfigVersion {
+            name: "paper-risk".to_string(),
+            content_json: r#"{"risk":{"max_order_notional":"2000"},"enabled":true}"#.to_string(),
+            created_by: "ops".to_string(),
+            parent_version: Some(v1),
+            ts_ms: 200,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(v1, 1);
+    assert_eq!(v2, 2);
+
+    let versions = db.list_config_versions("paper-risk").await.unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|version| version.version)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(versions[0].state, ConfigState::Draft);
+    assert_eq!(versions[1].parent_version, Some(1));
+    assert_eq!(
+        db.get_latest_config("paper-risk")
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        2
+    );
+    assert!(
+        db.get_published_config("paper-risk")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    db.update_config_state(
+        "paper-risk",
+        1,
+        ConfigState::PendingReview,
+        "reviewer",
+        Some("ready for review"),
+        300,
+    )
+    .await
+    .unwrap();
+    db.update_config_state(
+        "paper-risk",
+        1,
+        ConfigState::Approved,
+        "approver",
+        Some("risk accepted"),
+        400,
+    )
+    .await
+    .unwrap();
+    db.update_config_state(
+        "paper-risk",
+        1,
+        ConfigState::Published,
+        "release",
+        Some("publish v1"),
+        500,
+    )
+    .await
+    .unwrap();
+
+    let published = db
+        .get_published_config("paper-risk")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(published.version, 1);
+    assert_eq!(published.state, ConfigState::Published);
+    assert_eq!(published.state_changed_by, "release");
+    assert_eq!(published.state_change_reason.as_deref(), Some("publish v1"));
+}
+
+#[tokio::test]
+async fn config_state_transition_rejects_invalid_edges_and_terminal_archive() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.create_config_version(NewConfigVersion {
+        name: "live-risk".to_string(),
+        content_json: r#"{"risk":{"max_drawdown":"0.2"}}"#.to_string(),
+        created_by: "ops".to_string(),
+        parent_version: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let invalid_publish = db
+        .update_config_state(
+            "live-risk",
+            1,
+            ConfigState::Published,
+            "release",
+            Some("skip review"),
+            200,
+        )
+        .await;
+    assert!(invalid_publish.is_err());
+    assert_eq!(
+        db.get_config("live-risk", 1).await.unwrap().unwrap().state,
+        ConfigState::Draft
+    );
+
+    db.update_config_state(
+        "live-risk",
+        1,
+        ConfigState::Archived,
+        "ops",
+        Some("discard draft"),
+        300,
+    )
+    .await
+    .unwrap();
+    let archived_to_review = db
+        .update_config_state(
+            "live-risk",
+            1,
+            ConfigState::PendingReview,
+            "reviewer",
+            None,
+            400,
+        )
+        .await;
+    assert!(archived_to_review.is_err());
+}
+
+#[tokio::test]
+async fn config_diff_and_rollback_create_new_draft_version() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.create_config_version(NewConfigVersion {
+        name: "ops-config".to_string(),
+        content_json: r#"{"risk":{"max_order_notional":"1000"},"enabled":true}"#.to_string(),
+        created_by: "ops".to_string(),
+        parent_version: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+    db.create_config_version(NewConfigVersion {
+        name: "ops-config".to_string(),
+        content_json: r#"{"risk":{"max_order_notional":"2000"},"symbols":["AAPL"]}"#.to_string(),
+        created_by: "ops".to_string(),
+        parent_version: Some(1),
+        ts_ms: 200,
+    })
+    .await
+    .unwrap();
+
+    let diff = db.diff_configs("ops-config", 1, 2).await.unwrap();
+    assert_eq!(diff.name, "ops-config");
+    assert_eq!(diff.version_a, 1);
+    assert_eq!(diff.version_b, 2);
+    assert_eq!(diff.added, vec!["symbols".to_string()]);
+    assert_eq!(diff.removed, vec!["enabled".to_string()]);
+    assert_eq!(diff.changed.len(), 1);
+    assert_eq!(diff.changed[0].path, "risk.max_order_notional");
+    assert_eq!(diff.changed[0].before, serde_json::json!("1000"));
+    assert_eq!(diff.changed[0].after, serde_json::json!("2000"));
+
+    let rollback_version = db
+        .rollback_config_version("ops-config", 1, "ops", Some("restore v1"), 300)
+        .await
+        .unwrap();
+    assert_eq!(rollback_version, 3);
+
+    let rollback = db.get_config("ops-config", 3).await.unwrap().unwrap();
+    assert_eq!(rollback.state, ConfigState::Draft);
+    assert_eq!(rollback.parent_version, Some(1));
+    assert_eq!(
+        rollback.content_json,
+        r#"{"risk":{"max_order_notional":"1000"},"enabled":true}"#
+    );
+
+    let audits = db.list_config_audits(&rollback.id).await.unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "rollback");
+    assert_eq!(audits[0].reason.as_deref(), Some("restore v1"));
+}
+
+#[tokio::test]
+async fn config_state_change_writes_audit_and_event_store() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.create_config_version(NewConfigVersion {
+        name: "audit-config".to_string(),
+        content_json: r#"{"enabled":true}"#.to_string(),
+        created_by: "ops".to_string(),
+        parent_version: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+    db.update_config_state(
+        "audit-config",
+        1,
+        ConfigState::PendingReview,
+        "reviewer",
+        Some("review requested"),
+        200,
+    )
+    .await
+    .unwrap();
+
+    let config = db.get_config("audit-config", 1).await.unwrap().unwrap();
+    let audits = db.list_config_audits(&config.id).await.unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "state_changed");
+    assert_eq!(audits[0].actor.as_deref(), Some("reviewer"));
+
+    let events = db.list_events_by_source(&config.id).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].category, "config.state.changed");
+    let payload: serde_json::Value = serde_json::from_str(&events[0].payload_json).unwrap();
+    assert_eq!(payload["name"], "audit-config");
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["old_state"], "draft");
+    assert_eq!(payload["new_state"], "pending_review");
+    assert_eq!(payload["changed_by"], "reviewer");
+}
 
 #[tokio::test]
 async fn runtime_records_round_trip() {

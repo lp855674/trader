@@ -1809,7 +1809,7 @@ ON portfolio_targets(asset_class);
 
 # 8.23 configs
 
-配置快照表。
+配置快照和管理型配置版本表。原始 migration 提供配置快照列；运行时 migration 会为管理型配置补齐 nullable lifecycle columns，保持旧 `RUN` 快照兼容。
 
 ```sql
 CREATE TABLE IF NOT EXISTS configs (
@@ -1826,7 +1826,15 @@ CREATE TABLE IF NOT EXISTS configs (
     checksum TEXT,
 
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+
+    lifecycle_version INTEGER,
+    state TEXT,
+    parent_version INTEGER,
+    created_by TEXT,
+    state_changed_at INTEGER,
+    state_changed_by TEXT,
+    state_change_reason TEXT
 );
 ```
 
@@ -1850,12 +1858,28 @@ JSON
 YAML
 ```
 
+lifecycle columns：
+
+```text
+lifecycle_version  管理型配置版本号；RUN 快照为空
+state              draft / pending_review / approved / published / archived
+parent_version     rollback 或派生版本来源
+created_by         创建人
+state_changed_at   最近状态变更时间
+state_changed_by   最近状态变更人
+state_change_reason 最近状态变更原因
+```
+
 ```sql
 CREATE INDEX IF NOT EXISTS idx_configs_name
 ON configs(name);
 
 CREATE INDEX IF NOT EXISTS idx_configs_type
 ON configs(config_type);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_configs_name_lifecycle_version
+ON configs(name, lifecycle_version)
+WHERE lifecycle_version IS NOT NULL;
 ```
 
 ---
