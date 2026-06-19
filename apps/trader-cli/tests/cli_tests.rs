@@ -2356,6 +2356,187 @@ fn config_management_commands_enforce_production_governance() {
 }
 
 #[test]
+fn config_management_commands_enforce_roles_and_print_pending_approvals() {
+    let config = seed_config_management_cli_storage();
+    let version_one = temp_output("trader-cli-prod-queue-config-v1", "json");
+    std::fs::write(&version_one, r#"{"risk":{"max_order_notional":"1000"}}"#).unwrap();
+
+    let mut create = Command::cargo_bin("trader").unwrap();
+    create
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "create",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--file",
+            version_one.to_str().unwrap(),
+            "--created-by",
+            "release",
+            "--target-env",
+            "production",
+            "--rollout",
+            "canary",
+            "--ts-ms",
+            "100",
+        ])
+        .assert()
+        .success();
+
+    let mut unauthorized_submit = Command::cargo_bin("trader").unwrap();
+    unauthorized_submit
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "submit-review",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "trader",
+            "--actor-role",
+            "viewer",
+            "--reason",
+            "request approval",
+            "--ts-ms",
+            "200",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "production config pending_review requires role release_manager",
+        ));
+
+    let mut submit = Command::cargo_bin("trader").unwrap();
+    submit
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "submit-review",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--actor-role",
+            "release_manager",
+            "--reason",
+            "request approval",
+            "--ts-ms",
+            "300",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("state=pending_review"));
+
+    let mut pending = Command::cargo_bin("trader").unwrap();
+    pending
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "pending-approvals",
+            "--config",
+            config.to_str().unwrap(),
+            "--target-env",
+            "production",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_approval: name=prod-queue version=1"))
+        .stdout(contains("target_env=production"))
+        .stdout(contains("state=pending_review"));
+
+    let mut unauthorized_approve = Command::cargo_bin("trader").unwrap();
+    unauthorized_approve
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "approve",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--actor-role",
+            "release_manager",
+            "--reason",
+            "approve",
+            "--ts-ms",
+            "400",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "production config approved requires role approver",
+        ));
+
+    let mut approve = Command::cargo_bin("trader").unwrap();
+    approve
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "approve",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "risk-owner",
+            "--actor-role",
+            "approver",
+            "--reason",
+            "risk approval",
+            "--ts-ms",
+            "500",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("approved_by=risk-owner"));
+
+    let mut publish = Command::cargo_bin("trader").unwrap();
+    publish
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "publish",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--actor-role",
+            "release_manager",
+            "--reason",
+            "publish",
+            "--ts-ms",
+            "600",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("state=published"))
+        .stdout(contains("published_by=release"));
+
+    std::fs::remove_file(config).unwrap();
+    std::fs::remove_file(version_one).unwrap();
+}
+
+#[test]
 fn logs_commands_filter_and_purge_system_logs() {
     let config = seed_logs_cli_storage();
 

@@ -365,6 +365,39 @@ pub enum ConfigState {
     Archived,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigActorRole {
+    ReleaseManager,
+    Approver,
+    Viewer,
+    Unknown,
+}
+
+impl ConfigActorRole {
+    fn can_transition_production(self, next: ConfigState) -> bool {
+        match next {
+            ConfigState::PendingReview | ConfigState::Published | ConfigState::Archived => {
+                self == Self::ReleaseManager
+            }
+            ConfigState::Approved => self == Self::Approver,
+            ConfigState::Draft => false,
+        }
+    }
+}
+
+impl FromStr for ConfigActorRole {
+    type Err = StorageError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "release_manager" | "release" => Ok(Self::ReleaseManager),
+            "approver" | "reviewer" | "risk_owner" | "risk-owner" => Ok(Self::Approver),
+            "viewer" => Ok(Self::Viewer),
+            _ => Ok(Self::Unknown),
+        }
+    }
+}
+
 impl ConfigState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -2916,6 +2949,64 @@ impl Db {
         rows.into_iter().map(config_version_from_row).collect()
     }
 
+    pub async fn list_pending_config_approvals(
+        &self,
+        target_env: Option<&str>,
+    ) -> StorageResult<Vec<ConfigVersion>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
+            FROM configs
+            WHERE lifecycle_version IS NOT NULL AND state =
+            "#,
+        );
+        query_builder.push_bind(ConfigState::PendingReview.as_str());
+        if let Some(target_env) = target_env {
+            query_builder.push(" AND target_env = ");
+            query_builder.push_bind(target_env);
+        }
+        query_builder.push(" ORDER BY state_changed_at ASC, lifecycle_version ASC");
+
+        let rows = query_builder
+            .build_query_as::<ConfigVersionRow>()
+            .fetch_all(self.pool())
+            .await?;
+        rows.into_iter().map(config_version_from_row).collect()
+    }
+
+    pub async fn update_config_state_with_policy(
+        &self,
+        name: &str,
+        version: u32,
+        new_state: ConfigState,
+        changed_by: &str,
+        actor_role: &str,
+        reason: Option<&str>,
+        ts_ms: i64,
+    ) -> StorageResult<()> {
+        let Some(current) = self.get_config(name, version).await? else {
+            return Err(StorageError::Protocol(format!(
+                "config version {name}:{version} does not exist"
+            )));
+        };
+        let role = ConfigActorRole::from_str(actor_role)?;
+        if current.target_env.as_deref() == Some("production")
+            && !role.can_transition_production(new_state)
+        {
+            return Err(StorageError::Protocol(format!(
+                "production config {} requires role {}",
+                new_state.as_str(),
+                required_config_role(new_state)
+            )));
+        }
+        self.update_config_state(name, version, new_state, changed_by, reason, ts_ms)
+            .await
+    }
+
     pub async fn update_config_state(
         &self,
         name: &str,
@@ -5270,6 +5361,16 @@ struct ConfigVersionRow {
 
 fn config_version_id(name: &str, version: u32) -> String {
     format!("config:{name}:v{version}")
+}
+
+fn required_config_role(state: ConfigState) -> &'static str {
+    match state {
+        ConfigState::PendingReview | ConfigState::Published | ConfigState::Archived => {
+            "release_manager"
+        }
+        ConfigState::Approved => "approver",
+        ConfigState::Draft => "none",
+    }
 }
 
 fn config_version_from_row(row: ConfigVersionRow) -> StorageResult<ConfigVersion> {

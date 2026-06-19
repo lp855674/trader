@@ -439,8 +439,14 @@ struct CreateConfigVersionRequest {
 struct UpdateConfigStateRequest {
     new_state: storage::ConfigState,
     changed_by: String,
+    actor_role: Option<String>,
     reason: Option<String>,
     ts_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct PendingConfigApprovalsQuery {
+    target_env: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -553,6 +559,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/configs/{name}/{version}/rollback",
             post(rollback_config_version),
+        )
+        .route(
+            "/api/v1/config-approvals/pending",
+            get(list_pending_config_approvals),
         )
         .route("/api/v1/system-logs", get(list_system_logs))
         .route(
@@ -1536,23 +1546,52 @@ async fn update_config_state(
     Json(request): Json<UpdateConfigStateRequest>,
 ) -> Result<Json<ConfigVersionResponse>, ApiError> {
     let ts_ms = request.ts_ms.unwrap_or_else(now_ms);
-    state
-        .db
-        .update_config_state(
-            &name,
-            version,
-            request.new_state,
-            &request.changed_by,
-            request.reason.as_deref(),
-            ts_ms,
-        )
-        .await?;
+    if let Some(actor_role) = request.actor_role.as_deref() {
+        state
+            .db
+            .update_config_state_with_policy(
+                &name,
+                version,
+                request.new_state,
+                &request.changed_by,
+                actor_role,
+                request.reason.as_deref(),
+                ts_ms,
+            )
+            .await?;
+    } else {
+        state
+            .db
+            .update_config_state(
+                &name,
+                version,
+                request.new_state,
+                &request.changed_by,
+                request.reason.as_deref(),
+                ts_ms,
+            )
+            .await?;
+    }
     let config = state
         .db
         .get_config(&name, version)
         .await?
         .ok_or_else(|| ApiError(anyhow::anyhow!("updated config version was not found")))?;
     Ok(Json(config_version_response(config)))
+}
+
+async fn list_pending_config_approvals(
+    State(state): State<AppState>,
+    Query(query): Query<PendingConfigApprovalsQuery>,
+) -> Result<Json<Vec<ConfigVersionResponse>>, ApiError> {
+    let approvals = state
+        .db
+        .list_pending_config_approvals(query.target_env.as_deref())
+        .await?
+        .into_iter()
+        .map(config_version_response)
+        .collect();
+    Ok(Json(approvals))
 }
 
 async fn diff_config_versions(

@@ -356,6 +356,113 @@ async fn production_config_publish_requires_independent_approval() {
 }
 
 #[tokio::test]
+async fn production_config_policy_requires_roles_and_lists_pending_queue() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.create_config_version(NewConfigVersion {
+        name: "prod-queue".to_string(),
+        content_json: r#"{"risk":{"max_order_notional":"1000"}}"#.to_string(),
+        created_by: "release".to_string(),
+        parent_version: None,
+        target_env: Some("production".to_string()),
+        rollout: Some("canary".to_string()),
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let unauthorized_submit = db
+        .update_config_state_with_policy(
+            "prod-queue",
+            1,
+            ConfigState::PendingReview,
+            "trader",
+            "viewer",
+            Some("request approval"),
+            200,
+        )
+        .await;
+    assert!(unauthorized_submit.is_err());
+
+    db.update_config_state_with_policy(
+        "prod-queue",
+        1,
+        ConfigState::PendingReview,
+        "release",
+        "release_manager",
+        Some("request approval"),
+        300,
+    )
+    .await
+    .unwrap();
+
+    let pending = db
+        .list_pending_config_approvals(Some("production"))
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].name, "prod-queue");
+    assert_eq!(pending[0].state, ConfigState::PendingReview);
+    assert_eq!(pending[0].target_env.as_deref(), Some("production"));
+
+    let unauthorized_approve = db
+        .update_config_state_with_policy(
+            "prod-queue",
+            1,
+            ConfigState::Approved,
+            "release",
+            "release_manager",
+            Some("approve"),
+            400,
+        )
+        .await;
+    assert!(unauthorized_approve.is_err());
+
+    db.update_config_state_with_policy(
+        "prod-queue",
+        1,
+        ConfigState::Approved,
+        "risk-owner",
+        "approver",
+        Some("risk approval"),
+        500,
+    )
+    .await
+    .unwrap();
+
+    let unauthorized_publish = db
+        .update_config_state_with_policy(
+            "prod-queue",
+            1,
+            ConfigState::Published,
+            "trader",
+            "approver",
+            Some("publish"),
+            600,
+        )
+        .await;
+    assert!(unauthorized_publish.is_err());
+
+    db.update_config_state_with_policy(
+        "prod-queue",
+        1,
+        ConfigState::Published,
+        "release",
+        "release_manager",
+        Some("publish"),
+        700,
+    )
+    .await
+    .unwrap();
+
+    let published = db.get_config("prod-queue", 1).await.unwrap().unwrap();
+    assert_eq!(published.state, ConfigState::Published);
+    assert_eq!(published.approved_by.as_deref(), Some("risk-owner"));
+    assert_eq!(published.published_by.as_deref(), Some("release"));
+}
+
+#[tokio::test]
 async fn runtime_records_round_trip() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

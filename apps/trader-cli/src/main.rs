@@ -381,6 +381,8 @@ enum ConfigsCommand {
         #[arg(long, default_value = "local")]
         changed_by: String,
         #[arg(long)]
+        actor_role: Option<String>,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         ts_ms: Option<i64>,
@@ -394,6 +396,8 @@ enum ConfigsCommand {
         version: u32,
         #[arg(long, default_value = "local")]
         changed_by: String,
+        #[arg(long)]
+        actor_role: Option<String>,
         #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
@@ -409,6 +413,8 @@ enum ConfigsCommand {
         #[arg(long, default_value = "local")]
         changed_by: String,
         #[arg(long)]
+        actor_role: Option<String>,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         ts_ms: Option<i64>,
@@ -423,9 +429,17 @@ enum ConfigsCommand {
         #[arg(long, default_value = "local")]
         changed_by: String,
         #[arg(long)]
+        actor_role: Option<String>,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         ts_ms: Option<i64>,
+    },
+    PendingApprovals {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        target_env: Option<String>,
     },
     Releases {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -1700,6 +1714,7 @@ async fn run_command(command: Command) -> Result<()> {
                 name,
                 version,
                 changed_by,
+                actor_role,
                 reason,
                 ts_ms,
             } => {
@@ -1709,6 +1724,7 @@ async fn run_command(command: Command) -> Result<()> {
                     version,
                     storage::ConfigState::PendingReview,
                     &changed_by,
+                    actor_role.as_deref(),
                     reason.as_deref(),
                     ts_ms,
                 )
@@ -1719,6 +1735,7 @@ async fn run_command(command: Command) -> Result<()> {
                 name,
                 version,
                 changed_by,
+                actor_role,
                 reason,
                 ts_ms,
             } => {
@@ -1728,6 +1745,7 @@ async fn run_command(command: Command) -> Result<()> {
                     version,
                     storage::ConfigState::Approved,
                     &changed_by,
+                    actor_role.as_deref(),
                     reason.as_deref(),
                     ts_ms,
                 )
@@ -1738,6 +1756,7 @@ async fn run_command(command: Command) -> Result<()> {
                 name,
                 version,
                 changed_by,
+                actor_role,
                 reason,
                 ts_ms,
             } => {
@@ -1747,6 +1766,7 @@ async fn run_command(command: Command) -> Result<()> {
                     version,
                     storage::ConfigState::Published,
                     &changed_by,
+                    actor_role.as_deref(),
                     reason.as_deref(),
                     ts_ms,
                 )
@@ -1757,6 +1777,7 @@ async fn run_command(command: Command) -> Result<()> {
                 name,
                 version,
                 changed_by,
+                actor_role,
                 reason,
                 ts_ms,
             } => {
@@ -1766,10 +1787,29 @@ async fn run_command(command: Command) -> Result<()> {
                     version,
                     storage::ConfigState::Archived,
                     &changed_by,
+                    actor_role.as_deref(),
                     reason.as_deref(),
                     ts_ms,
                 )
                 .await?;
+            }
+            ConfigsCommand::PendingApprovals { config, target_env } => {
+                let (_, db) = load_db(&config).await?;
+                for approval in db
+                    .list_pending_config_approvals(target_env.as_deref())
+                    .await?
+                {
+                    println!(
+                        "config_approval: name={} version={} state={} target_env={} rollout={} changed_by={} changed_at_ms={}",
+                        approval.name,
+                        approval.version,
+                        approval.state.as_str(),
+                        approval.target_env.as_deref().unwrap_or(""),
+                        approval.rollout.as_deref().unwrap_or(""),
+                        approval.state_changed_by,
+                        approval.state_changed_at_ms
+                    );
+                }
             }
             ConfigsCommand::Releases { config, config_id } => {
                 let (_, db) = load_db(&config).await?;
@@ -2880,19 +2920,21 @@ async fn transition_config_state(
     version: u32,
     new_state: storage::ConfigState,
     changed_by: &str,
+    actor_role: Option<&str>,
     reason: Option<&str>,
     ts_ms: Option<i64>,
 ) -> Result<()> {
     let (_, db) = load_db(config_path).await?;
-    db.update_config_state(
-        name,
-        version,
-        new_state,
-        changed_by,
-        reason,
-        ts_ms.unwrap_or_else(now_ms),
-    )
-    .await?;
+    let ts_ms = ts_ms.unwrap_or_else(now_ms);
+    if let Some(actor_role) = actor_role {
+        db.update_config_state_with_policy(
+            name, version, new_state, changed_by, actor_role, reason, ts_ms,
+        )
+        .await?;
+    } else {
+        db.update_config_state(name, version, new_state, changed_by, reason, ts_ms)
+            .await?;
+    }
     let config_version = db
         .get_config(name, version)
         .await?

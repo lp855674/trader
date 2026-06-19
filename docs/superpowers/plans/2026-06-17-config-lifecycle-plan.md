@@ -10,16 +10,16 @@
 
 ## Current Status (2026-06-19 Implementation Update)
 
-The local lifecycle MVP is implemented. Managed configs now support immutable version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, latest/published/specific queries, structured JSON diff, rollback-to-new-draft, API routes, CLI commands, release/audit readback, and event-store logging for state changes. Remaining work is full production governance: RBAC, multi-environment permission matrices, and approval queues.
+The local lifecycle MVP is implemented. Managed configs now support immutable version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue readback, latest/published/specific queries, structured JSON diff, rollback-to-new-draft, API routes, CLI commands, release/audit readback, and event-store logging for state changes. Remaining work is full production governance: authenticated RBAC, multi-environment permission matrices, and multi-person approval queues.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Run config snapshots | Done for API-launched and CLI-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions; Backtest, Paper, and Replay CLI starts bind run config versions | None for current local run entrypoints |
 | Release/readback surface | Done for local MVP | `GET /api/v1/configs/{config_id}/releases`, `GET /api/v1/runs/{run_id}/config-version`, `configs releases`, `runs config-version` | None for lightweight readback |
 | Audit readback | Done for local MVP | `config_audits`, `record_config_audit`, API/CLI audit queries exist; state changes also write `event_store` category `config.state.changed` | Production audit reports remain follow-up work |
-| Approval state machine | Done for local MVP | `ConfigState` and validated transitions exist in storage; API and CLI expose state updates | Full RBAC and approval queues are not enforced |
+| Approval state machine | Done for local MVP | `ConfigState` and validated transitions exist in storage; API and CLI expose state updates; production transitions can enforce `release_manager` / `approver` roles when supplied | Full authenticated RBAC is not enforced |
 | Config CRUD/diff/rollback workflow | Done for local MVP | Storage, API, and CLI support create/list/show/latest/published/diff/rollback | UI remains follow-up work |
-| Production rollout governance | Partial local enforcement done | `target_env=production` publish requires an independent approver; target_env/rollout/approved_by/published_by are persisted and returned through API/CLI | Add RBAC, multi-environment permission matrix, and approval queues |
+| Production rollout governance | Partial local enforcement done | `target_env=production` publish requires an independent approver; target_env/rollout/approved_by/published_by are persisted and returned through API/CLI; pending production approvals can be listed through API/CLI | Add authenticated RBAC, multi-environment permission matrix, and multi-person approval queues |
 
 ---
 
