@@ -1819,6 +1819,199 @@ fn funding_list_prints_filtered_funding_rates() {
 }
 
 #[test]
+fn snapshots_cash_prints_filtered_cash_snapshots() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "snapshots",
+            "cash",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--currency",
+            "USDT",
+            "--from",
+            "1000",
+            "--to",
+            "2000",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("cash_snapshot: run_id=cli-contract-run"))
+        .stdout(contains("currency=USDT"))
+        .stdout(contains("cash=99900"))
+        .stdout(contains("ts_ms=1500"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn snapshots_positions_prints_filtered_position_snapshots() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "snapshots",
+            "positions",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--symbol",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("position_snapshot: run_id=cli-contract-run"))
+        .stdout(contains("symbol=CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"))
+        .stdout(contains("side="))
+        .stdout(contains("qty=0.25"))
+        .stdout(contains("avg_price=50000"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn reconciliation_prints_snapshot_and_drift_status() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation: run_id=cli-contract-run"))
+        .stdout(contains("status=drift"))
+        .stdout(contains("cash_snapshots=1"))
+        .stdout(contains("position_snapshots=1"))
+        .stdout(contains("drift_events=1"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn config_lifecycle_commands_print_release_audit_and_run_binding_status() {
+    let config = seed_config_lifecycle_cli_storage();
+
+    let mut releases = Command::cargo_bin("trader").unwrap();
+    releases
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "releases",
+            "--config",
+            config.to_str().unwrap(),
+            "--config-id",
+            "config-paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_release: config_id=config-paper"))
+        .stdout(contains("version=v1"))
+        .stdout(contains("status=released"));
+
+    let mut audits = Command::cargo_bin("trader").unwrap();
+    audits
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "audits",
+            "--config",
+            config.to_str().unwrap(),
+            "--config-id",
+            "config-paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("config_audit: config_id=config-paper"))
+        .stdout(contains("action=rollback"))
+        .stdout(contains("reason=restore previous release"));
+
+    let mut binding = Command::cargo_bin("trader").unwrap();
+    binding
+        .current_dir(workspace_root())
+        .args([
+            "runs",
+            "config-version",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-config-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("run_config_version: run_id=cli-config-run"))
+        .stdout(contains("config_id=config-paper"))
+        .stdout(contains("version=v1"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn logs_commands_filter_and_purge_system_logs() {
+    let config = seed_logs_cli_storage();
+
+    let mut list = Command::cargo_bin("trader").unwrap();
+    list.current_dir(workspace_root())
+        .args([
+            "logs",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-logs-run",
+            "--level",
+            "ERROR",
+            "--target",
+            "runtime.execution",
+            "--from",
+            "100",
+            "--to",
+            "300",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_log: run_id=cli-logs-run"))
+        .stdout(contains("level=ERROR"))
+        .stdout(contains("target=runtime.execution"))
+        .stdout(contains("message=execution failed"));
+
+    let mut purge = Command::cargo_bin("trader").unwrap();
+    purge
+        .current_dir(workspace_root())
+        .args([
+            "logs",
+            "purge",
+            "--config",
+            config.to_str().unwrap(),
+            "--before",
+            "150",
+            "--target",
+            "runtime.execution",
+            "--run-id",
+            "cli-logs-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_logs_purged: count=1"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn ingest_status_shows_last_fetch_time() {
     let config = seed_ingestion_cli_storage();
     let mut command = Command::cargo_bin("trader").unwrap();
@@ -1935,6 +2128,15 @@ fn seed_contract_cli_storage() -> PathBuf {
             .await
             .unwrap();
         db.migrate().await.unwrap();
+        db.start_strategy_run(storage::StrategyRunStartCommand {
+            run_id: "cli-contract-run".to_string(),
+            name: "contract-cli".to_string(),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
         db.record_crypto_position(storage::CryptoPositionCommand {
             run_id: "cli-contract-run".to_string(),
             account_id: "paper".to_string(),
@@ -1995,6 +2197,44 @@ fn seed_contract_cli_storage() -> PathBuf {
         })
         .await
         .unwrap();
+        db.record_paper_portfolio_snapshot(storage::PaperPortfolioSnapshotCommand {
+            run_id: "cli-contract-run".to_string(),
+            account_id: "paper".to_string(),
+            ts_ms: 1500,
+            base_currency: "USDT".to_string(),
+            cash: dec!(99900),
+            market_value: dec!(12500),
+            equity: dec!(112400),
+            realized_pnl: dec!(-1.25),
+            unrealized_pnl: dec!(12.5),
+            positions: vec![storage::PositionCommand {
+                run_id: "cli-contract-run".to_string(),
+                account_id: "paper".to_string(),
+                symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+                qty: dec!(0.25),
+                avg_price: dec!(50000),
+                updated_at_ms: 1500,
+            }],
+        })
+        .await
+        .unwrap();
+        db.record_runtime_event(storage::RuntimeEventCommand {
+            source: "cli-contract-run".to_string(),
+            ts_ms: 1500,
+            category: "algorithm.risk.rejected".to_string(),
+            payload: serde_json::json!({
+                "run_id": "cli-contract-run",
+                "account_id": "paper",
+                "symbol": "BTCUSDT_PERP",
+                "risk_type": "reconciliation_drift",
+                "decision": "warn",
+                "reason": "qty mismatch",
+                "threshold": "1",
+                "observed_value": "2"
+            }),
+        })
+        .await
+        .unwrap();
     });
 
     config
@@ -2026,6 +2266,114 @@ fn seed_ingestion_cli_storage() -> PathBuf {
         })
         .await
         .unwrap();
+    });
+
+    config
+}
+
+fn seed_config_lifecycle_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-config-lifecycle-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.start_strategy_run(storage::StrategyRunStartCommand {
+            run_id: "cli-config-run".to_string(),
+            name: "config-lifecycle-cli".to_string(),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        db.record_config(storage::ConfigRecordCommand {
+            id: "config-paper".to_string(),
+            name: "paper-binance".to_string(),
+            config_type: "BROKER".to_string(),
+            content: "order_submit_enabled = true".to_string(),
+            format: "TOML".to_string(),
+            checksum: Some("sha256:v1".to_string()),
+            ts_ms: 2,
+        })
+        .await
+        .unwrap();
+        db.record_config_release(storage::ConfigReleaseCommand {
+            config_id: "config-paper".to_string(),
+            version: "v1".to_string(),
+            status: "released".to_string(),
+            released_by: Some("ops".to_string()),
+            notes: Some("paper broker rollout".to_string()),
+            ts_ms: 3,
+        })
+        .await
+        .unwrap();
+        db.bind_run_config_version(storage::RunConfigVersionBindingCommand {
+            run_id: "cli-config-run".to_string(),
+            config_id: "config-paper".to_string(),
+            version: "v1".to_string(),
+            ts_ms: 4,
+        })
+        .await
+        .unwrap();
+        db.record_config_audit(storage::ConfigAuditCommand {
+            config_id: "config-paper".to_string(),
+            version: Some("v1".to_string()),
+            action: "rollback".to_string(),
+            actor: Some("ops".to_string()),
+            reason: Some("restore previous release".to_string()),
+            ts_ms: 5,
+        })
+        .await
+        .unwrap();
+    });
+
+    config
+}
+
+fn seed_logs_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-logs-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        for (run_id, ts_ms, level, target, message) in [
+            (
+                Some("cli-logs-run"),
+                100,
+                "INFO",
+                "runtime.execution",
+                "execution started",
+            ),
+            (
+                Some("cli-logs-run"),
+                200,
+                "ERROR",
+                "runtime.execution",
+                "execution failed",
+            ),
+            (None, 200, "WARN", "system.scheduler", "scheduler lag"),
+        ] {
+            db.record_system_log(storage::SystemLogCommand {
+                run_id: run_id.map(str::to_string),
+                ts_ms,
+                level: level.to_string(),
+                target: target.to_string(),
+                message: message.to_string(),
+                fields: Some(serde_json::json!({
+                    "category": target.split('.').next().unwrap_or(target)
+                })),
+            })
+            .await
+            .unwrap();
+        }
     });
 
     config

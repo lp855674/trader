@@ -158,6 +158,31 @@ struct FundingRatesQuery {
     end_ms: Option<i64>,
 }
 
+#[derive(Deserialize)]
+struct CashSnapshotsQuery {
+    currency: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct PositionSnapshotsQuery {
+    symbol: Option<String>,
+    position_side: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SystemLogsQuery {
+    run_id: Option<String>,
+    level: Option<String>,
+    target: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+}
+
 #[derive(Serialize)]
 struct CryptoMarketMetaResponse {
     id: i64,
@@ -321,6 +346,17 @@ struct RiskEventResponse {
 }
 
 #[derive(Serialize)]
+struct ReconciliationStatusResponse {
+    run_id: String,
+    status: String,
+    cash_snapshots: usize,
+    position_snapshots: usize,
+    drift_events: Vec<RiskEventResponse>,
+    latest_cash_ts_ms: Option<i64>,
+    latest_position_ts_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
 struct InsightResponse {
     id: String,
     event_id: String,
@@ -355,6 +391,37 @@ struct ConfigResponse {
     checksum: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct ConfigReleaseResponse {
+    id: String,
+    config_id: String,
+    version: String,
+    status: String,
+    released_by: Option<String>,
+    notes: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct RunConfigVersionBindingResponse {
+    run_id: String,
+    config_id: String,
+    version: String,
+    bound_at_ms: i64,
+}
+
+#[derive(Serialize)]
+struct ConfigAuditResponse {
+    id: String,
+    config_id: String,
+    version: Option<String>,
+    action: String,
+    actor: Option<String>,
+    reason: Option<String>,
+    ts_ms: i64,
 }
 
 #[derive(Serialize)]
@@ -416,6 +483,19 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/runs/{run_id}", get(get_run))
         .route("/api/v1/configs", get(list_configs))
         .route("/api/v1/configs/{name}", get(get_config))
+        .route("/api/v1/system-logs", get(list_system_logs))
+        .route(
+            "/api/v1/configs/{config_id}/releases",
+            get(list_config_releases),
+        )
+        .route(
+            "/api/v1/configs/{config_id}/audits",
+            get(list_config_audits),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/config-version",
+            get(get_run_config_version),
+        )
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/runs/{run_id}/events", get(list_run_events))
         .route(
@@ -427,6 +507,18 @@ pub fn router_with_state(state: AppState) -> Router {
             get(list_run_risk_events),
         )
         .route("/api/v1/runs/{run_id}/insights", get(list_run_insights))
+        .route(
+            "/api/v1/runs/{run_id}/cash-snapshots",
+            get(list_run_cash_snapshots),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/position-snapshots",
+            get(list_run_position_snapshots),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/reconciliation",
+            get(get_run_reconciliation),
+        )
         .route(
             "/api/v1/runs/{run_id}/portfolio-targets",
             get(list_run_portfolio_targets),
@@ -873,6 +965,7 @@ async fn start_live_run(
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
     let run_id = app_config.runtime.run_id.clone();
+    let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
     let db = state.db.clone();
     let task_run_id = run_id.clone();
     state
@@ -883,6 +976,10 @@ async fn start_live_run(
                 LiveRuntimeSettings {
                     run_id: task_run_id,
                     broker_kind: broker_kind(app_config.broker.kind),
+                    account_id: app_config.paper.account_id,
+                    base_currency: app_config.portfolio.base_currency,
+                    initial_cash,
+                    broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
                 },
             );
             let _ = runtime.run(cancel).await;
@@ -1065,9 +1162,33 @@ async fn list_cash_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<CashSnapshotResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let snapshots = state
-        .db
-        .list_cash_snapshots(&app_config.runtime.run_id)
+    snapshot_cash_response(&state.db, &app_config.runtime.run_id, None, None, None).await
+}
+
+async fn list_run_cash_snapshots(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<CashSnapshotsQuery>,
+) -> Result<Json<Vec<CashSnapshotResponse>>, ApiError> {
+    snapshot_cash_response(
+        &state.db,
+        &run_id,
+        query.currency.as_deref(),
+        query.from_ms,
+        query.to_ms,
+    )
+    .await
+}
+
+async fn snapshot_cash_response(
+    db: &storage::Db,
+    run_id: &str,
+    currency: Option<&str>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> Result<Json<Vec<CashSnapshotResponse>>, ApiError> {
+    let snapshots = db
+        .list_cash_snapshots_filtered(run_id, currency, from_ms, to_ms)
         .await?
         .into_iter()
         .map(|snapshot| CashSnapshotResponse {
@@ -1088,9 +1209,43 @@ async fn list_position_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PositionSnapshotResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let snapshots = state
-        .db
-        .list_position_snapshots(&app_config.runtime.run_id)
+    snapshot_position_response(
+        &state.db,
+        &app_config.runtime.run_id,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+async fn list_run_position_snapshots(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<PositionSnapshotsQuery>,
+) -> Result<Json<Vec<PositionSnapshotResponse>>, ApiError> {
+    snapshot_position_response(
+        &state.db,
+        &run_id,
+        query.symbol.as_deref(),
+        query.position_side.as_deref(),
+        query.from_ms,
+        query.to_ms,
+    )
+    .await
+}
+
+async fn snapshot_position_response(
+    db: &storage::Db,
+    run_id: &str,
+    symbol: Option<&str>,
+    position_side: Option<&str>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> Result<Json<Vec<PositionSnapshotResponse>>, ApiError> {
+    let snapshots = db
+        .list_position_snapshots_filtered(run_id, symbol, position_side, from_ms, to_ms)
         .await?
         .into_iter()
         .map(|snapshot| PositionSnapshotResponse {
@@ -1116,6 +1271,42 @@ async fn list_position_snapshots(
         })
         .collect();
     Ok(Json(snapshots))
+}
+
+async fn get_run_reconciliation(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<ReconciliationStatusResponse>, ApiError> {
+    let cash_snapshots = state.db.list_cash_snapshots(&run_id).await?;
+    let position_snapshots = state.db.list_position_snapshots(&run_id).await?;
+    let drift_events = state
+        .db
+        .list_risk_events(&run_id)
+        .await?
+        .into_iter()
+        .filter(|event| event.risk_type == "reconciliation_drift")
+        .map(risk_event_response)
+        .collect::<Vec<_>>();
+    let latest_cash_ts_ms = cash_snapshots.iter().map(|snapshot| snapshot.ts_ms).max();
+    let latest_position_ts_ms = position_snapshots
+        .iter()
+        .map(|snapshot| snapshot.ts_ms)
+        .max();
+    let status = if drift_events.is_empty() {
+        "ok"
+    } else {
+        "drift"
+    };
+
+    Ok(Json(ReconciliationStatusResponse {
+        run_id,
+        status: status.to_string(),
+        cash_snapshots: cash_snapshots.len(),
+        position_snapshots: position_snapshots.len(),
+        drift_events,
+        latest_cash_ts_ms,
+        latest_position_ts_ms,
+    }))
 }
 
 async fn list_portfolio_snapshots(
@@ -1206,6 +1397,44 @@ async fn list_configs(
     Ok(Json(configs))
 }
 
+async fn list_config_releases(
+    State(state): State<AppState>,
+    Path(config_id): Path<String>,
+) -> Result<Json<Vec<ConfigReleaseResponse>>, ApiError> {
+    let releases = state
+        .db
+        .list_config_releases(&config_id)
+        .await?
+        .into_iter()
+        .map(config_release_response)
+        .collect();
+    Ok(Json(releases))
+}
+
+async fn list_config_audits(
+    State(state): State<AppState>,
+    Path(config_id): Path<String>,
+) -> Result<Json<Vec<ConfigAuditResponse>>, ApiError> {
+    let audits = state
+        .db
+        .list_config_audits(&config_id)
+        .await?
+        .into_iter()
+        .map(config_audit_response)
+        .collect();
+    Ok(Json(audits))
+}
+
+async fn get_run_config_version(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let Some(binding) = state.db.get_run_config_version_binding(&run_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(run_config_version_binding_response(binding)).into_response())
+}
+
 async fn list_events(State(state): State<AppState>) -> Result<Json<Vec<EventResponse>>, ApiError> {
     let events = state
         .db
@@ -1290,10 +1519,46 @@ async fn list_run_portfolio_targets(
 async fn list_run_system_logs(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
+    Query(query): Query<SystemLogsQuery>,
 ) -> Result<Json<Vec<SystemLogResponse>>, ApiError> {
-    let logs = state
-        .db
-        .list_system_logs(Some(&run_id))
+    system_logs_response(
+        &state.db,
+        storage::SystemLogFilter {
+            run_id: Some(run_id),
+            level: query.level,
+            target: query.target,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        },
+    )
+    .await
+}
+
+async fn list_system_logs(
+    State(state): State<AppState>,
+    Query(query): Query<SystemLogsQuery>,
+) -> Result<Json<Vec<SystemLogResponse>>, ApiError> {
+    system_logs_response(
+        &state.db,
+        storage::SystemLogFilter {
+            run_id: query.run_id,
+            level: query.level,
+            target: query.target,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        },
+    )
+    .await
+}
+
+async fn system_logs_response(
+    db: &storage::Db,
+    filter: storage::SystemLogFilter,
+) -> Result<Json<Vec<SystemLogResponse>>, ApiError> {
+    let logs = db
+        .list_system_logs_filtered(filter)
         .await?
         .into_iter()
         .map(system_log_response)
@@ -1330,6 +1595,42 @@ fn config_response(config: storage::StoredConfigRecord) -> ConfigResponse {
         checksum: config.checksum,
         created_at_ms: config.created_at_ms,
         updated_at_ms: config.updated_at_ms,
+    }
+}
+
+fn config_release_response(release: storage::StoredConfigRelease) -> ConfigReleaseResponse {
+    ConfigReleaseResponse {
+        id: release.id,
+        config_id: release.config_id,
+        version: release.version,
+        status: release.status,
+        released_by: release.released_by,
+        notes: release.notes,
+        created_at_ms: release.created_at_ms,
+        updated_at_ms: release.updated_at_ms,
+    }
+}
+
+fn run_config_version_binding_response(
+    binding: storage::StoredRunConfigVersionBinding,
+) -> RunConfigVersionBindingResponse {
+    RunConfigVersionBindingResponse {
+        run_id: binding.run_id,
+        config_id: binding.config_id,
+        version: binding.version,
+        bound_at_ms: binding.bound_at_ms,
+    }
+}
+
+fn config_audit_response(audit: storage::StoredConfigAudit) -> ConfigAuditResponse {
+    ConfigAuditResponse {
+        id: audit.id,
+        config_id: audit.config_id,
+        version: audit.version,
+        action: audit.action,
+        actor: audit.actor,
+        reason: audit.reason,
+        ts_ms: audit.ts_ms,
     }
 }
 

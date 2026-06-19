@@ -1,7 +1,8 @@
+use rust_decimal::Decimal;
 use storage::{
-    Db, NewAccountBalance, NewCashSnapshot, NewConfigRecord, NewCorporateActionMeta,
-    NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate,
-    NewLotSizeRule, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
+    BrokerPositionSnapshotCommand, Db, NewAccountBalance, NewCashSnapshot, NewConfigRecord,
+    NewCorporateActionMeta, NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFill,
+    NewFundingRate, NewLotSizeRule, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
     NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
 };
 
@@ -908,6 +909,43 @@ async fn reference_snapshot_and_ops_records_round_trip() {
     assert_eq!(cash_snapshots.len(), 1);
     assert_eq!(cash_snapshots[0].cash, "1000.1234");
 
+    db.insert_cash_snapshot(NewCashSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 30,
+        currency: "USDT".to_string(),
+        cash: "2000.0000".to_string(),
+        available_cash: "2000.0000".to_string(),
+        frozen_cash: "0".to_string(),
+        created_at_ms: 30,
+    })
+    .await
+    .unwrap();
+    db.insert_cash_snapshot(NewCashSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 40,
+        currency: "USD".to_string(),
+        cash: "1100.0000".to_string(),
+        available_cash: "1000.0000".to_string(),
+        frozen_cash: "100.0000".to_string(),
+        created_at_ms: 40,
+    })
+    .await
+    .unwrap();
+    let filtered_cash = db
+        .list_cash_snapshots_filtered("run-reference", Some("USD"), Some(25), Some(45))
+        .await
+        .unwrap();
+    assert_eq!(filtered_cash.len(), 1);
+    assert_eq!(filtered_cash[0].currency, "USD");
+    assert_eq!(filtered_cash[0].cash, "1100.0000");
+    let latest_cash = db
+        .get_latest_cash_snapshot("run-reference", Some("USD"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_cash.ts_ms, 40);
+    assert_eq!(latest_cash.cash, "1100.0000");
+
     db.insert_position_snapshot(NewPositionSnapshot {
         run_id: "run-reference".to_string(),
         ts_ms: 21,
@@ -936,6 +974,71 @@ async fn reference_snapshot_and_ops_records_round_trip() {
         position_snapshots[0].mark_price.as_deref(),
         Some("65101.0000")
     );
+
+    db.insert_position_snapshot(NewPositionSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 22,
+        market: "CRYPTO".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "ETHUSDT".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        position_side: Some("short".to_string()),
+        qty: "-1.5".to_string(),
+        available_qty: "1.5".to_string(),
+        avg_price: Some("3500".to_string()),
+        entry_price: Some("3500".to_string()),
+        market_price: Some("3490".to_string()),
+        mark_price: Some("3491".to_string()),
+        market_value: Some("-5235".to_string()),
+        unrealized_pnl: Some("15".to_string()),
+        realized_pnl: Some("0".to_string()),
+        currency: "USDT".to_string(),
+        created_at_ms: 22,
+    })
+    .await
+    .unwrap();
+    db.insert_position_snapshot(NewPositionSnapshot {
+        run_id: "run-reference".to_string(),
+        ts_ms: 31,
+        market: "CRYPTO".to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        asset_class: "CRYPTO_PERP".to_string(),
+        position_side: Some("long".to_string()),
+        qty: "0.50".to_string(),
+        available_qty: "0.50".to_string(),
+        avg_price: Some("65050".to_string()),
+        entry_price: Some("65000.1234".to_string()),
+        market_price: Some("65200".to_string()),
+        mark_price: Some("65201".to_string()),
+        market_value: Some("32600".to_string()),
+        unrealized_pnl: Some("75".to_string()),
+        realized_pnl: Some("0".to_string()),
+        currency: "USDT".to_string(),
+        created_at_ms: 31,
+    })
+    .await
+    .unwrap();
+    let filtered_positions = db
+        .list_position_snapshots_filtered(
+            "run-reference",
+            Some("BTCUSDT"),
+            Some("long"),
+            Some(25),
+            Some(40),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered_positions.len(), 1);
+    assert_eq!(filtered_positions[0].symbol, "BTCUSDT");
+    assert_eq!(filtered_positions[0].qty, "0.50");
+    let latest_position = db
+        .get_latest_position_snapshot("run-reference", "BTCUSDT", Some("long"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_position.ts_ms, 31);
+    assert_eq!(latest_position.qty, "0.50");
 
     db.upsert_config(NewConfigRecord {
         id: "config-paper".to_string(),
@@ -989,6 +1092,58 @@ async fn reference_snapshot_and_ops_records_round_trip() {
     assert_eq!(configs[0].config_type, "RUN");
     assert_eq!(configs[1].config_type, "BROKER");
 
+    db.record_config_release(storage::ConfigReleaseCommand {
+        config_id: "config-paper".to_string(),
+        version: "v1".to_string(),
+        status: "released".to_string(),
+        released_by: Some("ops".to_string()),
+        notes: Some("paper broker rollout".to_string()),
+        ts_ms: 33,
+    })
+    .await
+    .unwrap();
+    db.bind_run_config_version(storage::RunConfigVersionBindingCommand {
+        run_id: "run-reference".to_string(),
+        config_id: "config-paper".to_string(),
+        version: "v1".to_string(),
+        ts_ms: 34,
+    })
+    .await
+    .unwrap();
+    db.record_config_audit(storage::ConfigAuditCommand {
+        config_id: "config-paper".to_string(),
+        version: Some("v1".to_string()),
+        action: "rollback".to_string(),
+        actor: Some("ops".to_string()),
+        reason: Some("restore previous release".to_string()),
+        ts_ms: 35,
+    })
+    .await
+    .unwrap();
+
+    let release = db
+        .get_config_release("config-paper", "v1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(release.status, "released");
+    assert_eq!(release.released_by.as_deref(), Some("ops"));
+    assert_eq!(release.notes.as_deref(), Some("paper broker rollout"));
+    let binding = db
+        .get_run_config_version_binding("run-reference")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.config_id, "config-paper");
+    assert_eq!(binding.version, "v1");
+    let audits = db.list_config_audits("config-paper").await.unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "rollback");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("restore previous release")
+    );
+
     db.insert_system_log(NewSystemLog {
         id: "log-1".to_string(),
         run_id: Some("run-reference".to_string()),
@@ -1017,6 +1172,173 @@ async fn reference_snapshot_and_ops_records_round_trip() {
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].message, "started");
     assert_eq!(logs[0].fields_json.as_deref(), Some(r#"{"orders":0}"#));
+
+    db.record_system_log(storage::SystemLogCommand {
+        run_id: Some("run-reference".to_string()),
+        ts_ms: 50,
+        level: "ERROR".to_string(),
+        target: "runtime.execution".to_string(),
+        message: "execution failed".to_string(),
+        fields: Some(serde_json::json!({
+            "category": "runtime",
+            "component": "execution"
+        })),
+    })
+    .await
+    .unwrap();
+    db.record_system_log(storage::SystemLogCommand {
+        run_id: None,
+        ts_ms: 60,
+        level: "INFO".to_string(),
+        target: "system.scheduler".to_string(),
+        message: "scheduler tick".to_string(),
+        fields: Some(serde_json::json!({
+            "category": "system",
+            "component": "scheduler"
+        })),
+    })
+    .await
+    .unwrap();
+
+    let filtered_logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("run-reference".to_string()),
+            level: Some("ERROR".to_string()),
+            target: Some("runtime.execution".to_string()),
+            from_ms: Some(45),
+            to_ms: Some(55),
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(filtered_logs.len(), 1);
+    assert_eq!(filtered_logs[0].message, "execution failed");
+
+    let purged = db
+        .purge_system_logs(storage::SystemLogRetentionCommand {
+            before_ms: 45,
+            target: Some("paper".to_string()),
+            run_id: Some("run-reference".to_string()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(purged, 1);
+    assert!(
+        db.list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("run-reference".to_string()),
+            level: None,
+            target: Some("paper".to_string()),
+            from_ms: None,
+            to_ms: None,
+            limit: None,
+        })
+        .await
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn broker_position_snapshot_command_preserves_side_and_pnl_fields() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-broker-position".to_string(),
+        name: "live-reconciliation".to_string(),
+        mode: "live".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_broker_position_snapshot(BrokerPositionSnapshotCommand {
+        run_id: "run-broker-position".to_string(),
+        account_id: "paper".to_string(),
+        ts_ms: 1_700_000_000_000,
+        exchange: "BINANCE".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        position_side: "long".to_string(),
+        qty: dec("0.5"),
+        avg_price: dec("65000"),
+        mark_price: Some(dec("65025")),
+        margin_used: dec("3250"),
+        unrealized_pnl: dec("12.5"),
+        realized_pnl: Decimal::ZERO,
+        currency: "USDT".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let snapshot = db
+        .get_latest_position_snapshot(
+            "run-broker-position",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            Some("long"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.exchange, "BINANCE");
+    assert_eq!(snapshot.asset_class, "CRYPTO_PERP");
+    assert_eq!(snapshot.position_side.as_deref(), Some("long"));
+    assert_eq!(snapshot.qty, "0.5");
+    assert_eq!(snapshot.avg_price.as_deref(), Some("65000"));
+    assert_eq!(snapshot.entry_price.as_deref(), Some("65000"));
+    assert_eq!(snapshot.mark_price.as_deref(), Some("65025"));
+    assert_eq!(snapshot.market_value.as_deref(), Some("32512.5"));
+    assert_eq!(snapshot.unrealized_pnl.as_deref(), Some("12.5"));
+    assert_eq!(snapshot.realized_pnl.as_deref(), Some("0"));
+}
+
+#[tokio::test]
+async fn runtime_position_snapshot_command_preserves_side_for_reconciliation() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-runtime-position".to_string(),
+        name: "live-reconciliation".to_string(),
+        mode: "live".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_runtime_position_snapshot(storage::RuntimePositionSnapshotCommand {
+        run_id: "run-runtime-position".to_string(),
+        ts_ms: 1_700_000_000_000,
+        symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+        position_side: "long".to_string(),
+        qty: dec("0.25"),
+        available_qty: dec("0.25"),
+        avg_price: dec("65000"),
+        mark_price: Some(dec("65010")),
+        currency: "USDT".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let snapshot = db
+        .get_latest_position_snapshot(
+            "run-runtime-position",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            Some("long"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.position_side.as_deref(), Some("long"));
+    assert_eq!(snapshot.qty, "0.25");
+    assert_eq!(snapshot.available_qty, "0.25");
+    assert_eq!(snapshot.avg_price.as_deref(), Some("65000"));
+    assert_eq!(snapshot.mark_price.as_deref(), Some("65010"));
 }
 
 #[tokio::test]
@@ -1131,4 +1453,8 @@ async fn migrate_adds_error_column_to_existing_strategy_runs_table() {
         .unwrap()
         .unwrap();
     assert_eq!(run.error, Some("boom".to_string()));
+}
+
+fn dec(value: &str) -> Decimal {
+    value.parse().unwrap()
 }

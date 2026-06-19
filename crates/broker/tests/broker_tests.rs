@@ -337,6 +337,26 @@ async fn fake_broker_returns_deterministic_account_snapshot() {
     assert_eq!(account.margin_used, dec!(0));
 }
 
+#[tokio::test]
+async fn fake_broker_returns_deterministic_position_snapshots() {
+    let broker = FakeBrokerAdapter::new(BrokerKind::Binance);
+
+    let positions = broker.position_snapshots("paper").await.unwrap();
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].account_id, "paper");
+    assert_eq!(positions[0].exchange, "BINANCE");
+    assert_eq!(
+        positions[0].symbol,
+        "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"
+    );
+    assert_eq!(positions[0].position_side, BrokerPositionSide::Long);
+    assert_eq!(positions[0].qty, dec!(0.5));
+    assert_eq!(positions[0].avg_price, dec!(65000));
+    assert_eq!(positions[0].margin_used, dec!(3250));
+    assert_eq!(positions[0].unrealized_pnl, dec!(12.5));
+}
+
 #[test]
 fn binance_testnet_adapter_builds_signed_account_url() {
     let adapter = BinanceSpotTestnetAdapter::new(BinanceSpotTestnetSettings {

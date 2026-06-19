@@ -231,6 +231,28 @@ enum Command {
         #[command(subcommand)]
         command: PositionsCommand,
     },
+    Snapshots {
+        #[command(subcommand)]
+        command: SnapshotsCommand,
+    },
+    Configs {
+        #[command(subcommand)]
+        command: ConfigsCommand,
+    },
+    Runs {
+        #[command(subcommand)]
+        command: RunsCommand,
+    },
+    Logs {
+        #[command(subcommand)]
+        command: LogsCommand,
+    },
+    Reconciliation {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+    },
     Funding {
         #[command(subcommand)]
         command: FundingCommand,
@@ -256,6 +278,92 @@ enum PositionsCommand {
         account: Option<String>,
         #[arg(long)]
         exchange: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SnapshotsCommand {
+    Cash {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+    },
+    Positions {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        position_side: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigsCommand {
+    Releases {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        config_id: String,
+    },
+    Audits {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        config_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RunsCommand {
+    ConfigVersion {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogsCommand {
+    List {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        level: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    Purge {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long = "before")]
+        before_ms: i64,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
     },
 }
 
@@ -1301,6 +1409,205 @@ async fn run_command(command: Command) -> Result<()> {
                 }
             }
         },
+        Command::Snapshots { command } => match command {
+            SnapshotsCommand::Cash {
+                config,
+                run_id,
+                currency,
+                from_ms,
+                to_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let snapshots = db
+                    .list_cash_snapshots_filtered(&run_id, currency.as_deref(), from_ms, to_ms)
+                    .await?;
+                for snapshot in snapshots {
+                    println!(
+                        "cash_snapshot: run_id={} ts_ms={} currency={} cash={} available_cash={} frozen_cash={} created_at_ms={}",
+                        snapshot.run_id,
+                        snapshot.ts_ms,
+                        snapshot.currency,
+                        snapshot.cash,
+                        snapshot.available_cash,
+                        snapshot.frozen_cash,
+                        snapshot.created_at_ms
+                    );
+                }
+            }
+            SnapshotsCommand::Positions {
+                config,
+                run_id,
+                symbol,
+                position_side,
+                from_ms,
+                to_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let snapshots = db
+                    .list_position_snapshots_filtered(
+                        &run_id,
+                        symbol.as_deref(),
+                        position_side.as_deref(),
+                        from_ms,
+                        to_ms,
+                    )
+                    .await?;
+                for snapshot in snapshots {
+                    println!(
+                        "position_snapshot: run_id={} ts_ms={} market={} exchange={} symbol={} asset_class={} side={} qty={} available_qty={} avg_price={} mark_price={} market_value={} unrealized_pnl={} realized_pnl={} currency={} created_at_ms={}",
+                        snapshot.run_id,
+                        snapshot.ts_ms,
+                        snapshot.market,
+                        snapshot.exchange,
+                        snapshot.symbol,
+                        snapshot.asset_class,
+                        snapshot.position_side.as_deref().unwrap_or(""),
+                        snapshot.qty,
+                        snapshot.available_qty,
+                        snapshot.avg_price.as_deref().unwrap_or(""),
+                        snapshot.mark_price.as_deref().unwrap_or(""),
+                        snapshot.market_value.as_deref().unwrap_or(""),
+                        snapshot.unrealized_pnl.as_deref().unwrap_or(""),
+                        snapshot.realized_pnl.as_deref().unwrap_or(""),
+                        snapshot.currency,
+                        snapshot.created_at_ms
+                    );
+                }
+            }
+        },
+        Command::Configs { command } => match command {
+            ConfigsCommand::Releases { config, config_id } => {
+                let (_, db) = load_db(&config).await?;
+                let releases = db.list_config_releases(&config_id).await?;
+                for release in releases {
+                    println!(
+                        "config_release: config_id={} version={} status={} released_by={} notes={} created_at_ms={} updated_at_ms={}",
+                        release.config_id,
+                        release.version,
+                        release.status,
+                        release.released_by.as_deref().unwrap_or(""),
+                        release.notes.as_deref().unwrap_or(""),
+                        release.created_at_ms,
+                        release.updated_at_ms
+                    );
+                }
+            }
+            ConfigsCommand::Audits { config, config_id } => {
+                let (_, db) = load_db(&config).await?;
+                let audits = db.list_config_audits(&config_id).await?;
+                for audit in audits {
+                    println!(
+                        "config_audit: config_id={} version={} action={} actor={} reason={} ts_ms={}",
+                        audit.config_id,
+                        audit.version.as_deref().unwrap_or(""),
+                        audit.action,
+                        audit.actor.as_deref().unwrap_or(""),
+                        audit.reason.as_deref().unwrap_or(""),
+                        audit.ts_ms
+                    );
+                }
+            }
+        },
+        Command::Runs { command } => match command {
+            RunsCommand::ConfigVersion { config, run_id } => {
+                let (_, db) = load_db(&config).await?;
+                if let Some(binding) = db.get_run_config_version_binding(&run_id).await? {
+                    println!(
+                        "run_config_version: run_id={} config_id={} version={} bound_at_ms={}",
+                        binding.run_id, binding.config_id, binding.version, binding.bound_at_ms
+                    );
+                } else {
+                    println!("run_config_version: run_id={} status=missing", run_id);
+                }
+            }
+        },
+        Command::Logs { command } => match command {
+            LogsCommand::List {
+                config,
+                run_id,
+                level,
+                target,
+                from_ms,
+                to_ms,
+                limit,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let logs = db
+                    .list_system_logs_filtered(storage::SystemLogFilter {
+                        run_id,
+                        level,
+                        target,
+                        from_ms,
+                        to_ms,
+                        limit,
+                    })
+                    .await?;
+                for log in logs {
+                    println!(
+                        "system_log: run_id={} ts_ms={} level={} target={} message={} fields={} created_at_ms={}",
+                        log.run_id.as_deref().unwrap_or(""),
+                        log.ts_ms,
+                        log.level,
+                        log.target,
+                        log.message,
+                        log.fields_json.as_deref().unwrap_or("{}"),
+                        log.created_at_ms
+                    );
+                }
+            }
+            LogsCommand::Purge {
+                config,
+                before_ms,
+                target,
+                run_id,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let purged = db
+                    .purge_system_logs(storage::SystemLogRetentionCommand {
+                        before_ms,
+                        target,
+                        run_id,
+                    })
+                    .await?;
+                println!("system_logs_purged: count={purged}");
+            }
+        },
+        Command::Reconciliation { config, run_id } => {
+            let (_, db) = load_db(&config).await?;
+            let cash_snapshots = db.list_cash_snapshots(&run_id).await?;
+            let position_snapshots = db.list_position_snapshots(&run_id).await?;
+            let drift_events = db
+                .list_risk_events(&run_id)
+                .await?
+                .into_iter()
+                .filter(|event| event.risk_type == "reconciliation_drift")
+                .collect::<Vec<_>>();
+            let status = if drift_events.is_empty() {
+                "ok"
+            } else {
+                "drift"
+            };
+            println!(
+                "reconciliation: run_id={} status={} cash_snapshots={} position_snapshots={} drift_events={}",
+                run_id,
+                status,
+                cash_snapshots.len(),
+                position_snapshots.len(),
+                drift_events.len()
+            );
+            for event in drift_events {
+                println!(
+                    "reconciliation_drift: ts_ms={} account={} symbol={} decision={} reason={} threshold={} observed_value={}",
+                    event.ts_ms,
+                    event.account_id.as_deref().unwrap_or(""),
+                    event.symbol.as_deref().unwrap_or(""),
+                    event.decision,
+                    event.reason.as_deref().unwrap_or(""),
+                    event.threshold.as_deref().unwrap_or(""),
+                    event.observed_value.as_deref().unwrap_or("")
+                );
+            }
+        }
         Command::Funding { command } => match command {
             FundingCommand::List {
                 config,

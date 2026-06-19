@@ -716,6 +716,25 @@ impl Broker for BinanceSpotTestnetAdapter {
         })
     }
 
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        let request = self.signed_request(
+            "/fapi/v2/positionRisk",
+            &format!(
+                "timestamp={}&recvWindow={}",
+                self.server_time_ms().await?,
+                self.settings.recv_window_ms
+            ),
+        );
+        let body = self
+            .client
+            .get(&request.url, Some(&request.api_key))
+            .await?;
+        Self::parse_position_risk_json(account_id, &body)
+    }
+
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
         self.client
             .get(

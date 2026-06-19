@@ -247,6 +247,207 @@ pub struct BrokerPositionSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashSnapshot {
+    pub currency: String,
+    pub total: Decimal,
+    pub available: Decimal,
+    pub locked: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrokerCashSnapshot {
+    pub currency: String,
+    pub total: Decimal,
+    pub available: Decimal,
+    pub locked: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePositionSnapshot {
+    pub symbol: String,
+    pub position_side: PositionSide,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriftSeverity {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CashDrift {
+    pub currency: String,
+    pub runtime_total: Decimal,
+    pub broker_total: Decimal,
+    pub drift_abs: Decimal,
+    pub drift_bps: Decimal,
+    pub severity: DriftSeverity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionSnapshotDrift {
+    pub symbol: String,
+    pub position_side: PositionSide,
+    pub runtime_qty: Decimal,
+    pub broker_qty: Decimal,
+    pub drift_qty: Decimal,
+    pub reason: String,
+    pub severity: DriftSeverity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconciliationSnapshotReport {
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub cash_drift: Option<CashDrift>,
+    pub position_drifts: Vec<PositionSnapshotDrift>,
+    pub severity: DriftSeverity,
+}
+
+impl ReconciliationSnapshotReport {
+    pub fn new(
+        run_id: &str,
+        account_id: &str,
+        ts_ms: i64,
+        runtime_cash: Option<CashSnapshot>,
+        broker_cash: Option<BrokerCashSnapshot>,
+        runtime_positions: Vec<RuntimePositionSnapshot>,
+        broker_positions: Vec<BrokerPositionSnapshot>,
+        cash_threshold_bps: Decimal,
+    ) -> Self {
+        let cash_drift = reconcile_cash(runtime_cash, broker_cash, cash_threshold_bps);
+        let position_drifts = reconcile_snapshot_positions(&runtime_positions, &broker_positions);
+        let mut severity = DriftSeverity::Info;
+        if let Some(cash_drift) = &cash_drift {
+            severity = severity.max(cash_drift.severity);
+        }
+        for drift in &position_drifts {
+            severity = severity.max(drift.severity);
+        }
+
+        Self {
+            run_id: run_id.to_string(),
+            account_id: account_id.to_string(),
+            ts_ms,
+            cash_drift,
+            position_drifts,
+            severity,
+        }
+    }
+}
+
+fn reconcile_cash(
+    runtime_cash: Option<CashSnapshot>,
+    broker_cash: Option<BrokerCashSnapshot>,
+    threshold_bps: Decimal,
+) -> Option<CashDrift> {
+    let runtime_cash = runtime_cash?;
+    let broker_cash = broker_cash?;
+    if runtime_cash.currency != broker_cash.currency {
+        return Some(CashDrift {
+            currency: runtime_cash.currency,
+            runtime_total: runtime_cash.total,
+            broker_total: broker_cash.total,
+            drift_abs: (runtime_cash.total - broker_cash.total).abs(),
+            drift_bps: Decimal::MAX,
+            severity: DriftSeverity::Error,
+        });
+    }
+
+    let drift_abs = (runtime_cash.total - broker_cash.total).abs();
+    let drift_bps = if broker_cash.total == Decimal::ZERO {
+        if drift_abs == Decimal::ZERO {
+            Decimal::ZERO
+        } else {
+            Decimal::MAX
+        }
+    } else {
+        drift_abs / broker_cash.total.abs() * Decimal::from(10_000)
+    };
+
+    if drift_bps <= threshold_bps {
+        return None;
+    }
+
+    Some(CashDrift {
+        currency: runtime_cash.currency,
+        runtime_total: runtime_cash.total,
+        broker_total: broker_cash.total,
+        drift_abs,
+        drift_bps,
+        severity: DriftSeverity::Warn,
+    })
+}
+
+fn reconcile_snapshot_positions(
+    runtime_positions: &[RuntimePositionSnapshot],
+    broker_positions: &[BrokerPositionSnapshot],
+) -> Vec<PositionSnapshotDrift> {
+    let mut drifts = Vec::new();
+    for runtime_position in runtime_positions {
+        let broker_position = broker_positions.iter().find(|broker_position| {
+            broker_position.symbol == runtime_position.symbol
+                && broker_position.position_side == runtime_position.position_side
+        });
+        match broker_position {
+            Some(broker_position)
+                if broker_position.qty != runtime_position.qty
+                    || broker_position.avg_price != runtime_position.avg_price =>
+            {
+                drifts.push(PositionSnapshotDrift {
+                    symbol: runtime_position.symbol.clone(),
+                    position_side: runtime_position.position_side,
+                    runtime_qty: runtime_position.qty,
+                    broker_qty: broker_position.qty,
+                    drift_qty: runtime_position.qty - broker_position.qty,
+                    reason: if broker_position.qty != runtime_position.qty {
+                        "qty mismatch".to_string()
+                    } else {
+                        "avg_price mismatch".to_string()
+                    },
+                    severity: DriftSeverity::Error,
+                });
+            }
+            Some(_) => {}
+            None => drifts.push(PositionSnapshotDrift {
+                symbol: runtime_position.symbol.clone(),
+                position_side: runtime_position.position_side,
+                runtime_qty: runtime_position.qty,
+                broker_qty: Decimal::ZERO,
+                drift_qty: runtime_position.qty,
+                reason: "missing broker position".to_string(),
+                severity: DriftSeverity::Error,
+            }),
+        }
+    }
+
+    for broker_position in broker_positions {
+        let has_runtime_position = runtime_positions.iter().any(|runtime_position| {
+            runtime_position.symbol == broker_position.symbol
+                && runtime_position.position_side == broker_position.position_side
+        });
+        if !has_runtime_position {
+            drifts.push(PositionSnapshotDrift {
+                symbol: broker_position.symbol.clone(),
+                position_side: broker_position.position_side,
+                runtime_qty: Decimal::ZERO,
+                broker_qty: broker_position.qty,
+                drift_qty: -broker_position.qty,
+                reason: "missing runtime position".to_string(),
+                severity: DriftSeverity::Error,
+            });
+        }
+    }
+
+    drifts
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractPosition {
     pub run_id: String,
     pub account_id: String,

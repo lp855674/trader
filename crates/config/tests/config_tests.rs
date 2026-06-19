@@ -46,6 +46,7 @@ fn parses_backtest_config() {
 
         [live]
         enabled = false
+        broker_snapshot_interval_ms = 250
     "#;
 
     let config = AppConfig::from_toml_str(input).unwrap();
@@ -74,6 +75,7 @@ fn parses_backtest_config() {
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert!(!config.broker.order_submit_enabled);
     assert!(!config.live.enabled);
+    assert_eq!(config.live.broker_snapshot_interval_ms, Some(250));
     assert!(!config.ingestion.enabled);
     assert_eq!(config.ingestion.fetch_interval_minutes, 60);
 }

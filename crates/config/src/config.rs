@@ -228,6 +228,7 @@ pub struct PaperConfig {
 pub struct LiveConfig {
     pub enabled: bool,
     pub heartbeat_ms: Option<u64>,
+    pub broker_snapshot_interval_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

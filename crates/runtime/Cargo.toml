@@ -12,6 +12,7 @@ path = "src/runtime.rs"
 anyhow.workspace = true
 broker.workspace = true
 chrono.workspace = true
+rust_decimal.workspace = true
 serde_json.workspace = true
 storage.workspace = true
 tokio.workspace = true

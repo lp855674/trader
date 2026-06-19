@@ -1,8 +1,9 @@
 use algorithm::{
     AccountingUpdatedPayload, AlgorithmEngine, AlgorithmEngineSettings, AlgorithmOrderPayload,
-    AlphaGeneratedPayload, BrokerPositionSnapshot, ContractAccountingBook, ContractFill,
-    EngineEventKind, FundingRateEvent, PositionSide, SimulatedContractAccounting,
-    UniverseSelectedPayload,
+    AlphaGeneratedPayload, BrokerCashSnapshot, BrokerPositionSnapshot, CashSnapshot,
+    ContractAccountingBook, ContractFill, DriftSeverity, EngineEventKind, FundingRateEvent,
+    PositionSide, ReconciliationSnapshotReport, RuntimePositionSnapshot,
+    SimulatedContractAccounting, UniverseSelectedPayload,
 };
 use alpha::{AlphaModel, CompositeAlphaModel};
 use data::{Bar, MarketSlice, SymbolBar};
@@ -100,6 +101,78 @@ async fn contract_accounting_reconciliation_reports_qty_drift() {
 
     assert_eq!(report.drift_count(), 1);
     assert!(report.drifts[0].reason.contains("qty mismatch"));
+}
+
+#[test]
+fn reconciliation_report_detects_cash_drift_above_threshold() {
+    let report = ReconciliationSnapshotReport::new(
+        "run-reconcile",
+        "paper",
+        10,
+        Some(CashSnapshot {
+            currency: "USD".to_string(),
+            total: dec!(10000),
+            available: dec!(10000),
+            locked: dec!(0),
+        }),
+        Some(BrokerCashSnapshot {
+            currency: "USD".to_string(),
+            total: dec!(10005),
+            available: dec!(10005),
+            locked: dec!(0),
+        }),
+        Vec::new(),
+        Vec::new(),
+        dec!(1),
+    );
+
+    assert_eq!(report.severity, DriftSeverity::Warn);
+    let cash_drift = report.cash_drift.unwrap();
+    assert_eq!(cash_drift.currency, "USD");
+    assert_eq!(cash_drift.runtime_total, dec!(10000));
+    assert_eq!(cash_drift.broker_total, dec!(10005));
+    assert!(cash_drift.drift_bps > dec!(1));
+}
+
+#[test]
+fn reconciliation_report_detects_missing_and_orphaned_positions() {
+    let report = ReconciliationSnapshotReport::new(
+        "run-reconcile",
+        "paper",
+        10,
+        None,
+        None,
+        vec![RuntimePositionSnapshot {
+            symbol: "BTCUSDT".to_string(),
+            position_side: PositionSide::Long,
+            qty: dec!(0.25),
+            avg_price: dec!(65000),
+        }],
+        vec![BrokerPositionSnapshot {
+            account_id: "paper".to_string(),
+            exchange: "BINANCE".to_string(),
+            symbol: "ETHUSDT".to_string(),
+            position_side: PositionSide::Short,
+            qty: dec!(-1),
+            avg_price: dec!(3500),
+            margin_used: dec!(700),
+            ts_ms: 10,
+        }],
+        dec!(1),
+    );
+
+    assert_eq!(report.severity, DriftSeverity::Error);
+    assert_eq!(report.position_drifts.len(), 2);
+    assert!(
+        report.position_drifts.iter().any(|drift| {
+            drift.symbol == "BTCUSDT" && drift.reason == "missing broker position"
+        })
+    );
+    assert!(
+        report.position_drifts.iter().any(|drift| {
+            drift.symbol == "ETHUSDT" && drift.reason == "missing runtime position"
+        })
+    );
 }
 
 #[test]

@@ -41,6 +41,7 @@ GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
 GET  /api/v1/configs
 GET  /api/v1/configs/{name}
+GET  /api/v1/system-logs
 GET  /api/v1/runs/{run_id}/status
 POST /api/v1/runs/{run_id}/cancel
 GET  /api/v1/events
@@ -48,6 +49,9 @@ GET  /api/v1/runs/{run_id}/events
 GET  /api/v1/runs/{run_id}/order-events
 GET  /api/v1/runs/{run_id}/risk-events
 GET  /api/v1/runs/{run_id}/insights
+GET  /api/v1/runs/{run_id}/cash-snapshots
+GET  /api/v1/runs/{run_id}/position-snapshots
+GET  /api/v1/runs/{run_id}/reconciliation
 GET  /api/v1/runs/{run_id}/portfolio-targets
 GET  /api/v1/runs/{run_id}/system-logs
 GET  /api/v1/runs/{run_id}/crypto-positions
@@ -64,7 +68,11 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
-`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`.
+`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` expose runtime/system logs with run, level, target, time-window, and limit filters; CLI also supports retention purge.
+
+`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; real broker-reported cash/position scheduling remains production hardening work.
+
+`GET /api/v1/runs/{run_id}/reconciliation` summarizes persisted cash snapshots, position snapshots, and `risk_events` with `risk_type = "reconciliation_drift"` for the run.
 
 `GET /api/v1/ingestion/status` response:
 
@@ -105,7 +113,7 @@ subscribe       -> replay persisted events for run_id
 replay_control  -> pause / resume / seek / speed
 ```
 
-Broker status 返回 Futu、Binance、OKX、Interactive Brokers 的 deterministic fake adapters。Live runtime 只验证本地 lifecycle、broker status 和 stop，不连接真实 broker、不接收凭证、不发真实订单。
+Broker status 返回 Futu、Binance、OKX、Interactive Brokers 的 deterministic fake adapters。Live runtime 验证本地 lifecycle、broker status、stop，以及可配置的 fake broker cash/position snapshot 调度；不连接真实 broker、不接收凭证、不发真实订单。
 
 ---
 
@@ -640,9 +648,10 @@ GET /api/v1/runs/{run_id}
 
 ```http
 GET /api/v1/runs/{run_id}/system-logs
+GET /api/v1/system-logs
 ```
 
-当前 V1 返回 API 启动 Backtest、Paper、Replay 时写入的运行生命周期日志。`fields` 是结构化 JSON，不返回 `fields_json` 字符串：
+当前 V1 返回 API 启动 Backtest、Paper、Replay 时写入的运行生命周期日志，以及 ingestion/runtime/system 组件写入的结构化日志。两个端点都支持 `level`、`target`、`from_ms`、`to_ms`、`limit` 过滤；全局端点还支持 `run_id`。`fields` 是结构化 JSON，不返回 `fields_json` 字符串：
 
 ```json
 [
@@ -1807,9 +1816,10 @@ Query 参数：
 
 ```http
 GET /api/v1/cash/snapshots
+GET /api/v1/runs/{run_id}/cash-snapshots?currency=USD&from_ms=1700000000000&to_ms=1700000600000
 ```
 
-当前 V1 根据服务配置中的 `runtime.run_id` 查询，返回数组：
+当前 V1 根据服务配置中的 `runtime.run_id` 查询，或通过 run-scoped endpoint 查询指定运行。run-scoped endpoint 支持 `currency`、`from_ms`、`to_ms` 可选过滤。返回数组：
 
 ```json
 [
@@ -1832,9 +1842,10 @@ GET /api/v1/cash/snapshots
 
 ```http
 GET /api/v1/positions/snapshots
+GET /api/v1/runs/{run_id}/position-snapshots?symbol=BTCUSDT_PERP&position_side=LONG&from_ms=1700000000000&to_ms=1700000600000
 ```
 
-当前 V1 根据服务配置中的 `runtime.run_id` 查询，返回数组：
+当前 V1 根据服务配置中的 `runtime.run_id` 查询，或通过 run-scoped endpoint 查询指定运行。run-scoped endpoint 支持 `symbol`、`position_side`、`from_ms`、`to_ms` 可选过滤。返回数组：
 
 ```json
 [
@@ -1861,6 +1872,45 @@ GET /api/v1/positions/snapshots
   }
 ]
 ```
+
+---
+
+## 17.5 查询对账状态
+
+```http
+GET /api/v1/runs/{run_id}/reconciliation
+```
+
+返回指定 run 的 snapshot 覆盖和 drift 投影状态：
+
+```json
+{
+  "run_id": "sample-ma-cross",
+  "status": "drift",
+  "cash_snapshots": 1,
+  "position_snapshots": 1,
+  "latest_cash_ts_ms": 1700000000000,
+  "latest_position_ts_ms": 1700000000000,
+  "drift_events": [
+    {
+      "id": "risk-1",
+      "event_id": "evt-1",
+      "run_id": "sample-ma-cross",
+      "account_id": "paper",
+      "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+      "risk_type": "reconciliation_drift",
+      "decision": "rejected",
+      "reason": "position_qty_drift",
+      "threshold": "1",
+      "observed_value": "5",
+      "ts_ms": 1700000000000,
+      "payload": {}
+    }
+  ]
+}
+```
+
+`status` 为 `ok` 表示当前没有 drift 投影事件，为 `drift` 表示已记录 reconciliation drift。
 
 ---
 
@@ -2255,7 +2305,7 @@ Query 参数：
 
 # 21. Config API
 
-当前 V1 实现 `GET /api/v1/configs` 和 `GET /api/v1/configs/{name}`。API 启动 Backtest、Paper 或 Replay 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照；`name` 使用 `runtime.run_id`。配置审批、发布绑定和回滚生命周期仍是后续 production-hardening 工作。
+当前 V1 实现 `GET /api/v1/configs`、`GET /api/v1/configs/{name}`、`GET /api/v1/configs/{config_id}/releases`、`GET /api/v1/configs/{config_id}/audits` 和 `GET /api/v1/runs/{run_id}/config-version`。API 启动 Backtest、Paper 或 Replay 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。人工审批流和生产发布策略 enforcement 仍是后续 production-hardening 工作。
 
 ---
 
@@ -2302,6 +2352,74 @@ GET /api/v1/configs/{name}
   "checksum": "fnv1a64:0000000000000000",
   "created_at_ms": 1700000000000,
   "updated_at_ms": 1700000000000
+}
+```
+
+---
+
+## 21.3 查询配置发布版本
+
+```http
+GET /api/v1/configs/{config_id}/releases
+```
+
+响应：
+
+```json
+[
+  {
+    "id": "run:sample-ma-cross:fnv1a64:0000000000000000",
+    "config_id": "run:sample-ma-cross",
+    "version": "fnv1a64:0000000000000000",
+    "status": "released",
+    "released_by": "runtime",
+    "notes": "run config snapshot",
+    "created_at_ms": 1700000000000,
+    "updated_at_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 21.4 查询配置审计记录
+
+```http
+GET /api/v1/configs/{config_id}/audits
+```
+
+响应：
+
+```json
+[
+  {
+    "id": "audit-id",
+    "config_id": "cfg-paper",
+    "version": "v1",
+    "action": "rollback",
+    "actor": "ops",
+    "reason": "restore previous release",
+    "ts_ms": 1700000000000
+  }
+]
+```
+
+---
+
+## 21.5 查询运行绑定的配置版本
+
+```http
+GET /api/v1/runs/{run_id}/config-version
+```
+
+响应：
+
+```json
+{
+  "run_id": "sample-ma-cross",
+  "config_id": "run:sample-ma-cross",
+  "version": "fnv1a64:0000000000000000",
+  "bound_at_ms": 1700000000000
 }
 ```
 

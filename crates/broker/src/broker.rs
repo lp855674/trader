@@ -280,6 +280,10 @@ pub trait Broker: Send + Sync {
         &self,
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError>;
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>;
     async fn status(&self) -> Result<BrokerStatus, BrokerError>;
 }
 
@@ -316,6 +320,13 @@ impl Broker for MockBroker {
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
         Ok(fake_account_snapshot(account_id))
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(fake_position_snapshots(account_id, BrokerKind::Simulated))
     }
 }
 
@@ -403,6 +414,13 @@ impl Broker for FakeBrokerAdapter {
         Ok(fake_account_snapshot(account_id))
     }
 
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(fake_position_snapshots(account_id, self.kind))
+    }
+
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
         Ok(fake_status(self.kind))
     }
@@ -416,6 +434,26 @@ fn fake_account_snapshot(account_id: &str) -> BrokerAccountSnapshot {
         buying_power: Decimal::from(100_000),
         margin_used: Decimal::ZERO,
     }
+}
+
+fn fake_position_snapshots(account_id: &str, kind: BrokerKind) -> Vec<BrokerPositionSnapshot> {
+    let exchange = match kind {
+        BrokerKind::Binance | BrokerKind::Simulated => "BINANCE",
+        BrokerKind::Futu => "FUTU",
+        BrokerKind::Okx => "OKX",
+        BrokerKind::InteractiveBrokers => "IBKR",
+    };
+    vec![BrokerPositionSnapshot {
+        account_id: account_id.to_string(),
+        exchange: exchange.to_string(),
+        symbol: format!("CRYPTO:{exchange}:BTCUSDT_PERP:CRYPTO_PERP"),
+        position_side: BrokerPositionSide::Long,
+        qty: Decimal::new(5, 1),
+        avg_price: Decimal::from(65_000),
+        margin_used: Decimal::from(3_250),
+        unrealized_pnl: Decimal::new(125, 1),
+        ts_ms: 1_700_000_000_000,
+    }]
 }
 
 fn fake_status(kind: BrokerKind) -> BrokerStatus {

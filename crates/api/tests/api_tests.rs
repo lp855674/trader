@@ -5,7 +5,8 @@ use rust_decimal::Decimal;
 use std::path::PathBuf;
 use storage::{
     CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
-    FundingRateCommand, RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
+    FundingRateCommand, PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
+    StrategyRunStartCommand, SystemLogCommand,
 };
 use tower::ServiceExt;
 
@@ -383,6 +384,339 @@ async fn run_crypto_positions_route_returns_contract_position_projection() {
 }
 
 #[tokio::test]
+async fn run_cash_snapshots_route_returns_filtered_snapshot_series() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for run_id in ["run-snapshots", "other-run"] {
+        db.start_strategy_run(StrategyRunStartCommand {
+            run_id: run_id.to_string(),
+            name: "sample".to_string(),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+    for (run_id, currency, ts_ms, cash) in [
+        ("run-snapshots", "USD", 10, dec("1000")),
+        ("run-snapshots", "USDT", 20, dec("2000")),
+        ("run-snapshots", "USD", 30, dec("1100")),
+        ("other-run", "USD", 30, dec("9999")),
+    ] {
+        db.record_paper_portfolio_snapshot(PaperPortfolioSnapshotCommand {
+            run_id: run_id.to_string(),
+            account_id: "paper".to_string(),
+            ts_ms,
+            base_currency: currency.to_string(),
+            cash,
+            market_value: Decimal::ZERO,
+            equity: cash,
+            realized_pnl: Decimal::ZERO,
+            unrealized_pnl: Decimal::ZERO,
+            positions: Vec::new(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-snapshots/cash-snapshots?currency=USD&from_ms=15&to_ms=35")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let snapshots: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshots = snapshots.as_array().unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["run_id"], "run-snapshots");
+    assert_eq!(snapshots[0]["currency"], "USD");
+    assert_eq!(snapshots[0]["cash"], "1100");
+    assert_eq!(snapshots[0]["ts_ms"], 30);
+}
+
+#[tokio::test]
+async fn run_position_snapshots_route_returns_filtered_snapshot_series() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for run_id in ["run-snapshots", "other-run"] {
+        db.start_strategy_run(StrategyRunStartCommand {
+            run_id: run_id.to_string(),
+            name: "sample".to_string(),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+    for (run_id, symbol, ts_ms, qty) in [
+        (
+            "run-snapshots",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            10,
+            dec("0.25"),
+        ),
+        (
+            "run-snapshots",
+            "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+            20,
+            dec("-1.5"),
+        ),
+        (
+            "run-snapshots",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            30,
+            dec("0.50"),
+        ),
+        (
+            "other-run",
+            "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            30,
+            dec("9"),
+        ),
+    ] {
+        db.record_paper_portfolio_snapshot(PaperPortfolioSnapshotCommand {
+            run_id: run_id.to_string(),
+            account_id: "paper".to_string(),
+            ts_ms,
+            base_currency: "USDT".to_string(),
+            cash: dec("1000"),
+            market_value: dec("32550"),
+            equity: dec("33550"),
+            realized_pnl: Decimal::ZERO,
+            unrealized_pnl: dec("50"),
+            positions: vec![PositionCommand {
+                run_id: run_id.to_string(),
+                account_id: "paper".to_string(),
+                symbol: symbol.to_string(),
+                qty,
+                avg_price: dec("65000"),
+                updated_at_ms: ts_ms,
+            }],
+        })
+        .await
+        .unwrap();
+    }
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-snapshots/position-snapshots?symbol=CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP&from_ms=15&to_ms=35")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let snapshots: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let snapshots = snapshots.as_array().unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["run_id"], "run-snapshots");
+    assert_eq!(
+        snapshots[0]["symbol"],
+        "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"
+    );
+    assert!(snapshots[0]["position_side"].is_null());
+    assert_eq!(snapshots[0]["qty"], "0.50");
+}
+
+#[tokio::test]
+async fn run_reconciliation_route_summarizes_snapshots_and_drift_events() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-recon".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_paper_portfolio_snapshot(PaperPortfolioSnapshotCommand {
+        run_id: "run-recon".to_string(),
+        account_id: "paper".to_string(),
+        ts_ms: 25,
+        base_currency: "USDT".to_string(),
+        cash: dec("1000"),
+        market_value: dec("650"),
+        equity: dec("1650"),
+        realized_pnl: Decimal::ZERO,
+        unrealized_pnl: Decimal::ZERO,
+        positions: vec![PositionCommand {
+            run_id: "run-recon".to_string(),
+            account_id: "paper".to_string(),
+            symbol: "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
+            qty: dec("0.01"),
+            avg_price: dec("65000"),
+            updated_at_ms: 25,
+        }],
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-recon".to_string(),
+        ts_ms: 30,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-recon",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "rejected",
+            "reason": "position_qty_drift",
+            "threshold": "1",
+            "observed_value": "5"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-recon/reconciliation")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["run_id"], "run-recon");
+    assert_eq!(body["status"], "drift");
+    assert_eq!(body["cash_snapshots"], 1);
+    assert_eq!(body["position_snapshots"], 1);
+    assert_eq!(body["latest_cash_ts_ms"], 25);
+    assert_eq!(body["latest_position_ts_ms"], 25);
+    assert_eq!(body["drift_events"].as_array().unwrap().len(), 1);
+    assert_eq!(body["drift_events"][0]["risk_type"], "reconciliation_drift");
+}
+
+#[tokio::test]
+async fn config_lifecycle_routes_return_release_audit_and_run_binding_status() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-config".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_config(storage::ConfigRecordCommand {
+        id: "config-paper".to_string(),
+        name: "paper-binance".to_string(),
+        config_type: "BROKER".to_string(),
+        content: "order_submit_enabled = true".to_string(),
+        format: "TOML".to_string(),
+        checksum: Some("sha256:v1".to_string()),
+        ts_ms: 2,
+    })
+    .await
+    .unwrap();
+    db.record_config_release(storage::ConfigReleaseCommand {
+        config_id: "config-paper".to_string(),
+        version: "v1".to_string(),
+        status: "released".to_string(),
+        released_by: Some("ops".to_string()),
+        notes: Some("paper broker rollout".to_string()),
+        ts_ms: 3,
+    })
+    .await
+    .unwrap();
+    db.bind_run_config_version(storage::RunConfigVersionBindingCommand {
+        run_id: "run-config".to_string(),
+        config_id: "config-paper".to_string(),
+        version: "v1".to_string(),
+        ts_ms: 4,
+    })
+    .await
+    .unwrap();
+    db.record_config_audit(storage::ConfigAuditCommand {
+        config_id: "config-paper".to_string(),
+        version: Some("v1".to_string()),
+        action: "rollback".to_string(),
+        actor: Some("ops".to_string()),
+        reason: Some("restore previous release".to_string()),
+        ts_ms: 5,
+    })
+    .await
+    .unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let releases = get_json(app.clone(), "/api/v1/configs/config-paper/releases").await;
+    assert_eq!(releases.as_array().unwrap().len(), 1);
+    assert_eq!(releases[0]["version"], "v1");
+    assert_eq!(releases[0]["status"], "released");
+    assert_eq!(releases[0]["released_by"], "ops");
+
+    let audits = get_json(app.clone(), "/api/v1/configs/config-paper/audits").await;
+    assert_eq!(audits.as_array().unwrap().len(), 1);
+    assert_eq!(audits[0]["action"], "rollback");
+    assert_eq!(audits[0]["reason"], "restore previous release");
+
+    let binding = get_json(app, "/api/v1/runs/run-config/config-version").await;
+    assert_eq!(binding["run_id"], "run-config");
+    assert_eq!(binding["config_id"], "config-paper");
+    assert_eq!(binding["version"], "v1");
+}
+
+#[tokio::test]
+async fn backtest_start_binds_run_to_config_snapshot_version() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let binding = get_json(app, "/api/v1/runs/sample-ma-cross/config-version").await;
+    assert_eq!(binding["run_id"], "sample-ma-cross");
+    assert_eq!(binding["config_id"], "run:sample-ma-cross");
+    assert!(binding["version"].as_str().unwrap().starts_with("fnv1a64:"));
+}
+
+#[tokio::test]
 async fn funding_rates_route_returns_filtered_decimal_series() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -627,6 +961,72 @@ async fn ingestion_status_route_returns_tracker_status() {
 }
 
 #[tokio::test]
+async fn system_logs_route_filters_by_run_level_target_and_time() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for (run_id, ts_ms, level, target, message) in [
+        (
+            Some("run-logs"),
+            100,
+            "INFO",
+            "runtime.execution",
+            "started",
+        ),
+        (
+            Some("run-logs"),
+            200,
+            "ERROR",
+            "runtime.execution",
+            "failed",
+        ),
+        (None, 200, "ERROR", "system.scheduler", "scheduler failed"),
+        (
+            Some("other-run"),
+            200,
+            "ERROR",
+            "runtime.execution",
+            "other failed",
+        ),
+    ] {
+        db.record_system_log(SystemLogCommand {
+            run_id: run_id.map(str::to_string),
+            ts_ms,
+            level: level.to_string(),
+            target: target.to_string(),
+            message: message.to_string(),
+            fields: Some(serde_json::json!({
+                "category": target.split('.').next().unwrap_or(target)
+            })),
+        })
+        .await
+        .unwrap();
+    }
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let logs = get_json(
+        app.clone(),
+        "/api/v1/system-logs?run_id=run-logs&level=ERROR&target=runtime.execution&from_ms=150&to_ms=250",
+    )
+    .await;
+    let logs = logs.as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["message"], "failed");
+    assert_eq!(logs[0]["fields"]["category"], "runtime");
+
+    let run_logs = get_json(
+        app,
+        "/api/v1/runs/run-logs/system-logs?level=ERROR&target=runtime.execution",
+    )
+    .await;
+    let run_logs = run_logs.as_array().unwrap();
+    assert_eq!(run_logs.len(), 1);
+    assert_eq!(run_logs[0]["run_id"], "run-logs");
+}
+
+#[tokio::test]
 async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -672,6 +1072,117 @@ async fn live_runtime_routes_start_report_status_and_stop() {
     wait_for_body_fragment(app, "/api/v1/live-runs/sample-ma-cross/status", "stopped").await;
 }
 
+#[tokio::test]
+async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let config_path =
+        std::env::temp_dir().join(format!("trader-live-snapshot-{}.toml", std::process::id()));
+    std::fs::write(
+        &config_path,
+        r#"
+        [runtime]
+        mode = "live"
+        run_id = "api-live-snapshot"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "25000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        broker_snapshot_interval_ms = 5
+        "#,
+    )
+    .unwrap();
+    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-snapshot/cash-snapshots?currency=USD",
+        "\"cash\":\"100000\"",
+    )
+    .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-snapshot/position-snapshots?symbol=CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP&position_side=long",
+        "\"unrealized_pnl\":\"12.5\"",
+    )
+    .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-snapshot/reconciliation",
+        "\"status\":\"drift\"",
+    )
+    .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-snapshot/reconciliation",
+        "position_missing_runtime",
+    )
+    .await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs/api-live-snapshot/stop")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 fn dec(value: &str) -> Decimal {
     value.parse().unwrap()
 }
@@ -704,4 +1215,14 @@ async fn wait_for_body_fragment(app: axum::Router, uri: &str, fragment: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{uri} did not contain {fragment}");
+}
+
+async fn get_json(app: axum::Router, uri: &str) -> serde_json::Value {
+    let response = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }

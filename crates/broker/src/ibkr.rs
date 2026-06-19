@@ -16,7 +16,7 @@ use trader_core::OrderRequest;
 
 use crate::{
     Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerError, BrokerKind, BrokerOrder,
-    BrokerStatus, PlaceOrderResponse,
+    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,6 +492,15 @@ impl Broker for IbkrPaperGatewayAdapter {
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
         Err(BrokerError::Rejected(format!(
             "IBKR paper account snapshot is not implemented for {account_id}"
+        )))
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Err(BrokerError::Rejected(format!(
+            "IBKR paper position snapshots are not implemented for {account_id}"
         )))
     }
 

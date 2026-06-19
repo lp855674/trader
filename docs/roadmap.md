@@ -16,9 +16,9 @@ Trader 采用渐进式开发路线。
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
 - `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, Binance funding-rate ingestion can populate historical funding rows, and Binance reconciliation has drift-detection tests. Production crypto derivative accounting still needs real broker reconciliation scheduling and IBKR contract reconciliation.
-- `cash_snapshots` and `position_snapshots` are captured by paper runtime; live/reconciliation snapshot capture remains follow-up work.
-- API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config approval/release lifecycle remains follow-up work.
-- API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; broader production log indexing remains follow-up work.
+- `cash_snapshots` and `position_snapshots` are captured by paper runtime and exposed through explicit run-scoped API/CLI queries; live runtime writes a startup baseline cash snapshot, can periodically capture fake broker cash/position snapshots from `[live].broker_snapshot_interval_ms`, and emits cash/position `reconciliation_drift` risk events when fake broker state diverges from the latest runtime snapshots. API/CLI reconciliation status can summarize snapshots plus drift events. Real broker-reported cash/position scheduling remains follow-up work.
+- API-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; config releases, run-version bindings, rollback audit records, and API/CLI status queries are now wired for local lifecycle tracking. Human approval workflows and production rollout policy enforcement remain follow-up work.
+- API-launched Backtest, Paper, and Replay runs index lifecycle messages in `system_logs`; runtime/system log filtering and retention purge are exposed through API/CLI. External production log collectors and alert routing remain follow-up work.
 - `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; Binance market metadata and Yahoo corporate actions now have CLI/scheduled ingestion paths plus `/api/v1/ingestion/status`.
 
 ## Reference-Data Ingestion Milestone
@@ -58,9 +58,9 @@ Current status:
 Remaining:
 
 ```text
-1. Scheduled broker reported position snapshots
+1. Scheduled real broker reported cash/position snapshots beyond local fake broker snapshots
 2. IBKR contract reconciliation
-3. Live/reconciliation snapshot persistence
+3. Real broker adapter position snapshot implementations beyond fake/Binance parser scaffolding
 4. Production alerts and audit reports for reconciliation drift
 5. Production hardening for reference-data rate limits and stale-data alerts
 ```

@@ -320,6 +320,17 @@ pub struct NewConfigRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigRecordCommand {
+    pub id: String,
+    pub name: String,
+    pub config_type: String,
+    pub content: String,
+    pub format: String,
+    pub checksum: Option<String>,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoredConfigRecord {
     pub id: String,
     pub name: String,
@@ -329,6 +340,65 @@ pub struct StoredConfigRecord {
     pub checksum: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigReleaseCommand {
+    pub config_id: String,
+    pub version: String,
+    pub status: String,
+    pub released_by: Option<String>,
+    pub notes: Option<String>,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredConfigRelease {
+    pub id: String,
+    pub config_id: String,
+    pub version: String,
+    pub status: String,
+    pub released_by: Option<String>,
+    pub notes: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunConfigVersionBindingCommand {
+    pub run_id: String,
+    pub config_id: String,
+    pub version: String,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredRunConfigVersionBinding {
+    pub run_id: String,
+    pub config_id: String,
+    pub version: String,
+    pub bound_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigAuditCommand {
+    pub config_id: String,
+    pub version: Option<String>,
+    pub action: String,
+    pub actor: Option<String>,
+    pub reason: Option<String>,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredConfigAudit {
+    pub id: String,
+    pub config_id: String,
+    pub version: Option<String>,
+    pub action: String,
+    pub actor: Option<String>,
+    pub reason: Option<String>,
+    pub ts_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -372,6 +442,23 @@ pub struct SystemLogCommand {
     pub target: String,
     pub message: String,
     pub fields: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SystemLogFilter {
+    pub run_id: Option<String>,
+    pub level: Option<String>,
+    pub target: Option<String>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemLogRetentionCommand {
+    pub before_ms: i64,
+    pub target: Option<String>,
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -804,6 +891,36 @@ pub struct PositionCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePositionSnapshotCommand {
+    pub run_id: String,
+    pub ts_ms: i64,
+    pub symbol: String,
+    pub position_side: String,
+    pub qty: Decimal,
+    pub available_qty: Decimal,
+    pub avg_price: Decimal,
+    pub mark_price: Option<Decimal>,
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrokerPositionSnapshotCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub ts_ms: i64,
+    pub exchange: String,
+    pub symbol: String,
+    pub position_side: String,
+    pub qty: Decimal,
+    pub avg_price: Decimal,
+    pub mark_price: Option<Decimal>,
+    pub margin_used: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub realized_pnl: Decimal,
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CryptoPositionCommand {
     pub run_id: String,
     pub account_id: String,
@@ -1055,6 +1172,62 @@ fn position_snapshot_from_command(
         realized_pnl: None,
         currency: currency.to_string(),
         created_at_ms: position.updated_at_ms,
+    })
+}
+
+fn runtime_position_snapshot_from_command(
+    command: RuntimePositionSnapshotCommand,
+) -> Result<NewPositionSnapshot, StorageError> {
+    let (market, exchange, asset_class) = parse_symbol_parts(&command.symbol)?;
+    Ok(NewPositionSnapshot {
+        run_id: command.run_id,
+        ts_ms: command.ts_ms,
+        market,
+        exchange,
+        symbol: command.symbol,
+        asset_class,
+        position_side: Some(command.position_side),
+        qty: command.qty.to_string(),
+        available_qty: command.available_qty.to_string(),
+        avg_price: Some(command.avg_price.to_string()),
+        entry_price: Some(command.avg_price.to_string()),
+        market_price: None,
+        mark_price: command.mark_price.map(|price| price.to_string()),
+        market_value: command
+            .mark_price
+            .map(|price| (command.qty * price).to_string()),
+        unrealized_pnl: Some(Decimal::ZERO.to_string()),
+        realized_pnl: Some(Decimal::ZERO.to_string()),
+        currency: command.currency,
+        created_at_ms: command.ts_ms,
+    })
+}
+
+fn broker_position_snapshot_from_command(
+    command: BrokerPositionSnapshotCommand,
+) -> Result<NewPositionSnapshot, StorageError> {
+    let (market, exchange, asset_class) = parse_symbol_parts(&command.symbol)?;
+    Ok(NewPositionSnapshot {
+        run_id: command.run_id,
+        ts_ms: command.ts_ms,
+        market,
+        exchange,
+        symbol: command.symbol,
+        asset_class,
+        position_side: Some(command.position_side),
+        qty: command.qty.to_string(),
+        available_qty: command.qty.abs().to_string(),
+        avg_price: Some(command.avg_price.to_string()),
+        entry_price: Some(command.avg_price.to_string()),
+        market_price: command.mark_price.map(|price| price.to_string()),
+        mark_price: command.mark_price.map(|price| price.to_string()),
+        market_value: command
+            .mark_price
+            .map(|price| (command.qty * price).to_string()),
+        unrealized_pnl: Some(command.unrealized_pnl.to_string()),
+        realized_pnl: Some(command.realized_pnl.to_string()),
+        currency: command.currency,
+        created_at_ms: command.ts_ms,
     })
 }
 
@@ -2078,17 +2251,40 @@ impl Db {
         &self,
         run_id: &str,
     ) -> StorageResult<Vec<StoredCashSnapshot>> {
-        let rows = sqlx::query_as::<_, (i64, String, i64, String, String, String, String, i64)>(
-            r#"
-            SELECT id, run_id, ts, currency, cash, available_cash, frozen_cash, created_at
-            FROM cash_snapshots
-            WHERE run_id = ?
-            ORDER BY ts, id
-            "#,
-        )
-        .bind(run_id)
-        .fetch_all(self.pool())
-        .await?;
+        self.list_cash_snapshots_filtered(run_id, None, None, None)
+            .await
+    }
+
+    pub async fn list_cash_snapshots_filtered(
+        &self,
+        run_id: &str,
+        currency: Option<&str>,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> StorageResult<Vec<StoredCashSnapshot>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            "SELECT id, run_id, ts, currency, cash, available_cash, frozen_cash, created_at \
+             FROM cash_snapshots WHERE run_id = ",
+        );
+        query_builder.push_bind(run_id);
+        if let Some(currency) = currency {
+            query_builder.push(" AND currency = ");
+            query_builder.push_bind(currency);
+        }
+        if let Some(from_ms) = from_ms {
+            query_builder.push(" AND ts >= ");
+            query_builder.push_bind(from_ms);
+        }
+        if let Some(to_ms) = to_ms {
+            query_builder.push(" AND ts <= ");
+            query_builder.push_bind(to_ms);
+        }
+        query_builder.push(" ORDER BY ts, id");
+
+        let rows = query_builder
+            .build_query_as::<(i64, String, i64, String, String, String, String, i64)>()
+            .fetch_all(self.pool())
+            .await?;
 
         Ok(rows
             .into_iter()
@@ -2116,6 +2312,43 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn get_latest_cash_snapshot(
+        &self,
+        run_id: &str,
+        currency: Option<&str>,
+    ) -> StorageResult<Option<StoredCashSnapshot>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            "SELECT id, run_id, ts, currency, cash, available_cash, frozen_cash, created_at \
+             FROM cash_snapshots WHERE run_id = ",
+        );
+        query_builder.push_bind(run_id);
+        if let Some(currency) = currency {
+            query_builder.push(" AND currency = ");
+            query_builder.push_bind(currency);
+        }
+        query_builder.push(" ORDER BY ts DESC, id DESC LIMIT 1");
+
+        let row = query_builder
+            .build_query_as::<(i64, String, i64, String, String, String, String, i64)>()
+            .fetch_optional(self.pool())
+            .await?;
+
+        Ok(row.map(
+            |(id, run_id, ts_ms, currency, cash, available_cash, frozen_cash, created_at_ms)| {
+                StoredCashSnapshot {
+                    id,
+                    run_id,
+                    ts_ms,
+                    currency,
+                    cash,
+                    available_cash,
+                    frozen_cash,
+                    created_at_ms,
+                }
+            },
+        ))
     }
 
     pub async fn insert_position_snapshot(
@@ -2159,20 +2392,44 @@ impl Db {
         &self,
         run_id: &str,
     ) -> StorageResult<Vec<StoredPositionSnapshot>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, run_id, ts AS ts_ms, market, exchange, symbol, asset_class, position_side,
-                   qty, available_qty, avg_price, entry_price, market_price, mark_price,
-                   market_value, unrealized_pnl, realized_pnl, currency, created_at AS created_at_ms
-            FROM position_snapshots
-            WHERE run_id = ?
-            ORDER BY ts, id
-            "#,
-        )
-        .bind(run_id)
-        .fetch_all(self.pool())
-        .await?;
+        self.list_position_snapshots_filtered(run_id, None, None, None, None)
+            .await
+    }
 
+    pub async fn list_position_snapshots_filtered(
+        &self,
+        run_id: &str,
+        symbol: Option<&str>,
+        position_side: Option<&str>,
+        from_ms: Option<i64>,
+        to_ms: Option<i64>,
+    ) -> StorageResult<Vec<StoredPositionSnapshot>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            "SELECT id, run_id, ts AS ts_ms, market, exchange, symbol, asset_class, position_side, \
+             qty, available_qty, avg_price, entry_price, market_price, mark_price, \
+             market_value, unrealized_pnl, realized_pnl, currency, created_at AS created_at_ms \
+             FROM position_snapshots WHERE run_id = ",
+        );
+        query_builder.push_bind(run_id);
+        if let Some(symbol) = symbol {
+            query_builder.push(" AND symbol = ");
+            query_builder.push_bind(symbol);
+        }
+        if let Some(position_side) = position_side {
+            query_builder.push(" AND position_side = ");
+            query_builder.push_bind(position_side);
+        }
+        if let Some(from_ms) = from_ms {
+            query_builder.push(" AND ts >= ");
+            query_builder.push_bind(from_ms);
+        }
+        if let Some(to_ms) = to_ms {
+            query_builder.push(" AND ts <= ");
+            query_builder.push_bind(to_ms);
+        }
+        query_builder.push(" ORDER BY ts, id");
+
+        let rows = query_builder.build().fetch_all(self.pool()).await?;
         let mut snapshots = Vec::with_capacity(rows.len());
         for row in rows {
             snapshots.push(StoredPositionSnapshot {
@@ -2198,6 +2455,24 @@ impl Db {
             });
         }
         Ok(snapshots)
+    }
+
+    pub async fn get_latest_position_snapshot(
+        &self,
+        run_id: &str,
+        symbol: &str,
+        position_side: Option<&str>,
+    ) -> StorageResult<Option<StoredPositionSnapshot>> {
+        let mut snapshots = self
+            .list_position_snapshots_filtered(run_id, Some(symbol), position_side, None, None)
+            .await?;
+        snapshots.sort_by(|left, right| {
+            right
+                .ts_ms
+                .cmp(&left.ts_ms)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(snapshots.into_iter().next())
     }
 
     pub async fn upsert_config(&self, config: NewConfigRecord) -> StorageResult<()> {
@@ -2229,19 +2504,54 @@ impl Db {
         Ok(())
     }
 
+    pub async fn record_config(&self, command: ConfigRecordCommand) -> StorageResult<()> {
+        self.upsert_config(NewConfigRecord {
+            id: command.id,
+            name: command.name,
+            config_type: command.config_type,
+            content: command.content,
+            format: command.format,
+            checksum: command.checksum,
+            created_at_ms: command.ts_ms,
+            updated_at_ms: command.ts_ms,
+        })
+        .await
+    }
+
     pub async fn record_run_config_snapshot(
         &self,
         command: RunConfigSnapshotCommand,
     ) -> StorageResult<()> {
+        let config_id = format!("run:{}", command.run_id);
+        let version = command
+            .checksum
+            .clone()
+            .unwrap_or_else(|| format!("ts:{}", command.ts_ms));
         self.upsert_config(NewConfigRecord {
-            id: format!("run:{}", command.run_id),
-            name: command.run_id,
+            id: config_id.clone(),
+            name: command.run_id.clone(),
             config_type: "RUN".to_string(),
             content: command.content,
             format: command.format,
             checksum: command.checksum,
             created_at_ms: command.ts_ms,
             updated_at_ms: command.ts_ms,
+        })
+        .await?;
+        self.record_config_release(ConfigReleaseCommand {
+            config_id: config_id.clone(),
+            version: version.clone(),
+            status: "released".to_string(),
+            released_by: Some("runtime".to_string()),
+            notes: Some("run config snapshot".to_string()),
+            ts_ms: command.ts_ms,
+        })
+        .await?;
+        self.bind_run_config_version(RunConfigVersionBindingCommand {
+            run_id: command.run_id,
+            config_id,
+            version,
+            ts_ms: command.ts_ms,
         })
         .await
     }
@@ -2342,6 +2652,244 @@ impl Db {
             .collect())
     }
 
+    pub async fn record_config_release(&self, command: ConfigReleaseCommand) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO config_releases (
+                id, config_id, version, status, released_by, notes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(config_id, version) DO UPDATE SET
+                status = excluded.status,
+                released_by = excluded.released_by,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(format!("{}:{}", command.config_id, command.version))
+        .bind(command.config_id)
+        .bind(command.version)
+        .bind(command.status)
+        .bind(command.released_by)
+        .bind(command.notes)
+        .bind(command.ts_ms)
+        .bind(command.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_config_release(
+        &self,
+        config_id: &str,
+        version: &str,
+    ) -> StorageResult<Option<StoredConfigRelease>> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, config_id, version, status, released_by, notes, created_at, updated_at
+            FROM config_releases
+            WHERE config_id = ? AND version = ?
+            "#,
+        )
+        .bind(config_id)
+        .bind(version)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(id, config_id, version, status, released_by, notes, created_at_ms, updated_at_ms)| {
+                StoredConfigRelease {
+                    id,
+                    config_id,
+                    version,
+                    status,
+                    released_by,
+                    notes,
+                    created_at_ms,
+                    updated_at_ms,
+                }
+            },
+        ))
+    }
+
+    pub async fn list_config_releases(
+        &self,
+        config_id: &str,
+    ) -> StorageResult<Vec<StoredConfigRelease>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, config_id, version, status, released_by, notes, created_at, updated_at
+            FROM config_releases
+            WHERE config_id = ?
+            ORDER BY updated_at DESC, version DESC
+            "#,
+        )
+        .bind(config_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    config_id,
+                    version,
+                    status,
+                    released_by,
+                    notes,
+                    created_at_ms,
+                    updated_at_ms,
+                )| StoredConfigRelease {
+                    id,
+                    config_id,
+                    version,
+                    status,
+                    released_by,
+                    notes,
+                    created_at_ms,
+                    updated_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn bind_run_config_version(
+        &self,
+        command: RunConfigVersionBindingCommand,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO run_config_versions (run_id, config_id, version, bound_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                config_id = excluded.config_id,
+                version = excluded.version,
+                bound_at = excluded.bound_at
+            "#,
+        )
+        .bind(command.run_id)
+        .bind(command.config_id)
+        .bind(command.version)
+        .bind(command.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_run_config_version_binding(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Option<StoredRunConfigVersionBinding>> {
+        let row = sqlx::query_as::<_, (String, String, String, i64)>(
+            r#"
+            SELECT run_id, config_id, version, bound_at
+            FROM run_config_versions
+            WHERE run_id = ?
+            "#,
+        )
+        .bind(run_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        Ok(row.map(
+            |(run_id, config_id, version, bound_at_ms)| StoredRunConfigVersionBinding {
+                run_id,
+                config_id,
+                version,
+                bound_at_ms,
+            },
+        ))
+    }
+
+    pub async fn record_config_audit(&self, command: ConfigAuditCommand) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO config_audits (
+                id, config_id, version, action, actor, reason, ts
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(command.config_id)
+        .bind(command.version)
+        .bind(command.action)
+        .bind(command.actor)
+        .bind(command.reason)
+        .bind(command.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_config_audits(
+        &self,
+        config_id: &str,
+    ) -> StorageResult<Vec<StoredConfigAudit>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+            ),
+        >(
+            r#"
+            SELECT id, config_id, version, action, actor, reason, ts
+            FROM config_audits
+            WHERE config_id = ?
+            ORDER BY ts DESC, id
+            "#,
+        )
+        .bind(config_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, config_id, version, action, actor, reason, ts_ms)| StoredConfigAudit {
+                    id,
+                    config_id,
+                    version,
+                    action,
+                    actor,
+                    reason,
+                    ts_ms,
+                },
+            )
+            .collect())
+    }
+
     pub async fn insert_system_log(&self, log: NewSystemLog) -> StorageResult<()> {
         sqlx::query(
             r#"
@@ -2382,9 +2930,49 @@ impl Db {
         &self,
         run_id: Option<&str>,
     ) -> StorageResult<Vec<StoredSystemLog>> {
-        let rows = sqlx::query_as::<
-            _,
-            (
+        self.list_system_logs_filtered(SystemLogFilter {
+            run_id: run_id.map(str::to_string),
+            ..SystemLogFilter::default()
+        })
+        .await
+    }
+
+    pub async fn list_system_logs_filtered(
+        &self,
+        filter: SystemLogFilter,
+    ) -> StorageResult<Vec<StoredSystemLog>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            "SELECT id, run_id, ts, level, target, message, fields_json, created_at \
+             FROM system_logs WHERE 1 = 1",
+        );
+        if let Some(run_id) = filter.run_id {
+            query_builder.push(" AND run_id = ");
+            query_builder.push_bind(run_id);
+        }
+        if let Some(level) = filter.level {
+            query_builder.push(" AND level = ");
+            query_builder.push_bind(level);
+        }
+        if let Some(target) = filter.target {
+            query_builder.push(" AND target = ");
+            query_builder.push_bind(target);
+        }
+        if let Some(from_ms) = filter.from_ms {
+            query_builder.push(" AND ts >= ");
+            query_builder.push_bind(from_ms);
+        }
+        if let Some(to_ms) = filter.to_ms {
+            query_builder.push(" AND ts <= ");
+            query_builder.push_bind(to_ms);
+        }
+        query_builder.push(" ORDER BY ts, id");
+        if let Some(limit) = filter.limit {
+            query_builder.push(" LIMIT ");
+            query_builder.push_bind(limit);
+        }
+
+        let rows = query_builder
+            .build_query_as::<(
                 String,
                 Option<String>,
                 i64,
@@ -2393,19 +2981,9 @@ impl Db {
                 String,
                 Option<String>,
                 i64,
-            ),
-        >(
-            r#"
-            SELECT id, run_id, ts, level, target, message, fields_json, created_at
-            FROM system_logs
-            WHERE (? IS NULL OR run_id = ?)
-            ORDER BY ts, id
-            "#,
-        )
-        .bind(run_id)
-        .bind(run_id)
-        .fetch_all(self.pool())
-        .await?;
+            )>()
+            .fetch_all(self.pool())
+            .await?;
 
         Ok(rows
             .into_iter()
@@ -2424,6 +3002,24 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn purge_system_logs(
+        &self,
+        command: SystemLogRetentionCommand,
+    ) -> StorageResult<u64> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new("DELETE FROM system_logs WHERE ts < ");
+        query_builder.push_bind(command.before_ms);
+        if let Some(target) = command.target {
+            query_builder.push(" AND target = ");
+            query_builder.push_bind(target);
+        }
+        if let Some(run_id) = command.run_id {
+            query_builder.push(" AND run_id = ");
+            query_builder.push_bind(run_id);
+        }
+        let result = query_builder.build().execute(self.pool()).await?;
+        Ok(result.rows_affected())
     }
 
     pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> StorageResult<()> {
@@ -3280,6 +3876,22 @@ impl Db {
             .await?;
         }
         Ok(())
+    }
+
+    pub async fn record_broker_position_snapshot(
+        &self,
+        command: BrokerPositionSnapshotCommand,
+    ) -> StorageResult<()> {
+        self.insert_position_snapshot(broker_position_snapshot_from_command(command)?)
+            .await
+    }
+
+    pub async fn record_runtime_position_snapshot(
+        &self,
+        command: RuntimePositionSnapshotCommand,
+    ) -> StorageResult<()> {
+        self.insert_position_snapshot(runtime_position_snapshot_from_command(command)?)
+            .await
     }
 
     pub async fn complete_paper_run(&self, command: PaperFinalStateCommand) -> StorageResult<()> {
