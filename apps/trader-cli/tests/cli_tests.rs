@@ -1961,6 +1961,85 @@ fn config_lifecycle_commands_print_release_audit_and_run_binding_status() {
 }
 
 #[test]
+fn cli_backtest_records_run_config_snapshot_binding() {
+    let config = write_multi_symbol_cli_config("cli-config-snapshot-backtest", "backtest");
+
+    let mut backtest = Command::cargo_bin("trader").unwrap();
+    backtest
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+
+    let mut binding = Command::cargo_bin("trader").unwrap();
+    binding
+        .current_dir(workspace_root())
+        .args([
+            "runs",
+            "config-version",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-config-snapshot-backtest",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            "run_config_version: run_id=cli-config-snapshot-backtest",
+        ))
+        .stdout(contains("config_id=run:cli-config-snapshot-backtest"))
+        .stdout(contains("version=fnv1a64:"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn cli_paper_and_replay_record_run_config_snapshot_bindings() {
+    for (command_name, run_id, config, completion) in [
+        (
+            "paper-run",
+            "cli-config-snapshot-paper",
+            write_multi_symbol_cli_config("cli-config-snapshot-paper", "paper"),
+            "paper completed",
+        ),
+        (
+            "replay",
+            "cli-config-snapshot-replay",
+            write_replay_cli_config("cli-config-snapshot-replay"),
+            "replay completed",
+        ),
+    ] {
+        let mut command = Command::cargo_bin("trader").unwrap();
+        command
+            .current_dir(workspace_root())
+            .args([command_name, "--config", config.to_str().unwrap()])
+            .assert()
+            .success()
+            .stdout(contains(completion));
+
+        let mut binding = Command::cargo_bin("trader").unwrap();
+        binding
+            .current_dir(workspace_root())
+            .args([
+                "runs",
+                "config-version",
+                "--config",
+                config.to_str().unwrap(),
+                "--run-id",
+                run_id,
+            ])
+            .assert()
+            .success()
+            .stdout(contains(format!("run_config_version: run_id={run_id}")))
+            .stdout(contains(format!("config_id=run:{run_id}")))
+            .stdout(contains("version=fnv1a64:"));
+
+        std::fs::remove_file(config).unwrap();
+    }
+}
+
+#[test]
 fn config_management_commands_create_transition_show_diff_and_rollback() {
     let config = seed_config_management_cli_storage();
     let version_one = temp_output("trader-cli-config-v1", "json");
@@ -2907,6 +2986,71 @@ fn write_multi_symbol_cli_config(run_id: &str, runtime_mode: &str) -> PathBuf {
             toml_path(&db_path),
             toml_path(&aapl_path),
             toml_path(&msft_path)
+        ),
+    )
+    .unwrap();
+    config
+}
+
+fn write_replay_cli_config(run_id: &str) -> PathBuf {
+    let bars_path = temp_output("trader-cli-replay-bars", "csv");
+    let db_path = temp_output("trader-cli-replay", "sqlite");
+    let config = temp_output("trader-cli-replay", "toml");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n3,20,20,20,20,1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "replay"
+            run_id = "{run_id}"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            source = "csv"
+            path = "{}"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(&db_path),
+            toml_path(&bars_path)
         ),
     )
     .unwrap();

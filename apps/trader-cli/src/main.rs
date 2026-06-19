@@ -779,6 +779,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Backtest { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
+            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
             insert_event(
                 &db,
                 &app_config.runtime.run_id,
@@ -812,6 +813,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
+            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
             let market_slices = load_configured_market_slices(&app_config).with_context(|| {
                 format!(
                     "failed to load market data from {}",
@@ -1411,6 +1413,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Replay { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
+            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
             let started_at_ms = chrono::Utc::now().timestamp_millis();
             db.start_strategy_run(storage::StrategyRunStartCommand {
                 run_id: app_config.runtime.run_id.clone(),
@@ -2974,6 +2977,25 @@ async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> 
     Ok((app_config, db))
 }
 
+async fn persist_cli_run_config_snapshot(
+    db: &storage::Db,
+    app_config: &config::AppConfig,
+    config_path: &str,
+) -> Result<()> {
+    let content = std::fs::read_to_string(config_path)
+        .with_context(|| format!("failed to read config snapshot from {config_path}"))?;
+    let ts_ms = chrono::Utc::now().timestamp_millis();
+    db.record_run_config_snapshot(storage::RunConfigSnapshotCommand {
+        run_id: app_config.runtime.run_id.clone(),
+        content: content.clone(),
+        format: "TOML".to_string(),
+        checksum: Some(stable_bytes_hash(content.as_bytes())),
+        ts_ms,
+    })
+    .await?;
+    Ok(())
+}
+
 fn load_configured_market_slices(app_config: &config::AppConfig) -> Result<Vec<data::MarketSlice>> {
     let inputs = configured_bar_inputs(app_config)?;
     Ok(data::load_market_slices(&inputs)?)
@@ -3138,12 +3160,16 @@ fn feature_manifest_input_from_bar_input_and_bars(
 
 fn stable_file_content_hash(path: &str) -> Result<String> {
     let bytes = std::fs::read(path)?;
+    Ok(stable_bytes_hash(&bytes))
+}
+
+fn stable_bytes_hash(bytes: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {
-        hash ^= u64::from(byte);
+        hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    Ok(format!("fnv1a64:{hash:016x}"))
+    format!("fnv1a64:{hash:016x}")
 }
 
 fn indicator_inputs(

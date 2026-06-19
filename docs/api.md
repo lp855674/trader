@@ -2327,7 +2327,7 @@ Query 参数：
 
 当前 V1 同时保留两类配置面：
 
-- API 启动 Backtest、Paper、Replay 或 Live 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。
+- API 启动 Backtest、Paper、Replay 或 Live，以及 CLI 启动 Backtest、Paper 或 Replay 时，会把本次运行使用的 TOML 文件保存为 `configs` 表中的 `RUN` 配置快照，使用 checksum 作为 release version，并把 run 绑定到该 config version。
 - 管理型配置使用 `POST /api/v1/configs` 创建不可变版本，支持 `draft -> pending_review -> approved -> published -> archived` 生命周期、JSON diff、rollback、状态变更审计，以及 `target_env=production` 时的独立审批发布约束。
 
 当前接口返回未包 envelope 的 JSON。生产级 RBAC、多环境权限矩阵和多人审批队列仍是后续 production-hardening 工作。

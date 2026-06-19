@@ -14,7 +14,7 @@ The local lifecycle MVP is implemented. Managed configs now support immutable ve
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
-| Run config snapshots | Done for API-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions | CLI-launched runs do not automatically create run config snapshots |
+| Run config snapshots | Done for API-launched and CLI-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions; Backtest, Paper, and Replay CLI starts bind run config versions | None for current local run entrypoints |
 | Release/readback surface | Done for local MVP | `GET /api/v1/configs/{config_id}/releases`, `GET /api/v1/runs/{run_id}/config-version`, `configs releases`, `runs config-version` | None for lightweight readback |
 | Audit readback | Done for local MVP | `config_audits`, `record_config_audit`, API/CLI audit queries exist; state changes also write `event_store` category `config.state.changed` | Production audit reports remain follow-up work |
 | Approval state machine | Done for local MVP | `ConfigState` and validated transitions exist in storage; API and CLI expose state updates | Full RBAC and approval queues are not enforced |
