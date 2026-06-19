@@ -18,7 +18,7 @@ This plan file has now been backfilled for the audited local MVP. Checked items 
 | Paper runtime snapshots | Done for local MVP | `paper_runtime_persists_cash_and_position_snapshots` verifies paper cash/position snapshot writes | Configurable snapshot cadence is still simpler than the original sketch |
 | Live runtime snapshots | Done for fake broker local MVP | Live runtime writes startup baseline cash snapshots and periodic fake broker cash/position snapshots via `[live].broker_snapshot_interval_ms` | Real broker-reported scheduling remains follow-up |
 | Reconciliation drift projection | Done for fake broker local MVP | Live runtime emits `reconciliation_drift` risk events for cash drift, missing broker position and qty drift | Production alert routing/audit reports remain follow-up |
-| CLI/API readback | Done for local MVP | `snapshots cash`, `snapshots positions`, `reconciliation`, run-scoped API routes and `ops-smoke.ps1` cover API + CLI readback | None for current read-only surface |
+| CLI/API readback | Done for local MVP | `snapshots cash`, `snapshots positions`, `reconciliation`, run-scoped API routes and `ops-smoke.ps1` cover API + CLI readback for the same live run id | None for current read-only surface |
 | Production readiness | Not done | Docs still classify real broker snapshots as hardening work | Real broker scheduling, alerting, and external operational runbooks |
 
 ---

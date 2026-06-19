@@ -16,7 +16,7 @@ This plan was only partially implemented. The repository has an operational `sys
 | --- | --- | --- | --- |
 | System log storage | Done for local MVP | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `list_system_logs_filtered`, `purge_system_logs` | Batch insert/count/text search are not implemented |
 | Runtime/API/ingestion log writes | Done for local MVP | API run lifecycle logs, live runtime source logs and ingestion tracker write `system_logs` | Full-chain logging across all crates is not implemented |
-| CLI/API readback | Done for local MVP | `logs list`, `logs purge`, `GET /api/v1/system-logs`, `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/limit filters | Tail/count/search endpoints are not implemented |
+| CLI/API readback | Done for local MVP | `logs list`, `logs purge`, `GET /api/v1/system-logs`, `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/limit filters; `ops-smoke.ps1` verifies run-scoped logs alongside snapshots, reconciliation and config-version readback | Tail/count/search endpoints are not implemented |
 | Retention | Partially done | CLI purge supports retention-style cleanup by timestamp/target/run | Configured scheduled retention cleanup is not implemented |
 | Async tracing writer | Not done | No `events::log_writer`, `SystemLogLayer`, buffered channel writer or batch flush implementation exists | Implement tracing layer and non-blocking buffered DB writer |
 | External production collection | Not done | Docs classify external production log collectors and alert routing as follow-up | Add collector/shipper integration and alert routing |
