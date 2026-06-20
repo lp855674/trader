@@ -6,7 +6,7 @@ Trader 采用渐进式开发路线。
 
 ## Current V1 Local Verification
 
-当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、system logs、config-version binding，以及 staging config pending-approval queue。
+当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、system logs、config-version binding，以及 staging config 的 pending-approval、publish、release/audit readback。
 
 这不等于生产实盘完成。真实 Futu/Binance/OKX/IB 网络连接、凭证管理、真实资金下单、生产级权限、监控告警和分布式部署仍属于后续 production/live-real-money 阶段。
 
@@ -19,7 +19,7 @@ Trader 采用渐进式开发路线。
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime and exposed through explicit run-scoped API/CLI queries; live runtime writes a startup baseline cash snapshot, can periodically capture fake broker cash/position snapshots from `[live].broker_snapshot_interval_ms`, and emits cash/position `reconciliation_drift` risk events when fake broker state diverges from the latest runtime snapshots. API/CLI reconciliation status can summarize snapshots plus drift events. Real broker-reported cash/position scheduling remains follow-up work.
 - API-launched Backtest, Paper, Replay, and Live runs plus CLI-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; managed configs now support version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue, JSON diff, rollback-to-new-draft, release/audit/event logging, run-version bindings, and API/CLI status queries for local lifecycle tracking. Full authenticated RBAC, multi-environment permission matrices, and multi-person approval queues remain follow-up work.
 - API-launched Backtest, Paper, Replay, and Live runs index lifecycle messages in `system_logs`; runtime/ingestion/system log filtering and retention purge are exposed through API/CLI. External production log collectors and alert routing remain follow-up work.
-- `scripts/ops-smoke.ps1` now provides the end-to-end local ops smoke across live run startup, snapshots, reconciliation, logs, config-version readback, and staging approval-queue readback in the same local environment.
+- `scripts/ops-smoke.ps1` now provides the end-to-end local ops smoke across live run startup, snapshots, reconciliation, logs, config-version readback, and staging config governance readback in the same local environment.
 - `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; Binance market metadata and Yahoo corporate actions now have CLI/scheduled ingestion paths plus `/api/v1/ingestion/status`.
 
 ## Reference-Data Ingestion Milestone

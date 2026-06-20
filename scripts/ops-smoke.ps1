@@ -177,6 +177,8 @@ try {
             ts_ms = 800
         } | ConvertTo-Json -Depth 5)
     Assert-True ($createdApprovalConfig.name -eq $approvalConfigName) "expected staged approval config"
+    $approvalConfigId = $createdApprovalConfig.id
+    Assert-True (-not [string]::IsNullOrWhiteSpace($approvalConfigId)) "expected approval config id"
 
     $pendingApprovalConfig = Invoke-RestMethod `
         -Method Put `
@@ -199,6 +201,63 @@ try {
     Assert-True ($cliPendingApprovals.Contains("config_approval: name=$approvalConfigName version=1")) "expected CLI pending approval entry"
     Assert-True ($cliPendingApprovals.Contains("target_env=staging")) "expected CLI pending approval target env"
 
+    $approvedApprovalConfig = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$approvalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "approved"
+            changed_by = "qa-owner"
+            actor_role = "approver"
+            reason = "ops smoke approval"
+            ts_ms = 1000
+        } | ConvertTo-Json)
+    Assert-True ($approvedApprovalConfig.state -eq "approved") "expected approved config state"
+
+    $publishedApprovalConfig = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$approvalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "published"
+            changed_by = "release"
+            actor_role = "release_manager"
+            reason = "ops smoke publish"
+            ts_ms = 1100
+        } | ConvertTo-Json)
+    Assert-True ($publishedApprovalConfig.state -eq "published") "expected published config state"
+
+    $apiConfigReleases = $null
+    $apiConfigAudits = $null
+    $remainingPendingApprovals = $null
+    $approvalConfigIdPath = [uri]::EscapeDataString($approvalConfigId)
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Milliseconds 250
+        $apiConfigReleases = Invoke-RestMethod "$baseUrl/api/v1/configs/$approvalConfigIdPath/releases"
+        $apiConfigAudits = Invoke-RestMethod "$baseUrl/api/v1/configs/$approvalConfigIdPath/audits"
+        $remainingPendingApprovals = @(
+            (Invoke-RestMethod "$baseUrl/api/v1/config-approvals/pending?target_env=staging") |
+                Where-Object { $_.name -eq $approvalConfigName }
+        )
+        if (@($apiConfigReleases).Count -ge 1 -and @($apiConfigAudits).Count -ge 3 -and @($remainingPendingApprovals).Count -eq 0) {
+            break
+        }
+    }
+
+    Assert-True (@($apiConfigReleases).Count -ge 1) "expected API config releases"
+    Assert-True (@($apiConfigAudits).Count -ge 3) "expected API config audits"
+    Assert-True (@($remainingPendingApprovals).Count -eq 0) "expected pending approval queue to clear after publish"
+
+    $releaseStatuses = @($apiConfigReleases | ForEach-Object { $_.status })
+    $auditActions = @($apiConfigAudits | ForEach-Object { $_.action })
+    Assert-True ($releaseStatuses -contains "published") "expected published release record"
+    Assert-True ((@($auditActions | Where-Object { $_ -eq "state_changed" }).Count) -ge 3) "expected state_changed audits"
+
+    $cliReleases = Invoke-CheckedTrader @("configs", "releases", "--config", $configPath, "--config-id", $approvalConfigId) 2>&1 | Out-String
+    $cliAudits = Invoke-CheckedTrader @("configs", "audits", "--config", $configPath, "--config-id", $approvalConfigId) 2>&1 | Out-String
+    Assert-True ($cliReleases.Contains("config_release: config_id=$approvalConfigId version=1 status=published")) "expected CLI published release"
+    Assert-True ($cliAudits.Contains("config_audit: config_id=$approvalConfigId version=1 action=state_changed")) "expected CLI config audit"
+
     $stopped = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs/$runId/stop"
     Assert-True ($stopped.status -eq "stopped") "expected live stopped"
 
@@ -211,7 +270,9 @@ try {
         config_version = $apiConfigVersion.version
         approval_config = $approvalConfigName
         api_pending_approvals = @($matchingApiApprovals).Count
-        approval_state = $matchingApiApprovals[0].state
+        approval_state = $publishedApprovalConfig.state
+        api_config_releases = @($apiConfigReleases).Count
+        api_config_audits = @($apiConfigAudits).Count
     }
 } finally {
     Set-Location $repoRoot
