@@ -8,6 +8,7 @@ $stdoutPath = Join-Path $env:TEMP "trader-ops-server-$id.out.log"
 $stderrPath = Join-Path $env:TEMP "trader-ops-server-$id.err.log"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $runId = "ops-live-$id"
+$approvalConfigName = "ops-approval-$id"
 $targetDir = $env:TRADER_SMOKE_TARGET_DIR
 $targetRoot = if ($targetDir) { $targetDir } else { Join-Path $repoRoot "target" }
 $traderExe = Join-Path $targetRoot "debug/trader.exe"
@@ -159,6 +160,45 @@ try {
     Assert-True ($cliConfigVersion.Contains("run_config_version: run_id=$runId")) "expected CLI config version binding"
     Assert-True (-not $cliConfigVersion.Contains("status=missing")) "expected bound CLI config version"
 
+    $createdApprovalConfig = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$baseUrl/api/v1/configs" `
+        -ContentType "application/json" `
+        -Body (@{
+            name = $approvalConfigName
+            content = @{
+                risk = @{
+                    max_order_notional = "1000"
+                }
+            }
+            created_by = "release"
+            target_env = "staging"
+            rollout = "ops-smoke"
+            ts_ms = 800
+        } | ConvertTo-Json -Depth 5)
+    Assert-True ($createdApprovalConfig.name -eq $approvalConfigName) "expected staged approval config"
+
+    $pendingApprovalConfig = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$approvalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "pending_review"
+            changed_by = "release"
+            actor_role = "release_manager"
+            reason = "ops smoke approval queue"
+            ts_ms = 900
+        } | ConvertTo-Json)
+    Assert-True ($pendingApprovalConfig.state -eq "pending_review") "expected pending approval config state"
+
+    $apiPendingApprovals = Wait-ApiArray "$baseUrl/api/v1/config-approvals/pending?target_env=staging" "API pending approvals"
+    $matchingApiApprovals = @($apiPendingApprovals | Where-Object { $_.name -eq $approvalConfigName })
+    Assert-True (@($matchingApiApprovals).Count -eq 1) "expected API pending approval queue entry"
+
+    $cliPendingApprovals = Invoke-CheckedTrader @("configs", "pending-approvals", "--config", $configPath, "--target-env", "staging") 2>&1 | Out-String
+    Assert-True ($cliPendingApprovals.Contains("config_approval: name=$approvalConfigName version=1")) "expected CLI pending approval entry"
+    Assert-True ($cliPendingApprovals.Contains("target_env=staging")) "expected CLI pending approval target env"
+
     $stopped = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs/$runId/stop"
     Assert-True ($stopped.status -eq "stopped") "expected live stopped"
 
@@ -169,6 +209,9 @@ try {
         api_reconciliation = $apiReconciliation.status
         api_system_logs = @($apiLogs).Count
         config_version = $apiConfigVersion.version
+        approval_config = $approvalConfigName
+        api_pending_approvals = @($matchingApiApprovals).Count
+        approval_state = $matchingApiApprovals[0].state
     }
 } finally {
     Set-Location $repoRoot
