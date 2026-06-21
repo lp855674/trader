@@ -76,8 +76,164 @@ fn parses_backtest_config() {
     assert!(!config.broker.order_submit_enabled);
     assert!(!config.live.enabled);
     assert_eq!(config.live.broker_snapshot_interval_ms, Some(250));
+    assert!(!config.live.alerts.enabled);
+    assert_eq!(config.live.alerts.sink.as_deref(), None);
+    assert_eq!(config.live.alerts.file_path.as_deref(), None);
+    assert_eq!(config.live.alerts.webhook_url.as_deref(), None);
+    assert_eq!(config.live.alerts.cooldown_ms, None);
+    assert_eq!(config.live.alerts.webhook_timeout_ms, None);
+    assert_eq!(config.live.alerts.webhook_max_retries, None);
+    assert_eq!(config.live.alerts.webhook_auth_token.as_deref(), None);
     assert!(!config.ingestion.enabled);
     assert_eq!(config.ingestion.fetch_interval_minutes, 60);
+}
+
+#[test]
+fn parses_live_alert_file_sink_config() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "alert-live"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        broker_snapshot_interval_ms = 5
+
+        [live.alerts]
+        enabled = true
+        sink = "file"
+        file_path = "target/runtime-alerts.jsonl"
+        cooldown_ms = 60000
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(config.live.enabled);
+    assert!(config.live.alerts.enabled);
+    assert_eq!(config.live.alerts.sink.as_deref(), Some("file"));
+    assert_eq!(
+        config.live.alerts.file_path.as_deref(),
+        Some("target/runtime-alerts.jsonl")
+    );
+    assert_eq!(config.live.alerts.webhook_url.as_deref(), None);
+    assert_eq!(config.live.alerts.cooldown_ms, Some(60000));
+    assert_eq!(config.live.alerts.webhook_timeout_ms, None);
+    assert_eq!(config.live.alerts.webhook_max_retries, None);
+    assert_eq!(config.live.alerts.webhook_auth_token.as_deref(), None);
+}
+
+#[test]
+fn parses_live_alert_webhook_sink_config() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "alert-live-webhook"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        broker_snapshot_interval_ms = 5
+
+        [live.alerts]
+        enabled = true
+        sink = "webhook"
+        webhook_url = "http://127.0.0.1:18080/alerts"
+        cooldown_ms = 120000
+        webhook_timeout_ms = 3000
+        webhook_max_retries = 2
+        webhook_auth_token = "secret-token"
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(config.live.enabled);
+    assert!(config.live.alerts.enabled);
+    assert_eq!(config.live.alerts.sink.as_deref(), Some("webhook"));
+    assert_eq!(
+        config.live.alerts.webhook_url.as_deref(),
+        Some("http://127.0.0.1:18080/alerts")
+    );
+    assert_eq!(config.live.alerts.file_path.as_deref(), None);
+    assert_eq!(config.live.alerts.cooldown_ms, Some(120000));
+    assert_eq!(config.live.alerts.webhook_timeout_ms, Some(3000));
+    assert_eq!(config.live.alerts.webhook_max_retries, Some(2));
+    assert_eq!(
+        config.live.alerts.webhook_auth_token.as_deref(),
+        Some("secret-token")
+    );
 }
 
 #[test]

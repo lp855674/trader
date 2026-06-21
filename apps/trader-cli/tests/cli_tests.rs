@@ -1903,6 +1903,34 @@ fn reconciliation_prints_snapshot_and_drift_status() {
 }
 
 #[test]
+fn reconciliation_drifts_lists_filtered_audit_rows() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-drifts",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--account-id",
+            "paper",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_drift: run_id=cli-contract-run"))
+        .stdout(contains("account=paper"))
+        .stdout(contains("decision=warn"))
+        .stdout(contains("reason=qty mismatch"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn config_lifecycle_commands_print_release_audit_and_run_binding_status() {
     let config = seed_config_lifecycle_cli_storage();
 
@@ -2746,6 +2774,7 @@ fn config_management_commands_enforce_staging_roles_and_print_pending_approvals(
 #[test]
 fn logs_commands_filter_and_purge_system_logs() {
     let config = seed_logs_cli_storage();
+    let export = temp_output("trader-cli-logs-export", "jsonl");
 
     let mut list = Command::cargo_bin("trader").unwrap();
     list.current_dir(workspace_root())
@@ -2772,6 +2801,37 @@ fn logs_commands_filter_and_purge_system_logs() {
         .stdout(contains("target=runtime.execution"))
         .stdout(contains("message=execution failed"));
 
+    let mut export_command = Command::cargo_bin("trader").unwrap();
+    export_command
+        .current_dir(workspace_root())
+        .args([
+            "logs",
+            "export",
+            "--config",
+            config.to_str().unwrap(),
+            "--output",
+            export.to_str().unwrap(),
+            "--run-id",
+            "cli-logs-run",
+            "--level",
+            "ERROR",
+            "--target",
+            "runtime.execution",
+            "--from",
+            "100",
+            "--to",
+            "300",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_logs_exported: count=1"));
+    let exported = std::fs::read_to_string(&export).unwrap();
+    assert!(exported.contains("\"run_id\":\"cli-logs-run\""));
+    assert!(exported.contains("\"level\":\"ERROR\""));
+    assert!(exported.contains("\"target\":\"runtime.execution\""));
+    assert!(exported.contains("\"message\":\"execution failed\""));
+    assert!(exported.contains("\"fields\":{\"category\":\"runtime\"}"));
+
     let mut purge = Command::cargo_bin("trader").unwrap();
     purge
         .current_dir(workspace_root())
@@ -2790,6 +2850,176 @@ fn logs_commands_filter_and_purge_system_logs() {
         .assert()
         .success()
         .stdout(contains("system_logs_purged: count=1"));
+
+    std::fs::remove_file(export).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn reconciliation_alerts_summary_reports_runtime_alert_aggregate() {
+    let config = seed_reconciliation_alerts_cli_storage();
+    let export = temp_output("trader-cli-reconciliation-alerts-export", "jsonl");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alerts-summary",
+            "--config",
+            config.to_str().unwrap(),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_alert_summary: run_id=*"))
+        .stdout(contains("alert_count=2"))
+        .stdout(contains("runs=cli-alert-a,cli-alert-b"))
+        .stdout(contains("reasons=cash_total_drift,position_qty_drift"));
+
+    let mut export_command = Command::cargo_bin("trader").unwrap();
+    export_command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alerts-export",
+            "--config",
+            config.to_str().unwrap(),
+            "--output",
+            export.to_str().unwrap(),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_alerts_exported: count=2"));
+    let exported = std::fs::read_to_string(&export).unwrap();
+    assert!(exported.contains("\"message\":\"reconciliation_drift.alert\""));
+    assert!(exported.contains("\"account_id\":\"paper\""));
+    assert!(exported.contains("\"dedup_key\":\"reconciliation_drift.alert|cli-alert-a|paper|CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP|position_qty_drift\""));
+    assert!(exported.contains("\"reason\":\"cash_total_drift\""));
+
+    std::fs::remove_file(export).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn reconciliation_alert_delivery_summary_reports_delivery_aggregate() {
+    let config = seed_reconciliation_alert_delivery_cli_storage();
+    let export = temp_output("trader-cli-reconciliation-alert-deliveries-export", "jsonl");
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alert-deliveries-summary",
+            "--config",
+            config.to_str().unwrap(),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_alert_delivery_summary: run_id=*"))
+        .stdout(contains("delivery_count=2"))
+        .stdout(contains("sent_count=1"))
+        .stdout(contains("failed_count=1"))
+        .stdout(contains("sinks=file,webhook"))
+        .stdout(contains("statuses=failed,sent"));
+
+    let mut export_command = Command::cargo_bin("trader").unwrap();
+    export_command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alert-deliveries-export",
+            "--config",
+            config.to_str().unwrap(),
+            "--output",
+            export.to_str().unwrap(),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            "reconciliation_alert_deliveries_exported: count=2",
+        ));
+    let exported = std::fs::read_to_string(&export).unwrap();
+    assert!(exported.contains("\"message\":\"alert.delivery\""));
+    assert!(exported.contains("\"status\":\"failed\""));
+    assert!(exported.contains("\"sink\":\"webhook\""));
+    assert!(exported.contains("\"http_status\":500"));
+    assert!(exported.contains("\"attempts\":1"));
+
+    std::fs::remove_file(export).unwrap();
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn reconciliation_alert_redeliver_posts_failed_alert_to_webhook() {
+    let config = seed_reconciliation_alert_delivery_cli_storage();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let mut content_length = None;
+        loop {
+            let size = std::io::Read::read(&mut stream, &mut chunk).unwrap();
+            if size == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..size]);
+            if content_length.is_none()
+                && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let headers = String::from_utf8_lossy(&buf[..headers_end + 4]);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length: ")
+                            .or_else(|| line.strip_prefix("Content-Length: "))
+                    })
+                    .and_then(|value| value.trim().parse::<usize>().ok());
+            }
+            if let Some(expected) = content_length
+                && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let body_len = buf.len().saturating_sub(headers_end + 4);
+                if body_len >= expected {
+                    break;
+                }
+            }
+        }
+        let request = String::from_utf8_lossy(&buf).to_string();
+        std::io::Write::write_all(
+            &mut stream,
+            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
+        )
+        .unwrap();
+        request
+    });
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alert-redeliver",
+            "--config",
+            config.to_str().unwrap(),
+            "--webhook-url",
+            &format!("http://{addr}/alerts"),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_alerts_redelivered: count=1"));
+
+    let request = server.join().unwrap();
+    assert!(request.starts_with("POST /alerts HTTP/1.1"));
+    assert!(request.contains("\"message\":\"reconciliation_drift.alert\""));
+    assert!(request.contains("\"dedup_key\":\"reconciliation_drift.alert|cli-delivery-a|paper|CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP|position_qty_drift\""));
 
     std::fs::remove_file(config).unwrap();
 }
@@ -3168,6 +3398,140 @@ fn seed_logs_cli_storage() -> PathBuf {
                 fields: Some(serde_json::json!({
                     "category": target.split('.').next().unwrap_or(target)
                 })),
+            })
+            .await
+            .unwrap();
+        }
+    });
+
+    config
+}
+
+fn seed_reconciliation_alerts_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-reconciliation-alerts-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        for (run_id, ts_ms, message, fields) in [
+            (
+                Some("cli-alert-a"),
+                100,
+                "reconciliation_drift.alert",
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                    "reason": "position_qty_drift"
+                }),
+            ),
+            (
+                Some("cli-alert-b"),
+                200,
+                "reconciliation_drift.alert",
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                    "reason": "cash_total_drift"
+                }),
+            ),
+        ] {
+            db.record_system_log(storage::SystemLogCommand {
+                run_id: run_id.map(str::to_string),
+                ts_ms,
+                level: "ERROR".to_string(),
+                target: "runtime.alert".to_string(),
+                message: message.to_string(),
+                fields: Some(fields),
+            })
+            .await
+            .unwrap();
+        }
+    });
+
+    config
+}
+
+fn seed_reconciliation_alert_delivery_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-reconciliation-alert-delivery-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        for (run_id, ts_ms, message, fields) in [
+            (
+                Some("cli-delivery-a"),
+                90,
+                "reconciliation_drift.alert",
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                    "reason": "position_qty_drift"
+                }),
+            ),
+            (
+                Some("cli-delivery-b"),
+                190,
+                "reconciliation_drift.alert",
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                    "reason": "cash_total_drift"
+                }),
+            ),
+        ] {
+            db.record_system_log(storage::SystemLogCommand {
+                run_id: run_id.map(str::to_string),
+                ts_ms,
+                level: "ERROR".to_string(),
+                target: "runtime.alert".to_string(),
+                message: message.to_string(),
+                fields: Some(fields),
+            })
+            .await
+            .unwrap();
+        }
+        for (run_id, ts_ms, fields) in [
+            (
+                Some("cli-delivery-a"),
+                100,
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                    "sink": "webhook",
+                    "status": "failed",
+                    "http_status": 500,
+                    "attempts": 1,
+                    "dedup_key": "reconciliation_drift.alert|cli-delivery-a|paper|CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP|position_qty_drift"
+                }),
+            ),
+            (
+                Some("cli-delivery-b"),
+                200,
+                serde_json::json!({
+                    "account_id": "paper",
+                    "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                    "sink": "file",
+                    "status": "sent",
+                    "attempts": 1,
+                    "dedup_key": "reconciliation_drift.alert|cli-delivery-b|paper|CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP|cash_total_drift"
+                }),
+            ),
+        ] {
+            db.record_system_log(storage::SystemLogCommand {
+                run_id: run_id.map(str::to_string),
+                ts_ms,
+                level: "INFO".to_string(),
+                target: "runtime.alert_delivery".to_string(),
+                message: "alert.delivery".to_string(),
+                fields: Some(fields),
             })
             .await
             .unwrap();

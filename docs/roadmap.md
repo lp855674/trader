@@ -6,7 +6,7 @@ Trader 采用渐进式开发路线。
 
 ## Current V1 Local Verification
 
-当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、system logs、config-version binding，以及 staging config 的 pending-approval、publish、release/audit readback。
+当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、reconciliation alert summary、system logs、config-version binding，以及 staging config 的 pending-approval、publish、release/audit readback。
 
 这不等于生产实盘完成。真实 Futu/Binance/OKX/IB 网络连接、凭证管理、真实资金下单、生产级权限、监控告警和分布式部署仍属于后续 production/live-real-money 阶段。
 
@@ -16,10 +16,10 @@ Trader 采用渐进式开发路线。
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
 - `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, Binance funding-rate ingestion can populate historical funding rows, and Binance reconciliation has drift-detection tests. Production crypto derivative accounting still needs real broker reconciliation scheduling and IBKR contract reconciliation.
-- `cash_snapshots` and `position_snapshots` are captured by paper runtime and exposed through explicit run-scoped API/CLI queries; live runtime writes a startup baseline cash snapshot, can periodically capture fake broker cash/position snapshots from `[live].broker_snapshot_interval_ms`, and emits cash/position `reconciliation_drift` risk events when fake broker state diverges from the latest runtime snapshots. API/CLI reconciliation status can summarize snapshots plus drift events. Real broker-reported cash/position scheduling remains follow-up work.
+- `cash_snapshots` and `position_snapshots` are captured by paper runtime and exposed through explicit run-scoped API/CLI queries; live runtime writes a startup baseline cash snapshot, can periodically capture fake broker cash/position snapshots from `[live].broker_snapshot_interval_ms`, and emits cash/position `reconciliation_drift` risk events when fake broker state diverges from the latest runtime snapshots. API/CLI reconciliation status can summarize snapshots plus drift events, and dedicated reconciliation-drift audit queries can list persisted drift events across runs or for a single run. Real broker-reported cash/position scheduling remains follow-up work.
 - API-launched Backtest, Paper, Replay, and Live runs plus CLI-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; managed configs now support version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue, JSON diff, rollback-to-new-draft, release/audit/event logging, run-version bindings, and API/CLI status queries for local lifecycle tracking. Full authenticated RBAC, multi-environment permission matrices, and multi-person approval queues remain follow-up work.
-- API-launched Backtest, Paper, Replay, and Live runs index lifecycle messages in `system_logs`; runtime/ingestion/system log filtering and retention purge are exposed through API/CLI. External production log collectors and alert routing remain follow-up work.
-- `scripts/ops-smoke.ps1` now provides the end-to-end local ops smoke across live run startup, snapshots, reconciliation, logs, config-version readback, and staging config governance readback in the same local environment.
+- API-launched Backtest, Paper, Replay, and Live runs index lifecycle messages in `system_logs`; runtime/ingestion/system log filtering, JSONL export, and retention purge are exposed through API/CLI. Reconciliation drift also writes dedicated `runtime.alert` records plus API/CLI alert-summary readback and `runtime.alert_delivery` records plus API/CLI delivery-summary readback; CLI can export both alert and delivery records as JSONL and can locally redeliver failed alert records to a specified webhook, and `[live.alerts]` now supports local JSONL file sink and webhook POST sink with optional `cooldown_ms` dedup, `webhook_timeout_ms`, `webhook_max_retries`, and bearer-token auth. `system_logs` remains the full audit trail. Real external production collectors, stronger sink auth/retry policy, and broader downstream alert routing remain follow-up work.
+- `scripts/ops-smoke.ps1` now provides the end-to-end local ops smoke across live run startup, snapshots, reconciliation, reconciliation alert summary, logs, config-version readback, and staging config governance readback in the same local environment.
 - `crypto_market_meta` and `corporate_actions_meta` exist as storage boundary and read-only API query surface; Binance market metadata and Yahoo corporate actions now have CLI/scheduled ingestion paths plus `/api/v1/ingestion/status`.
 
 ## Reference-Data Ingestion Milestone
@@ -62,7 +62,7 @@ Remaining:
 1. Scheduled real broker reported cash/position snapshots beyond local fake broker snapshots
 2. IBKR contract reconciliation
 3. Real broker adapter position snapshot implementations beyond fake/Binance parser scaffolding
-4. Production alerts and audit reports for reconciliation drift
+4. Production alerts for reconciliation drift
 5. Production hardening for reference-data rate limits and stale-data alerts
 ```
 

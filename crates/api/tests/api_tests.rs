@@ -614,6 +614,105 @@ async fn run_reconciliation_route_summarizes_snapshots_and_drift_events() {
 }
 
 #[tokio::test]
+async fn reconciliation_drifts_routes_filter_audit_rows() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-recon-a".to_string(),
+        ts_ms: 30,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-recon-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "warn",
+            "reason": "position_qty_drift",
+            "threshold": "1",
+            "observed_value": "5"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-recon-b".to_string(),
+        ts_ms: 40,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-recon-b",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "warn",
+            "reason": "cash_drift",
+            "threshold": "2",
+            "observed_value": "3"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-recon-a".to_string(),
+        ts_ms: 50,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-recon-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "max_exposure",
+            "decision": "reject",
+            "reason": "too_large"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/reconciliation-drifts?run_id=run-recon-a&limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["run_id"], "run-recon-a");
+    assert_eq!(rows[0]["risk_type"], "reconciliation_drift");
+
+    let run_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs/run-recon-b/reconciliation-drifts?symbol=CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(run_response.status(), StatusCode::OK);
+    let bytes = to_bytes(run_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["run_id"], "run-recon-b");
+    assert_eq!(rows[0]["reason"], "cash_drift");
+}
+
+#[tokio::test]
 async fn config_lifecycle_routes_return_release_audit_and_run_binding_status() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -1479,6 +1578,155 @@ async fn system_logs_route_filters_by_run_level_target_and_time() {
     let run_logs = run_logs.as_array().unwrap();
     assert_eq!(run_logs.len(), 1);
     assert_eq!(run_logs[0]["run_id"], "run-logs");
+}
+
+#[tokio::test]
+async fn reconciliation_alert_summary_routes_aggregate_runtime_alert_logs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for (run_id, ts_ms, message, fields) in [
+        (
+            Some("run-alert-a"),
+            100,
+            "reconciliation_drift.alert",
+            serde_json::json!({
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                "reason": "position_qty_drift"
+            }),
+        ),
+        (
+            Some("run-alert-b"),
+            200,
+            "reconciliation_drift.alert",
+            serde_json::json!({
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                "reason": "cash_total_drift"
+            }),
+        ),
+        (
+            Some("run-alert-b"),
+            300,
+            "other.alert",
+            serde_json::json!({
+                "account_id": "paper",
+                "reason": "ignored"
+            }),
+        ),
+    ] {
+        db.record_system_log(SystemLogCommand {
+            run_id: run_id.map(str::to_string),
+            ts_ms,
+            level: "ERROR".to_string(),
+            target: "runtime.alert".to_string(),
+            message: message.to_string(),
+            fields: Some(fields),
+        })
+        .await
+        .unwrap();
+    }
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let summary = get_json(
+        app.clone(),
+        "/api/v1/reconciliation-alerts/summary?account_id=paper",
+    )
+    .await;
+    assert_eq!(summary["alert_count"], 2);
+    assert_eq!(summary["latest_alert_ts_ms"], 200);
+    assert_eq!(summary["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(summary["reasons"].as_array().unwrap().len(), 2);
+
+    let run_summary = get_json(
+        app,
+        "/api/v1/runs/run-alert-b/reconciliation-alerts/summary?symbol=CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+    )
+    .await;
+    assert_eq!(run_summary["run_id"], "run-alert-b");
+    assert_eq!(run_summary["alert_count"], 1);
+    assert_eq!(run_summary["latest_alert_ts_ms"], 200);
+    assert_eq!(run_summary["runs"][0], "run-alert-b");
+    assert_eq!(run_summary["reasons"][0], "cash_total_drift");
+}
+
+#[tokio::test]
+async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for (run_id, ts_ms, fields) in [
+        (
+            Some("run-delivery-a"),
+            100,
+            serde_json::json!({
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                "sink": "webhook",
+                "status": "failed",
+                "http_status": 500
+            }),
+        ),
+        (
+            Some("run-delivery-b"),
+            200,
+            serde_json::json!({
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                "sink": "file",
+                "status": "sent"
+            }),
+        ),
+        (
+            Some("run-delivery-b"),
+            300,
+            serde_json::json!({
+                "account_id": "other",
+                "sink": "webhook",
+                "status": "sent"
+            }),
+        ),
+    ] {
+        db.record_system_log(SystemLogCommand {
+            run_id: run_id.map(str::to_string),
+            ts_ms,
+            level: "INFO".to_string(),
+            target: "runtime.alert_delivery".to_string(),
+            message: "alert.delivery".to_string(),
+            fields: Some(fields),
+        })
+        .await
+        .unwrap();
+    }
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let summary = get_json(
+        app.clone(),
+        "/api/v1/reconciliation-alert-deliveries/summary?account_id=paper",
+    )
+    .await;
+    assert_eq!(summary["delivery_count"], 2);
+    assert_eq!(summary["latest_delivery_ts_ms"], 200);
+    assert_eq!(summary["sent_count"], 1);
+    assert_eq!(summary["failed_count"], 1);
+    assert_eq!(summary["sinks"].as_array().unwrap().len(), 2);
+
+    let run_summary = get_json(
+        app,
+        "/api/v1/runs/run-delivery-b/reconciliation-alert-deliveries/summary?symbol=CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+    )
+    .await;
+    assert_eq!(run_summary["run_id"], "run-delivery-b");
+    assert_eq!(run_summary["delivery_count"], 1);
+    assert_eq!(run_summary["sent_count"], 1);
+    assert_eq!(run_summary["failed_count"], 0);
+    assert_eq!(run_summary["sinks"][0], "file");
+    assert_eq!(run_summary["statuses"][0], "sent");
 }
 
 #[tokio::test]

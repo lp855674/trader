@@ -844,6 +844,17 @@ pub struct StoredRiskEvent {
     pub payload_json: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RiskEventFilter {
+    pub run_id: Option<String>,
+    pub risk_type: Option<String>,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewInsight {
     pub id: String,
@@ -5186,6 +5197,17 @@ impl Db {
     }
 
     pub async fn list_risk_events(&self, run_id: &str) -> StorageResult<Vec<StoredRiskEvent>> {
+        self.list_risk_events_filtered(RiskEventFilter {
+            run_id: Some(run_id.to_string()),
+            ..RiskEventFilter::default()
+        })
+        .await
+    }
+
+    pub async fn list_risk_events_filtered(
+        &self,
+        filter: RiskEventFilter,
+    ) -> StorageResult<Vec<StoredRiskEvent>> {
         type RiskEventRow = (
             String,
             String,
@@ -5201,18 +5223,45 @@ impl Db {
             String,
         );
 
-        let rows = sqlx::query_as::<_, RiskEventRow>(
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
             r#"
             SELECT id, event_id, run_id, account_id, symbol, risk_type, decision,
                    reason, threshold, observed_value, ts_ms, payload_json
             FROM risk_events
-            WHERE run_id = ?
-            ORDER BY ts_ms, id
+            WHERE 1 = 1
             "#,
-        )
-        .bind(run_id)
-        .fetch_all(self.pool())
-        .await?;
+        );
+
+        if let Some(run_id) = filter.run_id.as_deref() {
+            query_builder.push(" AND run_id = ").push_bind(run_id);
+        }
+        if let Some(risk_type) = filter.risk_type.as_deref() {
+            query_builder.push(" AND risk_type = ").push_bind(risk_type);
+        }
+        if let Some(account_id) = filter.account_id.as_deref() {
+            query_builder
+                .push(" AND account_id = ")
+                .push_bind(account_id);
+        }
+        if let Some(symbol) = filter.symbol.as_deref() {
+            query_builder.push(" AND symbol = ").push_bind(symbol);
+        }
+        if let Some(from_ms) = filter.from_ms {
+            query_builder.push(" AND ts_ms >= ").push_bind(from_ms);
+        }
+        if let Some(to_ms) = filter.to_ms {
+            query_builder.push(" AND ts_ms <= ").push_bind(to_ms);
+        }
+
+        query_builder.push(" ORDER BY ts_ms DESC, id DESC");
+        if let Some(limit) = filter.limit {
+            query_builder.push(" LIMIT ").push_bind(limit);
+        }
+
+        let rows = query_builder
+            .build_query_as::<RiskEventRow>()
+            .fetch_all(self.pool())
+            .await?;
 
         Ok(rows
             .into_iter()

@@ -253,6 +253,110 @@ enum Command {
         #[arg(long)]
         run_id: String,
     },
+    ReconciliationDrifts {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    ReconciliationAlertsSummary {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    ReconciliationAlertsExport {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    ReconciliationAlertDeliveriesSummary {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    ReconciliationAlertDeliveriesExport {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    ReconciliationAlertRedeliver {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        webhook_url: String,
+        #[arg(long)]
+        auth_token: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     Funding {
         #[command(subcommand)]
         command: FundingCommand,
@@ -470,6 +574,24 @@ enum LogsCommand {
     List {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        level: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    Export {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        output: String,
         #[arg(long)]
         run_id: Option<String>,
         #[arg(long)]
@@ -1890,6 +2012,51 @@ async fn run_command(command: Command) -> Result<()> {
                     );
                 }
             }
+            LogsCommand::Export {
+                config,
+                output,
+                run_id,
+                level,
+                target,
+                from_ms,
+                to_ms,
+                limit,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let logs = db
+                    .list_system_logs_filtered(storage::SystemLogFilter {
+                        run_id,
+                        level,
+                        target,
+                        from_ms,
+                        to_ms,
+                        limit,
+                    })
+                    .await?;
+                let mut file = std::fs::File::create(&output)
+                    .with_context(|| format!("failed to create log export file {output}"))?;
+                for log in &logs {
+                    let fields = log
+                        .fields_json
+                        .as_deref()
+                        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                        .unwrap_or(serde_json::Value::Null);
+                    writeln!(
+                        file,
+                        "{}",
+                        serde_json::json!({
+                            "run_id": log.run_id,
+                            "ts_ms": log.ts_ms,
+                            "level": log.level,
+                            "target": log.target,
+                            "message": log.message,
+                            "fields": fields,
+                            "created_at_ms": log.created_at_ms,
+                        })
+                    )?;
+                }
+                println!("system_logs_exported: count={} path={output}", logs.len());
+            }
             LogsCommand::Purge {
                 config,
                 before_ms,
@@ -1942,6 +2109,487 @@ async fn run_command(command: Command) -> Result<()> {
                     event.observed_value.as_deref().unwrap_or("")
                 );
             }
+        }
+        Command::ReconciliationDrifts {
+            config,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let drift_events = db
+                .list_risk_events_filtered(storage::RiskEventFilter {
+                    run_id,
+                    risk_type: Some("reconciliation_drift".to_string()),
+                    account_id,
+                    symbol,
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            for event in drift_events {
+                println!(
+                    "reconciliation_drift: run_id={} ts_ms={} account={} symbol={} decision={} reason={} threshold={} observed_value={}",
+                    event.run_id,
+                    event.ts_ms,
+                    event.account_id.as_deref().unwrap_or(""),
+                    event.symbol.as_deref().unwrap_or(""),
+                    event.decision,
+                    event.reason.as_deref().unwrap_or(""),
+                    event.threshold.as_deref().unwrap_or(""),
+                    event.observed_value.as_deref().unwrap_or("")
+                );
+            }
+        }
+        Command::ReconciliationAlertsSummary {
+            config,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: None,
+                    target: Some("runtime.alert".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            let mut alert_count = 0usize;
+            let mut latest_alert_ts_ms = None;
+            let mut runs = BTreeSet::new();
+            let mut accounts = BTreeSet::new();
+            let mut symbols = BTreeSet::new();
+            let mut reasons = BTreeSet::new();
+            for log in logs {
+                if log.message != "reconciliation_drift.alert" {
+                    continue;
+                }
+                let fields = log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let log_account_id = fields
+                    .get("account_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let log_symbol = fields
+                    .get("symbol")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let log_reason = fields
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                if account_id
+                    .as_deref()
+                    .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
+                {
+                    continue;
+                }
+                if symbol
+                    .as_deref()
+                    .is_some_and(|expected| log_symbol.as_deref() != Some(expected))
+                {
+                    continue;
+                }
+                alert_count += 1;
+                latest_alert_ts_ms = Some(
+                    latest_alert_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)),
+                );
+                if let Some(run_id) = log.run_id {
+                    runs.insert(run_id);
+                }
+                if let Some(account_id) = log_account_id {
+                    accounts.insert(account_id);
+                }
+                if let Some(symbol) = log_symbol {
+                    symbols.insert(symbol);
+                }
+                if let Some(reason) = log_reason {
+                    reasons.insert(reason);
+                }
+            }
+            println!(
+                "reconciliation_alert_summary: run_id={} alert_count={} latest_alert_ts_ms={} runs={} accounts={} symbols={} reasons={}",
+                run_id.as_deref().unwrap_or("*"),
+                alert_count,
+                latest_alert_ts_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                runs.into_iter().collect::<Vec<_>>().join(","),
+                accounts.into_iter().collect::<Vec<_>>().join(","),
+                symbols.into_iter().collect::<Vec<_>>().join(","),
+                reasons.into_iter().collect::<Vec<_>>().join(","),
+            );
+        }
+        Command::ReconciliationAlertsExport {
+            config,
+            output,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: None,
+                    target: Some("runtime.alert".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            let mut file = std::fs::File::create(&output)
+                .with_context(|| format!("failed to create alert export file {output}"))?;
+            let mut exported = 0usize;
+            for log in logs {
+                if log.message != "reconciliation_drift.alert" {
+                    continue;
+                }
+                let fields = log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let log_account_id = fields.get("account_id").and_then(serde_json::Value::as_str);
+                let log_symbol = fields.get("symbol").and_then(serde_json::Value::as_str);
+                if account_id
+                    .as_deref()
+                    .is_some_and(|expected| log_account_id != Some(expected))
+                {
+                    continue;
+                }
+                if symbol
+                    .as_deref()
+                    .is_some_and(|expected| log_symbol != Some(expected))
+                {
+                    continue;
+                }
+                let dedup_key = format!(
+                    "{}|{}|{}|{}|{}",
+                    log.message,
+                    log.run_id.as_deref().unwrap_or(""),
+                    log_account_id.unwrap_or(""),
+                    log_symbol.unwrap_or(""),
+                    fields
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                );
+                writeln!(
+                    file,
+                    "{}",
+                    serde_json::json!({
+                        "run_id": log.run_id,
+                        "ts_ms": log.ts_ms,
+                        "level": log.level,
+                        "target": log.target,
+                        "message": log.message,
+                        "account_id": log_account_id,
+                        "symbol": log_symbol,
+                        "reason": fields.get("reason").and_then(serde_json::Value::as_str),
+                        "dedup_key": dedup_key,
+                        "fields": fields,
+                        "created_at_ms": log.created_at_ms,
+                    })
+                )?;
+                exported += 1;
+            }
+            println!(
+                "reconciliation_alerts_exported: count={} path={output}",
+                exported
+            );
+        }
+        Command::ReconciliationAlertDeliveriesSummary {
+            config,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: None,
+                    target: Some("runtime.alert_delivery".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            let mut delivery_count = 0usize;
+            let mut latest_delivery_ts_ms = None;
+            let mut sent_count = 0usize;
+            let mut failed_count = 0usize;
+            let mut statuses = BTreeSet::new();
+            let mut sinks = BTreeSet::new();
+            for log in logs {
+                if log.message != "alert.delivery" {
+                    continue;
+                }
+                let fields = log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let log_account_id = fields
+                    .get("account_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let log_symbol = fields
+                    .get("symbol")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                if account_id
+                    .as_deref()
+                    .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
+                {
+                    continue;
+                }
+                if symbol
+                    .as_deref()
+                    .is_some_and(|expected| log_symbol.as_deref() != Some(expected))
+                {
+                    continue;
+                }
+                delivery_count += 1;
+                latest_delivery_ts_ms = Some(
+                    latest_delivery_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)),
+                );
+                if let Some(status) = fields.get("status").and_then(serde_json::Value::as_str) {
+                    if status == "sent" {
+                        sent_count += 1;
+                    }
+                    if status == "failed" {
+                        failed_count += 1;
+                    }
+                    statuses.insert(status.to_string());
+                }
+                if let Some(sink) = fields.get("sink").and_then(serde_json::Value::as_str) {
+                    sinks.insert(sink.to_string());
+                }
+            }
+            println!(
+                "reconciliation_alert_delivery_summary: run_id={} delivery_count={} latest_delivery_ts_ms={} sent_count={} failed_count={} sinks={} statuses={}",
+                run_id.as_deref().unwrap_or("*"),
+                delivery_count,
+                latest_delivery_ts_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                sent_count,
+                failed_count,
+                sinks.into_iter().collect::<Vec<_>>().join(","),
+                statuses.into_iter().collect::<Vec<_>>().join(","),
+            );
+        }
+        Command::ReconciliationAlertDeliveriesExport {
+            config,
+            output,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: None,
+                    target: Some("runtime.alert_delivery".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            let mut file = std::fs::File::create(&output)
+                .with_context(|| format!("failed to create alert delivery export file {output}"))?;
+            let mut exported = 0usize;
+            for log in logs {
+                if log.message != "alert.delivery" {
+                    continue;
+                }
+                let fields = log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let log_account_id = fields.get("account_id").and_then(serde_json::Value::as_str);
+                let log_symbol = fields.get("symbol").and_then(serde_json::Value::as_str);
+                if account_id
+                    .as_deref()
+                    .is_some_and(|expected| log_account_id != Some(expected))
+                {
+                    continue;
+                }
+                if symbol
+                    .as_deref()
+                    .is_some_and(|expected| log_symbol != Some(expected))
+                {
+                    continue;
+                }
+                writeln!(
+                    file,
+                    "{}",
+                    serde_json::json!({
+                        "run_id": log.run_id,
+                        "ts_ms": log.ts_ms,
+                        "level": log.level,
+                        "target": log.target,
+                        "message": log.message,
+                        "account_id": log_account_id,
+                        "symbol": log_symbol,
+                        "sink": fields.get("sink").and_then(serde_json::Value::as_str),
+                        "status": fields.get("status").and_then(serde_json::Value::as_str),
+                        "attempts": fields.get("attempts").and_then(serde_json::Value::as_u64),
+                        "http_status": fields.get("http_status").and_then(serde_json::Value::as_u64),
+                        "error": fields.get("error").and_then(serde_json::Value::as_str),
+                        "dedup_key": fields.get("dedup_key").and_then(serde_json::Value::as_str),
+                        "fields": fields,
+                        "created_at_ms": log.created_at_ms,
+                    })
+                )?;
+                exported += 1;
+            }
+            println!(
+                "reconciliation_alert_deliveries_exported: count={} path={output}",
+                exported
+            );
+        }
+        Command::ReconciliationAlertRedeliver {
+            config,
+            webhook_url,
+            auth_token,
+            run_id,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let delivery_logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: None,
+                    target: Some("runtime.alert_delivery".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            let alert_logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id,
+                    level: None,
+                    target: Some("runtime.alert".to_string()),
+                    from_ms,
+                    to_ms,
+                    limit: None,
+                })
+                .await?;
+            let client = reqwest::Client::new();
+            let mut redelivered = 0usize;
+            for delivery_log in delivery_logs {
+                if delivery_log.message != "alert.delivery" {
+                    continue;
+                }
+                let delivery_fields = delivery_log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                if delivery_fields
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    != Some("failed")
+                {
+                    continue;
+                }
+                let delivery_account_id = delivery_fields
+                    .get("account_id")
+                    .and_then(serde_json::Value::as_str);
+                let delivery_symbol = delivery_fields
+                    .get("symbol")
+                    .and_then(serde_json::Value::as_str);
+                if account_id
+                    .as_deref()
+                    .is_some_and(|expected| delivery_account_id != Some(expected))
+                {
+                    continue;
+                }
+                if symbol
+                    .as_deref()
+                    .is_some_and(|expected| delivery_symbol != Some(expected))
+                {
+                    continue;
+                }
+                let Some(delivery_dedup_key) = delivery_fields
+                    .get("dedup_key")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                let Some(alert_log) = alert_logs.iter().find(|log| {
+                    if log.message != "reconciliation_drift.alert" {
+                        return false;
+                    }
+                    let alert_fields = log
+                        .fields_json
+                        .as_deref()
+                        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                        .unwrap_or(serde_json::Value::Null);
+                    alert_dedup_key_for_cli(
+                        &log.message,
+                        log.run_id.as_deref().unwrap_or(""),
+                        &alert_fields,
+                    ) == delivery_dedup_key
+                }) else {
+                    continue;
+                };
+                let alert_fields = alert_log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let payload = serde_json::json!({
+                    "ts_ms": alert_log.ts_ms,
+                    "run_id": alert_log.run_id,
+                    "target": alert_log.target,
+                    "message": alert_log.message,
+                    "dedup_key": delivery_dedup_key,
+                    "fields": alert_fields,
+                });
+                let mut request = client.post(&webhook_url).json(&payload);
+                if let Some(token) = auth_token.as_deref() {
+                    request = request.bearer_auth(token);
+                }
+                request.send().await?.error_for_status()?;
+                redelivered += 1;
+            }
+            println!(
+                "reconciliation_alerts_redelivered: count={redelivered} webhook_url={webhook_url}"
+            );
         }
         Command::Funding { command } => match command {
             FundingCommand::List {
@@ -3017,6 +3665,22 @@ async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> 
     ensure_database_parent(&app_config.database.url)?;
     let db = storage::Db::connect(&app_config.database.url).await?;
     Ok((app_config, db))
+}
+
+fn alert_dedup_key_for_cli(message: &str, run_id: &str, fields: &serde_json::Value) -> String {
+    let account_id = fields
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let symbol = fields
+        .get("symbol")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let reason = fields
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    format!("{message}|{run_id}|{account_id}|{symbol}|{reason}")
 }
 
 async fn persist_cli_run_config_snapshot(

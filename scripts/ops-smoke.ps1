@@ -4,6 +4,10 @@ $repoRoot = Get-Location
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-ops-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-ops-$id.toml"
+$alertFilePath = Join-Path $env:TEMP "trader-ops-alerts-$id.jsonl"
+$logExportPath = Join-Path $env:TEMP "trader-ops-system-logs-$id.jsonl"
+$alertExportPath = Join-Path $env:TEMP "trader-ops-reconciliation-alerts-$id.jsonl"
+$alertDeliveryExportPath = Join-Path $env:TEMP "trader-ops-reconciliation-alert-deliveries-$id.jsonl"
 $stdoutPath = Join-Path $env:TEMP "trader-ops-server-$id.out.log"
 $stderrPath = Join-Path $env:TEMP "trader-ops-server-$id.err.log"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
@@ -82,6 +86,7 @@ $config = $template `
     -replace 'url = "sqlite://data/trader.sqlite"', "url = `"$databaseUrl`"" `
     -replace 'initial_cash = "100000"', 'initial_cash = "25000"' `
     -replace 'enabled = false', "enabled = true`nbroker_snapshot_interval_ms = 5"
+$config = "$config`n`n[live.alerts]`nenabled = true`nsink = `"file`"`nfile_path = `"$($alertFilePath.Replace('\', '/'))`"`ncooldown_ms = 60000`n"
 Set-Content -Path $configPath -Value $config -Encoding UTF8
 
 $server = $null
@@ -139,23 +144,33 @@ try {
     $apiPositions = Wait-ApiArray "$baseUrl/api/v1/runs/$runId/position-snapshots?symbol=CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP&position_side=long" "API position snapshot"
     $apiReconciliation = Wait-ApiObject "$baseUrl/api/v1/runs/$runId/reconciliation" "API reconciliation"
     $apiLogs = Wait-ApiArray "$baseUrl/api/v1/runs/$runId/system-logs?target=runtime.broker_snapshot" "API broker snapshot logs"
+    $apiAlertSummary = Wait-ApiObject "$baseUrl/api/v1/runs/$runId/reconciliation-alerts/summary" "API reconciliation alert summary"
+    $apiAlertDeliverySummary = Wait-ApiObject "$baseUrl/api/v1/runs/$runId/reconciliation-alert-deliveries/summary" "API reconciliation alert delivery summary"
     $apiConfigVersion = Wait-ApiObject "$baseUrl/api/v1/runs/$runId/config-version" "API config version binding"
 
     Assert-True (@($apiCash).Count -ge 1) "expected API cash snapshots"
     Assert-True (@($apiPositions).Count -ge 1) "expected API position snapshots"
     Assert-True ($apiReconciliation.status -eq "drift") "expected API reconciliation drift"
     Assert-True (@($apiLogs).Count -ge 1) "expected API system logs"
+    Assert-True ($apiAlertSummary.alert_count -ge 1) "expected API reconciliation alert summary"
+    Assert-True ($apiAlertDeliverySummary.delivery_count -ge 1) "expected API reconciliation alert delivery summary"
     Assert-True ($apiConfigVersion.run_id -eq $runId) "expected API config version run id"
 
     $cliCash = Invoke-CheckedTrader @("snapshots", "cash", "--config", $configPath, "--run-id", $runId, "--currency", "USD") 2>&1 | Out-String
     $cliPositions = Invoke-CheckedTrader @("snapshots", "positions", "--config", $configPath, "--run-id", $runId, "--symbol", "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP", "--position-side", "long") 2>&1 | Out-String
     $cliReconciliation = Invoke-CheckedTrader @("reconciliation", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
+    $cliAlertSummary = Invoke-CheckedTrader @("reconciliation-alerts-summary", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
+    $cliAlertDeliverySummary = Invoke-CheckedTrader @("reconciliation-alert-deliveries-summary", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
     $cliLogs = Invoke-CheckedTrader @("logs", "list", "--config", $configPath, "--run-id", $runId, "--target", "runtime.broker_snapshot") 2>&1 | Out-String
     $cliConfigVersion = Invoke-CheckedTrader @("runs", "config-version", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
 
     Assert-True ($cliCash.Contains("cash_snapshot: run_id=$runId")) "expected CLI cash snapshot"
     Assert-True ($cliPositions.Contains("position_snapshot: run_id=$runId")) "expected CLI position snapshot"
     Assert-True ($cliReconciliation.Contains("reconciliation: run_id=$runId status=drift")) "expected CLI reconciliation drift"
+    Assert-True ($cliAlertSummary.Contains("reconciliation_alert_summary: run_id=$runId")) "expected CLI reconciliation alert summary"
+    Assert-True ($cliAlertSummary.Contains("alert_count=")) "expected CLI alert count"
+    Assert-True ($cliAlertDeliverySummary.Contains("reconciliation_alert_delivery_summary: run_id=$runId")) "expected CLI reconciliation alert delivery summary"
+    Assert-True ($cliAlertDeliverySummary.Contains("delivery_count=")) "expected CLI alert delivery count"
     Assert-True ($cliLogs.Contains("system_log: run_id=$runId")) "expected CLI system log"
     Assert-True ($cliConfigVersion.Contains("run_config_version: run_id=$runId")) "expected CLI config version binding"
     Assert-True (-not $cliConfigVersion.Contains("status=missing")) "expected bound CLI config version"
@@ -260,6 +275,39 @@ try {
 
     $stopped = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs/$runId/stop"
     Assert-True ($stopped.status -eq "stopped") "expected live stopped"
+    Assert-True (Test-Path $alertFilePath) "expected alert sink file"
+    $alertLines = @(Get-Content $alertFilePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-True (@($alertLines).Count -ge 1) "expected alert sink records"
+    $alertRecords = @($alertLines | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($alertRecords | Where-Object { $_.target -eq "runtime.alert" }).Count -ge 1) "expected runtime.alert sink record"
+    Assert-True (@($alertRecords | Where-Object { $_.message -eq "reconciliation_drift.alert" }).Count -ge 1) "expected reconciliation drift sink record"
+    Assert-True (@($alertRecords | Where-Object { -not [string]::IsNullOrWhiteSpace($_.dedup_key) }).Count -eq @($alertRecords).Count) "expected dedup keys on alert sink records"
+    Assert-True (@($alertRecords).Count -le $apiAlertSummary.alert_count) "expected sink records to not exceed alert log summary"
+    $cliLogExport = Invoke-CheckedTrader @("logs", "export", "--config", $configPath, "--output", $logExportPath, "--run-id", $runId, "--target", "runtime.alert") 2>&1 | Out-String
+    Assert-True ($cliLogExport.Contains("system_logs_exported: count=")) "expected CLI log export summary"
+    Assert-True (Test-Path $logExportPath) "expected exported system log file"
+    $exportedLogLines = @(Get-Content $logExportPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-True (@($exportedLogLines).Count -ge 1) "expected exported system log records"
+    $exportedLogRecords = @($exportedLogLines | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($exportedLogRecords | Where-Object { $_.target -eq "runtime.alert" }).Count -ge 1) "expected exported runtime.alert records"
+    Assert-True (@($exportedLogRecords | Where-Object { $_.message -eq "reconciliation_drift.alert" }).Count -ge 1) "expected exported reconciliation alert records"
+    $cliAlertExport = Invoke-CheckedTrader @("reconciliation-alerts-export", "--config", $configPath, "--output", $alertExportPath, "--run-id", $runId) 2>&1 | Out-String
+    Assert-True ($cliAlertExport.Contains("reconciliation_alerts_exported: count=")) "expected CLI reconciliation alert export summary"
+    Assert-True (Test-Path $alertExportPath) "expected reconciliation alert export file"
+    $exportedAlertLines = @(Get-Content $alertExportPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-True (@($exportedAlertLines).Count -ge 1) "expected reconciliation alert export records"
+    $exportedAlertRecords = @($exportedAlertLines | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($exportedAlertRecords | Where-Object { $_.message -eq "reconciliation_drift.alert" }).Count -ge 1) "expected exported reconciliation drift alerts"
+    Assert-True (@($exportedAlertRecords | Where-Object { -not [string]::IsNullOrWhiteSpace($_.dedup_key) }).Count -eq @($exportedAlertRecords).Count) "expected dedup keys on exported reconciliation alerts"
+    $cliAlertDeliveryExport = Invoke-CheckedTrader @("reconciliation-alert-deliveries-export", "--config", $configPath, "--output", $alertDeliveryExportPath, "--run-id", $runId) 2>&1 | Out-String
+    Assert-True ($cliAlertDeliveryExport.Contains("reconciliation_alert_deliveries_exported: count=")) "expected CLI reconciliation alert delivery export summary"
+    Assert-True (Test-Path $alertDeliveryExportPath) "expected reconciliation alert delivery export file"
+    $exportedAlertDeliveryLines = @(Get-Content $alertDeliveryExportPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-True (@($exportedAlertDeliveryLines).Count -ge 1) "expected reconciliation alert delivery export records"
+    $exportedAlertDeliveryRecords = @($exportedAlertDeliveryLines | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($exportedAlertDeliveryRecords | Where-Object { $_.message -eq "alert.delivery" }).Count -ge 1) "expected exported alert delivery records"
+    Assert-True (@($exportedAlertDeliveryRecords | Where-Object { $_.sink -eq "file" }).Count -ge 1) "expected exported file delivery record"
+    Assert-True (@($exportedAlertDeliveryRecords | Where-Object { $_.status -eq "sent" }).Count -ge 1) "expected exported sent delivery record"
 
     [pscustomobject]@{
         run_id = $runId
@@ -267,6 +315,12 @@ try {
         api_position_snapshots = @($apiPositions).Count
         api_reconciliation = $apiReconciliation.status
         api_system_logs = @($apiLogs).Count
+        api_reconciliation_alerts = $apiAlertSummary.alert_count
+        api_reconciliation_alert_deliveries = $apiAlertDeliverySummary.delivery_count
+        sink_alert_records = @($alertRecords).Count
+        exported_log_records = @($exportedLogRecords).Count
+        exported_alert_records = @($exportedAlertRecords).Count
+        exported_alert_delivery_records = @($exportedAlertDeliveryRecords).Count
         config_version = $apiConfigVersion.version
         approval_config = $approvalConfigName
         api_pending_approvals = @($matchingApiApprovals).Count
@@ -283,6 +337,10 @@ try {
     Remove-Item -LiteralPath $databasePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-shm" -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-wal" -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $alertFilePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $logExportPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $alertExportPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $alertDeliveryExportPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
 }

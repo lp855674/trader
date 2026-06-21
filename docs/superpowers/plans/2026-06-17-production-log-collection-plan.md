@@ -19,7 +19,7 @@ This plan was only partially implemented. The repository has an operational `sys
 | CLI/API readback | Done for local MVP | `logs list`, `logs purge`, `GET /api/v1/system-logs`, `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/limit filters; `ops-smoke.ps1` verifies run-scoped logs alongside snapshots, reconciliation and config-version readback | Tail/count/search endpoints are not implemented |
 | Retention | Partially done | CLI purge supports retention-style cleanup by timestamp/target/run | Configured scheduled retention cleanup is not implemented |
 | Async tracing writer | Not done | No `events::log_writer`, `SystemLogLayer`, buffered channel writer or batch flush implementation exists | Implement tracing layer and non-blocking buffered DB writer |
-| External production collection | Not done | Docs classify external production log collectors and alert routing as follow-up | Add collector/shipper integration and alert routing |
+| External production collection | Partial local stub | CLI `logs export` can emit filtered `system_logs` as JSONL for local collector handoff; `ops-smoke.ps1` verifies the export path | Add real collector/shipper integration and alert routing |
 
 ---
 

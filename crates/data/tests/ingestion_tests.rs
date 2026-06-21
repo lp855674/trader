@@ -1,8 +1,9 @@
 use data::ingestion::{
-    IngestionResult, run_scheduled_ingestion,
+    IngestionResult,
     binance_funding::{filter_funding_rates_after, parse_binance_funding_history},
     binance_meta::parse_binance_market_meta,
     corporate_actions::parse_yahoo_corporate_actions,
+    run_scheduled_ingestion,
     tracker::{IngestionTracker, last_ingestions},
 };
 
@@ -183,7 +184,9 @@ async fn ingestion_scheduled_disabled_returns_no_work() {
     let client = reqwest::Client::new();
     let config = config::IngestionConfig::default();
 
-    let results = run_scheduled_ingestion(&db, &client, &config).await.unwrap();
+    let results = run_scheduled_ingestion(&db, &client, &config)
+        .await
+        .unwrap();
 
     assert!(results.is_empty());
 }

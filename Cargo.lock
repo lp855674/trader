@@ -3624,6 +3624,7 @@ dependencies = [
  "anyhow",
  "broker",
  "chrono",
+ "reqwest",
  "rust_decimal",
  "serde_json",
  "storage",

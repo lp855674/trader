@@ -4,7 +4,7 @@ use storage::{
     NewConfigRecord, NewConfigVersion, NewCorporateActionMeta, NewCryptoMarketMeta,
     NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate, NewLotSizeRule, NewOrder,
     NewOrderEvent, NewPortfolioSnapshot, NewPosition, NewPositionSnapshot, NewPriceLimitRule,
-    NewRiskEvent, NewStrategyRun, NewSystemLog,
+    NewRiskEvent, NewStrategyRun, NewSystemLog, RuntimeEventCommand, StrategyRunStartCommand,
 };
 
 #[tokio::test]
@@ -862,6 +862,100 @@ async fn audit_projection_records_round_trip_in_time_order() {
     assert_eq!(risk_events.len(), 1);
     assert_eq!(risk_events[0].risk_type, "max_exposure");
     assert_eq!(risk_events[0].threshold.as_deref(), Some("10000"));
+}
+
+#[tokio::test]
+async fn risk_events_can_be_filtered_for_reconciliation_audit() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "recon-a".to_string(),
+        mode: "live".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-b".to_string(),
+        name: "recon-b".to_string(),
+        mode: "live".to_string(),
+        started_at_ms: 2,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "runtime".to_string(),
+        ts_ms: 200,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "warn",
+            "reason": "qty mismatch",
+            "threshold": "1",
+            "observed_value": "2"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "runtime".to_string(),
+        ts_ms: 100,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-b",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "warn",
+            "reason": "cash drift",
+            "threshold": "5",
+            "observed_value": "7"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "runtime".to_string(),
+        ts_ms: 300,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "max_exposure",
+            "decision": "reject",
+            "reason": "too large",
+            "threshold": "100",
+            "observed_value": "120"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let filtered = db
+        .list_risk_events_filtered(storage::RiskEventFilter {
+            risk_type: Some("reconciliation_drift".to_string()),
+            account_id: Some("paper".to_string()),
+            from_ms: Some(90),
+            to_ms: Some(250),
+            limit: Some(1),
+            ..storage::RiskEventFilter::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].run_id, "run-a");
+    assert_eq!(filtered[0].risk_type, "reconciliation_drift");
+    assert_eq!(filtered[0].reason.as_deref(), Some("qty mismatch"));
+    assert_eq!(filtered[0].ts_ms, 200);
 }
 
 #[tokio::test]

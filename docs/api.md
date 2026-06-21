@@ -62,6 +62,12 @@ GET  /api/v1/runs/{run_id}/insights
 GET  /api/v1/runs/{run_id}/cash-snapshots
 GET  /api/v1/runs/{run_id}/position-snapshots
 GET  /api/v1/runs/{run_id}/reconciliation
+GET  /api/v1/reconciliation-drifts
+GET  /api/v1/runs/{run_id}/reconciliation-drifts
+GET  /api/v1/reconciliation-alerts/summary
+GET  /api/v1/runs/{run_id}/reconciliation-alerts/summary
+GET  /api/v1/reconciliation-alert-deliveries/summary
+GET  /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary
 GET  /api/v1/runs/{run_id}/portfolio-targets
 GET  /api/v1/runs/{run_id}/system-logs
 GET  /api/v1/runs/{run_id}/crypto-positions
@@ -80,9 +86,9 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` expose runtime/system logs with run, level, target, time-window, and limit filters; CLI also supports retention purge.
 
-`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; real broker-reported cash/position scheduling remains production hardening work.
+`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; when `[live.alerts]` is enabled, downstream alert sinks currently support `sink = "file"` with `file_path` for local JSONL append and `sink = "webhook"` with `webhook_url` for JSON POST delivery. Optional `[live.alerts].cooldown_ms` suppresses repeated downstream sends for the same alert dedup key within the cooldown window. Webhook sink also supports `webhook_timeout_ms`, `webhook_max_retries`, and `webhook_auth_token` for a bearer-authenticated local MVP delivery policy; `system_logs` and drift audit surfaces still record every alert. Real broker-reported cash/position scheduling remains production hardening work.
 
-`GET /api/v1/runs/{run_id}/reconciliation` summarizes persisted cash snapshots, position snapshots, and `risk_events` with `risk_type = "reconciliation_drift"` for the run.
+`GET /api/v1/runs/{run_id}/reconciliation` summarizes persisted cash snapshots, position snapshots, and `risk_events` with `risk_type = "reconciliation_drift"` for the run. `GET /api/v1/reconciliation-drifts` and `GET /api/v1/runs/{run_id}/reconciliation-drifts` provide drift-audit readback with `run_id` / `account_id` / `symbol` / `from_ms` / `to_ms` / `limit` filters. `GET /api/v1/reconciliation-alerts/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alerts/summary` aggregate `runtime.alert` log records for persisted reconciliation alerts. `GET /api/v1/reconciliation-alert-deliveries/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary` aggregate `runtime.alert_delivery` records for downstream delivery status by sink and outcome.
 
 `GET /api/v1/ingestion/status` response:
 

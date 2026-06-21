@@ -229,6 +229,21 @@ pub struct LiveConfig {
     pub enabled: bool,
     pub heartbeat_ms: Option<u64>,
     pub broker_snapshot_interval_ms: Option<u64>,
+    #[serde(default)]
+    pub alerts: LiveAlertsConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LiveAlertsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub sink: Option<String>,
+    pub file_path: Option<String>,
+    pub webhook_url: Option<String>,
+    pub cooldown_ms: Option<u64>,
+    pub webhook_timeout_ms: Option<u64>,
+    pub webhook_max_retries: Option<u32>,
+    pub webhook_auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

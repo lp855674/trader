@@ -21,7 +21,7 @@ use paper::{
     PaperSettings,
 };
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
-use runtime::{LiveRuntime, LiveRuntimeSettings};
+use runtime::{AlertSinkSettings, LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -178,6 +178,26 @@ struct SystemLogsQuery {
     run_id: Option<String>,
     level: Option<String>,
     target: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ReconciliationDriftsQuery {
+    run_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ReconciliationAlertsSummaryQuery {
+    run_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
     from_ms: Option<i64>,
     to_ms: Option<i64>,
     limit: Option<i64>,
@@ -354,6 +374,28 @@ struct ReconciliationStatusResponse {
     drift_events: Vec<RiskEventResponse>,
     latest_cash_ts_ms: Option<i64>,
     latest_position_ts_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct ReconciliationAlertSummaryResponse {
+    run_id: Option<String>,
+    alert_count: usize,
+    latest_alert_ts_ms: Option<i64>,
+    runs: Vec<String>,
+    accounts: Vec<String>,
+    symbols: Vec<String>,
+    reasons: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ReconciliationAlertDeliverySummaryResponse {
+    run_id: Option<String>,
+    delivery_count: usize,
+    latest_delivery_ts_ms: Option<i64>,
+    sent_count: usize,
+    failed_count: usize,
+    statuses: Vec<String>,
+    sinks: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -566,6 +608,18 @@ pub fn router_with_state(state: AppState) -> Router {
         )
         .route("/api/v1/system-logs", get(list_system_logs))
         .route(
+            "/api/v1/reconciliation-drifts",
+            get(list_reconciliation_drifts),
+        )
+        .route(
+            "/api/v1/reconciliation-alerts/summary",
+            get(get_reconciliation_alerts_summary),
+        )
+        .route(
+            "/api/v1/reconciliation-alert-deliveries/summary",
+            get(get_reconciliation_alert_deliveries_summary),
+        )
+        .route(
             "/api/v1/configs/{config_id}/releases",
             get(list_config_releases),
         )
@@ -599,6 +653,18 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runs/{run_id}/reconciliation",
             get(get_run_reconciliation),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/reconciliation-drifts",
+            get(list_run_reconciliation_drifts),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/reconciliation-alerts/summary",
+            get(get_run_reconciliation_alerts_summary),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary",
+            get(get_run_reconciliation_alert_deliveries_summary),
         )
         .route(
             "/api/v1/runs/{run_id}/portfolio-targets",
@@ -1063,6 +1129,7 @@ async fn start_live_run(
                     base_currency: app_config.portfolio.base_currency,
                     initial_cash,
                     broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
+                    alert_sink: alert_sink_settings(&app_config.live.alerts),
                 },
             );
             let _ = runtime.run(cancel).await;
@@ -1719,6 +1786,26 @@ async fn list_run_risk_events(
     Ok(Json(events))
 }
 
+async fn list_run_reconciliation_drifts(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<ReconciliationDriftsQuery>,
+) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
+    reconciliation_drifts_response(
+        &state.db,
+        storage::RiskEventFilter {
+            run_id: Some(run_id),
+            risk_type: Some("reconciliation_drift".to_string()),
+            account_id: query.account_id,
+            symbol: query.symbol,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        },
+    )
+    .await
+}
+
 async fn list_run_insights(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -1784,6 +1871,91 @@ async fn list_system_logs(
     .await
 }
 
+async fn list_reconciliation_drifts(
+    State(state): State<AppState>,
+    Query(query): Query<ReconciliationDriftsQuery>,
+) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
+    reconciliation_drifts_response(
+        &state.db,
+        storage::RiskEventFilter {
+            run_id: query.run_id,
+            risk_type: Some("reconciliation_drift".to_string()),
+            account_id: query.account_id,
+            symbol: query.symbol,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        },
+    )
+    .await
+}
+
+async fn get_reconciliation_alerts_summary(
+    State(state): State<AppState>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationAlertSummaryResponse>, ApiError> {
+    reconciliation_alerts_summary_response(
+        &state.db,
+        query.run_id,
+        query.account_id,
+        query.symbol,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
+async fn get_run_reconciliation_alerts_summary(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationAlertSummaryResponse>, ApiError> {
+    reconciliation_alerts_summary_response(
+        &state.db,
+        Some(run_id),
+        query.account_id,
+        query.symbol,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
+async fn get_reconciliation_alert_deliveries_summary(
+    State(state): State<AppState>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationAlertDeliverySummaryResponse>, ApiError> {
+    reconciliation_alert_deliveries_summary_response(
+        &state.db,
+        query.run_id,
+        query.account_id,
+        query.symbol,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
+async fn get_run_reconciliation_alert_deliveries_summary(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationAlertDeliverySummaryResponse>, ApiError> {
+    reconciliation_alert_deliveries_summary_response(
+        &state.db,
+        Some(run_id),
+        query.account_id,
+        query.symbol,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
 async fn system_logs_response(
     db: &storage::Db,
     filter: storage::SystemLogFilter,
@@ -1795,6 +1967,211 @@ async fn system_logs_response(
         .map(system_log_response)
         .collect();
     Ok(Json(logs))
+}
+
+async fn reconciliation_drifts_response(
+    db: &storage::Db,
+    filter: storage::RiskEventFilter,
+) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
+    let events = db
+        .list_risk_events_filtered(filter)
+        .await?
+        .into_iter()
+        .map(risk_event_response)
+        .collect();
+    Ok(Json(events))
+}
+
+async fn reconciliation_alerts_summary_response(
+    db: &storage::Db,
+    run_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Json<ReconciliationAlertSummaryResponse>, ApiError> {
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: run_id.clone(),
+            level: None,
+            target: Some("runtime.alert".to_string()),
+            from_ms,
+            to_ms,
+            limit,
+        })
+        .await?;
+
+    let mut latest_alert_ts_ms = None;
+    let mut runs = BTreeSet::new();
+    let mut accounts = BTreeSet::new();
+    let mut symbols = BTreeSet::new();
+    let mut reasons = BTreeSet::new();
+    let mut alert_count = 0usize;
+
+    for log in logs {
+        if log.message != "reconciliation_drift.alert" {
+            continue;
+        }
+        let fields = log
+            .fields_json
+            .as_deref()
+            .and_then(parse_log_fields)
+            .unwrap_or(serde_json::Value::Null);
+        let log_account_id = json_string_field(&fields, "account_id");
+        let log_symbol = json_string_field(&fields, "symbol");
+        let log_reason = json_string_field(&fields, "reason");
+
+        if account_id
+            .as_deref()
+            .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
+        {
+            continue;
+        }
+        if symbol
+            .as_deref()
+            .is_some_and(|expected| log_symbol.as_deref() != Some(expected))
+        {
+            continue;
+        }
+
+        alert_count += 1;
+        latest_alert_ts_ms =
+            Some(latest_alert_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)));
+        if let Some(run_id) = log.run_id {
+            runs.insert(run_id);
+        }
+        if let Some(account_id) = log_account_id {
+            accounts.insert(account_id);
+        }
+        if let Some(symbol) = log_symbol {
+            symbols.insert(symbol);
+        }
+        if let Some(reason) = log_reason {
+            reasons.insert(reason);
+        }
+    }
+
+    Ok(Json(ReconciliationAlertSummaryResponse {
+        run_id,
+        alert_count,
+        latest_alert_ts_ms,
+        runs: runs.into_iter().collect(),
+        accounts: accounts.into_iter().collect(),
+        symbols: symbols.into_iter().collect(),
+        reasons: reasons.into_iter().collect(),
+    }))
+}
+
+async fn reconciliation_alert_deliveries_summary_response(
+    db: &storage::Db,
+    run_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Json<ReconciliationAlertDeliverySummaryResponse>, ApiError> {
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: run_id.clone(),
+            level: None,
+            target: Some("runtime.alert_delivery".to_string()),
+            from_ms,
+            to_ms,
+            limit,
+        })
+        .await?;
+
+    let mut latest_delivery_ts_ms = None;
+    let mut statuses = BTreeSet::new();
+    let mut sinks = BTreeSet::new();
+    let mut delivery_count = 0usize;
+    let mut sent_count = 0usize;
+    let mut failed_count = 0usize;
+
+    for log in logs {
+        if log.message != "alert.delivery" {
+            continue;
+        }
+        let fields = log
+            .fields_json
+            .as_deref()
+            .and_then(parse_log_fields)
+            .unwrap_or(serde_json::Value::Null);
+        let log_account_id = json_string_field(&fields, "account_id");
+        let log_symbol = json_string_field(&fields, "symbol");
+        if account_id
+            .as_deref()
+            .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
+        {
+            continue;
+        }
+        if symbol
+            .as_deref()
+            .is_some_and(|expected| log_symbol.as_deref() != Some(expected))
+        {
+            continue;
+        }
+
+        delivery_count += 1;
+        latest_delivery_ts_ms =
+            Some(latest_delivery_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)));
+        if let Some(status) = json_string_field(&fields, "status") {
+            if status == "sent" {
+                sent_count += 1;
+            }
+            if status == "failed" {
+                failed_count += 1;
+            }
+            statuses.insert(status);
+        }
+        if let Some(sink) = json_string_field(&fields, "sink") {
+            sinks.insert(sink);
+        }
+    }
+
+    Ok(Json(ReconciliationAlertDeliverySummaryResponse {
+        run_id,
+        delivery_count,
+        latest_delivery_ts_ms,
+        sent_count,
+        failed_count,
+        statuses: statuses.into_iter().collect(),
+        sinks: sinks.into_iter().collect(),
+    }))
+}
+
+fn parse_log_fields(fields_json: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(fields_json).ok()
+}
+
+fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value.get(key)?.as_str().map(str::to_string)
+}
+
+fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
+    if !alerts.enabled {
+        return AlertSinkSettings::Noop;
+    }
+    match (
+        alerts.sink.as_deref(),
+        alerts.file_path.as_ref().filter(|path| !path.is_empty()),
+        alerts.webhook_url.as_ref().filter(|url| !url.is_empty()),
+    ) {
+        (Some("file"), Some(path), _) => AlertSinkSettings::File {
+            path: path.clone(),
+            cooldown_ms: alerts.cooldown_ms.unwrap_or(300_000),
+        },
+        (Some("webhook"), _, Some(url)) => AlertSinkSettings::Webhook {
+            url: url.clone(),
+            cooldown_ms: alerts.cooldown_ms.unwrap_or(300_000),
+            timeout_ms: alerts.webhook_timeout_ms.unwrap_or(3_000),
+            max_retries: alerts.webhook_max_retries.unwrap_or(2),
+            auth_token: alerts.webhook_auth_token.clone(),
+        },
+        _ => AlertSinkSettings::Noop,
+    }
 }
 
 fn run_response(run: storage::StrategyRunRecord) -> RunResponse {

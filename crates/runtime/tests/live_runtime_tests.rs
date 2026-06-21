@@ -1,5 +1,5 @@
 use broker::BrokerKind;
-use runtime::{CancellationFlag, LiveRuntime, LiveRuntimeSettings};
+use runtime::{AlertSinkSettings, CancellationFlag, LiveRuntime, LiveRuntimeSettings};
 use rust_decimal::Decimal;
 use storage::{Db, RuntimePositionSnapshotCommand, SystemLogFilter};
 
@@ -14,6 +14,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
         base_currency: "USD".to_string(),
         initial_cash: dec("25000"),
         broker_snapshot_interval_ms: None,
+        alert_sink: AlertSinkSettings::Noop,
     };
     let live = LiveRuntime::new(db.clone(), settings);
     let cancel = CancellationFlag::default();
@@ -31,6 +32,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
             base_currency: "USD".to_string(),
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
         },
     )
     .broker_status()
@@ -72,6 +74,7 @@ async fn live_runtime_periodically_records_broker_reported_cash_snapshot() {
             base_currency: "USDT".to_string(),
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -103,6 +106,7 @@ async fn live_runtime_periodically_records_broker_reported_position_snapshot() {
             base_currency: "USDT".to_string(),
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -147,6 +151,7 @@ async fn live_runtime_emits_reconciliation_drift_when_broker_cash_differs_from_r
             base_currency: "USDT".to_string(),
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -183,6 +188,7 @@ async fn live_runtime_emits_reconciliation_drift_when_broker_position_is_missing
             base_currency: "USDT".to_string(),
             initial_cash: dec("100000"),
             broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -225,6 +231,7 @@ async fn live_runtime_emits_reconciliation_drift_when_runtime_position_qty_diffe
             base_currency: "USDT".to_string(),
             initial_cash: dec("100000"),
             broker_snapshot_interval_ms: Some(100),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -287,6 +294,7 @@ async fn live_runtime_records_source_system_logs_for_snapshots_and_reconciliatio
             base_currency: "USDT".to_string(),
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
         },
     );
     let cancel = CancellationFlag::default();
@@ -324,6 +332,362 @@ async fn live_runtime_records_source_system_logs_for_snapshots_and_reconciliatio
                 .as_deref()
                 .is_some_and(|fields| fields.contains("cash_total_drift"))
     }));
+    assert!(logs.iter().any(|log| {
+        log.level == "ERROR"
+            && log.target == "runtime.alert"
+            && log.message == "reconciliation_drift.alert"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("reconciliation_drift"))
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_writes_reconciliation_alert_to_file_sink_when_configured() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let alert_file = std::env::temp_dir().join(format!(
+        "trader-live-alert-{}.jsonl",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-file".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::File {
+                path: alert_file.display().to_string(),
+                cooldown_ms: 60_000,
+            },
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-file", "runtime.alert").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let content = std::fs::read_to_string(&alert_file).unwrap();
+    assert!(content.contains("\"target\":\"runtime.alert\""));
+    assert!(content.contains("\"message\":\"reconciliation_drift.alert\""));
+    assert!(content.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-file|live-account||cash_total_drift\""));
+    assert!(content.contains("\"run_id\":\"live-alert-file\""));
+
+    let _ = std::fs::remove_file(alert_file);
+}
+
+#[tokio::test]
+async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 8192];
+        let size = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let request = String::from_utf8_lossy(&buf[..size]).to_string();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
+        )
+        .await
+        .unwrap();
+        request
+    });
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-webhook".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Webhook {
+                url: format!("http://{addr}/alerts"),
+                cooldown_ms: 60_000,
+                timeout_ms: 1_000,
+                max_retries: 0,
+                auth_token: None,
+            },
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-webhook", "runtime.alert").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+    let request = server.await.unwrap();
+    assert!(request.starts_with("POST /alerts HTTP/1.1"));
+    assert!(request.contains("\"target\":\"runtime.alert\""));
+    assert!(request.contains("\"message\":\"reconciliation_drift.alert\""));
+    assert!(request.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-webhook|live-account||cash_total_drift\""));
+    let delivery_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-alert-webhook".to_string()),
+            level: None,
+            target: Some("runtime.alert_delivery".to_string()),
+            from_ms: None,
+            to_ms: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(delivery_logs.iter().any(|log| {
+        log.level == "INFO"
+            && log.fields_json.as_deref().is_some_and(|fields| {
+                fields.contains("\"status\":\"sent\"") && fields.contains("\"http_status\":200")
+            })
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_retries_webhook_alert_with_auth_header() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for status_line in [
+            "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 5\r\ncontent-type: text/plain\r\n\r\nerror",
+            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
+        ] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let size = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            requests.push(String::from_utf8_lossy(&buf[..size]).to_string());
+            tokio::io::AsyncWriteExt::write_all(&mut stream, status_line.as_bytes())
+                .await
+                .unwrap();
+        }
+        requests
+    });
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-webhook-retry".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Webhook {
+                url: format!("http://{addr}/alerts"),
+                cooldown_ms: 60_000,
+                timeout_ms: 1_000,
+                max_retries: 1,
+                auth_token: Some("secret-token".to_string()),
+            },
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-webhook-retry", "runtime.alert").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("POST /alerts HTTP/1.1"));
+    assert!(
+        requests[0].contains("authorization: Bearer secret-token")
+            || requests[0].contains("Authorization: Bearer secret-token")
+    );
+    assert!(requests[1].contains("\"message\":\"reconciliation_drift.alert\""));
+    let delivery_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-alert-webhook-retry".to_string()),
+            level: None,
+            target: Some("runtime.alert_delivery".to_string()),
+            from_ms: None,
+            to_ms: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(delivery_logs.iter().any(|log| {
+        log.level == "INFO"
+            && log.fields_json.as_deref().is_some_and(|fields| {
+                fields.contains("\"status\":\"sent\"") && fields.contains("\"attempts\":2")
+            })
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_does_not_retry_webhook_alert_on_client_error_and_logs_failure() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 8192];
+        let size = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let request = String::from_utf8_lossy(&buf[..size]).to_string();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"HTTP/1.1 400 Bad Request\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nbad",
+        )
+        .await
+        .unwrap();
+        request
+    });
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-webhook-400".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Webhook {
+                url: format!("http://{addr}/alerts"),
+                cooldown_ms: 60_000,
+                timeout_ms: 1_000,
+                max_retries: 3,
+                auth_token: None,
+            },
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-webhook-400", "runtime.alert").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+    let request = server.await.unwrap();
+    assert!(request.starts_with("POST /alerts HTTP/1.1"));
+    let delivery_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-alert-webhook-400".to_string()),
+            level: None,
+            target: Some("runtime.alert_delivery".to_string()),
+            from_ms: None,
+            to_ms: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(delivery_logs.iter().any(|log| {
+        log.level == "WARN"
+            && log.fields_json.as_deref().is_some_and(|fields| {
+                fields.contains("\"status\":\"failed\"")
+                    && fields.contains("\"http_status\":400")
+                    && fields.contains("\"attempts\":1")
+            })
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_suppresses_duplicate_file_sink_alerts_within_cooldown() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let alert_file = std::env::temp_dir().join(format!(
+        "trader-live-alert-dedup-{}.jsonl",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    db.record_system_log(storage::SystemLogCommand {
+        run_id: Some("live-alert-dedup".to_string()),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        level: "ERROR".to_string(),
+        target: "runtime.alert".to_string(),
+        message: "reconciliation_drift.alert".to_string(),
+        fields: Some(serde_json::json!({
+            "run_id": "live-alert-dedup",
+            "account_id": "live-account",
+            "risk_type": "reconciliation_drift",
+            "reason": "cash_total_drift",
+            "threshold": "0",
+            "observed_value": "75000",
+            "runtime_cash": "25000",
+            "broker_cash": "100000",
+            "currency": "USDT",
+        })),
+    })
+    .await
+    .unwrap();
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-dedup".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::File {
+                path: alert_file.display().to_string(),
+                cooldown_ms: 60_000,
+            },
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-dedup", "runtime.reconciliation").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let content = std::fs::read_to_string(&alert_file).unwrap_or_default();
+    assert!(!content.contains("\"reason\":\"cash_total_drift\""));
+    let alert_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-alert-dedup".to_string()),
+            level: None,
+            target: Some("runtime.alert".to_string()),
+            from_ms: None,
+            to_ms: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(alert_logs.len() >= 2);
+
+    let _ = std::fs::remove_file(alert_file);
 }
 
 fn dec(value: &str) -> Decimal {

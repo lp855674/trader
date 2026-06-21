@@ -17,3 +17,4 @@ serde_json.workspace = true
 storage.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+reqwest.workspace = true
