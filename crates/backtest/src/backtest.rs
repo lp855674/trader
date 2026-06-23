@@ -2,18 +2,19 @@
 
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, ExecutionReport};
 use data::{Bar, MarketSlice};
-use events::EventBus;
+use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use storage::{
     BacktestCompletedRun, BacktestFilledExecutionCommand, BacktestPositionCommand, Db,
-    RuntimeEventCommand,
+    DbSystemLogSink, RuntimeEventCommand,
 };
 use strategies::{
     StrategyAlphaComponentConfig, StrategyAlphaConflictResolution, StrategyAlphaGateConfig,
     StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode, StrategyUniverseFilterConfig,
 };
+use tracing_subscriber::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
@@ -47,6 +48,7 @@ pub struct BacktestSettings {
     pub initial_equity: Decimal,
     pub fast_window: usize,
     pub slow_window: usize,
+    pub logging: LogWriterSettings,
 }
 
 impl BacktestSettings {
@@ -76,6 +78,7 @@ impl BacktestSettings {
             initial_equity: Decimal::from(100_000),
             fast_window: 2,
             slow_window: 3,
+            logging: LogWriterSettings::default(),
         }
     }
 
@@ -121,6 +124,23 @@ impl BacktestRuntime {
         &self,
         market_slices: Vec<MarketSlice>,
     ) -> anyhow::Result<BacktestSummary> {
+        let log_scope = self.db.clone().and_then(|db| {
+            self.settings.logging.enabled.then(|| {
+                BacktestLogScope::new(
+                    db,
+                    self.settings.run_id.clone(),
+                    self.settings.logging.clone(),
+                )
+            })
+        });
+        if log_scope.is_some() {
+            tracing::info!(
+                run_id = %self.settings.run_id,
+                mode = "backtest",
+                symbol = %self.primary_symbol(),
+                "backtest run started"
+            );
+        }
         let registry = StrategyRegistry;
         let assembly = registry.assemble_alpha(
             StrategyAssemblyConfig {
@@ -168,74 +188,110 @@ impl BacktestRuntime {
         let started_at_ms = market_slices.first().map_or(0, |slice| slice.ts_ms);
         let mut ended_at_ms = started_at_ms;
 
-        for market_slice in market_slices {
-            ended_at_ms = market_slice.ts_ms;
-            let step = engine.on_market_slice(market_slice.clone())?;
-            for decision in step.decisions {
-                signals += 1;
-                let Some(order) = decision.order else {
-                    continue;
-                };
-                let bar = market_slice.bar(&order.symbol).ok_or_else(|| {
-                    anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
-                })?;
-                let broker_order_id = format!("backtest-{}", decision.order_number);
-                let execution = engine.apply_execution(
-                    &order,
-                    &ExecutionReport {
-                        broker_order_id: broker_order_id.clone(),
-                        status: "FILLED".to_string(),
-                        price: bar.close,
-                        qty: order.qty,
-                        fee: Decimal::ZERO,
-                    },
-                    bar.ts_ms,
-                )?;
+        let result = async {
+            for market_slice in market_slices {
+                ended_at_ms = market_slice.ts_ms;
+                let step = engine.on_market_slice(market_slice.clone())?;
+                for decision in step.decisions {
+                    signals += 1;
+                    let Some(order) = decision.order else {
+                        continue;
+                    };
+                    let bar = market_slice.bar(&order.symbol).ok_or_else(|| {
+                        anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
+                    })?;
+                    let broker_order_id = format!("backtest-{}", decision.order_number);
+                    let execution = engine.apply_execution(
+                        &order,
+                        &ExecutionReport {
+                            broker_order_id: broker_order_id.clone(),
+                            status: "FILLED".to_string(),
+                            price: bar.close,
+                            qty: order.qty,
+                            fee: Decimal::ZERO,
+                        },
+                        bar.ts_ms,
+                    )?;
 
-                if let Some(db) = &self.db {
-                    record_runtime_events(db, &self.settings.run_id, &decision.events).await?;
-                    record_runtime_events(db, &self.settings.run_id, &execution.events).await?;
-                    db.record_backtest_filled_execution(BacktestFilledExecutionCommand {
+                    if log_scope.is_some() {
+                        tracing::info!(
+                            run_id = %self.settings.run_id,
+                            order_id = %decision.order_id,
+                            fill_id = %decision.fill_id,
+                            symbol = %order.symbol,
+                            qty = %order.qty,
+                            price = %bar.close,
+                            ts_ms = bar.ts_ms,
+                            category = "trading",
+                            broker_order_id = %broker_order_id,
+                            "backtest order filled"
+                        );
+                    }
+
+                    if let Some(db) = &self.db {
+                        record_runtime_events(db, &self.settings.run_id, &decision.events).await?;
+                        record_runtime_events(db, &self.settings.run_id, &execution.events).await?;
+                        db.record_backtest_filled_execution(BacktestFilledExecutionCommand {
+                            run_id: self.settings.run_id.clone(),
+                            order_id: decision.order_id,
+                            fill_id: decision.fill_id,
+                            broker_order_id,
+                            order,
+                            fill_price: bar.close,
+                            fee: Decimal::ZERO,
+                            ts_ms: bar.ts_ms,
+                        })
+                        .await?;
+                    }
+                    orders += 1;
+                }
+            }
+
+            if let Some(db) = &self.db {
+                db.complete_backtest_run(BacktestCompletedRun {
+                    run_id: self.settings.run_id.clone(),
+                    strategy_name: self.settings.strategy_name.clone(),
+                    started_at_ms,
+                    ended_at_ms,
+                    config_json: self.settings.config_json.clone(),
+                })
+                .await?;
+
+                let snapshot = engine.snapshot_from_prices()?;
+                for position in snapshot.positions {
+                    db.record_backtest_position(BacktestPositionCommand {
                         run_id: self.settings.run_id.clone(),
-                        order_id: decision.order_id,
-                        fill_id: decision.fill_id,
-                        broker_order_id,
-                        order,
-                        fill_price: bar.close,
-                        fee: Decimal::ZERO,
-                        ts_ms: bar.ts_ms,
+                        account_id: self.settings.account_id.clone(),
+                        symbol: position.symbol,
+                        qty: position.qty,
+                        avg_price: position.avg_price,
+                        updated_at_ms: ended_at_ms,
                     })
                     .await?;
                 }
-                orders += 1;
             }
+
+            Ok(BacktestSummary { signals, orders })
         }
-
-        if let Some(db) = &self.db {
-            db.complete_backtest_run(BacktestCompletedRun {
-                run_id: self.settings.run_id.clone(),
-                strategy_name: self.settings.strategy_name.clone(),
-                started_at_ms,
-                ended_at_ms,
-                config_json: self.settings.config_json.clone(),
-            })
-            .await?;
-
-            let snapshot = engine.snapshot_from_prices()?;
-            for position in snapshot.positions {
-                db.record_backtest_position(BacktestPositionCommand {
-                    run_id: self.settings.run_id.clone(),
-                    account_id: self.settings.account_id.clone(),
-                    symbol: position.symbol,
-                    qty: position.qty,
-                    avg_price: position.avg_price,
-                    updated_at_ms: ended_at_ms,
-                })
-                .await?;
-            }
+        .await;
+        match &result {
+            Ok(summary) if log_scope.is_some() => tracing::info!(
+                run_id = %self.settings.run_id,
+                signals = summary.signals as u64,
+                orders = summary.orders as u64,
+                "backtest run completed"
+            ),
+            Err(error) if log_scope.is_some() => tracing::error!(
+                run_id = %self.settings.run_id,
+                error = %error,
+                "backtest run failed"
+            ),
+            _ => {}
         }
-
-        Ok(BacktestSummary { signals, orders })
+        if let Some(log_scope) = log_scope {
+            log_scope.shutdown().await;
+        }
+        result
     }
 
     fn primary_symbol(&self) -> String {
@@ -267,5 +323,36 @@ async fn record_runtime_events(
 impl Default for BacktestSettings {
     fn default() -> Self {
         Self::sample()
+    }
+}
+
+struct BacktestLogScope {
+    _guard: tracing::subscriber::DefaultGuard,
+    writer: LogWriter<DbSystemLogSink>,
+}
+
+impl BacktestLogScope {
+    fn new(db: Db, run_id: String, settings: LogWriterSettings) -> Self {
+        let writer = LogWriter::new_with_metrics(
+            DbSystemLogSink::new(db),
+            settings.buffer_size,
+            settings.batch_size,
+            settings.flush_interval_ms,
+            settings.metrics.clone(),
+        );
+        let subscriber = tracing_subscriber::registry().with(
+            SystemLogLayer::new(writer.sender(), Some(run_id))
+                .with_settings(settings)
+                .with_metrics(writer.metrics()),
+        );
+        let guard = tracing::subscriber::set_default(subscriber);
+        Self {
+            _guard: guard,
+            writer,
+        }
+    }
+
+    async fn shutdown(self) {
+        self.writer.shutdown().await;
     }
 }

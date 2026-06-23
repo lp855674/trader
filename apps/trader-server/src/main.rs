@@ -12,6 +12,11 @@ async fn main() -> Result<()> {
     ensure_database_parent(&database_url)?;
     let db = storage::Db::connect(&database_url).await?;
     db.migrate().await?;
+    let _retention_scheduler = api::spawn_logging_retention_scheduler(
+        db.clone(),
+        config_path.clone(),
+        std::time::Duration::from_secs(86_400),
+    );
     let state = api::AppState::new(db, config_path);
     let address = SocketAddr::from(([127, 0, 0, 1], 8080));
     let listener = tokio::net::TcpListener::bind(address).await?;

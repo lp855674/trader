@@ -46,3 +46,25 @@ fee_bps = "10"
 
 [live]
 enabled = false
+
+[live.alerts]
+enabled = false
+cooldown_ms = 300000
+webhook_timeout_ms = 3000
+webhook_max_retries = 2
+
+[[live.alerts.sinks]]
+sink = "file"
+file_path = "target/runtime-alerts.jsonl"
+
+[[live.alerts.sinks]]
+sink = "webhook"
+webhook_url = "http://127.0.0.1:18080/alerts"
+
+[logging]
+enabled = true
+level = "info"
+buffer_size = 1000
+flush_interval_ms = 5000
+retention_days = 30
+console_output = true

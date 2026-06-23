@@ -1549,7 +1549,7 @@ async fn post_paper_run_populates_query_routes() {
     );
     let completed = logs
         .iter()
-        .find(|log| log["message"] == "paper run completed")
+        .find(|log| log["message"] == "paper run completed" && log["target"] == "api.run")
         .unwrap();
     assert_eq!(completed["level"], "INFO");
     assert_eq!(completed["target"], "api.run");

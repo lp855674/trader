@@ -4,6 +4,8 @@ use feature_store::{
     build_feature_manifest_with_contract, load_feature_manifest, load_feature_records_from_parquet,
     write_feature_manifest, write_feature_records_to_parquet,
 };
+use hmac::Mac;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use rust_decimal_macros::dec;
 use std::path::PathBuf;
@@ -2856,6 +2858,248 @@ fn logs_commands_filter_and_purge_system_logs() {
 }
 
 #[test]
+fn logs_metrics_prints_drop_counter_and_writer_config() {
+    let config = seed_logs_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args(["logs", "metrics", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("logging_metrics: dropped_logs=0"))
+        .stdout(contains("enabled=true"))
+        .stdout(contains("buffer_size=1000"))
+        .stdout(contains("flush_interval_ms=5000"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn logs_ship_posts_filtered_system_logs_to_collector() {
+    let config = seed_logs_cli_storage();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let mut content_length = None;
+        loop {
+            let size = std::io::Read::read(&mut stream, &mut chunk).unwrap();
+            if size == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..size]);
+            if content_length.is_none()
+                && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let headers = String::from_utf8_lossy(&buf[..headers_end + 4]);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length: ")
+                            .or_else(|| line.strip_prefix("Content-Length: "))
+                    })
+                    .and_then(|value| value.trim().parse::<usize>().ok());
+            }
+            if let Some(expected) = content_length
+                && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let body_len = buf.len().saturating_sub(headers_end + 4);
+                if body_len >= expected {
+                    break;
+                }
+            }
+        }
+        let request = String::from_utf8_lossy(&buf).to_string();
+        std::io::Write::write_all(
+            &mut stream,
+            b"HTTP/1.1 202 Accepted\r\ncontent-length: 8\r\ncontent-type: text/plain\r\n\r\naccepted",
+        )
+        .unwrap();
+        request
+    });
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .env("TRADER_LOG_SHIP_SECRET", "ship-secret")
+        .args([
+            "logs",
+            "ship",
+            "--config",
+            config.to_str().unwrap(),
+            "--collector-url",
+            &format!("http://{addr}/logs"),
+            "--run-id",
+            "cli-logs-run",
+            "--level",
+            "ERROR",
+            "--search",
+            "failed",
+            "--bearer-token",
+            "ship-token",
+            "--signature-secret-env",
+            "TRADER_LOG_SHIP_SECRET",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_logs_shipped: count=1 status=202"));
+
+    let request = server.join().unwrap();
+    assert!(request.starts_with("POST /logs HTTP/1.1"));
+    assert!(
+        request.contains("authorization: Bearer ship-token")
+            || request.contains("Authorization: Bearer ship-token")
+    );
+    assert!(
+        request.contains("content-type: application/x-ndjson")
+            || request.contains("Content-Type: application/x-ndjson")
+    );
+    let timestamp = http_header_value(&request, "x-trader-log-timestamp")
+        .expect("missing X-Trader-Log-Timestamp header");
+    let signature = http_header_value(&request, "x-trader-log-signature")
+        .expect("missing X-Trader-Log-Signature header");
+    let body = http_body(&request);
+    assert_eq!(
+        signature,
+        format!(
+            "v1={}",
+            test_log_ship_signature("ship-secret", &timestamp, body)
+        )
+    );
+    assert!(request.contains("\"run_id\":\"cli-logs-run\""));
+    assert!(request.contains("\"level\":\"ERROR\""));
+    assert!(request.contains("\"target\":\"runtime.execution\""));
+    assert!(request.contains("\"message\":\"execution failed\""));
+    assert!(request.contains("\"fields\":{\"category\":\"runtime\"}"));
+    assert!(!request.contains("execution started"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn logs_ship_retries_retryable_collector_failures() {
+    let config = seed_logs_cli_storage();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        for response in [
+            b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 5\r\n\r\nerror".as_slice(),
+            b"HTTP/1.1 202 Accepted\r\ncontent-length: 8\r\n\r\naccepted".as_slice(),
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            requests.push(read_http_request(&mut stream));
+            std::io::Write::write_all(&mut stream, response).unwrap();
+        }
+        requests
+    });
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "logs",
+            "ship",
+            "--config",
+            config.to_str().unwrap(),
+            "--collector-url",
+            &format!("http://{addr}/logs"),
+            "--run-id",
+            "cli-logs-run",
+            "--level",
+            "ERROR",
+            "--search",
+            "failed",
+            "--max-retries",
+            "1",
+            "--retry-backoff-ms",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            "system_logs_shipped: count=1 status=202 attempts=2",
+        ));
+
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| {
+        request.contains("\"message\":\"execution failed\"")
+            && !request.contains("execution started")
+    }));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn logs_commands_support_search_count_and_tail() {
+    let config = seed_logs_cli_storage();
+
+    let mut list = Command::cargo_bin("trader").unwrap();
+    list.current_dir(workspace_root())
+        .args([
+            "logs",
+            "list",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-logs-run",
+            "--search",
+            "failed",
+            "--limit",
+            "1",
+            "--offset",
+            "0",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("message=execution failed"))
+        .stdout(predicates::str::contains("execution started").not());
+
+    let mut count = Command::cargo_bin("trader").unwrap();
+    count
+        .current_dir(workspace_root())
+        .args([
+            "logs",
+            "count",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-logs-run",
+            "--search",
+            "execution",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_logs_count: count=2"));
+
+    let mut tail = Command::cargo_bin("trader").unwrap();
+    tail.current_dir(workspace_root())
+        .args([
+            "logs",
+            "tail",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-logs-run",
+            "--poll-interval-ms",
+            "1",
+            "--max-polls",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("system_log: run_id=cli-logs-run"))
+        .stdout(contains("message=execution started"))
+        .stdout(contains("message=execution failed"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn reconciliation_alerts_summary_reports_runtime_alert_aggregate() {
     let config = seed_reconciliation_alerts_cli_storage();
     let export = temp_output("trader-cli-reconciliation-alerts-export", "jsonl");
@@ -3405,6 +3649,64 @@ fn seed_logs_cli_storage() -> PathBuf {
     });
 
     config
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let mut content_length = None;
+    loop {
+        let size = std::io::Read::read(stream, &mut chunk).unwrap();
+        if size == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..size]);
+        if content_length.is_none()
+            && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+        {
+            let headers = String::from_utf8_lossy(&buf[..headers_end + 4]);
+            content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("content-length: ")
+                        .or_else(|| line.strip_prefix("Content-Length: "))
+                })
+                .and_then(|value| value.trim().parse::<usize>().ok());
+        }
+        if let Some(expected) = content_length
+            && let Some(headers_end) = buf.windows(4).position(|window| window == b"\r\n\r\n")
+        {
+            let body_len = buf.len().saturating_sub(headers_end + 4);
+            if body_len >= expected {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&buf).to_string()
+}
+
+fn http_header_value(request: &str, name: &str) -> Option<String> {
+    let expected = format!("{name}:");
+    request
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with(&expected))
+        .and_then(|line| {
+            line.split_once(':')
+                .map(|(_, value)| value.trim().to_string())
+        })
+}
+
+fn http_body(request: &str) -> &str {
+    request.split_once("\r\n\r\n").map_or("", |(_, body)| body)
+}
+
+fn test_log_ship_signature(secret: &str, timestamp_ms: &str, body: &str) -> String {
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes())
+        .expect("HMAC accepts keys of any length");
+    hmac::Mac::update(&mut mac, timestamp_ms.as_bytes());
+    hmac::Mac::update(&mut mac, b".");
+    hmac::Mac::update(&mut mac, body.as_bytes());
+    hex::encode(hmac::Mac::finalize(mac).into_bytes())
 }
 
 fn seed_reconciliation_alerts_cli_storage() -> PathBuf {

@@ -834,6 +834,15 @@ impl AlgorithmEngine {
         let Some(signal) = self.alpha.on_bar_for_symbol(symbol, bar) else {
             return Ok(None);
         };
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            symbol = %signal.symbol,
+            side = ?signal.side,
+            confidence = signal.confidence,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            "algorithm alpha generated"
+        );
         events.push(self.event(
             EngineEventKind::AlphaGenerated,
             bar.ts_ms,
@@ -847,6 +856,14 @@ impl AlgorithmEngine {
 
         let target = equal_weight_target(&signal, self.settings.order_qty);
         check_max_position(&target, self.settings.max_abs_qty)?;
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            symbol = %target.symbol,
+            target_qty = %target.target_qty,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            "algorithm portfolio target generated"
+        );
         events.push(self.event(
             EngineEventKind::PortfolioTargetGenerated,
             bar.ts_ms,
@@ -927,6 +944,17 @@ impl AlgorithmEngine {
             self.account_book.cash(),
             self.settings.trading_halted,
         )?;
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            symbol = %order.symbol,
+            qty = %order.qty,
+            side = ?order.side,
+            price = %bar.close,
+            cash = %self.account_book.cash(),
+            ts_ms = bar.ts_ms,
+            category = "risk",
+            "algorithm risk approved"
+        );
         events.push(self.event(
             EngineEventKind::RiskApproved,
             bar.ts_ms,
@@ -950,6 +978,16 @@ impl AlgorithmEngine {
                 None,
             ),
         ));
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            symbol = %order.symbol,
+            qty = %order.qty,
+            side = ?order.side,
+            price = %bar.close,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            "algorithm execution order generated"
+        );
         let mut order_state = OrderStateMachine::with_order_qty(order.qty);
         order_state.submit()?;
         events.push(self.event(
@@ -1014,6 +1052,18 @@ impl AlgorithmEngine {
         } else {
             EngineEventKind::BrokerOrderUnfilled
         };
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            symbol = %order.symbol,
+            qty = %report.qty,
+            price = %report.price,
+            fee = %report.fee,
+            status = %report.status,
+            broker_order_id = %report.broker_order_id,
+            ts_ms = ts_ms,
+            category = "trading",
+            "algorithm execution applied"
+        );
         let events = vec![
             self.event(
                 fill_kind,

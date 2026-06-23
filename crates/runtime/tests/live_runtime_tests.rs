@@ -15,6 +15,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
         initial_cash: dec("25000"),
         broker_snapshot_interval_ms: None,
         alert_sink: AlertSinkSettings::Noop,
+        logging: Default::default(),
     };
     let live = LiveRuntime::new(db.clone(), settings);
     let cancel = CancellationFlag::default();
@@ -33,6 +34,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: None,
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     )
     .broker_status()
@@ -75,6 +77,7 @@ async fn live_runtime_periodically_records_broker_reported_cash_snapshot() {
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -107,6 +110,7 @@ async fn live_runtime_periodically_records_broker_reported_position_snapshot() {
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -152,6 +156,7 @@ async fn live_runtime_emits_reconciliation_drift_when_broker_cash_differs_from_r
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -189,6 +194,7 @@ async fn live_runtime_emits_reconciliation_drift_when_broker_position_is_missing
             initial_cash: dec("100000"),
             broker_snapshot_interval_ms: Some(5),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -232,6 +238,7 @@ async fn live_runtime_emits_reconciliation_drift_when_runtime_position_qty_diffe
             initial_cash: dec("100000"),
             broker_snapshot_interval_ms: Some(100),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -295,6 +302,7 @@ async fn live_runtime_records_source_system_logs_for_snapshots_and_reconciliatio
             initial_cash: dec("25000"),
             broker_snapshot_interval_ms: Some(5),
             alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -311,12 +319,36 @@ async fn live_runtime_records_source_system_logs_for_snapshots_and_reconciliatio
         log.level == "INFO" && log.target == "runtime.live" && log.message == "live.started"
     }));
     assert!(logs.iter().any(|log| {
+        log.level == "INFO"
+            && log.message == "live runtime started"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"category\":\"system\""))
+    }));
+    assert!(logs.iter().any(|log| {
         log.level == "INFO" && log.target == "runtime.live" && log.message == "live.stopped"
+    }));
+    assert!(logs.iter().any(|log| {
+        log.level == "INFO"
+            && log.message == "live runtime stopped"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"category\":\"system\""))
     }));
     assert!(logs.iter().any(|log| {
         log.level == "INFO"
             && log.target == "runtime.broker_snapshot"
             && log.message == "broker.snapshot.cash"
+    }));
+    assert!(logs.iter().any(|log| {
+        log.level == "INFO"
+            && log.message == "live broker cash snapshot captured"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"category\":\"broker\""))
     }));
     assert!(logs.iter().any(|log| {
         log.level == "INFO"
@@ -367,6 +399,7 @@ async fn live_runtime_writes_reconciliation_alert_to_file_sink_when_configured()
                 path: alert_file.display().to_string(),
                 cooldown_ms: 60_000,
             },
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -395,15 +428,7 @@ async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buf = vec![0u8; 8192];
-        let size = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        let request = String::from_utf8_lossy(&buf[..size]).to_string();
+        let request = read_http_request(&mut stream).await;
         tokio::io::AsyncWriteExt::write_all(
             &mut stream,
             b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
@@ -428,6 +453,7 @@ async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured
                 max_retries: 0,
                 auth_token: None,
             },
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -450,7 +476,9 @@ async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured
             target: Some("runtime.alert_delivery".to_string()),
             from_ms: None,
             to_ms: None,
+            search: None,
             limit: None,
+            offset: None,
         })
         .await
         .unwrap();
@@ -460,6 +488,99 @@ async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured
                 fields.contains("\"status\":\"sent\"") && fields.contains("\"http_status\":200")
             })
     }));
+}
+
+#[tokio::test]
+async fn live_runtime_sends_reconciliation_alert_to_all_configured_sinks() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let alert_file = std::env::temp_dir().join(format!(
+        "trader-live-alert-multi-{}.jsonl",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut stream).await;
+        tokio::io::AsyncWriteExt::write_all(
+            &mut stream,
+            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
+        )
+        .await
+        .unwrap();
+        request
+    });
+    let live = LiveRuntime::new(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-alert-multi".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Multi(vec![
+                AlertSinkSettings::File {
+                    path: alert_file.display().to_string(),
+                    cooldown_ms: 60_000,
+                },
+                AlertSinkSettings::Webhook {
+                    url: format!("http://{addr}/alerts"),
+                    cooldown_ms: 60_000,
+                    timeout_ms: 1_000,
+                    max_retries: 0,
+                    auth_token: None,
+                },
+            ]),
+            logging: Default::default(),
+        },
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(&db, "live-alert-multi", "runtime.alert").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+    let request = server.await.unwrap();
+    assert!(request.starts_with("POST /alerts HTTP/1.1"));
+    assert!(request.contains("\"message\":\"reconciliation_drift.alert\""));
+    let content = std::fs::read_to_string(&alert_file).unwrap();
+    assert!(content.contains("\"message\":\"reconciliation_drift.alert\""));
+    let delivery_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-alert-multi".to_string()),
+            level: None,
+            target: Some("runtime.alert_delivery".to_string()),
+            from_ms: None,
+            to_ms: None,
+            search: None,
+            limit: None,
+            offset: None,
+        })
+        .await
+        .unwrap();
+    assert!(delivery_logs.iter().any(|log| {
+        log.level == "INFO"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"sink\":\"file\""))
+    }));
+    assert!(delivery_logs.iter().any(|log| {
+        log.level == "INFO"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"sink\":\"webhook\""))
+    }));
+
+    let _ = std::fs::remove_file(alert_file);
 }
 
 #[tokio::test]
@@ -475,15 +596,7 @@ async fn live_runtime_retries_webhook_alert_with_auth_header() {
             "HTTP/1.1 200 OK\r\ncontent-length: 2\r\ncontent-type: text/plain\r\n\r\nok",
         ] {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 8192];
-            let size = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            requests.push(String::from_utf8_lossy(&buf[..size]).to_string());
+            requests.push(read_http_request(&mut stream).await);
             tokio::io::AsyncWriteExt::write_all(&mut stream, status_line.as_bytes())
                 .await
                 .unwrap();
@@ -506,6 +619,7 @@ async fn live_runtime_retries_webhook_alert_with_auth_header() {
                 max_retries: 1,
                 auth_token: Some("secret-token".to_string()),
             },
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -531,7 +645,9 @@ async fn live_runtime_retries_webhook_alert_with_auth_header() {
             target: Some("runtime.alert_delivery".to_string()),
             from_ms: None,
             to_ms: None,
+            search: None,
             limit: None,
+            offset: None,
         })
         .await
         .unwrap();
@@ -551,15 +667,7 @@ async fn live_runtime_does_not_retry_webhook_alert_on_client_error_and_logs_fail
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buf = vec![0u8; 8192];
-        let size = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            tokio::io::AsyncReadExt::read(&mut stream, &mut buf),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        let request = String::from_utf8_lossy(&buf[..size]).to_string();
+        let request = read_http_request(&mut stream).await;
         tokio::io::AsyncWriteExt::write_all(
             &mut stream,
             b"HTTP/1.1 400 Bad Request\r\ncontent-length: 3\r\ncontent-type: text/plain\r\n\r\nbad",
@@ -584,6 +692,7 @@ async fn live_runtime_does_not_retry_webhook_alert_on_client_error_and_logs_fail
                 max_retries: 3,
                 auth_token: None,
             },
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -603,7 +712,9 @@ async fn live_runtime_does_not_retry_webhook_alert_on_client_error_and_logs_fail
             target: Some("runtime.alert_delivery".to_string()),
             from_ms: None,
             to_ms: None,
+            search: None,
             limit: None,
+            offset: None,
         })
         .await
         .unwrap();
@@ -661,6 +772,7 @@ async fn live_runtime_suppresses_duplicate_file_sink_alerts_within_cooldown() {
                 path: alert_file.display().to_string(),
                 cooldown_ms: 60_000,
             },
+            logging: Default::default(),
         },
     );
     let cancel = CancellationFlag::default();
@@ -681,7 +793,9 @@ async fn live_runtime_suppresses_duplicate_file_sink_alerts_within_cooldown() {
             target: Some("runtime.alert".to_string()),
             from_ms: None,
             to_ms: None,
+            search: None,
             limit: None,
+            offset: None,
         })
         .await
         .unwrap();
@@ -791,4 +905,40 @@ async fn wait_for_system_log(db: &Db, run_id: &str, target: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{run_id} did not emit system log target {target}");
+}
+
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let size = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::io::AsyncReadExt::read(stream, &mut buf),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if size == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buf[..size]);
+        if request_body_complete(&bytes) {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn request_body_complete(bytes: &[u8]) -> bool {
+    let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let header_text = String::from_utf8_lossy(&bytes[..header_end]);
+    let content_length = header_text
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    bytes.len() >= header_end + 4 + content_length
 }

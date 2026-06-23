@@ -26,6 +26,191 @@ async fn health_returns_ok() {
 }
 
 #[tokio::test]
+async fn api_requests_are_captured_as_system_logs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            search: Some("/api/v1/health".to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        logs.iter().any(|log| log.message == "api request completed"
+            && log.level == "INFO"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("\"status\":200"))),
+        "{logs:?}"
+    );
+}
+
+#[tokio::test]
+async fn logging_metrics_route_reads_shared_writer_metrics() {
+    use events::SystemLogLayer;
+    use tracing_subscriber::prelude::*;
+
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let state = api::AppState::new(db.clone(), "configs/backtest/ma_cross.toml".into());
+    let (layer_tx, _rx_guard) = tokio::sync::mpsc::channel(1);
+    let subscriber = tracing_subscriber::registry()
+        .with(SystemLogLayer::new(layer_tx, None).with_metrics(state.log_writer_metrics.clone()));
+    let dispatch = tracing::Dispatch::new(subscriber);
+    tracing::dispatcher::with_default(&dispatch, || {
+        tracing::info!("first log fills shared api metrics channel");
+        tracing::info!("second log increments shared api dropped count");
+    });
+
+    let response = api::router_with_state(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/ops/logging/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"dropped_logs\":1"), "{body}");
+    assert!(body.contains("\"buffer_size\":1000"), "{body}");
+}
+
+#[tokio::test]
+async fn logging_retention_scheduler_purges_old_system_logs() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    db.record_system_log(SystemLogCommand {
+        run_id: Some("retention-scheduler".to_string()),
+        ts_ms: now_ms - 2 * 86_400_000,
+        level: "INFO".to_string(),
+        target: "scheduler.test".to_string(),
+        message: "old log".to_string(),
+        fields: None,
+    })
+    .await
+    .unwrap();
+    db.record_system_log(SystemLogCommand {
+        run_id: Some("retention-scheduler".to_string()),
+        ts_ms: now_ms,
+        level: "INFO".to_string(),
+        target: "scheduler.test".to_string(),
+        message: "new log".to_string(),
+        fields: None,
+    })
+    .await
+    .unwrap();
+
+    let config_path = std::env::temp_dir().join(format!(
+        "trader-logging-retention-{}.toml",
+        std::process::id()
+    ));
+    std::fs::write(
+        &config_path,
+        r#"
+        [runtime]
+        mode = "backtest"
+        run_id = "retention-scheduler"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "0"
+        fee_bps = "0"
+
+        [live]
+        enabled = false
+
+        [logging]
+        retention_days = 1
+        "#,
+    )
+    .unwrap();
+
+    let scheduler = api::spawn_logging_retention_scheduler(
+        db.clone(),
+        config_path.display().to_string(),
+        std::time::Duration::from_millis(5),
+    );
+
+    let mut remaining = Vec::new();
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        remaining = db
+            .list_system_logs_filtered(storage::SystemLogFilter {
+                run_id: Some("retention-scheduler".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        if remaining.len() == 1 {
+            break;
+        }
+    }
+    scheduler.abort();
+    let _ = scheduler.await;
+    std::fs::remove_file(config_path).unwrap();
+
+    assert_eq!(remaining.len(), 1, "{remaining:?}");
+    assert_eq!(remaining[0].message, "new log");
+}
+
+#[tokio::test]
 async fn broker_status_returns_v1_fake_connectors() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -1578,6 +1763,65 @@ async fn system_logs_route_filters_by_run_level_target_and_time() {
     let run_logs = run_logs.as_array().unwrap();
     assert_eq!(run_logs.len(), 1);
     assert_eq!(run_logs[0]["run_id"], "run-logs");
+}
+
+#[tokio::test]
+async fn logs_route_returns_paginated_search_results_with_total() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for (run_id, ts_ms, level, target, message) in [
+        (
+            Some("run-logs"),
+            100,
+            "INFO",
+            "runtime.execution",
+            "execution started",
+        ),
+        (
+            Some("run-logs"),
+            200,
+            "ERROR",
+            "runtime.execution",
+            "execution failed",
+        ),
+        (
+            Some("run-logs"),
+            300,
+            "ERROR",
+            "runtime.execution",
+            "execution failed again",
+        ),
+    ] {
+        db.record_system_log(SystemLogCommand {
+            run_id: run_id.map(str::to_string),
+            ts_ms,
+            level: level.to_string(),
+            target: target.to_string(),
+            message: message.to_string(),
+            fields: Some(serde_json::json!({
+                "category": "runtime"
+            })),
+        })
+        .await
+        .unwrap();
+    }
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let body = get_json(
+        app,
+        "/api/v1/logs?run_id=run-logs&search=failed&limit=1&offset=1",
+    )
+    .await;
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["limit"], 1);
+    assert_eq!(body["offset"], 1);
+    let logs = body["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["message"], "execution failed again");
+    assert_eq!(logs[0]["fields"]["category"], "runtime");
 }
 
 #[tokio::test]

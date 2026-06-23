@@ -12,6 +12,7 @@ path = "src/storage.rs"
 trader_core.workspace = true
 events.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

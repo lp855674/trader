@@ -1,13 +1,15 @@
 use crate::CancellationFlag;
 use broker::{Broker, BrokerKind, BrokerPositionSide, BrokerStatus, FakeBrokerAdapter};
+use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
 use storage::{
-    BrokerPositionSnapshotCommand, Db, LiveRunCommand, PaperPortfolioSnapshotCommand,
-    RuntimeEventCommand, SystemLogCommand,
+    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, LiveRunCommand,
+    PaperPortfolioSnapshotCommand, RuntimeEventCommand, SystemLogCommand,
 };
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::time::{Duration, sleep};
+use tracing_subscriber::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveRuntimeSettings {
@@ -18,12 +20,14 @@ pub struct LiveRuntimeSettings {
     pub initial_cash: Decimal,
     pub broker_snapshot_interval_ms: Option<u64>,
     pub alert_sink: AlertSinkSettings,
+    pub logging: LogWriterSettings,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AlertSinkSettings {
     #[default]
     Noop,
+    Multi(Vec<AlertSinkSettings>),
     File {
         path: String,
         cooldown_ms: u64,
@@ -54,7 +58,19 @@ impl LiveRuntime {
     }
 
     pub async fn run(&self, cancel: CancellationFlag) -> anyhow::Result<()> {
+        let log_scope = LiveLogScope::new(
+            self.db.clone(),
+            self.settings.run_id.clone(),
+            self.settings.logging.clone(),
+        );
         let started_at_ms = chrono::Utc::now().timestamp_millis();
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            broker_kind = ?self.settings.broker_kind,
+            account_id = %self.settings.account_id,
+            category = "system",
+            "live runtime started"
+        );
         self.db
             .start_live_run(LiveRunCommand {
                 run_id: self.settings.run_id.clone(),
@@ -91,6 +107,13 @@ impl LiveRuntime {
         self.db
             .update_strategy_run_status(&self.settings.run_id, "stopped", Some(ended_at_ms), None)
             .await?;
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            broker_kind = ?self.settings.broker_kind,
+            account_id = %self.settings.account_id,
+            category = "system",
+            "live runtime stopped"
+        );
         self.record_event("live.stopped").await?;
         self.record_system_log(
             "INFO",
@@ -103,6 +126,9 @@ impl LiveRuntime {
             }),
         )
         .await?;
+        if let Some(log_scope) = log_scope {
+            log_scope.shutdown().await;
+        }
         Ok(())
     }
 
@@ -132,6 +158,14 @@ impl LiveRuntime {
         self.record_cash_drift_if_needed(snapshot.cash).await?;
         self.record_cash_snapshot(chrono::Utc::now().timestamp_millis(), snapshot.cash)
             .await?;
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            account_id = %self.settings.account_id,
+            currency = %self.settings.base_currency,
+            cash = %snapshot.cash,
+            category = "broker",
+            "live broker cash snapshot captured"
+        );
         self.record_system_log(
             "INFO",
             "runtime.broker_snapshot",
@@ -150,6 +184,16 @@ impl LiveRuntime {
             let qty = position.qty;
             self.record_position_drift_if_needed(&symbol, position_side, qty)
                 .await?;
+            tracing::info!(
+                run_id = %self.settings.run_id,
+                account_id = %self.settings.account_id,
+                symbol = %symbol,
+                position_side = %position_side,
+                qty = %qty,
+                currency = %self.settings.base_currency,
+                category = "broker",
+                "live broker position snapshot captured"
+            );
             self.db
                 .record_broker_position_snapshot(BrokerPositionSnapshotCommand {
                     run_id: self.settings.run_id.clone(),
@@ -224,6 +268,18 @@ impl LiveRuntime {
         if drift_abs == Decimal::ZERO {
             return Ok(());
         }
+        tracing::warn!(
+            run_id = %self.settings.run_id,
+            account_id = %self.settings.account_id,
+            risk_type = "reconciliation_drift",
+            reason = "cash_total_drift",
+            observed_value = %drift_abs,
+            runtime_cash = %runtime_cash,
+            broker_cash = %broker_cash,
+            currency = %self.settings.base_currency,
+            category = "risk",
+            "live reconciliation drift detected"
+        );
         self.db
             .record_runtime_event(RuntimeEventCommand {
                 ts_ms: chrono::Utc::now().timestamp_millis(),
@@ -313,6 +369,19 @@ impl LiveRuntime {
             return Ok(());
         }
 
+        tracing::warn!(
+            run_id = %self.settings.run_id,
+            account_id = %self.settings.account_id,
+            symbol = %symbol,
+            position_side = %position_side,
+            risk_type = "reconciliation_drift",
+            reason = %reason,
+            observed_value = %observed_value,
+            broker_qty = %broker_qty,
+            category = "risk",
+            "live reconciliation drift detected"
+        );
+
         self.db
             .record_runtime_event(RuntimeEventCommand {
                 ts_ms: chrono::Utc::now().timestamp_millis(),
@@ -380,12 +449,14 @@ impl LiveRuntime {
         self.record_system_log("ERROR", "runtime.alert", message, fields.clone())
             .await?;
         if should_notify {
-            let delivery = self
+            let deliveries = self
                 .send_alert_notification(message, &fields, now_ts_ms)
                 .await;
-            let _ = self
-                .record_alert_delivery_log(message, &fields, &delivery)
-                .await;
+            for delivery in deliveries {
+                let _ = self
+                    .record_alert_delivery_log(message, &fields, &delivery)
+                    .await;
+            }
         }
         Ok(())
     }
@@ -398,6 +469,12 @@ impl LiveRuntime {
     ) -> storage::StorageResult<bool> {
         let cooldown_ms = match &self.settings.alert_sink {
             AlertSinkSettings::Noop => return Ok(false),
+            AlertSinkSettings::Multi(sinks) if sinks.is_empty() => return Ok(false),
+            AlertSinkSettings::Multi(sinks) => sinks
+                .iter()
+                .map(alert_sink_cooldown_ms)
+                .max()
+                .unwrap_or_default(),
             AlertSinkSettings::File { cooldown_ms, .. }
             | AlertSinkSettings::Webhook { cooldown_ms, .. } => *cooldown_ms,
         };
@@ -410,7 +487,9 @@ impl LiveRuntime {
                 target: Some("runtime.alert".to_string()),
                 from_ms: Some(from_ms),
                 to_ms: Some(now_ts_ms),
+                search: None,
                 limit: None,
+                offset: None,
             })
             .await?;
         let dedup_key = alert_dedup_key(message, &self.settings.run_id, fields);
@@ -433,14 +512,40 @@ impl LiveRuntime {
         message: &str,
         fields: &serde_json::Value,
         ts_ms: i64,
-    ) -> AlertDeliveryResult {
+    ) -> Vec<AlertDeliveryResult> {
         match &self.settings.alert_sink {
+            AlertSinkSettings::Multi(sinks) => {
+                let mut deliveries = Vec::with_capacity(sinks.len());
+                for sink in sinks {
+                    deliveries.push(self.send_alert_to_sink(sink, message, fields, ts_ms).await);
+                }
+                deliveries
+            }
+            sink => vec![self.send_alert_to_sink(sink, message, fields, ts_ms).await],
+        }
+    }
+
+    async fn send_alert_to_sink(
+        &self,
+        sink: &AlertSinkSettings,
+        message: &str,
+        fields: &serde_json::Value,
+        ts_ms: i64,
+    ) -> AlertDeliveryResult {
+        match sink {
             AlertSinkSettings::Noop => AlertDeliveryResult {
                 sink: "noop".to_string(),
                 status: "skipped".to_string(),
                 attempts: 0,
                 http_status: None,
                 error: None,
+            },
+            AlertSinkSettings::Multi(_) => AlertDeliveryResult {
+                sink: "multi".to_string(),
+                status: "skipped".to_string(),
+                attempts: 0,
+                http_status: None,
+                error: Some("nested multi alert sinks are not supported".to_string()),
             },
             AlertSinkSettings::File { path, .. } => {
                 let file = OpenOptions::new()
@@ -626,6 +731,40 @@ fn position_side_slug(side: BrokerPositionSide) -> &'static str {
     }
 }
 
+struct LiveLogScope {
+    _guard: tracing::subscriber::DefaultGuard,
+    writer: LogWriter<DbSystemLogSink>,
+}
+
+impl LiveLogScope {
+    fn new(db: Db, run_id: String, settings: LogWriterSettings) -> Option<Self> {
+        if !settings.enabled {
+            return None;
+        }
+        let writer = LogWriter::new_with_metrics(
+            DbSystemLogSink::new(db),
+            settings.buffer_size,
+            settings.batch_size,
+            settings.flush_interval_ms,
+            settings.metrics.clone(),
+        );
+        let subscriber = tracing_subscriber::registry().with(
+            SystemLogLayer::new(writer.sender(), Some(run_id))
+                .with_settings(settings)
+                .with_metrics(writer.metrics()),
+        );
+        let guard = tracing::subscriber::set_default(subscriber);
+        Some(Self {
+            _guard: guard,
+            writer,
+        })
+    }
+
+    async fn shutdown(self) {
+        self.writer.shutdown().await;
+    }
+}
+
 fn alert_dedup_key(message: &str, run_id: &str, fields: &serde_json::Value) -> String {
     let account_id = fields
         .get("account_id")
@@ -640,6 +779,17 @@ fn alert_dedup_key(message: &str, run_id: &str, fields: &serde_json::Value) -> S
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
     format!("{message}|{run_id}|{account_id}|{symbol}|{reason}")
+}
+
+fn alert_sink_cooldown_ms(sink: &AlertSinkSettings) -> u64 {
+    match sink {
+        AlertSinkSettings::Noop => 0,
+        AlertSinkSettings::Multi(sinks) => {
+            sinks.iter().map(alert_sink_cooldown_ms).max().unwrap_or(0)
+        }
+        AlertSinkSettings::File { cooldown_ms, .. }
+        | AlertSinkSettings::Webhook { cooldown_ms, .. } => *cooldown_ms,
+    }
 }
 
 struct AlertDeliveryResult {

@@ -133,3 +133,56 @@ async fn paper_runtime_persists_realized_and_unrealized_pnl() {
     assert_eq!(last.realized_pnl, "-19");
     assert_eq!(last.unrealized_pnl, "0");
 }
+
+#[tokio::test]
+async fn paper_runtime_captures_structured_system_logs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let settings = PaperSettings::sample();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some(settings.run_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let messages = logs
+        .iter()
+        .map(|log| log.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(messages.contains(&"paper run started"), "{messages:?}");
+    assert!(
+        messages.contains(&"algorithm alpha generated"),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(&"algorithm portfolio target generated"),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(&"algorithm risk approved"),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(&"algorithm execution order generated"),
+        "{messages:?}"
+    );
+    assert!(messages.contains(&"paper order submitted"), "{messages:?}");
+    assert!(messages.contains(&"paper order filled"), "{messages:?}");
+    assert!(
+        messages.contains(&"algorithm execution applied"),
+        "{messages:?}"
+    );
+    assert!(messages.contains(&"paper run completed"), "{messages:?}");
+}

@@ -51,7 +51,9 @@ POST /api/v1/configs/{name}/{version}/rollback
 GET  /api/v1/configs/{config_id}/releases
 GET  /api/v1/configs/{config_id}/audits
 GET  /api/v1/runs/{run_id}/config-version
+GET  /api/v1/logs
 GET  /api/v1/system-logs
+GET  /api/v1/ops/logging/metrics
 GET  /api/v1/runs/{run_id}/status
 POST /api/v1/runs/{run_id}/cancel
 GET  /api/v1/events
@@ -84,9 +86,9 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
-`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` expose runtime/system logs with run, level, target, time-window, and limit filters; CLI also supports retention purge.
+`GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/logs` exposes paginated runtime/system logs with `run_id`, `level`, `target`, `from_ms`, `to_ms`, `search`, `limit`, and `offset` filters and returns `{ logs, total, limit, offset }`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` remain available for direct list readback. `GET /api/v1/ops/logging/metrics` exposes in-process writer dropped-log metrics plus active `[logging]` writer settings; CLI also supports retention purge, `logs count` / `logs tail` / `logs metrics`, JSONL export, and `logs ship` for HTTP NDJSON collector handoff. `trader-server` runs a background retention scheduler using `[logging].retention_days`; CLI/API run launch paths also perform startup cleanup. `logs ship` accepts optional `--max-retries`, `--retry-backoff-ms`, and `--signature-secret-env`; network errors, HTTP 429, and HTTP 5xx are retried with linearly increasing backoff, while non-retryable 4xx statuses fail immediately. When signing is enabled, requests include `X-Trader-Log-Timestamp` and `X-Trader-Log-Signature: v1=<hmac-sha256>`, signing `timestamp.body`.
 
-`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; when `[live.alerts]` is enabled, downstream alert sinks currently support `sink = "file"` with `file_path` for local JSONL append and `sink = "webhook"` with `webhook_url` for JSON POST delivery. Optional `[live.alerts].cooldown_ms` suppresses repeated downstream sends for the same alert dedup key within the cooldown window. Webhook sink also supports `webhook_timeout_ms`, `webhook_max_retries`, and `webhook_auth_token` for a bearer-authenticated local MVP delivery policy; `system_logs` and drift audit surfaces still record every alert. Real broker-reported cash/position scheduling remains production hardening work.
+`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; when `[live.alerts]` is enabled, downstream alert routing supports legacy single-sink fields (`sink = "file"` with `file_path`, or `sink = "webhook"` with `webhook_url`) and multi-sink `[[live.alerts.sinks]]` entries so file JSONL append and webhook JSON POST delivery can run together. Optional `cooldown_ms` suppresses repeated downstream sends for the same alert dedup key within the cooldown window; sink-level values override `[live.alerts]` defaults. Webhook sinks also support `webhook_timeout_ms`, `webhook_max_retries`, and `webhook_auth_token` for a bearer-authenticated local MVP delivery policy; `system_logs` and drift audit surfaces still record every alert. Real broker-reported cash/position scheduling remains production hardening work.
 
 `GET /api/v1/runs/{run_id}/reconciliation` summarizes persisted cash snapshots, position snapshots, and `risk_events` with `risk_type = "reconciliation_drift"` for the run. `GET /api/v1/reconciliation-drifts` and `GET /api/v1/runs/{run_id}/reconciliation-drifts` provide drift-audit readback with `run_id` / `account_id` / `symbol` / `from_ms` / `to_ms` / `limit` filters. `GET /api/v1/reconciliation-alerts/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alerts/summary` aggregate `runtime.alert` log records for persisted reconciliation alerts. `GET /api/v1/reconciliation-alert-deliveries/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary` aggregate `runtime.alert_delivery` records for downstream delivery status by sink and outcome.
 
@@ -1984,6 +1986,32 @@ Query 参数：
   "ts": 1700000000000
 }
 ```
+
+---
+
+## 18.2 查询日志 writer 运维指标
+
+```http
+GET /api/v1/ops/logging/metrics
+```
+
+响应：
+
+```json
+{
+  "metrics": {
+    "dropped_logs": 0
+  },
+  "enabled": true,
+  "level": "info",
+  "categories": [],
+  "buffer_size": 1000,
+  "batch_size": 100,
+  "flush_interval_ms": 5000
+}
+```
+
+`dropped_logs` 是当前 API 进程内 `LogWriterMetrics` 的累计 dropped count，用于判断 tracing channel backpressure 是否导致日志丢弃。
 
 ---
 

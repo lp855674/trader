@@ -2,7 +2,10 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use crate::{Db, StorageError, StorageResult};
 use chrono::{TimeZone, Utc};
-use events::{AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, RuntimeEvent, TraderEvent};
+use events::{
+    AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, LogSink, LogSinkError, RuntimeEvent,
+    StructuredLogEntry, TraderEvent,
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -586,7 +589,9 @@ pub struct SystemLogFilter {
     pub target: Option<String>,
     pub from_ms: Option<i64>,
     pub to_ms: Option<i64>,
+    pub search: Option<String>,
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -594,6 +599,46 @@ pub struct SystemLogRetentionCommand {
     pub before_ms: i64,
     pub target: Option<String>,
     pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemLogRetentionPolicy {
+    pub retention_days: u32,
+}
+
+#[derive(Clone)]
+pub struct DbSystemLogSink {
+    db: Db,
+}
+
+impl DbSystemLogSink {
+    pub fn new(db: Db) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait::async_trait]
+impl LogSink for DbSystemLogSink {
+    async fn write_batch(&self, logs: &[StructuredLogEntry]) -> Result<(), LogSinkError> {
+        let logs = logs
+            .iter()
+            .cloned()
+            .map(|log| NewSystemLog {
+                id: log.id,
+                run_id: log.run_id,
+                ts_ms: log.ts_ms,
+                level: log.level,
+                target: log.target,
+                message: log.message,
+                fields_json: log.fields_json,
+                created_at_ms: log.created_at_ms,
+            })
+            .collect::<Vec<_>>();
+        self.db
+            .insert_system_logs_batch(&logs)
+            .await
+            .map_err(|error| LogSinkError::Write(error.to_string()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3502,6 +3547,36 @@ impl Db {
         Ok(())
     }
 
+    pub async fn insert_system_logs_batch(&self, logs: &[NewSystemLog]) -> StorageResult<()> {
+        if logs.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool().begin().await?;
+        for log in logs {
+            sqlx::query(
+                r#"
+                INSERT INTO system_logs (
+                    id, run_id, ts, level, target, message, fields_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&log.id)
+            .bind(&log.run_id)
+            .bind(log.ts_ms)
+            .bind(&log.level)
+            .bind(&log.target)
+            .bind(&log.message)
+            .bind(&log.fields_json)
+            .bind(log.created_at_ms)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn record_system_log(&self, command: SystemLogCommand) -> StorageResult<()> {
         self.insert_system_log(NewSystemLog {
             id: Uuid::new_v4().to_string(),
@@ -3535,30 +3610,18 @@ impl Db {
             "SELECT id, run_id, ts, level, target, message, fields_json, created_at \
              FROM system_logs WHERE 1 = 1",
         );
-        if let Some(run_id) = filter.run_id {
-            query_builder.push(" AND run_id = ");
-            query_builder.push_bind(run_id);
-        }
-        if let Some(level) = filter.level {
-            query_builder.push(" AND level = ");
-            query_builder.push_bind(level);
-        }
-        if let Some(target) = filter.target {
-            query_builder.push(" AND target = ");
-            query_builder.push_bind(target);
-        }
-        if let Some(from_ms) = filter.from_ms {
-            query_builder.push(" AND ts >= ");
-            query_builder.push_bind(from_ms);
-        }
-        if let Some(to_ms) = filter.to_ms {
-            query_builder.push(" AND ts <= ");
-            query_builder.push_bind(to_ms);
-        }
+        Self::push_system_log_filters(&mut query_builder, &filter);
         query_builder.push(" ORDER BY ts, id");
         if let Some(limit) = filter.limit {
             query_builder.push(" LIMIT ");
             query_builder.push_bind(limit);
+        }
+        if let Some(offset) = filter.offset {
+            if filter.limit.is_none() {
+                query_builder.push(" LIMIT -1");
+            }
+            query_builder.push(" OFFSET ");
+            query_builder.push_bind(offset);
         }
 
         let rows = query_builder
@@ -3594,6 +3657,53 @@ impl Db {
             .collect())
     }
 
+    pub async fn count_system_logs(&self, filter: SystemLogFilter) -> StorageResult<u64> {
+        let mut query_builder =
+            QueryBuilder::<Sqlite>::new("SELECT COUNT(*) as count FROM system_logs WHERE 1 = 1");
+        Self::push_system_log_filters(&mut query_builder, &filter);
+
+        let count = query_builder
+            .build_query_scalar::<i64>()
+            .fetch_one(self.pool())
+            .await?;
+        Ok(count as u64)
+    }
+
+    fn push_system_log_filters(
+        query_builder: &mut QueryBuilder<'_, Sqlite>,
+        filter: &SystemLogFilter,
+    ) {
+        if let Some(run_id) = &filter.run_id {
+            query_builder.push(" AND run_id = ");
+            query_builder.push_bind(run_id.clone());
+        }
+        if let Some(level) = &filter.level {
+            query_builder.push(" AND level = ");
+            query_builder.push_bind(level.clone());
+        }
+        if let Some(target) = &filter.target {
+            query_builder.push(" AND target = ");
+            query_builder.push_bind(target.clone());
+        }
+        if let Some(from_ms) = filter.from_ms {
+            query_builder.push(" AND ts >= ");
+            query_builder.push_bind(from_ms);
+        }
+        if let Some(to_ms) = filter.to_ms {
+            query_builder.push(" AND ts <= ");
+            query_builder.push_bind(to_ms);
+        }
+        if let Some(search) = &filter.search {
+            query_builder.push(" AND (message LIKE ");
+            query_builder.push_bind(format!("%{search}%"));
+            query_builder.push(" OR target LIKE ");
+            query_builder.push_bind(format!("%{search}%"));
+            query_builder.push(" OR COALESCE(fields_json, '') LIKE ");
+            query_builder.push_bind(format!("%{search}%"));
+            query_builder.push(")");
+        }
+    }
+
     pub async fn purge_system_logs(
         &self,
         command: SystemLogRetentionCommand,
@@ -3610,6 +3720,20 @@ impl Db {
         }
         let result = query_builder.build().execute(self.pool()).await?;
         Ok(result.rows_affected())
+    }
+
+    pub async fn purge_system_logs_by_retention(
+        &self,
+        now_ms: i64,
+        policy: SystemLogRetentionPolicy,
+    ) -> StorageResult<u64> {
+        let retention_ms = i64::from(policy.retention_days).saturating_mul(86_400_000);
+        self.purge_system_logs(SystemLogRetentionCommand {
+            before_ms: now_ms.saturating_sub(retention_ms),
+            target: None,
+            run_id: None,
+        })
+        .await
     }
 
     pub async fn insert_strategy_run(&self, run: NewStrategyRun) -> StorageResult<()> {

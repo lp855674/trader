@@ -17,12 +17,12 @@ use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::{Bar, MarketSlice};
-use events::EventBus;
+use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{collections::BTreeSet, error::Error, fmt, time::Duration};
 use storage::{
-    CryptoPositionCommand, Db, PaperExecutionCommand, PaperFailedOrderCommand,
+    CryptoPositionCommand, Db, DbSystemLogSink, PaperExecutionCommand, PaperFailedOrderCommand,
     PaperFinalStateCommand, PaperOrderCommand, PaperPortfolioSnapshotCommand, PositionCommand,
     RuntimeEventCommand, StrategyRunStartCommand,
 };
@@ -31,6 +31,7 @@ use strategies::{
     StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode, StrategyUniverseFilterConfig,
 };
 use tokio::sync::mpsc;
+use tracing_subscriber::prelude::*;
 use trader_core::OrderRequest;
 
 pub struct PaperRuntime {
@@ -74,6 +75,7 @@ pub struct PaperSettings {
     pub fast_window: usize,
     pub slow_window: usize,
     pub bar_delay_ms: u64,
+    pub logging: LogWriterSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,7 @@ impl PaperSettings {
             fast_window: 2,
             slow_window: 3,
             bar_delay_ms: 0,
+            logging: LogWriterSettings::default(),
         }
     }
 
@@ -225,12 +228,43 @@ impl PaperRuntime {
         market_slices: Vec<MarketSlice>,
         cancel: CancellationFlag,
     ) -> anyhow::Result<BacktestSummary> {
+        let log_scope = PaperLogScope::new(
+            self.db.clone(),
+            self.settings.run_id.clone(),
+            self.settings.logging.clone(),
+        );
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            mode = "paper",
+            symbol = %self.primary_symbol(),
+            "paper run started"
+        );
         let mut session = PaperRunSession::new(self)?;
-        for market_slice in market_slices {
-            self.wait_before_bar(&cancel).await?;
-            session.process_market_slice(market_slice).await?;
+        let result = async {
+            for market_slice in market_slices {
+                self.wait_before_bar(&cancel).await?;
+                session.process_market_slice(market_slice).await?;
+            }
+            session.finish().await
         }
-        session.finish().await
+        .await;
+        match &result {
+            Ok(summary) => tracing::info!(
+                run_id = %self.settings.run_id,
+                signals = summary.signals as u64,
+                orders = summary.orders as u64,
+                "paper run completed"
+            ),
+            Err(error) => tracing::error!(
+                run_id = %self.settings.run_id,
+                error = %error,
+                "paper run failed"
+            ),
+        }
+        if let Some(log_scope) = log_scope {
+            log_scope.shutdown().await;
+        }
+        result
     }
 
     pub async fn run_bar_stream_with_cancel(
@@ -238,14 +272,45 @@ impl PaperRuntime {
         mut bars: mpsc::Receiver<Bar>,
         cancel: CancellationFlag,
     ) -> anyhow::Result<BacktestSummary> {
+        let log_scope = PaperLogScope::new(
+            self.db.clone(),
+            self.settings.run_id.clone(),
+            self.settings.logging.clone(),
+        );
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            mode = "paper",
+            symbol = %self.primary_symbol(),
+            "paper stream started"
+        );
         let mut session = PaperRunSession::new(self)?;
-        while let Some(bar) = bars.recv().await {
-            self.wait_before_bar(&cancel).await?;
-            session
-                .process_market_slice(MarketSlice::single(self.primary_symbol(), bar))
-                .await?;
+        let result = async {
+            while let Some(bar) = bars.recv().await {
+                self.wait_before_bar(&cancel).await?;
+                session
+                    .process_market_slice(MarketSlice::single(self.primary_symbol(), bar))
+                    .await?;
+            }
+            session.finish().await
         }
-        session.finish().await
+        .await;
+        match &result {
+            Ok(summary) => tracing::info!(
+                run_id = %self.settings.run_id,
+                signals = summary.signals as u64,
+                orders = summary.orders as u64,
+                "paper stream completed"
+            ),
+            Err(error) => tracing::error!(
+                run_id = %self.settings.run_id,
+                error = %error,
+                "paper stream failed"
+            ),
+        }
+        if let Some(log_scope) = log_scope {
+            log_scope.shutdown().await;
+        }
+        result
     }
 
     pub async fn run_market_slice_stream_with_cancel(
@@ -253,12 +318,43 @@ impl PaperRuntime {
         mut market_slices: mpsc::Receiver<MarketSlice>,
         cancel: CancellationFlag,
     ) -> anyhow::Result<BacktestSummary> {
+        let log_scope = PaperLogScope::new(
+            self.db.clone(),
+            self.settings.run_id.clone(),
+            self.settings.logging.clone(),
+        );
+        tracing::info!(
+            run_id = %self.settings.run_id,
+            mode = "paper",
+            symbol = %self.primary_symbol(),
+            "paper market slice stream started"
+        );
         let mut session = PaperRunSession::new(self)?;
-        while let Some(market_slice) = market_slices.recv().await {
-            self.wait_before_bar(&cancel).await?;
-            session.process_market_slice(market_slice).await?;
+        let result = async {
+            while let Some(market_slice) = market_slices.recv().await {
+                self.wait_before_bar(&cancel).await?;
+                session.process_market_slice(market_slice).await?;
+            }
+            session.finish().await
         }
-        session.finish().await
+        .await;
+        match &result {
+            Ok(summary) => tracing::info!(
+                run_id = %self.settings.run_id,
+                signals = summary.signals as u64,
+                orders = summary.orders as u64,
+                "paper market slice stream completed"
+            ),
+            Err(error) => tracing::error!(
+                run_id = %self.settings.run_id,
+                error = %error,
+                "paper market slice stream failed"
+            ),
+        }
+        if let Some(log_scope) = log_scope {
+            log_scope.shutdown().await;
+        }
+        result
     }
 
     async fn wait_before_bar(&self, cancel: &CancellationFlag) -> anyhow::Result<()> {
@@ -484,6 +580,17 @@ impl<'a> PaperRunSession<'a> {
         client_order_id: &str,
         bar: &Bar,
     ) -> anyhow::Result<()> {
+        tracing::info!(
+            run_id = %self.runtime.settings.run_id,
+            order_id = %decision.order_id,
+            symbol = %order.symbol,
+            qty = %order.qty,
+            side = ?order.side,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            client_order_id = client_order_id,
+            "paper order submitted"
+        );
         self.runtime
             .db
             .record_paper_order_submitted(PaperOrderCommand {
@@ -505,6 +612,18 @@ impl<'a> PaperRunSession<'a> {
         bar: &Bar,
         error: &str,
     ) -> anyhow::Result<()> {
+        tracing::error!(
+            run_id = %self.runtime.settings.run_id,
+            order_id = %decision.order_id,
+            symbol = %order.symbol,
+            qty = %order.qty,
+            side = ?order.side,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            client_order_id = client_order_id,
+            error = error,
+            "paper order failed"
+        );
         self.runtime
             .db
             .record_paper_order_failed(PaperFailedOrderCommand {
@@ -527,6 +646,21 @@ impl<'a> PaperRunSession<'a> {
         fill: &ExecutedPaperOrder,
         bar: &Bar,
     ) -> anyhow::Result<()> {
+        tracing::info!(
+            run_id = %self.runtime.settings.run_id,
+            order_id = %decision.order_id,
+            fill_id = %decision.fill_id,
+            symbol = %order.symbol,
+            qty = %fill.qty,
+            price = %fill.price,
+            fee = %fill.fee,
+            status = %fill.status,
+            ts_ms = bar.ts_ms,
+            category = "trading",
+            client_order_id = client_order_id,
+            broker_order_id = %fill.broker_order_id,
+            "paper order filled"
+        );
         self.runtime
             .db
             .record_paper_execution_result(PaperExecutionCommand {
@@ -753,5 +887,39 @@ fn contract_symbol_parts(symbol: &str) -> Option<(String, String)> {
         Some((exchange.to_string(), asset_class.to_string()))
     } else {
         None
+    }
+}
+
+struct PaperLogScope {
+    _guard: tracing::subscriber::DefaultGuard,
+    writer: LogWriter<DbSystemLogSink>,
+}
+
+impl PaperLogScope {
+    fn new(db: Db, run_id: String, settings: LogWriterSettings) -> Option<Self> {
+        if !settings.enabled {
+            return None;
+        }
+        let writer = LogWriter::new_with_metrics(
+            DbSystemLogSink::new(db),
+            settings.buffer_size,
+            settings.batch_size,
+            settings.flush_interval_ms,
+            settings.metrics.clone(),
+        );
+        let subscriber = tracing_subscriber::registry().with(
+            SystemLogLayer::new(writer.sender(), Some(run_id))
+                .with_settings(settings)
+                .with_metrics(writer.metrics()),
+        );
+        let guard = tracing::subscriber::set_default(subscriber);
+        Some(Self {
+            _guard: guard,
+            writer,
+        })
+    }
+
+    async fn shutdown(self) {
+        self.writer.shutdown().await;
     }
 }

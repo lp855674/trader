@@ -8,18 +8,18 @@
 
 **Tech Stack:** Rust workspace, tracing, tracing-subscriber, SQLx SQLite, Axum, tokio, serde, PowerShell CLI.
 
-## Current Status (2026-06-19 Audit)
+## Current Status (2026-06-22 Update)
 
-This plan was only partially implemented. The repository has an operational `system_logs` read/write surface, not the full async tracing collection architecture described below. Checked items below only cover exact pieces that landed; local-MVP readback that does not match the tracing plan is summarized in the status table.
+This plan is now implemented for the local DB-backed tracing path. The repository has the `system_logs` storage/query surface, a generic async tracing writer, a SQLite-backed sink adapter, CLI/API log query access, tracing capture for algorithm decision points, paper, backtest, API request completion logs, and live runtime lifecycle/snapshot/reconciliation events, plus loadable `[logging]` config defaults/examples. `[logging]` now controls runtime writer enablement, level/category filtering, buffer size, flush interval, and retention cleanup for CLI/API-launched backtest, paper, and live runs plus server background cleanup. The async writer exposes dropped-log metrics for channel backpressure through API/CLI ops readback. CLI `logs ship` can POST filtered `system_logs` as NDJSON to an external collector with optional bearer auth, HMAC signature headers, and configurable retry/backoff for transient failures. Live runtime still keeps explicit `record_system_log` calls for compatibility with reconciliation alert and delivery summaries; managed production collector deployment remains follow-up work.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
-| System log storage | Done for local MVP | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `list_system_logs_filtered`, `purge_system_logs` | Batch insert/count/text search are not implemented |
-| Runtime/API/ingestion log writes | Done for local MVP | API run lifecycle logs, live runtime source logs and ingestion tracker write `system_logs` | Full-chain logging across all crates is not implemented |
-| CLI/API readback | Done for local MVP | `logs list`, `logs purge`, `GET /api/v1/system-logs`, `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/limit filters; `ops-smoke.ps1` verifies run-scoped logs alongside snapshots, reconciliation and config-version readback | Tail/count/search endpoints are not implemented |
-| Retention | Partially done | CLI purge supports retention-style cleanup by timestamp/target/run | Configured scheduled retention cleanup is not implemented |
-| Async tracing writer | Not done | No `events::log_writer`, `SystemLogLayer`, buffered channel writer or batch flush implementation exists | Implement tracing layer and non-blocking buffered DB writer |
-| External production collection | Partial local stub | CLI `logs export` can emit filtered `system_logs` as JSONL for local collector handoff; `ops-smoke.ps1` verifies the export path | Add real collector/shipper integration and alert routing |
+| System log storage | Done | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `insert_system_logs_batch`, `list_system_logs_filtered`, `count_system_logs`, `purge_system_logs`, `purge_system_logs_by_retention` | Long-running background retention scheduler is not implemented |
+| Runtime/API/ingestion log writes | Done for local tracing surface | API run lifecycle logs, live runtime source logs, ingestion tracker logs, algorithm decision tracing, paper/backtest tracing logs, API request completion logs, and live runtime tracing logs write `system_logs` | Managed collector deployment is not implemented |
+| CLI/API readback | Done for local query surface | `logs list`, `logs count`, `logs tail`, `logs export`, `logs purge`, `GET /api/v1/logs`, `GET /api/v1/system-logs`, and `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/search/limit/offset style filters where applicable | Real streaming is still polling-based |
+| Retention/config | Done | CLI purge supports retention-style cleanup by timestamp/target/run; `AppConfig.logging` loads enabled/level/categories/buffer/flush/retention/console settings with defaults; CLI/API settings map enabled/level/categories/buffer/flush to `LogWriterSettings`; CLI/API-launched backtest, paper, and live runs execute `retention_days` cleanup at startup; trader-server runs a background retention scheduler | None for local retention cleanup |
+| Async tracing writer | Done for local DB sink | `events::log_writer`, `LogWriter`, `SystemLogLayer`, `StructuredLogEntry`, `LogSink`, `LogWriterMetrics`, and `storage::DbSystemLogSink` provide non-blocking buffered writes, batch flush, dropped-log counting under channel backpressure, and API/CLI ops readback | None for local dropped-log readback |
+| External production collection | CLI shipper done for collector handoff | CLI `logs export` can emit filtered `system_logs` as JSONL and CLI `logs ship` can POST filtered records to an external HTTP collector as `application/x-ndjson` with optional bearer auth, HMAC timestamp/signature headers, and retry/backoff for network errors, HTTP 429, and HTTP 5xx; `ops-smoke.ps1` verifies the export path | Add managed collector deployment and broader alert routing |
 
 ---
 
@@ -645,7 +645,7 @@ git commit -m "feat: log query API endpoint"
 - Modify: `crates/config/src/config.rs`
 - Modify: configs/*.toml
 
-- [ ] **Step 1: Add logging config**
+- [x] **Step 1: Add logging config**
 
 ```rust
 pub struct LoggingConfig {
@@ -659,7 +659,7 @@ pub struct LoggingConfig {
 }
 ```
 
-- [ ] **Step 2: Add config examples**
+- [x] **Step 2: Add config examples**
 
 ```toml
 [logging]
@@ -671,7 +671,9 @@ retention_days = 30
 console_output = true
 ```
 
-- [ ] **Step 3: Add retention cleanup to scheduled tasks**
+- [x] **Step 3: Add retention cleanup to scheduled tasks**
+
+Implemented as startup-time retention cleanup for CLI/API-launched backtest, paper, and live runs plus a trader-server background scheduler.
 
 If a scheduler exists (e.g., from ingestion), add log cleanup task:
 ```rust

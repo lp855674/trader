@@ -5,8 +5,10 @@ mod ws;
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{Request, StatusCode},
+    middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post, put},
 };
@@ -15,6 +17,7 @@ use broker::{
     BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, BrokerAccountSnapshot,
     BrokerKind, BrokerStatus, FakeBrokerAdapter, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
+use events::{LogWriter, LogWriterMetricsSnapshot, LogWriterSettings, SystemLogLayer};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{
     BinancePaperOrderExecutor, IbkrPaperGatewayOrderClient, IbkrPaperOrderExecutor, PaperRuntime,
@@ -27,7 +30,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use storage::DbSystemLogSink;
 use tokio::sync::Mutex;
+use tracing_subscriber::prelude::*;
 
 pub use state::AppState;
 
@@ -173,14 +179,16 @@ struct PositionSnapshotsQuery {
     to_ms: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct SystemLogsQuery {
     run_id: Option<String>,
     level: Option<String>,
     target: Option<String>,
     from_ms: Option<i64>,
     to_ms: Option<i64>,
+    search: Option<String>,
     limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -538,6 +546,25 @@ struct SystemLogResponse {
 }
 
 #[derive(Serialize)]
+struct SystemLogsPageResponse {
+    logs: Vec<SystemLogResponse>,
+    total: u64,
+    limit: i64,
+    offset: i64,
+}
+
+#[derive(Serialize)]
+struct LoggingMetricsResponse {
+    metrics: LogWriterMetricsSnapshot,
+    enabled: bool,
+    level: String,
+    categories: Vec<String>,
+    buffer_size: usize,
+    batch_size: usize,
+    flush_interval_ms: u64,
+}
+
+#[derive(Serialize)]
 struct IngestionStatusResponse {
     sources: Vec<IngestionSourceStatusResponse>,
 }
@@ -606,7 +633,9 @@ pub fn router_with_state(state: AppState) -> Router {
             "/api/v1/config-approvals/pending",
             get(list_pending_config_approvals),
         )
+        .route("/api/v1/logs", get(list_logs))
         .route("/api/v1/system-logs", get(list_system_logs))
+        .route("/api/v1/ops/logging/metrics", get(logging_metrics))
         .route(
             "/api/v1/reconciliation-drifts",
             get(list_reconciliation_drifts),
@@ -685,11 +714,77 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/replay/{run_id}/seek/{offset}", post(seek_replay))
         .route("/api/v1/replay/{run_id}/speed/{speed}", post(speed_replay))
         .route("/ws", get(ws::ws_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_request_log_middleware,
+        ))
         .with_state(state)
+}
+
+pub fn spawn_logging_retention_scheduler(
+    db: storage::Db,
+    config_path: String,
+    interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            let app_config = match config::AppConfig::from_toml_file(&config_path) {
+                Ok(app_config) => app_config,
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to load logging retention config");
+                    continue;
+                }
+            };
+            if let Err(error) = db
+                .purge_system_logs_by_retention(
+                    chrono::Utc::now().timestamp_millis(),
+                    system_log_retention_policy(&app_config),
+                )
+                .await
+            {
+                tracing::warn!(error = %error, "failed to run logging retention cleanup");
+            }
+        }
+    })
 }
 
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn api_request_log_middleware(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> axum::response::Response {
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let status = response.status().as_u16();
+    let duration_ms = started.elapsed().as_millis() as u64;
+    let writer = LogWriter::new_with_metrics(
+        DbSystemLogSink::new(state.db.clone()),
+        128,
+        1,
+        1,
+        state.log_writer_metrics.clone(),
+    );
+    let subscriber = tracing_subscriber::registry()
+        .with(SystemLogLayer::new(writer.sender(), None).with_metrics(writer.metrics()));
+    let guard = tracing::subscriber::set_default(subscriber);
+    tracing::info!(
+        method = %method,
+        path = %path,
+        status = status as u64,
+        duration_ms = duration_ms,
+        category = "api",
+        "api request completed"
+    );
+    drop(guard);
+    writer.shutdown().await;
+    response
 }
 
 async fn ingestion_status(
@@ -829,6 +924,7 @@ async fn run_backtest(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    run_configured_log_retention(&state.db, &app_config).await?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
     insert_event(
@@ -850,13 +946,12 @@ async fn run_backtest(
     )
     .await?;
     let market_slices = load_configured_market_slices(&app_config)?;
-    let summary = BacktestRuntime::new(
-        state.db.clone(),
-        backtest_settings_with_config_json(&app_config, config_json)?,
-    )
-    .with_event_bus(state.event_bus.clone())
-    .run_market_slices(market_slices)
-    .await?;
+    let mut settings = backtest_settings_with_config_json(&app_config, config_json)?;
+    settings.logging.metrics = state.log_writer_metrics.clone();
+    let summary = BacktestRuntime::new(state.db.clone(), settings)
+        .with_event_bus(state.event_bus.clone())
+        .run_market_slices(market_slices)
+        .await?;
     let payload = serde_json::json!({
         "run_id": &app_config.runtime.run_id,
         "signals": summary.signals,
@@ -890,9 +985,11 @@ async fn run_paper(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    run_configured_log_retention(&state.db, &app_config).await?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
-    let settings = paper_settings_with_config_json(&app_config, config_json.clone())?;
+    let mut settings = paper_settings_with_config_json(&app_config, config_json.clone())?;
+    settings.logging.metrics = state.log_writer_metrics.clone();
 
     state
         .db
@@ -1111,6 +1208,7 @@ async fn start_live_run(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    run_configured_log_retention(&state.db, &app_config).await?;
     let run_id = app_config.runtime.run_id.clone();
     let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -1125,11 +1223,15 @@ async fn start_live_run(
                 LiveRuntimeSettings {
                     run_id: task_run_id,
                     broker_kind: broker_kind(app_config.broker.kind),
-                    account_id: app_config.paper.account_id,
-                    base_currency: app_config.portfolio.base_currency,
+                    account_id: app_config.paper.account_id.clone(),
+                    base_currency: app_config.portfolio.base_currency.clone(),
                     initial_cash,
                     broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
                     alert_sink: alert_sink_settings(&app_config.live.alerts),
+                    logging: log_writer_settings_with_metrics(
+                        &app_config,
+                        state.log_writer_metrics.clone(),
+                    ),
                 },
             );
             let _ = runtime.run(cancel).await;
@@ -1566,15 +1668,21 @@ async fn create_config_version(
 async fn list_config_versions_by_name(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<ConfigVersionResponse>>, ApiError> {
+) -> Result<axum::response::Response, ApiError> {
     let versions = state
         .db
         .list_config_versions(&name)
         .await?
         .into_iter()
         .map(config_version_response)
-        .collect();
-    Ok(Json(versions))
+        .collect::<Vec<_>>();
+    if !versions.is_empty() {
+        return Ok(Json(versions).into_response());
+    }
+    let Some(config) = state.db.get_config_by_name(&name).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    Ok(Json(config_response(config)).into_response())
 }
 
 async fn get_latest_config(
@@ -1847,7 +1955,9 @@ async fn list_run_system_logs(
             target: query.target,
             from_ms: query.from_ms,
             to_ms: query.to_ms,
+            search: query.search,
             limit: query.limit,
+            offset: None,
         },
     )
     .await
@@ -1857,18 +1967,48 @@ async fn list_system_logs(
     State(state): State<AppState>,
     Query(query): Query<SystemLogsQuery>,
 ) -> Result<Json<Vec<SystemLogResponse>>, ApiError> {
-    system_logs_response(
-        &state.db,
-        storage::SystemLogFilter {
-            run_id: query.run_id,
-            level: query.level,
-            target: query.target,
-            from_ms: query.from_ms,
-            to_ms: query.to_ms,
-            limit: query.limit,
-        },
-    )
-    .await
+    system_logs_response(&state.db, system_log_filter(query, false)).await
+}
+
+async fn list_logs(
+    State(state): State<AppState>,
+    Query(query): Query<SystemLogsQuery>,
+) -> Result<Json<SystemLogsPageResponse>, ApiError> {
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+    let total = state
+        .db
+        .count_system_logs(system_log_filter(query.clone(), false))
+        .await?;
+    let logs = state
+        .db
+        .list_system_logs_filtered(system_log_filter(query, true))
+        .await?
+        .into_iter()
+        .map(system_log_response)
+        .collect();
+    Ok(Json(SystemLogsPageResponse {
+        logs,
+        total,
+        limit,
+        offset,
+    }))
+}
+
+async fn logging_metrics(
+    State(state): State<AppState>,
+) -> Result<Json<LoggingMetricsResponse>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let settings = log_writer_settings_with_metrics(&app_config, state.log_writer_metrics.clone());
+    Ok(Json(LoggingMetricsResponse {
+        metrics: settings.metrics.snapshot(),
+        enabled: settings.enabled,
+        level: settings.min_level,
+        categories: settings.categories,
+        buffer_size: settings.buffer_size,
+        batch_size: settings.batch_size,
+        flush_interval_ms: settings.flush_interval_ms,
+    }))
 }
 
 async fn list_reconciliation_drifts(
@@ -1969,6 +2109,19 @@ async fn system_logs_response(
     Ok(Json(logs))
 }
 
+fn system_log_filter(query: SystemLogsQuery, include_paging: bool) -> storage::SystemLogFilter {
+    storage::SystemLogFilter {
+        run_id: query.run_id,
+        level: query.level,
+        target: query.target,
+        from_ms: query.from_ms,
+        to_ms: query.to_ms,
+        search: query.search,
+        limit: Some(query.limit.unwrap_or(100)),
+        offset: include_paging.then_some(query.offset.unwrap_or(0)),
+    }
+}
+
 async fn reconciliation_drifts_response(
     db: &storage::Db,
     filter: storage::RiskEventFilter,
@@ -1998,7 +2151,9 @@ async fn reconciliation_alerts_summary_response(
             target: Some("runtime.alert".to_string()),
             from_ms,
             to_ms,
+            search: None,
             limit,
+            offset: None,
         })
         .await?;
 
@@ -2079,7 +2234,9 @@ async fn reconciliation_alert_deliveries_summary_response(
             target: Some("runtime.alert_delivery".to_string()),
             from_ms,
             to_ms,
+            search: None,
             limit,
+            offset: None,
         })
         .await?;
 
@@ -2154,23 +2311,64 @@ fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     if !alerts.enabled {
         return AlertSinkSettings::Noop;
     }
+    if !alerts.sinks.is_empty() {
+        let sinks = alerts
+            .sinks
+            .iter()
+            .filter_map(|sink| alert_sink_from_config(sink, alerts))
+            .collect::<Vec<_>>();
+        return match sinks.len() {
+            0 => AlertSinkSettings::Noop,
+            1 => sinks.into_iter().next().unwrap_or(AlertSinkSettings::Noop),
+            _ => AlertSinkSettings::Multi(sinks),
+        };
+    }
+    alert_sink_from_legacy_config(alerts)
+}
+
+fn alert_sink_from_legacy_config(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
+    let sink = config::LiveAlertSinkConfig {
+        sink: alerts.sink.clone().unwrap_or_default(),
+        file_path: alerts.file_path.clone(),
+        webhook_url: alerts.webhook_url.clone(),
+        cooldown_ms: alerts.cooldown_ms,
+        webhook_timeout_ms: alerts.webhook_timeout_ms,
+        webhook_max_retries: alerts.webhook_max_retries,
+        webhook_auth_token: alerts.webhook_auth_token.clone(),
+    };
+    alert_sink_from_config(&sink, alerts).unwrap_or(AlertSinkSettings::Noop)
+}
+
+fn alert_sink_from_config(
+    sink: &config::LiveAlertSinkConfig,
+    defaults: &config::LiveAlertsConfig,
+) -> Option<AlertSinkSettings> {
     match (
-        alerts.sink.as_deref(),
-        alerts.file_path.as_ref().filter(|path| !path.is_empty()),
-        alerts.webhook_url.as_ref().filter(|url| !url.is_empty()),
+        sink.sink.as_str(),
+        sink.file_path.as_ref().filter(|path| !path.is_empty()),
+        sink.webhook_url.as_ref().filter(|url| !url.is_empty()),
     ) {
-        (Some("file"), Some(path), _) => AlertSinkSettings::File {
+        ("file", Some(path), _) => Some(AlertSinkSettings::File {
             path: path.clone(),
-            cooldown_ms: alerts.cooldown_ms.unwrap_or(300_000),
-        },
-        (Some("webhook"), _, Some(url)) => AlertSinkSettings::Webhook {
+            cooldown_ms: sink.cooldown_ms.or(defaults.cooldown_ms).unwrap_or(300_000),
+        }),
+        ("webhook", _, Some(url)) => Some(AlertSinkSettings::Webhook {
             url: url.clone(),
-            cooldown_ms: alerts.cooldown_ms.unwrap_or(300_000),
-            timeout_ms: alerts.webhook_timeout_ms.unwrap_or(3_000),
-            max_retries: alerts.webhook_max_retries.unwrap_or(2),
-            auth_token: alerts.webhook_auth_token.clone(),
-        },
-        _ => AlertSinkSettings::Noop,
+            cooldown_ms: sink.cooldown_ms.or(defaults.cooldown_ms).unwrap_or(300_000),
+            timeout_ms: sink
+                .webhook_timeout_ms
+                .or(defaults.webhook_timeout_ms)
+                .unwrap_or(3_000),
+            max_retries: sink
+                .webhook_max_retries
+                .or(defaults.webhook_max_retries)
+                .unwrap_or(2),
+            auth_token: sink
+                .webhook_auth_token
+                .clone()
+                .or_else(|| defaults.webhook_auth_token.clone()),
+        }),
+        _ => None,
     }
 }
 
@@ -2766,6 +2964,7 @@ fn backtest_settings_with_config_json(
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
+        logging: log_writer_settings(app_config),
     })
 }
 
@@ -2815,7 +3014,47 @@ fn paper_settings_with_config_json(
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
+        logging: log_writer_settings(app_config),
     })
+}
+
+fn log_writer_settings(app_config: &config::AppConfig) -> LogWriterSettings {
+    log_writer_settings_with_metrics(app_config, Default::default())
+}
+
+fn log_writer_settings_with_metrics(
+    app_config: &config::AppConfig,
+    metrics: events::LogWriterMetrics,
+) -> LogWriterSettings {
+    LogWriterSettings {
+        enabled: app_config.logging.enabled,
+        buffer_size: app_config.logging.buffer_size,
+        flush_interval_ms: app_config.logging.flush_interval_ms,
+        min_level: app_config.logging.level.clone(),
+        categories: app_config.logging.categories.clone(),
+        metrics,
+        ..LogWriterSettings::default()
+    }
+}
+
+fn system_log_retention_policy(
+    app_config: &config::AppConfig,
+) -> storage::SystemLogRetentionPolicy {
+    storage::SystemLogRetentionPolicy {
+        retention_days: app_config.logging.retention_days,
+    }
+}
+
+async fn run_configured_log_retention(
+    db: &storage::Db,
+    app_config: &config::AppConfig,
+) -> Result<u64, ApiError> {
+    Ok(db
+        .purge_system_logs_by_retention(
+            chrono::Utc::now().timestamp_millis(),
+            system_log_retention_policy(app_config),
+        )
+        .await?)
 }
 
 fn strategy_universe_filter(
@@ -3208,5 +3447,58 @@ impl From<rust_decimal::Error> for ApiError {
 impl From<storage::StorageError> for ApiError {
     fn from(error: storage::StorageError) -> Self {
         Self(error.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alert_sink_settings_prefers_multi_sink_config() {
+        let alerts = config::LiveAlertsConfig {
+            enabled: true,
+            cooldown_ms: Some(120_000),
+            webhook_timeout_ms: Some(4_000),
+            webhook_max_retries: Some(3),
+            sinks: vec![
+                config::LiveAlertSinkConfig {
+                    sink: "file".to_string(),
+                    file_path: Some("target/runtime-alerts.jsonl".to_string()),
+                    ..Default::default()
+                },
+                config::LiveAlertSinkConfig {
+                    sink: "webhook".to_string(),
+                    webhook_url: Some("http://127.0.0.1:18080/alerts".to_string()),
+                    webhook_max_retries: Some(1),
+                    ..Default::default()
+                },
+            ],
+            sink: Some("file".to_string()),
+            file_path: Some("target/legacy-alerts.jsonl".to_string()),
+            ..Default::default()
+        };
+
+        let AlertSinkSettings::Multi(sinks) = alert_sink_settings(&alerts) else {
+            panic!("expected multi alert sink settings");
+        };
+        assert_eq!(sinks.len(), 2);
+        assert!(matches!(
+            &sinks[0],
+            AlertSinkSettings::File {
+                path,
+                cooldown_ms: 120_000
+            } if path == "target/runtime-alerts.jsonl"
+        ));
+        assert!(matches!(
+            &sinks[1],
+            AlertSinkSettings::Webhook {
+                url,
+                cooldown_ms: 120_000,
+                timeout_ms: 4_000,
+                max_retries: 1,
+                auth_token: None
+            } if url == "http://127.0.0.1:18080/alerts"
+        ));
     }
 }

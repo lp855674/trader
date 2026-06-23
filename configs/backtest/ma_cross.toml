@@ -41,3 +41,11 @@ fee_bps = "10"
 
 [live]
 enabled = false
+
+[logging]
+enabled = true
+level = "info"
+buffer_size = 1000
+flush_interval_ms = 5000
+retention_days = 30
+console_output = true

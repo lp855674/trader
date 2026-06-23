@@ -78,6 +78,7 @@ fn parses_backtest_config() {
     assert_eq!(config.live.broker_snapshot_interval_ms, Some(250));
     assert!(!config.live.alerts.enabled);
     assert_eq!(config.live.alerts.sink.as_deref(), None);
+    assert!(config.live.alerts.sinks.is_empty());
     assert_eq!(config.live.alerts.file_path.as_deref(), None);
     assert_eq!(config.live.alerts.webhook_url.as_deref(), None);
     assert_eq!(config.live.alerts.cooldown_ms, None);
@@ -237,6 +238,92 @@ fn parses_live_alert_webhook_sink_config() {
 }
 
 #[test]
+fn parses_live_alert_multi_sink_config() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "alert-live-multi"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        broker_snapshot_interval_ms = 5
+
+        [live.alerts]
+        enabled = true
+        cooldown_ms = 120000
+        webhook_timeout_ms = 3000
+        webhook_max_retries = 2
+
+        [[live.alerts.sinks]]
+        sink = "file"
+        file_path = "target/runtime-alerts.jsonl"
+
+        [[live.alerts.sinks]]
+        sink = "webhook"
+        webhook_url = "http://127.0.0.1:18080/alerts"
+        webhook_auth_token = "secret-token"
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(config.live.enabled);
+    assert!(config.live.alerts.enabled);
+    assert_eq!(config.live.alerts.sinks.len(), 2);
+    assert_eq!(config.live.alerts.cooldown_ms, Some(120000));
+    assert_eq!(config.live.alerts.sinks[0].sink, "file");
+    assert_eq!(
+        config.live.alerts.sinks[0].file_path.as_deref(),
+        Some("target/runtime-alerts.jsonl")
+    );
+    assert_eq!(config.live.alerts.sinks[1].sink, "webhook");
+    assert_eq!(
+        config.live.alerts.sinks[1].webhook_url.as_deref(),
+        Some("http://127.0.0.1:18080/alerts")
+    );
+    assert_eq!(
+        config.live.alerts.sinks[1].webhook_auth_token.as_deref(),
+        Some("secret-token")
+    );
+}
+
+#[test]
 fn parses_ingestion_config() {
     let config = AppConfig::from_toml_str(
         r#"
@@ -297,6 +384,132 @@ fn parses_ingestion_config() {
     assert_eq!(config.ingestion.sources, vec!["binance", "yahoo"]);
     assert_eq!(config.ingestion.fetch_interval_minutes, 30);
     assert_eq!(config.ingestion.symbols, vec!["BTCUSDT", "AAPL"]);
+}
+
+#[test]
+fn parses_logging_config_with_defaults_and_overrides() {
+    let default_config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "logging-defaults"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+        "#,
+    )
+    .unwrap();
+
+    assert!(default_config.logging.enabled);
+    assert_eq!(default_config.logging.level, "info");
+    assert!(default_config.logging.categories.is_empty());
+    assert_eq!(default_config.logging.buffer_size, 1000);
+    assert_eq!(default_config.logging.flush_interval_ms, 5000);
+    assert_eq!(default_config.logging.retention_days, 30);
+    assert!(default_config.logging.console_output);
+
+    let overridden_config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "logging-overrides"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USDT"
+        order_qty = "0.001"
+        max_abs_qty = "1"
+
+        [risk]
+        max_order_notional = "50"
+        min_cash_after_order = "10"
+        max_exposure = "1000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "binance"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "5"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+
+        [logging]
+        enabled = false
+        level = "warn"
+        categories = ["api", "trading"]
+        buffer_size = 128
+        flush_interval_ms = 250
+        retention_days = 7
+        console_output = false
+        "#,
+    )
+    .unwrap();
+
+    assert!(!overridden_config.logging.enabled);
+    assert_eq!(overridden_config.logging.level, "warn");
+    assert_eq!(overridden_config.logging.categories, vec!["api", "trading"]);
+    assert_eq!(overridden_config.logging.buffer_size, 128);
+    assert_eq!(overridden_config.logging.flush_interval_ms, 250);
+    assert_eq!(overridden_config.logging.retention_days, 7);
+    assert!(!overridden_config.logging.console_output);
 }
 
 #[test]

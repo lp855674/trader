@@ -1864,7 +1864,9 @@ async fn reference_snapshot_and_ops_records_round_trip() {
             target: Some("runtime.execution".to_string()),
             from_ms: Some(45),
             to_ms: Some(55),
+            search: None,
             limit: Some(10),
+            offset: None,
         })
         .await
         .unwrap();
@@ -1887,7 +1889,9 @@ async fn reference_snapshot_and_ops_records_round_trip() {
             target: Some("paper".to_string()),
             from_ms: None,
             to_ms: None,
+            search: None,
             limit: None,
+            offset: None,
         })
         .await
         .unwrap()
@@ -1949,6 +1953,143 @@ async fn broker_position_snapshot_command_preserves_side_and_pnl_fields() {
     assert_eq!(snapshot.market_value.as_deref(), Some("32512.5"));
     assert_eq!(snapshot.unrealized_pnl.as_deref(), Some("12.5"));
     assert_eq!(snapshot.realized_pnl.as_deref(), Some("0"));
+}
+
+#[tokio::test]
+async fn system_log_batch_insert_count_search_and_offset_filters() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_system_logs_batch(&[
+        NewSystemLog {
+            id: "batch-log-1".to_string(),
+            run_id: Some("run-batch".to_string()),
+            ts_ms: 100,
+            level: "INFO".to_string(),
+            target: "runtime.execution".to_string(),
+            message: "order submitted".to_string(),
+            fields_json: Some(r#"{"category":"trading","order_id":"ord-1"}"#.to_string()),
+            created_at_ms: 100,
+        },
+        NewSystemLog {
+            id: "batch-log-2".to_string(),
+            run_id: Some("run-batch".to_string()),
+            ts_ms: 110,
+            level: "ERROR".to_string(),
+            target: "runtime.execution".to_string(),
+            message: "order rejected".to_string(),
+            fields_json: Some(r#"{"category":"risk","order_id":"ord-2"}"#.to_string()),
+            created_at_ms: 110,
+        },
+        NewSystemLog {
+            id: "batch-log-3".to_string(),
+            run_id: Some("run-batch".to_string()),
+            ts_ms: 120,
+            level: "ERROR".to_string(),
+            target: "system.scheduler".to_string(),
+            message: "scheduler failed".to_string(),
+            fields_json: Some(r#"{"category":"system"}"#.to_string()),
+            created_at_ms: 120,
+        },
+    ])
+    .await
+    .unwrap();
+
+    let total = db
+        .count_system_logs(storage::SystemLogFilter {
+            run_id: Some("run-batch".to_string()),
+            level: Some("ERROR".to_string()),
+            target: None,
+            from_ms: None,
+            to_ms: None,
+            search: None,
+            limit: None,
+            offset: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(total, 2);
+
+    let searched = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("run-batch".to_string()),
+            level: None,
+            target: None,
+            from_ms: None,
+            to_ms: None,
+            search: Some("rejected".to_string()),
+            limit: Some(10),
+            offset: Some(0),
+        })
+        .await
+        .unwrap();
+    assert_eq!(searched.len(), 1);
+    assert_eq!(searched[0].id, "batch-log-2");
+
+    let paged = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("run-batch".to_string()),
+            level: None,
+            target: None,
+            from_ms: None,
+            to_ms: None,
+            search: None,
+            limit: Some(1),
+            offset: Some(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(paged.len(), 1);
+    assert_eq!(paged[0].id, "batch-log-2");
+}
+
+#[tokio::test]
+async fn system_log_retention_policy_purges_logs_older_than_days() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_system_logs_batch(&[
+        NewSystemLog {
+            id: "old-log".to_string(),
+            run_id: Some("retention-run".to_string()),
+            ts_ms: 1_000,
+            level: "INFO".to_string(),
+            target: "system.scheduler".to_string(),
+            message: "old".to_string(),
+            fields_json: None,
+            created_at_ms: 1_000,
+        },
+        NewSystemLog {
+            id: "new-log".to_string(),
+            run_id: Some("retention-run".to_string()),
+            ts_ms: 90_000_000,
+            level: "INFO".to_string(),
+            target: "system.scheduler".to_string(),
+            message: "new".to_string(),
+            fields_json: None,
+            created_at_ms: 90_000_000,
+        },
+    ])
+    .await
+    .unwrap();
+
+    let purged = db
+        .purge_system_logs_by_retention(
+            90_000_000,
+            storage::SystemLogRetentionPolicy { retention_days: 1 },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(purged, 1);
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("retention-run".to_string()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].message, "new");
 }
 
 #[tokio::test]

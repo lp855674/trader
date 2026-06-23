@@ -56,6 +56,8 @@ pub struct AppConfig {
     pub live: LiveConfig,
     #[serde(default)]
     pub ingestion: IngestionConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -237,7 +239,20 @@ pub struct LiveConfig {
 pub struct LiveAlertsConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub sinks: Vec<LiveAlertSinkConfig>,
     pub sink: Option<String>,
+    pub file_path: Option<String>,
+    pub webhook_url: Option<String>,
+    pub cooldown_ms: Option<u64>,
+    pub webhook_timeout_ms: Option<u64>,
+    pub webhook_max_retries: Option<u32>,
+    pub webhook_auth_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LiveAlertSinkConfig {
+    pub sink: String,
     pub file_path: Option<String>,
     pub webhook_url: Option<String>,
     pub cooldown_ms: Option<u64>,
@@ -258,6 +273,24 @@ pub struct IngestionConfig {
     pub symbols: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_logging_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_logging_level")]
+    pub level: String,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    #[serde(default = "default_logging_buffer_size")]
+    pub buffer_size: usize,
+    #[serde(default = "default_logging_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    #[serde(default = "default_logging_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_logging_console_output")]
+    pub console_output: bool,
+}
+
 impl Default for IngestionConfig {
     fn default() -> Self {
         Self {
@@ -269,8 +302,46 @@ impl Default for IngestionConfig {
     }
 }
 
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_logging_enabled(),
+            level: default_logging_level(),
+            categories: Vec::new(),
+            buffer_size: default_logging_buffer_size(),
+            flush_interval_ms: default_logging_flush_interval_ms(),
+            retention_days: default_logging_retention_days(),
+            console_output: default_logging_console_output(),
+        }
+    }
+}
+
 fn default_ingestion_fetch_interval_minutes() -> u64 {
     60
+}
+
+fn default_logging_enabled() -> bool {
+    true
+}
+
+fn default_logging_level() -> String {
+    "info".to_string()
+}
+
+fn default_logging_buffer_size() -> usize {
+    1000
+}
+
+fn default_logging_flush_interval_ms() -> u64 {
+    5000
+}
+
+fn default_logging_retention_days() -> u32 {
+    30
+}
+
+fn default_logging_console_output() -> bool {
+    true
 }
 
 impl AppConfig {

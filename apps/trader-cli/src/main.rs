@@ -6,6 +6,8 @@ use broker::{
     IbkrOpenOrder, IbkrOrderSide, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
 use clap::{Parser, Subcommand, ValueEnum};
+use events::LogWriterSettings;
+use hmac::{Hmac, Mac};
 use metrics::{equity_returns, paper_summary};
 use paper::{
     BinancePaperOrderExecutor, IbkrPaperGatewayOrderClient, IbkrPaperOrderExecutor, PaperRuntime,
@@ -13,6 +15,7 @@ use paper::{
 };
 use replay::ReplayRuntime;
 use rust_decimal::Decimal;
+use sha2::Sha256;
 use std::{
     collections::BTreeSet,
     io::Write,
@@ -585,7 +588,53 @@ enum LogsCommand {
         #[arg(long = "to")]
         to_ms: Option<i64>,
         #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
         limit: Option<i64>,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
+    Count {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        level: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        search: Option<String>,
+    },
+    Metrics {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
+    Tail {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        level: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long, default_value_t = 1000)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 10)]
+        max_polls: u32,
+        #[arg(long, default_value_t = 100)]
+        limit: i64,
     },
     Export {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -603,7 +652,41 @@ enum LogsCommand {
         #[arg(long = "to")]
         to_ms: Option<i64>,
         #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
         limit: Option<i64>,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
+    },
+    Ship {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        collector_url: String,
+        #[arg(long)]
+        bearer_token: Option<String>,
+        #[arg(long)]
+        signature_secret_env: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        max_retries: u32,
+        #[arg(long, default_value_t = 250)]
+        retry_backoff_ms: u64,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        level: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
+        limit: Option<i64>,
+        #[arg(long, default_value_t = 0)]
+        offset: i64,
     },
     Purge {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
@@ -915,6 +998,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Backtest { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
+            run_configured_log_retention(&db, &app_config).await?;
             persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
             insert_event(
                 &db,
@@ -949,6 +1033,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
+            run_configured_log_retention(&db, &app_config).await?;
             persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
             let market_slices = load_configured_market_slices(&app_config).with_context(|| {
                 format!(
@@ -1986,30 +2071,102 @@ async fn run_command(command: Command) -> Result<()> {
                 target,
                 from_ms,
                 to_ms,
+                search,
                 limit,
+                offset,
             } => {
                 let (_, db) = load_db(&config).await?;
                 let logs = db
-                    .list_system_logs_filtered(storage::SystemLogFilter {
+                    .list_system_logs_filtered(build_system_log_filter(
                         run_id,
                         level,
                         target,
                         from_ms,
                         to_ms,
+                        search,
                         limit,
-                    })
+                        Some(offset),
+                    ))
                     .await?;
                 for log in logs {
-                    println!(
-                        "system_log: run_id={} ts_ms={} level={} target={} message={} fields={} created_at_ms={}",
-                        log.run_id.as_deref().unwrap_or(""),
-                        log.ts_ms,
-                        log.level,
-                        log.target,
-                        log.message,
-                        log.fields_json.as_deref().unwrap_or("{}"),
-                        log.created_at_ms
-                    );
+                    print_system_log(&log);
+                }
+            }
+            LogsCommand::Count {
+                config,
+                run_id,
+                level,
+                target,
+                from_ms,
+                to_ms,
+                search,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let count = db
+                    .count_system_logs(build_system_log_filter(
+                        run_id, level, target, from_ms, to_ms, search, None, None,
+                    ))
+                    .await?;
+                println!("system_logs_count: count={count}");
+            }
+            LogsCommand::Metrics { config } => {
+                let app_config = config::AppConfig::from_toml_file(&config)?;
+                let settings = log_writer_settings(&app_config);
+                let categories = if settings.categories.is_empty() {
+                    "all".to_string()
+                } else {
+                    settings.categories.join(",")
+                };
+                println!(
+                    "logging_metrics: dropped_logs={} enabled={} level={} categories={} buffer_size={} batch_size={} flush_interval_ms={}",
+                    settings.metrics.dropped_logs(),
+                    settings.enabled,
+                    settings.min_level,
+                    categories,
+                    settings.buffer_size,
+                    settings.batch_size,
+                    settings.flush_interval_ms
+                );
+            }
+            LogsCommand::Tail {
+                config,
+                run_id,
+                level,
+                target,
+                from_ms,
+                to_ms,
+                search,
+                poll_interval_ms,
+                max_polls,
+                limit,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let mut next_from_ms = from_ms;
+                let mut seen_ids = BTreeSet::new();
+                for poll_index in 0..max_polls {
+                    let logs = db
+                        .list_system_logs_filtered(build_system_log_filter(
+                            run_id.clone(),
+                            level.clone(),
+                            target.clone(),
+                            next_from_ms,
+                            to_ms,
+                            search.clone(),
+                            Some(limit),
+                            Some(0),
+                        ))
+                        .await?;
+                    let mut latest_ts_ms = next_from_ms.unwrap_or_default();
+                    for log in logs {
+                        latest_ts_ms = latest_ts_ms.max(log.ts_ms);
+                        if seen_ids.insert(log.id.clone()) {
+                            print_system_log(&log);
+                        }
+                    }
+                    next_from_ms = Some(latest_ts_ms.saturating_add(1));
+                    if poll_index + 1 < max_polls {
+                        tokio::time::sleep(Duration::from_millis(poll_interval_ms)).await;
+                    }
                 }
             }
             LogsCommand::Export {
@@ -2020,42 +2177,87 @@ async fn run_command(command: Command) -> Result<()> {
                 target,
                 from_ms,
                 to_ms,
+                search,
                 limit,
+                offset,
             } => {
                 let (_, db) = load_db(&config).await?;
                 let logs = db
-                    .list_system_logs_filtered(storage::SystemLogFilter {
+                    .list_system_logs_filtered(build_system_log_filter(
                         run_id,
                         level,
                         target,
                         from_ms,
                         to_ms,
+                        search,
                         limit,
-                    })
+                        Some(offset),
+                    ))
                     .await?;
                 let mut file = std::fs::File::create(&output)
                     .with_context(|| format!("failed to create log export file {output}"))?;
                 for log in &logs {
-                    let fields = log
-                        .fields_json
-                        .as_deref()
-                        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
-                        .unwrap_or(serde_json::Value::Null);
-                    writeln!(
-                        file,
-                        "{}",
-                        serde_json::json!({
-                            "run_id": log.run_id,
-                            "ts_ms": log.ts_ms,
-                            "level": log.level,
-                            "target": log.target,
-                            "message": log.message,
-                            "fields": fields,
-                            "created_at_ms": log.created_at_ms,
-                        })
-                    )?;
+                    writeln!(file, "{}", system_log_json(log))?;
                 }
                 println!("system_logs_exported: count={} path={output}", logs.len());
+            }
+            LogsCommand::Ship {
+                config,
+                collector_url,
+                bearer_token,
+                signature_secret_env,
+                max_retries,
+                retry_backoff_ms,
+                run_id,
+                level,
+                target,
+                from_ms,
+                to_ms,
+                search,
+                limit,
+                offset,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let logs = db
+                    .list_system_logs_filtered(build_system_log_filter(
+                        run_id,
+                        level,
+                        target,
+                        from_ms,
+                        to_ms,
+                        search,
+                        limit,
+                        Some(offset),
+                    ))
+                    .await?;
+                let mut body = String::new();
+                for log in &logs {
+                    body.push_str(&system_log_json(log).to_string());
+                    body.push('\n');
+                }
+                let signature_secret = signature_secret_env
+                    .as_deref()
+                    .map(|env_name| {
+                        std::env::var(env_name).with_context(|| {
+                            format!("failed to read signature secret env {env_name}")
+                        })
+                    })
+                    .transpose()?;
+                let (status, attempts) = ship_system_logs_with_retry(
+                    &collector_url,
+                    bearer_token.as_deref(),
+                    signature_secret.as_deref(),
+                    body,
+                    max_retries,
+                    retry_backoff_ms,
+                )
+                .await?;
+                println!(
+                    "system_logs_shipped: count={} status={} attempts={}",
+                    logs.len(),
+                    status.as_u16(),
+                    attempts
+                );
             }
             LogsCommand::Purge {
                 config,
@@ -2162,7 +2364,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit,
+                    offset: None,
                 })
                 .await?;
             let mut alert_count = 0usize;
@@ -2252,7 +2456,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit,
+                    offset: None,
                 })
                 .await?;
             let mut file = std::fs::File::create(&output)
@@ -2333,7 +2539,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert_delivery".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit,
+                    offset: None,
                 })
                 .await?;
             let mut delivery_count = 0usize;
@@ -2419,7 +2627,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert_delivery".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit,
+                    offset: None,
                 })
                 .await?;
             let mut file = std::fs::File::create(&output)
@@ -2495,7 +2705,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert_delivery".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit,
+                    offset: None,
                 })
                 .await?;
             let alert_logs = db
@@ -2505,7 +2717,9 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert".to_string()),
                     from_ms,
                     to_ms,
+                    search: None,
                     limit: None,
+                    offset: None,
                 })
                 .await?;
             let client = reqwest::Client::new();
@@ -3660,6 +3874,143 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+fn build_system_log_filter(
+    run_id: Option<String>,
+    level: Option<String>,
+    target: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    search: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> storage::SystemLogFilter {
+    storage::SystemLogFilter {
+        run_id,
+        level,
+        target,
+        from_ms,
+        to_ms,
+        search,
+        limit,
+        offset,
+    }
+}
+
+fn print_system_log(log: &storage::StoredSystemLog) {
+    println!(
+        "system_log: run_id={} ts_ms={} level={} target={} message={} fields={} created_at_ms={}",
+        log.run_id.as_deref().unwrap_or(""),
+        log.ts_ms,
+        log.level,
+        log.target,
+        log.message,
+        log.fields_json.as_deref().unwrap_or("{}"),
+        log.created_at_ms
+    );
+}
+
+fn system_log_json(log: &storage::StoredSystemLog) -> serde_json::Value {
+    let fields = log
+        .fields_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "run_id": log.run_id,
+        "ts_ms": log.ts_ms,
+        "level": log.level,
+        "target": log.target,
+        "message": log.message,
+        "fields": fields,
+        "created_at_ms": log.created_at_ms,
+    })
+}
+
+async fn ship_system_logs_with_retry(
+    collector_url: &str,
+    bearer_token: Option<&str>,
+    signature_secret: Option<&str>,
+    body: String,
+    max_retries: u32,
+    retry_backoff_ms: u64,
+) -> Result<(reqwest::StatusCode, u32)> {
+    let client = reqwest::Client::new();
+    let max_attempts = max_retries.saturating_add(1);
+    let mut last_error = None;
+    let signature = signature_secret.map(|secret| {
+        let timestamp_ms = chrono::Utc::now().timestamp_millis().to_string();
+        let signature = log_ship_signature(secret, &timestamp_ms, &body);
+        (timestamp_ms, signature)
+    });
+
+    for attempt in 1..=max_attempts {
+        let mut request = client
+            .post(collector_url)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-ndjson")
+            .body(body.clone());
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        if let Some((timestamp_ms, signature)) = &signature {
+            request = request
+                .header("X-Trader-Log-Timestamp", timestamp_ms)
+                .header("X-Trader-Log-Signature", format!("v1={signature}"));
+        }
+
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    return Ok((status, attempt));
+                }
+                if !is_retryable_ship_status(status) || attempt == max_attempts {
+                    bail!(
+                        "system log collector returned non-success status {} after {} attempt(s)",
+                        status.as_u16(),
+                        attempt
+                    );
+                }
+                last_error = Some(format!("collector status {}", status.as_u16()));
+            }
+            Err(error) => {
+                if attempt == max_attempts {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to ship system logs to {collector_url} after {attempt} attempt(s)"
+                        )
+                    });
+                }
+                last_error = Some(error.to_string());
+            }
+        }
+
+        let backoff = retry_backoff_ms.saturating_mul(attempt as u64);
+        if backoff > 0 {
+            tokio::time::sleep(Duration::from_millis(backoff)).await;
+        }
+    }
+
+    bail!(
+        "failed to ship system logs to {} after {} attempt(s): {}",
+        collector_url,
+        max_attempts,
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    )
+}
+
+fn is_retryable_ship_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn log_ship_signature(secret: &str, timestamp_ms: &str, body: &str) -> String {
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts keys of any length");
+    mac.update(timestamp_ms.as_bytes());
+    mac.update(b".");
+    mac.update(body.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
 async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {
     let app_config = config::AppConfig::from_toml_file(config_path)?;
     ensure_database_parent(&app_config.database.url)?;
@@ -4005,6 +4356,7 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings>
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
+        logging: log_writer_settings(app_config),
     })
 }
 
@@ -4047,7 +4399,39 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
         bar_delay_ms: app_config.paper.bar_delay_ms.unwrap_or(0),
+        logging: log_writer_settings(app_config),
     })
+}
+
+fn log_writer_settings(app_config: &config::AppConfig) -> LogWriterSettings {
+    LogWriterSettings {
+        enabled: app_config.logging.enabled,
+        buffer_size: app_config.logging.buffer_size,
+        flush_interval_ms: app_config.logging.flush_interval_ms,
+        min_level: app_config.logging.level.clone(),
+        categories: app_config.logging.categories.clone(),
+        ..LogWriterSettings::default()
+    }
+}
+
+fn system_log_retention_policy(
+    app_config: &config::AppConfig,
+) -> storage::SystemLogRetentionPolicy {
+    storage::SystemLogRetentionPolicy {
+        retention_days: app_config.logging.retention_days,
+    }
+}
+
+async fn run_configured_log_retention(
+    db: &storage::Db,
+    app_config: &config::AppConfig,
+) -> Result<u64> {
+    Ok(db
+        .purge_system_logs_by_retention(
+            chrono::Utc::now().timestamp_millis(),
+            system_log_retention_policy(app_config),
+        )
+        .await?)
 }
 
 fn strategy_universe_filter(
@@ -4215,11 +4599,12 @@ fn validate_feature_manifest_build_contract(
 #[cfg(test)]
 mod tests {
     use super::{
-        LocalFill, LocalOrder, binance_accounting_records_from_fills, binance_balance_total,
-        binance_base_asset, binance_cancel_outcome, binance_local_order_matches_remote_open,
-        binance_testnet_settings, ibkr_execution_matches_local,
-        ibkr_local_order_matches_remote_open, ibkr_recovered_order_status,
-        settings_with_broker_initial_cash,
+        LocalFill, LocalOrder, backtest_settings, binance_accounting_records_from_fills,
+        binance_balance_total, binance_base_asset, binance_cancel_outcome,
+        binance_local_order_matches_remote_open, binance_testnet_settings,
+        ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
+        ibkr_recovered_order_status, paper_settings, settings_with_broker_initial_cash,
+        system_log_retention_policy,
     };
     use broker::{BinanceAssetBalance, BinanceOpenOrder, IbkrExecution, IbkrOpenOrder};
     use rust_decimal::Decimal;
@@ -4490,6 +4875,27 @@ mod tests {
         let settings = settings_with_broker_initial_cash(settings, dec!(9744.45561));
 
         assert_eq!(settings.initial_cash, dec!(9744.45561));
+    }
+
+    #[test]
+    fn runtime_settings_use_logging_config_for_writer_tuning() {
+        let mut config = sample_app_config();
+        config.logging.enabled = false;
+        config.logging.buffer_size = 64;
+        config.logging.flush_interval_ms = 250;
+        config.logging.retention_days = 7;
+
+        let backtest = backtest_settings(&config).unwrap();
+        let paper = paper_settings(&config).unwrap();
+        let retention = system_log_retention_policy(&config);
+
+        assert!(!backtest.logging.enabled);
+        assert_eq!(backtest.logging.buffer_size, 64);
+        assert_eq!(backtest.logging.flush_interval_ms, 250);
+        assert!(!paper.logging.enabled);
+        assert_eq!(paper.logging.buffer_size, 64);
+        assert_eq!(paper.logging.flush_interval_ms, 250);
+        assert_eq!(retention.retention_days, 7);
     }
 
     fn sample_app_config() -> config::AppConfig {
