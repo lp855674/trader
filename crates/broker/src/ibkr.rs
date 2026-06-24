@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use chrono::Utc;
 use ibapi::{
     Client,
-    contracts::Contract,
+    accounts::{AccountSummaryResult, AccountSummaryTags, PositionUpdate, types::AccountGroup},
+    contracts::{Contract, SecurityType},
     orders::{
         Action, CancelOrder, ExecutionFilter, Executions, Order, Orders, PlaceOrder, TimeInForce,
     },
@@ -10,13 +12,14 @@ use ibapi::{
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use serde::Serialize;
-use std::{fmt, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 use tokio::time::timeout;
 use trader_core::OrderRequest;
 
 use crate::{
-    Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerError, BrokerKind, BrokerOrder,
-    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
+    Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerError, BrokerExecution, BrokerKind,
+    BrokerOpenOrder, BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus,
+    PlaceOrderResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +128,10 @@ pub trait IbkrGatewayClient: Send + Sync {
     async fn connect_probe(&self) -> Result<(), BrokerError>;
     async fn connect_and_handshake(&self) -> Result<IbkrServerVersion, BrokerError>;
     async fn managed_accounts(&self) -> Result<Vec<String>, BrokerError>;
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError>;
     async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError>;
     async fn executions(
         &self,
@@ -133,6 +140,10 @@ pub trait IbkrGatewayClient: Send + Sync {
         symbol: &str,
     ) -> Result<Vec<IbkrExecution>, BrokerError>;
     async fn next_order_id(&self) -> Result<i64, BrokerError>;
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>;
     async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError>;
     async fn place_limit_order(
         &self,
@@ -298,6 +309,47 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
         Ok(accounts)
     }
 
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        let client = self.connect_client().await?;
+        let group = AccountGroup::from("All");
+        let tags = [
+            AccountSummaryTags::TOTAL_CASH_VALUE,
+            AccountSummaryTags::NET_LIQUIDATION,
+            AccountSummaryTags::BUYING_POWER,
+            AccountSummaryTags::MAINT_MARGIN_REQ,
+        ];
+        let mut subscription = timeout(
+            self.settings.connect_timeout,
+            client.account_summary(&group, &tags),
+        )
+        .await
+        .map_err(|_| self.timeout_error("account summary"))?
+        .map_err(map_ibapi_error)?;
+        let mut values = HashMap::new();
+        while let Some(update) = timeout(self.settings.connect_timeout, subscription.next())
+            .await
+            .map_err(|_| self.timeout_error("account summary response"))?
+        {
+            match update.map_err(map_ibapi_error)? {
+                SubscriptionItem::Data(AccountSummaryResult::Summary(summary))
+                    if summary.account == account_id =>
+                {
+                    values.insert(summary.tag, summary.value);
+                }
+                SubscriptionItem::Data(AccountSummaryResult::Summary(_)) => {}
+                SubscriptionItem::Data(AccountSummaryResult::End) => {
+                    break;
+                }
+                SubscriptionItem::Notice(_) => {}
+            }
+        }
+        client.disconnect().await;
+        account_snapshot_from_summary(account_id, &values)
+    }
+
     async fn open_orders(&self) -> Result<Vec<IbkrOpenOrder>, BrokerError> {
         let client = self.connect_client().await?;
         let mut subscription = timeout(self.settings.connect_timeout, client.all_open_orders())
@@ -374,6 +426,39 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
             .map_err(map_ibapi_error)?;
         client.disconnect().await;
         Ok(i64::from(order_id))
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        let client = self.connect_client().await?;
+        let mut subscription = timeout(self.settings.connect_timeout, client.positions())
+            .await
+            .map_err(|_| self.timeout_error("positions"))?
+            .map_err(map_ibapi_error)?;
+        let mut positions = Vec::new();
+        while let Some(update) = timeout(self.settings.connect_timeout, subscription.next())
+            .await
+            .map_err(|_| self.timeout_error("positions response"))?
+        {
+            match update.map_err(map_ibapi_error)? {
+                SubscriptionItem::Data(PositionUpdate::Position(position))
+                    if position.account == account_id =>
+                {
+                    if let Some(snapshot) = map_position_snapshot(position)? {
+                        positions.push(snapshot);
+                    }
+                }
+                SubscriptionItem::Data(PositionUpdate::Position(_)) => {}
+                SubscriptionItem::Data(PositionUpdate::PositionEnd) => {
+                    break;
+                }
+                SubscriptionItem::Notice(_) => {}
+            }
+        }
+        client.disconnect().await;
+        Ok(positions)
     }
 
     async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
@@ -490,18 +575,40 @@ impl Broker for IbkrPaperGatewayAdapter {
         &self,
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
-        Err(BrokerError::Rejected(format!(
-            "IBKR paper account snapshot is not implemented for {account_id}"
-        )))
+        self.client.account_snapshot(account_id).await
     }
 
     async fn position_snapshots(
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
-        Err(BrokerError::Rejected(format!(
-            "IBKR paper position snapshots are not implemented for {account_id}"
-        )))
+        self.client.position_snapshots(account_id).await
+    }
+
+    async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        let orders = self.client.open_orders().await?;
+        Ok(orders
+            .into_iter()
+            .filter(|order| order.account_id == account_id)
+            .map(ibkr_open_order_into_broker_open_order)
+            .collect())
+    }
+
+    async fn executions(
+        &self,
+        account_id: &str,
+        symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        let request_id = Utc::now().timestamp_millis();
+        let symbol = symbol.unwrap_or("");
+        let executions = self
+            .client
+            .executions(request_id, account_id, symbol)
+            .await?;
+        Ok(executions
+            .into_iter()
+            .map(|execution| ibkr_execution_into_broker_execution(account_id, execution))
+            .collect())
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
@@ -518,6 +625,56 @@ impl Broker for IbkrPaperGatewayAdapter {
                 live_trading: false,
             },
         })
+    }
+}
+
+fn ibkr_open_order_into_broker_open_order(order: IbkrOpenOrder) -> BrokerOpenOrder {
+    BrokerOpenOrder {
+        broker_order_id: order.order_id.to_string(),
+        client_order_id: order.client_order_id,
+        account_id: order.account_id,
+        symbol: order.symbol,
+        side: parse_broker_order_side(&order.side),
+        order_type: parse_broker_order_type(&order.order_type),
+        price: order.limit_price,
+        qty: order.quantity,
+        filled_qty: order.filled_qty,
+        status: order.status,
+    }
+}
+
+fn ibkr_execution_into_broker_execution(
+    account_id: &str,
+    execution: IbkrExecution,
+) -> BrokerExecution {
+    BrokerExecution {
+        trade_id: execution.trade_id,
+        broker_order_id: execution.order_id.to_string(),
+        client_order_id: None,
+        account_id: account_id.to_string(),
+        symbol: execution.symbol,
+        side: parse_broker_order_side(&execution.side),
+        price: execution.price,
+        qty: execution.qty,
+        fee: execution.fee,
+        ts_ms: Utc::now().timestamp_millis(),
+    }
+}
+
+fn parse_broker_order_side(side: &str) -> trader_core::OrderSide {
+    if side.eq_ignore_ascii_case("SELL") || side.eq_ignore_ascii_case("SLD") {
+        trader_core::OrderSide::Sell
+    } else {
+        trader_core::OrderSide::Buy
+    }
+}
+
+fn parse_broker_order_type(order_type: &str) -> trader_core::OrderType {
+    match order_type.to_ascii_uppercase().as_str() {
+        "MKT" | "MARKET" => trader_core::OrderType::Market,
+        "STP" | "STOP" => trader_core::OrderType::Stop,
+        "STP LMT" | "STOP_LIMIT" | "STOPLIMIT" => trader_core::OrderType::StopLimit,
+        _ => trader_core::OrderType::Limit,
     }
 }
 
@@ -568,6 +725,73 @@ fn map_order_status(status: ibapi::orders::OrderStatus) -> Result<IbkrOrderStatu
             .transpose()?
             .unwrap_or(Decimal::ZERO),
     })
+}
+
+fn map_position_snapshot(
+    position: ibapi::accounts::Position,
+) -> Result<Option<BrokerPositionSnapshot>, BrokerError> {
+    let qty = decimal_from_f64(position.position, "IBKR position quantity")?;
+    if qty == Decimal::ZERO {
+        return Ok(None);
+    }
+    let avg_price = decimal_from_f64(position.average_cost, "IBKR average cost")?;
+    let position_side = BrokerPositionSide::from_signed_qty(qty).ok_or_else(|| {
+        BrokerError::Config(format!(
+            "IBKR position {} has zero quantity and no side",
+            position.contract.symbol
+        ))
+    })?;
+    Ok(Some(BrokerPositionSnapshot {
+        account_id: position.account,
+        exchange: "IBKR".to_string(),
+        symbol: ibkr_position_symbol(&position.contract),
+        position_side,
+        qty,
+        avg_price,
+        margin_used: Decimal::ZERO,
+        unrealized_pnl: Decimal::ZERO,
+        ts_ms: Utc::now().timestamp_millis(),
+    }))
+}
+
+fn account_snapshot_from_summary(
+    account_id: &str,
+    values: &HashMap<String, String>,
+) -> Result<BrokerAccountSnapshot, BrokerError> {
+    Ok(BrokerAccountSnapshot {
+        account_id: account_id.to_string(),
+        cash: summary_decimal(values, AccountSummaryTags::TOTAL_CASH_VALUE)?,
+        equity: summary_decimal(values, AccountSummaryTags::NET_LIQUIDATION)?,
+        buying_power: summary_decimal(values, AccountSummaryTags::BUYING_POWER)?,
+        margin_used: summary_decimal(values, AccountSummaryTags::MAINT_MARGIN_REQ)?,
+    })
+}
+
+fn summary_decimal(
+    values: &HashMap<String, String>,
+    tag: &'static str,
+) -> Result<Decimal, BrokerError> {
+    values
+        .get(tag)
+        .ok_or_else(|| BrokerError::Config(format!("IBKR account summary missing {tag}")))?
+        .parse::<Decimal>()
+        .map_err(|error| BrokerError::Config(format!("invalid IBKR {tag}: {error}")))
+}
+
+fn ibkr_position_symbol(contract: &Contract) -> String {
+    let exchange = if contract.primary_exchange.to_string().trim().is_empty() {
+        contract.exchange.to_string()
+    } else {
+        contract.primary_exchange.to_string()
+    };
+    match contract.security_type {
+        SecurityType::Stock => format!("US:{exchange}:{}:EQUITY", contract.symbol),
+        SecurityType::Crypto => format!("CRYPTO:{exchange}:{}:CRYPTO_SPOT", contract.symbol),
+        _ => format!(
+            "IBKR:{exchange}:{}:{}",
+            contract.symbol, contract.security_type
+        ),
+    }
 }
 
 fn ibkr_stock_contract(symbol: &str) -> Contract {

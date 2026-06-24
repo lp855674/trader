@@ -65,6 +65,34 @@ pub struct BrokerOrder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerOpenOrder {
+    pub broker_order_id: String,
+    pub client_order_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: OrderSide,
+    pub order_type: OrderType,
+    pub price: Option<Decimal>,
+    pub qty: Decimal,
+    pub filled_qty: Decimal,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerExecution {
+    pub trade_id: String,
+    pub broker_order_id: String,
+    pub client_order_id: Option<String>,
+    pub account_id: String,
+    pub symbol: String,
+    pub side: OrderSide,
+    pub price: Decimal,
+    pub qty: Decimal,
+    pub fee: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BrokerAccountSnapshot {
     pub account_id: String,
     pub cash: Decimal,
@@ -284,6 +312,16 @@ pub trait Broker: Send + Sync {
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>;
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(Vec::new())
+    }
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Ok(Vec::new())
+    }
     async fn status(&self) -> Result<BrokerStatus, BrokerError>;
 }
 

@@ -19,8 +19,8 @@ This plan file has now been backfilled for the audited local MVP. Checked items 
 | Contract risk checks | Done for current scope | `market_rules::ContractRiskLimits` and algorithm tests for leverage, margin and funding bounds | Production liquidation/open-interest data still not wired |
 | CLI/API readback | Done for local MVP | `trader positions list`, `trader funding list`, `GET /api/v1/runs/{run_id}/crypto-positions`, `GET /api/v1/funding-rates` | None for read-only local surface |
 | Binance reconciliation | Partially done | Binance position parsing and reconciliation drift tests exist in `crates/broker` | Scheduled real broker reconciliation remains follow-up |
-| IBKR contract reconciliation | Not done | IBKR adapter still returns "position snapshots are not implemented" for broker snapshots | Implement IBKR position snapshots and contract reconciliation |
-| Production readiness | Not done | `docs/分析.md` still classifies this as not full production accounting | Real broker scheduling, production alerts, exchange metadata such as liquidation/open-interest |
+| IBKR contract reconciliation | Partially done | IBKR paper adapter can now stream broker account/position snapshots through the broker boundary, and API-launched live runtime can inject the IBKR paper Gateway adapter from config instead of hard-coded fake snapshots | Add real Gateway reconciliation verification and fuller contract-position coverage |
+| Production readiness | Not done | `docs/分析.md` still classifies this as not full production accounting | Real Gateway long-run verification, production alerts, exchange metadata such as liquidation/open-interest |
 
 ---
 
@@ -334,9 +334,9 @@ async fn binance_reconciliation_detects_drift() {
 }
 ```
 
-- [ ] **Step 4: Add IBKR position fetch (if adapter exists)**
+- [x] **Step 4: Add IBKR account/position fetch (adapter boundary)**
 
-Similar pattern: fetch positions from IBKR paper, reconcile against runtime.
+Similar pattern: fetch account/positions from IBKR paper, reconcile against runtime. Adapter-boundary and API live-runtime injection are implemented; real Gateway reconciliation verification remains follow-up.
 
 - [ ] **Step 5: Run tests**
 

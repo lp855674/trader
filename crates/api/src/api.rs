@@ -1213,27 +1213,22 @@ async fn start_live_run(
     let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    let broker = live_broker_for_config(&app_config)?;
+    let settings = LiveRuntimeSettings {
+        run_id: run_id.clone(),
+        broker_kind: broker_kind(app_config.broker.kind),
+        account_id: app_config.paper.account_id.clone(),
+        base_currency: app_config.portfolio.base_currency.clone(),
+        initial_cash,
+        broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
+        alert_sink: alert_sink_settings(&app_config.live.alerts),
+        logging: log_writer_settings_with_metrics(&app_config, state.log_writer_metrics.clone()),
+    };
     let db = state.db.clone();
-    let task_run_id = run_id.clone();
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {
-            let runtime = LiveRuntime::new(
-                db,
-                LiveRuntimeSettings {
-                    run_id: task_run_id,
-                    broker_kind: broker_kind(app_config.broker.kind),
-                    account_id: app_config.paper.account_id.clone(),
-                    base_currency: app_config.portfolio.base_currency.clone(),
-                    initial_cash,
-                    broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
-                    alert_sink: alert_sink_settings(&app_config.live.alerts),
-                    logging: log_writer_settings_with_metrics(
-                        &app_config,
-                        state.log_writer_metrics.clone(),
-                    ),
-                },
-            );
+            let runtime = LiveRuntime::new_with_broker(db, settings, broker);
             let _ = runtime.run(cancel).await;
         })
         .await
@@ -1246,6 +1241,23 @@ async fn start_live_run(
             status: "running".to_string(),
         }),
     ))
+}
+
+fn live_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<dyn Broker>, ApiError> {
+    match app_config.broker.kind {
+        config::BrokerKind::InteractiveBrokers => {
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                return Err(ApiError(anyhow::anyhow!(
+                    "live runtime IBKR Gateway adapter requires broker.mode = paper in this phase"
+                )));
+            }
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)
+                    .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            Ok(Arc::new(adapter))
+        }
+        kind => Ok(Arc::new(FakeBrokerAdapter::new(broker_kind(kind)))),
+    }
 }
 
 async fn stop_live_run(
@@ -3453,6 +3465,77 @@ impl From<storage::StorageError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn live_config_with_broker(broker_toml: &str) -> config::AppConfig {
+        toml::from_str(&format!(
+            r#"
+            [runtime]
+            mode = "live"
+            run_id = "api-live-broker-test"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "datasets/sample/aapl_1d.csv"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "25000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            {broker_toml}
+
+            [paper]
+            account_id = "DU12345"
+            slippage_bps = "25"
+            fee_bps = "10"
+
+            [live]
+            enabled = true
+            broker_snapshot_interval_ms = 5
+            "#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn live_broker_for_config_rejects_ibkr_common_live_port() {
+        let app_config = live_config_with_broker(
+            r#"
+            kind = "ibkr"
+            mode = "paper"
+            host = "127.0.0.1"
+            port = 7496
+            client_id = 7
+            "#,
+        );
+
+        let error = match live_broker_for_config(&app_config) {
+            Ok(_) => panic!("expected IBKR live broker config to reject common live port"),
+            Err(error) => error,
+        };
+
+        assert!(error.0.to_string().contains("paper port"));
+    }
 
     #[test]
     fn alert_sink_settings_prefers_multi_sink_config() {

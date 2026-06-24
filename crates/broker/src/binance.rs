@@ -7,8 +7,9 @@ use std::{fmt, sync::Arc};
 use trader_core::OrderRequest;
 
 use crate::{
-    Broker, BrokerAccountSnapshot, BrokerError, BrokerKind, BrokerOrder, BrokerPositionSide,
-    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse, fake_status,
+    Broker, BrokerAccountSnapshot, BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder,
+    BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
+    fake_status,
 };
 
 #[derive(Debug, Clone)]
@@ -267,6 +268,18 @@ impl BinanceSpotTestnetAdapter {
         self.signed_request("/v3/myTrades", &query)
     }
 
+    pub fn signed_my_trades_for_symbol_request(
+        &self,
+        symbol: &str,
+        timestamp_ms: i64,
+    ) -> BinanceSignedRequest {
+        let query = format!(
+            "symbol={symbol}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/myTrades", &query)
+    }
+
     pub fn signed_open_orders_request(
         &self,
         symbol: &str,
@@ -274,6 +287,14 @@ impl BinanceSpotTestnetAdapter {
     ) -> BinanceSignedRequest {
         let query = format!(
             "symbol={symbol}&timestamp={timestamp_ms}&recvWindow={}",
+            self.settings.recv_window_ms
+        );
+        self.signed_request("/v3/openOrders", &query)
+    }
+
+    pub fn signed_all_open_orders_request(&self, timestamp_ms: i64) -> BinanceSignedRequest {
+        let query = format!(
+            "timestamp={timestamp_ms}&recvWindow={}",
             self.settings.recv_window_ms
         );
         self.signed_request("/v3/openOrders", &query)
@@ -372,8 +393,30 @@ impl BinanceSpotTestnetAdapter {
         Self::parse_trades_json(&body)
     }
 
+    pub async fn my_trades_for_symbol(
+        &self,
+        symbol: &str,
+    ) -> Result<Vec<BinanceTrade>, BrokerError> {
+        let request =
+            self.signed_my_trades_for_symbol_request(symbol, self.server_time_ms().await?);
+        let body = self
+            .client
+            .get(&request.url, Some(&request.api_key))
+            .await?;
+        Self::parse_trades_json(&body)
+    }
+
     pub async fn open_orders(&self, symbol: &str) -> Result<Vec<BinanceOpenOrder>, BrokerError> {
         let request = self.signed_open_orders_request(symbol, self.server_time_ms().await?);
+        let body = self
+            .client
+            .get(&request.url, Some(&request.api_key))
+            .await?;
+        Self::parse_open_orders_json(&body)
+    }
+
+    pub async fn all_open_orders(&self) -> Result<Vec<BinanceOpenOrder>, BrokerError> {
+        let request = self.signed_all_open_orders_request(self.server_time_ms().await?);
         let body = self
             .client
             .get(&request.url, Some(&request.api_key))
@@ -735,6 +778,53 @@ impl Broker for BinanceSpotTestnetAdapter {
         Self::parse_position_risk_json(account_id, &body)
     }
 
+    async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(self
+            .all_open_orders()
+            .await?
+            .into_iter()
+            .map(|order| BrokerOpenOrder {
+                broker_order_id: order.order_id.to_string(),
+                client_order_id: order.client_order_id,
+                account_id: account_id.to_string(),
+                symbol: order.symbol,
+                side: parse_broker_order_side(&order.side),
+                order_type: trader_core::OrderType::Limit,
+                price: Some(order.price),
+                qty: order.orig_qty,
+                filled_qty: order.executed_qty,
+                status: order.status,
+            })
+            .collect())
+    }
+
+    async fn executions(
+        &self,
+        account_id: &str,
+        symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        let Some(symbol) = symbol else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .my_trades_for_symbol(symbol)
+            .await?
+            .into_iter()
+            .map(|trade| BrokerExecution {
+                trade_id: trade.trade_id.to_string(),
+                broker_order_id: trade.order_id.to_string(),
+                client_order_id: None,
+                account_id: account_id.to_string(),
+                symbol: trade.symbol,
+                side: trader_core::OrderSide::Buy,
+                price: trade.price,
+                qty: trade.qty,
+                fee: trade.fee,
+                ts_ms: trade.ts_ms,
+            })
+            .collect())
+    }
+
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
         self.client
             .get(
@@ -743,6 +833,14 @@ impl Broker for BinanceSpotTestnetAdapter {
             )
             .await?;
         Ok(fake_status(BrokerKind::Binance))
+    }
+}
+
+fn parse_broker_order_side(side: &str) -> trader_core::OrderSide {
+    if side.eq_ignore_ascii_case("SELL") {
+        trader_core::OrderSide::Sell
+    } else {
+        trader_core::OrderSide::Buy
     }
 }
 

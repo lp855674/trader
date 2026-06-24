@@ -1,10 +1,15 @@
 use crate::CancellationFlag;
-use broker::{Broker, BrokerKind, BrokerPositionSide, BrokerStatus, FakeBrokerAdapter};
+use broker::{
+    Broker, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerPositionSide, BrokerStatus,
+    FakeBrokerAdapter,
+};
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 use storage::{
-    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, LiveRunCommand,
-    PaperPortfolioSnapshotCommand, RuntimeEventCommand, SystemLogCommand,
+    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, LiveRunCommand, NewFill,
+    PaperPortfolioSnapshotCommand, RuntimeEventCommand, StoredOrder, SystemLogCommand,
 };
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -44,17 +49,29 @@ pub enum AlertSinkSettings {
 pub struct LiveRuntime {
     db: Db,
     settings: LiveRuntimeSettings,
+    broker: Arc<dyn Broker>,
 }
 
 impl LiveRuntime {
     pub fn new(db: Db, settings: LiveRuntimeSettings) -> Self {
-        Self { db, settings }
+        let broker = Arc::new(FakeBrokerAdapter::new(settings.broker_kind));
+        Self {
+            db,
+            settings,
+            broker,
+        }
+    }
+
+    pub fn new_with_broker(db: Db, settings: LiveRuntimeSettings, broker: Arc<dyn Broker>) -> Self {
+        Self {
+            db,
+            settings,
+            broker,
+        }
     }
 
     pub async fn broker_status(&self) -> anyhow::Result<BrokerStatus> {
-        Ok(FakeBrokerAdapter::new(self.settings.broker_kind)
-            .status()
-            .await?)
+        Ok(self.broker.status().await?)
     }
 
     pub async fn run(&self, cancel: CancellationFlag) -> anyhow::Result<()> {
@@ -92,6 +109,7 @@ impl LiveRuntime {
             }),
         )
         .await?;
+        self.recover_startup_orders().await?;
         self.record_baseline_snapshot(started_at_ms).await?;
 
         while !cancel.is_cancelled() {
@@ -146,6 +164,157 @@ impl LiveRuntime {
             .await
     }
 
+    async fn recover_startup_orders(&self) -> anyhow::Result<()> {
+        let recoverable = self
+            .db
+            .list_recoverable_orders(&self.settings.run_id)
+            .await?;
+        if recoverable.is_empty() {
+            self.record_startup_recovery_log(&StartupRecoverySummary::default())
+                .await?;
+            return Ok(());
+        }
+
+        let open_orders = self.broker.open_orders(&self.settings.account_id).await?;
+        let symbols = recoverable
+            .iter()
+            .map(|order| order.symbol.clone())
+            .collect::<BTreeSet<_>>();
+        let mut executions = Vec::new();
+        for symbol in symbols {
+            executions.extend(
+                self.broker
+                    .executions(&self.settings.account_id, Some(&symbol))
+                    .await?,
+            );
+        }
+
+        let mut recovered = 0usize;
+        let mut recovered_execution_ids = HashSet::new();
+        let mut matched_open_order_ids = HashSet::new();
+        let mut matched_execution_ids = HashSet::new();
+        for order in &recoverable {
+            let open_order = open_orders
+                .iter()
+                .find(|open_order| broker_order_matches_local(open_order, order));
+            let matched_executions = executions
+                .iter()
+                .filter(|execution| broker_execution_matches_local(execution, order))
+                .collect::<Vec<_>>();
+            if open_order.is_none() && matched_executions.is_empty() {
+                continue;
+            }
+            if let Some(open_order) = open_order {
+                matched_open_order_ids.insert(open_order.broker_order_id.clone());
+            }
+            matched_execution_ids.extend(
+                matched_executions
+                    .iter()
+                    .map(|execution| execution.trade_id.clone()),
+            );
+
+            let broker_order_id = open_order
+                .map(|order| order.broker_order_id.as_str())
+                .or(order.broker_order_id.as_deref())
+                .or_else(|| {
+                    matched_executions
+                        .first()
+                        .map(|execution| execution.broker_order_id.as_str())
+                })
+                .unwrap_or_default();
+            let filled_qty = matched_executions
+                .iter()
+                .map(|execution| execution.qty)
+                .sum::<Decimal>();
+            let status = recovered_order_status(order, open_order, filled_qty)?;
+            self.db
+                .update_order_execution_by_client_order_id(
+                    &order.client_order_id,
+                    broker_order_id,
+                    &status,
+                    &filled_qty.to_string(),
+                    chrono::Utc::now().timestamp_millis(),
+                )
+                .await?;
+
+            for execution in matched_executions {
+                if recovered_execution_ids.insert(execution.trade_id.clone()) {
+                    self.db
+                        .insert_fill(NewFill {
+                            id: execution.trade_id.clone(),
+                            order_id: order.id.clone(),
+                            run_id: self.settings.run_id.clone(),
+                            symbol: execution.symbol.clone(),
+                            side: order_side_slug(execution.side).to_string(),
+                            price: execution.price.to_string(),
+                            qty: execution.qty.to_string(),
+                            fee: execution.fee.to_string(),
+                            ts_ms: execution.ts_ms,
+                        })
+                        .await?;
+                }
+            }
+            recovered += 1;
+        }
+
+        let remaining = self
+            .db
+            .list_recoverable_orders(&self.settings.run_id)
+            .await?
+            .len();
+        let unmatched_open_orders = open_orders
+            .iter()
+            .filter(|order| !matched_open_order_ids.contains(&order.broker_order_id))
+            .map(|order| order.broker_order_id.clone())
+            .collect::<Vec<_>>();
+        let unmatched_executions = executions
+            .iter()
+            .filter(|execution| !matched_execution_ids.contains(&execution.trade_id))
+            .map(|execution| execution.trade_id.clone())
+            .collect::<Vec<_>>();
+        self.record_startup_recovery_log(&StartupRecoverySummary {
+            scanned: recoverable.len(),
+            recovered,
+            remaining,
+            executions: recovered_execution_ids.len(),
+            unmatched_open_orders,
+            unmatched_executions,
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn record_startup_recovery_log(
+        &self,
+        summary: &StartupRecoverySummary,
+    ) -> storage::StorageResult<()> {
+        let level = if summary.unmatched_open_orders.is_empty()
+            && summary.unmatched_executions.is_empty()
+        {
+            "INFO"
+        } else {
+            "WARN"
+        };
+        self.record_system_log(
+            level,
+            "runtime.startup_recovery",
+            "startup_recovery.orders",
+            serde_json::json!({
+                "run_id": &self.settings.run_id,
+                "account_id": &self.settings.account_id,
+                "scanned": summary.scanned,
+                "recovered": summary.recovered,
+                "remaining": summary.remaining,
+                "executions": summary.executions,
+                "unmatched_open_orders": summary.unmatched_open_orders.len(),
+                "unmatched_executions": summary.unmatched_executions.len(),
+                "unmatched_open_order_ids": summary.unmatched_open_orders,
+                "unmatched_execution_ids": summary.unmatched_executions,
+            }),
+        )
+        .await
+    }
+
     async fn record_baseline_snapshot(&self, ts_ms: i64) -> storage::StorageResult<()> {
         self.record_cash_snapshot(ts_ms, self.settings.initial_cash)
             .await?;
@@ -153,8 +322,10 @@ impl LiveRuntime {
     }
 
     async fn record_broker_snapshot(&self) -> anyhow::Result<()> {
-        let broker = FakeBrokerAdapter::new(self.settings.broker_kind);
-        let snapshot = broker.account_snapshot(&self.settings.account_id).await?;
+        let snapshot = self
+            .broker
+            .account_snapshot(&self.settings.account_id)
+            .await?;
         self.record_cash_drift_if_needed(snapshot.cash).await?;
         self.record_cash_snapshot(chrono::Utc::now().timestamp_millis(), snapshot.cash)
             .await?;
@@ -178,7 +349,11 @@ impl LiveRuntime {
             }),
         )
         .await?;
-        for position in broker.position_snapshots(&self.settings.account_id).await? {
+        for position in self
+            .broker
+            .position_snapshots(&self.settings.account_id)
+            .await?
+        {
             let symbol = position.symbol.clone();
             let position_side = position_side_slug(position.position_side);
             let qty = position.qty;
@@ -731,6 +906,54 @@ fn position_side_slug(side: BrokerPositionSide) -> &'static str {
     }
 }
 
+fn broker_order_matches_local(open_order: &BrokerOpenOrder, local: &StoredOrder) -> bool {
+    open_order.client_order_id == local.client_order_id
+        || local
+            .broker_order_id
+            .as_deref()
+            .is_some_and(|broker_order_id| broker_order_id == open_order.broker_order_id)
+}
+
+fn broker_execution_matches_local(execution: &BrokerExecution, local: &StoredOrder) -> bool {
+    execution
+        .client_order_id
+        .as_deref()
+        .is_some_and(|client_order_id| client_order_id == local.client_order_id)
+        || local
+            .broker_order_id
+            .as_deref()
+            .is_some_and(|broker_order_id| broker_order_id == execution.broker_order_id)
+}
+
+fn recovered_order_status(
+    local: &StoredOrder,
+    open_order: Option<&BrokerOpenOrder>,
+    filled_qty: Decimal,
+) -> anyhow::Result<String> {
+    if let Some(open_order) = open_order
+        && filled_qty == Decimal::ZERO
+    {
+        return Ok(open_order.status.clone());
+    }
+    let order_qty = local.qty.parse::<Decimal>()?;
+    if filled_qty >= order_qty {
+        Ok("FILLED".to_string())
+    } else if filled_qty > Decimal::ZERO {
+        Ok("PARTIALLY_FILLED".to_string())
+    } else if let Some(open_order) = open_order {
+        Ok(open_order.status.clone())
+    } else {
+        Ok(local.status.clone())
+    }
+}
+
+fn order_side_slug(side: trader_core::OrderSide) -> &'static str {
+    match side {
+        trader_core::OrderSide::Buy => "BUY",
+        trader_core::OrderSide::Sell => "SELL",
+    }
+}
+
 struct LiveLogScope {
     _guard: tracing::subscriber::DefaultGuard,
     writer: LogWriter<DbSystemLogSink>,
@@ -798,4 +1021,14 @@ struct AlertDeliveryResult {
     attempts: u32,
     http_status: Option<u16>,
     error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct StartupRecoverySummary {
+    scanned: usize,
+    recovered: usize,
+    remaining: usize,
+    executions: usize,
+    unmatched_open_orders: Vec<String>,
+    unmatched_executions: Vec<String>,
 }

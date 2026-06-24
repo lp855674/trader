@@ -21,3 +21,7 @@ uuid.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+trader_core.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true

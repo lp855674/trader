@@ -85,10 +85,16 @@ enum FakeIbkrGatewayCall {
     ConnectAndHandshake,
     ManagedAccounts,
     OpenOrders,
+    AccountSnapshot {
+        account_id: String,
+    },
     Executions {
         request_id: i64,
         account_id: String,
         symbol: String,
+    },
+    PositionSnapshots {
+        account_id: String,
     },
     NextOrderId,
     CancelOrder {
@@ -105,8 +111,10 @@ enum FakeIbkrGatewayCall {
 struct FakeIbkrGatewayClient {
     calls: Mutex<Vec<FakeIbkrGatewayCall>>,
     accounts: Vec<String>,
+    account_snapshot: broker::BrokerAccountSnapshot,
     open_orders: Vec<IbkrOpenOrder>,
     executions: Vec<IbkrExecution>,
+    position_snapshots: Vec<broker::BrokerPositionSnapshot>,
     next_order_id: i64,
 }
 
@@ -115,6 +123,13 @@ impl FakeIbkrGatewayClient {
         Self {
             calls: Mutex::new(Vec::new()),
             accounts: vec!["DU12345".to_string()],
+            account_snapshot: broker::BrokerAccountSnapshot {
+                account_id: "DU12345".to_string(),
+                cash: dec!(100000.25),
+                equity: dec!(120000.50),
+                buying_power: dec!(200000),
+                margin_used: dec!(5000.75),
+            },
             open_orders: vec![IbkrOpenOrder {
                 order_id: 42,
                 account_id: "DU12345".to_string(),
@@ -136,6 +151,17 @@ impl FakeIbkrGatewayClient {
                 qty: dec!(1),
                 price: dec!(185.25),
                 fee: dec!(0.35),
+            }],
+            position_snapshots: vec![broker::BrokerPositionSnapshot {
+                account_id: "DU12345".to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Long,
+                qty: dec!(2),
+                avg_price: dec!(185.25),
+                margin_used: dec!(0),
+                unrealized_pnl: dec!(0),
+                ts_ms: 1_700_000_000_000,
             }],
             next_order_id: 43,
         }
@@ -183,6 +209,19 @@ impl IbkrGatewayClient for FakeIbkrGatewayClient {
         Ok(self.open_orders.clone())
     }
 
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<broker::BrokerAccountSnapshot, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::AccountSnapshot {
+                account_id: account_id.to_string(),
+            });
+        Ok(self.account_snapshot.clone())
+    }
+
     async fn executions(
         &self,
         request_id: i64,
@@ -206,6 +245,24 @@ impl IbkrGatewayClient for FakeIbkrGatewayClient {
             .unwrap()
             .push(FakeIbkrGatewayCall::NextOrderId);
         Ok(self.next_order_id)
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<broker::BrokerPositionSnapshot>, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::PositionSnapshots {
+                account_id: account_id.to_string(),
+            });
+        Ok(self
+            .position_snapshots
+            .iter()
+            .filter(|position| position.account_id == account_id)
+            .cloned()
+            .collect())
     }
 
     async fn cancel_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
@@ -769,6 +826,64 @@ async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client
             },
             FakeIbkrGatewayCall::NextOrderId,
         ]
+    );
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_returns_gateway_position_snapshots() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+
+    let positions = adapter.position_snapshots("DU12345").await.unwrap();
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].account_id, "DU12345");
+    assert_eq!(positions[0].exchange, "IBKR");
+    assert_eq!(positions[0].symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(positions[0].position_side, BrokerPositionSide::Long);
+    assert_eq!(positions[0].qty, dec!(2));
+    assert_eq!(positions[0].avg_price, dec!(185.25));
+    assert_eq!(
+        client.calls(),
+        vec![FakeIbkrGatewayCall::PositionSnapshots {
+            account_id: "DU12345".to_string(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_returns_gateway_account_snapshot() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+
+    let account = adapter.account_snapshot("DU12345").await.unwrap();
+
+    assert_eq!(account.account_id, "DU12345");
+    assert_eq!(account.cash, dec!(100000.25));
+    assert_eq!(account.equity, dec!(120000.50));
+    assert_eq!(account.buying_power, dec!(200000));
+    assert_eq!(account.margin_used, dec!(5000.75));
+    assert_eq!(
+        client.calls(),
+        vec![FakeIbkrGatewayCall::AccountSnapshot {
+            account_id: "DU12345".to_string(),
+        }]
     );
 }
 
