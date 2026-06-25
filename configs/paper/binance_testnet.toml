@@ -47,6 +47,9 @@ fee_bps = "10"
 [live]
 enabled = false
 
+[live.startup_recovery]
+unmatched_open_orders = "fail"
+
 [live.alerts]
 enabled = false
 cooldown_ms = 300000

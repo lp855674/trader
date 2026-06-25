@@ -3,10 +3,13 @@ use broker::{
     Broker, BrokerAccountSnapshot, BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder,
     BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
 };
-use runtime::{AlertSinkSettings, CancellationFlag, LiveRuntime, LiveRuntimeSettings};
+use runtime::{
+    AlertSinkSettings, CancellationFlag, LiveRuntime, LiveRuntimeSettings,
+    StartupRecoveryUnmatchedOpenOrdersPolicy,
+};
 use rust_decimal::Decimal;
 use std::sync::Arc;
-use storage::{Db, NewOrder, RuntimePositionSnapshotCommand, SystemLogFilter};
+use storage::{Db, NewFill, NewOrder, RuntimePositionSnapshotCommand, SystemLogFilter};
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[tokio::test]
@@ -52,6 +55,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
 
     let events = db.list_events_by_source("live-1").await.unwrap();
     assert!(events.iter().any(|event| event.category == "live.started"));
+    wait_for_latest_cash(&db, "live-1", "USD", "25000").await;
     let cash_snapshot = db
         .get_latest_cash_snapshot("live-1", Some("USD"))
         .await
@@ -248,10 +252,223 @@ async fn live_runtime_recovers_open_orders_and_executions_on_startup() {
             .unwrap()
             .is_empty()
     );
+    let order_events = db.list_order_events("live-startup-recovery").await.unwrap();
+    let recovered_event = order_events
+        .iter()
+        .find(|event| event.event_type == "broker.order.recovered")
+        .unwrap();
+    assert_eq!(recovered_event.order_id.as_deref(), Some("order-recover"));
+    assert_eq!(
+        recovered_event.client_order_id.as_deref(),
+        Some("client-recover")
+    );
+    assert_eq!(
+        recovered_event.broker_order_id.as_deref(),
+        Some("broker-recover")
+    );
+    assert_eq!(recovered_event.status, "FILLED");
+    assert_eq!(
+        recovered_event.message.as_deref(),
+        Some("startup recovery matched broker order state")
+    );
 }
 
 #[tokio::test]
-async fn live_runtime_logs_unmatched_broker_orders_and_executions_on_startup() {
+async fn live_runtime_records_recovered_fills_with_local_order_symbol() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-native-symbol".to_string(),
+        run_id: "live-native-symbol-recovery".to_string(),
+        client_order_id: "client-native-symbol".to_string(),
+        broker_order_id: Some("broker-native-symbol".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT".to_string(),
+        side: "SELL".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("10000".to_string()),
+        qty: "0.002".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-native-symbol-recovery".to_string(),
+            broker_kind: BrokerKind::Binance,
+            account_id: "live-account".to_string(),
+            base_currency: "USDT".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(NativeSymbolExecutionRecoveryBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(
+        &db,
+        "live-native-symbol-recovery",
+        "runtime.startup_recovery",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let fills = db.list_fills("live-native-symbol-recovery").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].symbol, "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT");
+    assert_eq!(fills[0].side, "SELL");
+}
+
+#[tokio::test]
+async fn live_runtime_adds_new_recovered_executions_to_existing_fills() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-existing-fill".to_string(),
+        run_id: "live-existing-fill-recovery".to_string(),
+        client_order_id: "client-existing-fill".to_string(),
+        broker_order_id: Some("broker-existing-fill".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "2".to_string(),
+        filled_qty: "1".to_string(),
+        status: "PARTIALLY_FILLED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+    db.insert_fill(NewFill {
+        id: "broker-exec-existing".to_string(),
+        order_id: "order-existing-fill".to_string(),
+        run_id: "live-existing-fill-recovery".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        price: "185".to_string(),
+        qty: "1".to_string(),
+        fee: "0.50".to_string(),
+        ts_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-existing-fill-recovery".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(IncrementalExecutionRecoveryBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(
+        &db,
+        "live-existing-fill-recovery",
+        "runtime.startup_recovery",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let recovered = db
+        .recover_order_state("live-existing-fill-recovery", "order-existing-fill")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.status, "FILLED");
+    assert_eq!(recovered.filled_qty, "2");
+    let fills = db.list_fills("live-existing-fill-recovery").await.unwrap();
+    assert_eq!(fills.len(), 2);
+    assert!(fills.iter().any(|fill| fill.id == "broker-exec-existing"));
+    assert!(fills.iter().any(|fill| fill.id == "broker-exec-new"));
+}
+
+#[tokio::test]
+async fn live_runtime_does_not_decrease_local_filled_qty_when_recovery_lacks_executions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-local-partial".to_string(),
+        run_id: "live-local-partial-recovery".to_string(),
+        client_order_id: "client-local-partial".to_string(),
+        broker_order_id: Some("broker-local-partial".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "2".to_string(),
+        filled_qty: "1".to_string(),
+        status: "PARTIALLY_FILLED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-local-partial-recovery".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(OpenOrderOnlyPartialRecoveryBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(
+        &db,
+        "live-local-partial-recovery",
+        "runtime.startup_recovery",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let recovered = db
+        .recover_order_state("live-local-partial-recovery", "order-local-partial")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.status, "PARTIALLY_FILLED");
+    assert_eq!(recovered.filled_qty, "1");
+}
+
+#[tokio::test]
+async fn live_runtime_fails_startup_when_remote_open_order_is_unmatched() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     db.insert_order(NewOrder {
@@ -287,14 +504,28 @@ async fn live_runtime_logs_unmatched_broker_orders_and_executions_on_startup() {
         },
         Arc::new(UnmatchedStartupRecoveryBroker),
     );
-    let cancel = CancellationFlag::default();
-    let task_cancel = cancel.clone();
-    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+    let error = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        live.run(CancellationFlag::default()),
+    )
+    .await
+    .expect("startup with unmatched remote open order should not enter main loop")
+    .unwrap_err();
+    assert!(error.to_string().contains("unmatched remote open orders"));
+    assert!(error.to_string().contains("broker-unknown"));
 
-    wait_for_system_log(&db, "live-startup-unmatched", "runtime.startup_recovery").await;
-
-    cancel.cancel();
-    handle.await.unwrap();
+    let run = db
+        .get_strategy_run("live-startup-unmatched")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "failed");
+    assert!(
+        run.error
+            .as_deref()
+            .unwrap()
+            .contains("unmatched remote open orders")
+    );
 
     let logs = db
         .list_system_logs_filtered(SystemLogFilter {
@@ -314,6 +545,247 @@ async fn live_runtime_logs_unmatched_broker_orders_and_executions_on_startup() {
     assert!(fields.contains("\"unmatched_executions\":1"));
     assert!(fields.contains("\"broker-unknown\""));
     assert!(fields.contains("\"broker-exec-unknown\""));
+    assert!(logs.iter().any(|log| {
+        log.level == "ERROR"
+            && log.message == "startup_recovery.failed"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("unmatched remote open orders"))
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_warns_but_continues_for_unmatched_remote_executions_on_startup() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-known-exec-only".to_string(),
+        run_id: "live-startup-unmatched-execution".to_string(),
+        client_order_id: "client-known-exec-only".to_string(),
+        broker_order_id: Some("broker-known-exec-only".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "1".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-startup-unmatched-execution".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(UnmatchedExecutionOnlyStartupRecoveryBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(
+        &db,
+        "live-startup-unmatched-execution",
+        "runtime.startup_recovery",
+    )
+    .await;
+
+    let run = db
+        .get_strategy_run("live-startup-unmatched-execution")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "running");
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-startup-unmatched-execution".to_string()),
+            target: Some("runtime.startup_recovery".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let log = logs
+        .iter()
+        .find(|log| log.message == "startup_recovery.orders")
+        .unwrap();
+    assert_eq!(log.level, "WARN");
+    let fields = log.fields_json.as_deref().unwrap();
+    assert!(fields.contains("\"unmatched_open_orders\":0"));
+    assert!(fields.contains("\"unmatched_executions\":1"));
+    assert!(fields.contains("\"broker-exec-unknown\""));
+}
+
+#[tokio::test]
+async fn live_runtime_can_warn_only_for_unmatched_remote_open_orders_when_configured() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-warn-only".to_string(),
+        run_id: "live-startup-unmatched-warn-only".to_string(),
+        client_order_id: "client-known".to_string(),
+        broker_order_id: Some("broker-known".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "1".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-startup-unmatched-warn-only".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(UnmatchedStartupRecoveryBroker),
+    )
+    .with_startup_recovery_unmatched_open_orders_policy(
+        StartupRecoveryUnmatchedOpenOrdersPolicy::WarnOnly,
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log(
+        &db,
+        "live-startup-unmatched-warn-only",
+        "runtime.startup_recovery",
+    )
+    .await;
+
+    let run = db
+        .get_strategy_run("live-startup-unmatched-warn-only")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "running");
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-startup-unmatched-warn-only".to_string()),
+            target: Some("runtime.startup_recovery".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    assert!(logs.iter().any(|log| {
+        log.level == "WARN"
+            && log.message == "startup_recovery.orders"
+            && log.fields_json.as_deref().is_some_and(|fields| {
+                fields.contains("\"unmatched_open_orders\":1")
+                    && fields.contains("\"broker-unknown\"")
+            })
+    }));
+    assert!(
+        !logs
+            .iter()
+            .any(|log| log.message == "startup_recovery.failed")
+    );
+}
+
+#[tokio::test]
+async fn live_runtime_marks_run_failed_when_startup_recovery_fails() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_order(NewOrder {
+        id: "order-fail".to_string(),
+        run_id: "live-startup-recovery-fail".to_string(),
+        client_order_id: "client-fail".to_string(),
+        broker_order_id: Some("broker-fail".to_string()),
+        account_id: "live-account".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "1".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
+
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-startup-recovery-fail".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: None,
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(StartupRecoveryFailureBroker),
+    );
+
+    let error = live.run(CancellationFlag::default()).await.unwrap_err();
+    assert!(error.to_string().contains("gateway unavailable"));
+
+    let run = db
+        .get_strategy_run("live-startup-recovery-fail")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "failed");
+    assert!(
+        run.error
+            .as_deref()
+            .unwrap()
+            .contains("gateway unavailable")
+    );
+
+    let logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-startup-recovery-fail".to_string()),
+            target: Some("runtime.startup_recovery".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    assert!(logs.iter().any(|log| {
+        log.level == "ERROR"
+            && log.message == "startup_recovery.failed"
+            && log
+                .fields_json
+                .as_deref()
+                .is_some_and(|fields| fields.contains("gateway unavailable"))
+    }));
 }
 
 #[tokio::test]
@@ -508,6 +980,237 @@ impl Broker for StartupRecoveryBroker {
 
 struct UnmatchedStartupRecoveryBroker;
 
+struct NativeSymbolExecutionRecoveryBroker;
+
+#[async_trait]
+impl Broker for NativeSymbolExecutionRecoveryBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Ok(vec![BrokerExecution {
+            trade_id: "broker-native-exec".to_string(),
+            broker_order_id: "broker-native-symbol".to_string(),
+            client_order_id: Some("client-native-symbol".to_string()),
+            account_id: "live-account".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            side: OrderSide::Sell,
+            price: dec("10001"),
+            qty: dec("0.002"),
+            fee: dec("0.01"),
+            ts_ms: 2,
+        }])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::Binance,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct IncrementalExecutionRecoveryBroker;
+
+#[async_trait]
+impl Broker for IncrementalExecutionRecoveryBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Ok(vec![BrokerExecution {
+            trade_id: "broker-exec-new".to_string(),
+            broker_order_id: "broker-existing-fill".to_string(),
+            client_order_id: Some("client-existing-fill".to_string()),
+            account_id: "live-account".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: OrderSide::Buy,
+            price: dec("186"),
+            qty: dec("1"),
+            fee: dec("0.75"),
+            ts_ms: 2,
+        }])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct OpenOrderOnlyPartialRecoveryBroker;
+
+#[async_trait]
+impl Broker for OpenOrderOnlyPartialRecoveryBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(vec![BrokerOpenOrder {
+            broker_order_id: "broker-local-partial".to_string(),
+            client_order_id: "client-local-partial".to_string(),
+            account_id: "live-account".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            price: Some(dec("185")),
+            qty: dec("2"),
+            filled_qty: Decimal::ZERO,
+            status: "SUBMITTED".to_string(),
+        }])
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
 #[async_trait]
 impl Broker for UnmatchedStartupRecoveryBroker {
     async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
@@ -615,6 +1318,166 @@ impl Broker for UnmatchedStartupRecoveryBroker {
                 market_data: true,
                 order_submit: false,
                 order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct UnmatchedExecutionOnlyStartupRecoveryBroker;
+
+#[async_trait]
+impl Broker for UnmatchedExecutionOnlyStartupRecoveryBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Ok(vec![BrokerOpenOrder {
+            broker_order_id: "broker-known-exec-only".to_string(),
+            client_order_id: "client-known-exec-only".to_string(),
+            account_id: "live-account".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            price: Some(dec("185")),
+            qty: dec("1"),
+            filled_qty: Decimal::ZERO,
+            status: "SUBMITTED".to_string(),
+        }])
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Ok(vec![
+            BrokerExecution {
+                trade_id: "broker-exec-known-only".to_string(),
+                broker_order_id: "broker-known-exec-only".to_string(),
+                client_order_id: Some("client-known-exec-only".to_string()),
+                account_id: "live-account".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: OrderSide::Buy,
+                price: dec("186"),
+                qty: dec("1"),
+                fee: dec("1.25"),
+                ts_ms: 2,
+            },
+            BrokerExecution {
+                trade_id: "broker-exec-unknown".to_string(),
+                broker_order_id: "broker-unknown-exec-only".to_string(),
+                client_order_id: Some("client-unknown-exec-only".to_string()),
+                account_id: "live-account".to_string(),
+                symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+                side: OrderSide::Sell,
+                price: dec("301"),
+                qty: dec("1"),
+                fee: dec("1.25"),
+                ts_ms: 3,
+            },
+        ])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct StartupRecoveryFailureBroker;
+
+#[async_trait]
+impl Broker for StartupRecoveryFailureBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Err(BrokerError::Connection("gateway unavailable".to_string()))
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: false,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: false,
+                order_submit: false,
+                order_cancel: false,
                 paper_trading: true,
                 live_trading: false,
             },

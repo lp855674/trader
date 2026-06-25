@@ -1933,6 +1933,78 @@ fn reconciliation_drifts_lists_filtered_audit_rows() {
 }
 
 #[test]
+fn order_events_lists_filtered_audit_rows() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "order-events",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--status",
+            "FILLED",
+            "--event-type",
+            "broker.order.recovered",
+            "--from",
+            "1500",
+            "--to",
+            "2500",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("order_event: run_id=cli-contract-run"))
+        .stdout(contains("status=FILLED"))
+        .stdout(contains("event_type=broker.order.recovered"))
+        .stdout(contains("message=startup recovery matched broker order state"))
+        .stdout(predicates::str::contains("order-two").not());
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn risk_events_lists_filtered_audit_rows() {
+    let config = seed_contract_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "risk-events",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-contract-run",
+            "--risk-type",
+            "reconciliation_drift",
+            "--decision",
+            "warn",
+            "--account-id",
+            "paper",
+            "--from",
+            "1400",
+            "--to",
+            "1600",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("risk_event: run_id=cli-contract-run"))
+        .stdout(contains("risk_type=reconciliation_drift"))
+        .stdout(contains("decision=warn"))
+        .stdout(contains("reason=qty mismatch"))
+        .stdout(predicates::str::contains("cash guard tripped").not());
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn config_lifecycle_commands_print_release_audit_and_run_binding_status() {
     let config = seed_config_lifecycle_cli_storage();
 
@@ -3477,6 +3549,57 @@ fn seed_contract_cli_storage() -> PathBuf {
         .unwrap();
         db.record_runtime_event(storage::RuntimeEventCommand {
             source: "cli-contract-run".to_string(),
+            ts_ms: 1400,
+            category: "broker.order.submitted".to_string(),
+            payload: serde_json::json!({
+                "run_id": "cli-contract-run",
+                "order_id": "order-one",
+                "client_order_id": "client-one",
+                "broker_order_id": "broker-one",
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                "status": "NEW",
+                "message": "submitted to broker"
+            }),
+        })
+        .await
+        .unwrap();
+        db.record_runtime_event(storage::RuntimeEventCommand {
+            source: "cli-contract-run".to_string(),
+            ts_ms: 1600,
+            category: "broker.order.recovered".to_string(),
+            payload: serde_json::json!({
+                "run_id": "cli-contract-run",
+                "order_id": "order-one",
+                "client_order_id": "client-one",
+                "broker_order_id": "broker-one",
+                "account_id": "paper",
+                "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                "status": "FILLED",
+                "message": "startup recovery matched broker order state"
+            }),
+        })
+        .await
+        .unwrap();
+        db.record_runtime_event(storage::RuntimeEventCommand {
+            source: "cli-contract-run".to_string(),
+            ts_ms: 2600,
+            category: "broker.order.failed".to_string(),
+            payload: serde_json::json!({
+                "run_id": "cli-contract-run",
+                "order_id": "order-two",
+                "client_order_id": "client-two",
+                "broker_order_id": "broker-two",
+                "account_id": "other",
+                "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                "status": "REJECTED",
+                "message": "risk rejected"
+            }),
+        })
+        .await
+        .unwrap();
+        db.record_runtime_event(storage::RuntimeEventCommand {
+            source: "cli-contract-run".to_string(),
             ts_ms: 1500,
             category: "algorithm.risk.rejected".to_string(),
             payload: serde_json::json!({
@@ -3488,6 +3611,23 @@ fn seed_contract_cli_storage() -> PathBuf {
                 "reason": "qty mismatch",
                 "threshold": "1",
                 "observed_value": "2"
+            }),
+        })
+        .await
+        .unwrap();
+        db.record_runtime_event(storage::RuntimeEventCommand {
+            source: "cli-contract-run".to_string(),
+            ts_ms: 2600,
+            category: "algorithm.risk.rejected".to_string(),
+            payload: serde_json::json!({
+                "run_id": "cli-contract-run",
+                "account_id": "other",
+                "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                "risk_type": "cash_limit",
+                "decision": "reject",
+                "reason": "cash guard tripped",
+                "threshold": "100",
+                "observed_value": "120"
             }),
         })
         .await

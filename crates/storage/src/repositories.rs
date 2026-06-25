@@ -890,9 +890,25 @@ pub struct StoredRiskEvent {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OrderEventFilter {
+    pub run_id: Option<String>,
+    pub order_id: Option<String>,
+    pub client_order_id: Option<String>,
+    pub broker_order_id: Option<String>,
+    pub account_id: Option<String>,
+    pub symbol: Option<String>,
+    pub status: Option<String>,
+    pub event_type: Option<String>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RiskEventFilter {
     pub run_id: Option<String>,
     pub risk_type: Option<String>,
+    pub decision: Option<String>,
     pub account_id: Option<String>,
     pub symbol: Option<String>,
     pub from_ms: Option<i64>,
@@ -5271,6 +5287,17 @@ impl Db {
     }
 
     pub async fn list_order_events(&self, run_id: &str) -> StorageResult<Vec<StoredOrderEvent>> {
+        self.list_order_events_filtered(OrderEventFilter {
+            run_id: Some(run_id.to_string()),
+            ..OrderEventFilter::default()
+        })
+        .await
+    }
+
+    pub async fn list_order_events_filtered(
+        &self,
+        filter: OrderEventFilter,
+    ) -> StorageResult<Vec<StoredOrderEvent>> {
         type OrderEventRow = (
             String,
             String,
@@ -5287,18 +5314,59 @@ impl Db {
             String,
         );
 
-        let rows = sqlx::query_as::<_, OrderEventRow>(
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
             r#"
             SELECT id, event_id, run_id, order_id, client_order_id, broker_order_id,
                    account_id, symbol, status, event_type, message, ts_ms, payload_json
             FROM order_events
-            WHERE run_id = ?
-            ORDER BY ts_ms, id
+            WHERE 1 = 1
             "#,
-        )
-        .bind(run_id)
-        .fetch_all(self.pool())
-        .await?;
+        );
+
+        if let Some(run_id) = filter.run_id.as_deref() {
+            query_builder.push(" AND run_id = ").push_bind(run_id);
+        }
+        if let Some(order_id) = filter.order_id.as_deref() {
+            query_builder.push(" AND order_id = ").push_bind(order_id);
+        }
+        if let Some(client_order_id) = filter.client_order_id.as_deref() {
+            query_builder
+                .push(" AND client_order_id = ")
+                .push_bind(client_order_id);
+        }
+        if let Some(broker_order_id) = filter.broker_order_id.as_deref() {
+            query_builder
+                .push(" AND broker_order_id = ")
+                .push_bind(broker_order_id);
+        }
+        if let Some(account_id) = filter.account_id.as_deref() {
+            query_builder.push(" AND account_id = ").push_bind(account_id);
+        }
+        if let Some(symbol) = filter.symbol.as_deref() {
+            query_builder.push(" AND symbol = ").push_bind(symbol);
+        }
+        if let Some(status) = filter.status.as_deref() {
+            query_builder.push(" AND status = ").push_bind(status);
+        }
+        if let Some(event_type) = filter.event_type.as_deref() {
+            query_builder.push(" AND event_type = ").push_bind(event_type);
+        }
+        if let Some(from_ms) = filter.from_ms {
+            query_builder.push(" AND ts_ms >= ").push_bind(from_ms);
+        }
+        if let Some(to_ms) = filter.to_ms {
+            query_builder.push(" AND ts_ms <= ").push_bind(to_ms);
+        }
+
+        query_builder.push(" ORDER BY ts_ms DESC, id DESC");
+        if let Some(limit) = filter.limit {
+            query_builder.push(" LIMIT ").push_bind(limit);
+        }
+
+        let rows = query_builder
+            .build_query_as::<OrderEventRow>()
+            .fetch_all(self.pool())
+            .await?;
 
         Ok(rows
             .into_iter()
@@ -5361,6 +5429,9 @@ impl Db {
         }
         if let Some(risk_type) = filter.risk_type.as_deref() {
             query_builder.push(" AND risk_type = ").push_bind(risk_type);
+        }
+        if let Some(decision) = filter.decision.as_deref() {
+            query_builder.push(" AND decision = ").push_bind(decision);
         }
         if let Some(account_id) = filter.account_id.as_deref() {
             query_builder

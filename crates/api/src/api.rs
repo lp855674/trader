@@ -24,7 +24,9 @@ use paper::{
     PaperSettings,
 };
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
-use runtime::{AlertSinkSettings, LiveRuntime, LiveRuntimeSettings};
+use runtime::{
+    AlertSinkSettings, LiveRuntime, LiveRuntimeSettings, StartupRecoveryUnmatchedOpenOrdersPolicy,
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -189,6 +191,31 @@ struct SystemLogsQuery {
     search: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct OrderEventsQuery {
+    order_id: Option<String>,
+    client_order_id: Option<String>,
+    broker_order_id: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    status: Option<String>,
+    event_type: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct RiskEventsQuery {
+    risk_type: Option<String>,
+    decision: Option<String>,
+    account_id: Option<String>,
+    symbol: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -1228,7 +1255,10 @@ async fn start_live_run(
     state
         .runtime_manager
         .spawn(run_id.clone(), move |cancel| async move {
-            let runtime = LiveRuntime::new_with_broker(db, settings, broker);
+            let runtime = LiveRuntime::new_with_broker(db, settings, broker)
+                .with_startup_recovery_unmatched_open_orders_policy(
+                    startup_recovery_unmatched_open_orders_policy(&app_config),
+                );
             let _ = runtime.run(cancel).await;
         })
         .await
@@ -1241,6 +1271,19 @@ async fn start_live_run(
             status: "running".to_string(),
         }),
     ))
+}
+
+fn startup_recovery_unmatched_open_orders_policy(
+    app_config: &config::AppConfig,
+) -> StartupRecoveryUnmatchedOpenOrdersPolicy {
+    match app_config.live.startup_recovery.unmatched_open_orders {
+        config::LiveStartupRecoveryUnmatchedOpenOrders::Fail => {
+            StartupRecoveryUnmatchedOpenOrdersPolicy::Fail
+        }
+        config::LiveStartupRecoveryUnmatchedOpenOrders::WarnOnly => {
+            StartupRecoveryUnmatchedOpenOrdersPolicy::WarnOnly
+        }
+    }
 }
 
 fn live_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<dyn Broker>, ApiError> {
@@ -1256,7 +1299,11 @@ fn live_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<dyn Brok
                     .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
             Ok(Arc::new(adapter))
         }
-        kind => Ok(Arc::new(FakeBrokerAdapter::new(broker_kind(kind)))),
+        kind => Ok(Arc::new(
+            FakeBrokerAdapter::new(broker_kind(kind)).with_startup_unmatched_open_order(
+                app_config.broker.fake_startup_unmatched_open_order,
+            ),
+        )),
     }
 }
 
@@ -1881,10 +1928,23 @@ async fn list_run_events(
 async fn list_run_order_events(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
+    Query(query): Query<OrderEventsQuery>,
 ) -> Result<Json<Vec<OrderEventResponse>>, ApiError> {
     let events = state
         .db
-        .list_order_events(&run_id)
+        .list_order_events_filtered(storage::OrderEventFilter {
+            run_id: Some(run_id),
+            order_id: query.order_id,
+            client_order_id: query.client_order_id,
+            broker_order_id: query.broker_order_id,
+            account_id: query.account_id,
+            symbol: query.symbol,
+            status: query.status,
+            event_type: query.event_type,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        })
         .await?
         .into_iter()
         .map(order_event_response)
@@ -1895,10 +1955,20 @@ async fn list_run_order_events(
 async fn list_run_risk_events(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
+    Query(query): Query<RiskEventsQuery>,
 ) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
     let events = state
         .db
-        .list_risk_events(&run_id)
+        .list_risk_events_filtered(storage::RiskEventFilter {
+            run_id: Some(run_id),
+            risk_type: query.risk_type,
+            decision: query.decision,
+            account_id: query.account_id,
+            symbol: query.symbol,
+            from_ms: query.from_ms,
+            to_ms: query.to_ms,
+            limit: query.limit,
+        })
         .await?
         .into_iter()
         .map(risk_event_response)
@@ -1911,11 +1981,12 @@ async fn list_run_reconciliation_drifts(
     Path(run_id): Path<String>,
     Query(query): Query<ReconciliationDriftsQuery>,
 ) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
-    reconciliation_drifts_response(
+        reconciliation_drifts_response(
         &state.db,
         storage::RiskEventFilter {
             run_id: Some(run_id),
             risk_type: Some("reconciliation_drift".to_string()),
+            decision: None,
             account_id: query.account_id,
             symbol: query.symbol,
             from_ms: query.from_ms,
@@ -2032,6 +2103,7 @@ async fn list_reconciliation_drifts(
         storage::RiskEventFilter {
             run_id: query.run_id,
             risk_type: Some("reconciliation_drift".to_string()),
+            decision: None,
             account_id: query.account_id,
             symbol: query.symbol,
             from_ms: query.from_ms,
@@ -3535,6 +3607,29 @@ mod tests {
         };
 
         assert!(error.0.to_string().contains("paper port"));
+    }
+
+    #[test]
+    fn startup_recovery_unmatched_open_orders_policy_maps_config() {
+        let mut app_config = live_config_with_broker(
+            r#"
+            kind = "simulated"
+            mode = "paper"
+            "#,
+        );
+
+        assert_eq!(
+            startup_recovery_unmatched_open_orders_policy(&app_config),
+            StartupRecoveryUnmatchedOpenOrdersPolicy::Fail
+        );
+
+        app_config.live.startup_recovery.unmatched_open_orders =
+            config::LiveStartupRecoveryUnmatchedOpenOrders::WarnOnly;
+
+        assert_eq!(
+            startup_recovery_unmatched_open_orders_policy(&app_config),
+            StartupRecoveryUnmatchedOpenOrdersPolicy::WarnOnly
+        );
     }
 
     #[test]

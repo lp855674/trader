@@ -216,6 +216,8 @@ pub struct BrokerConfig {
     pub recv_window_ms: Option<u64>,
     #[serde(default)]
     pub order_submit_enabled: bool,
+    #[serde(default)]
+    pub fake_startup_unmatched_open_order: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -232,7 +234,23 @@ pub struct LiveConfig {
     pub heartbeat_ms: Option<u64>,
     pub broker_snapshot_interval_ms: Option<u64>,
     #[serde(default)]
+    pub startup_recovery: LiveStartupRecoveryConfig,
+    #[serde(default)]
     pub alerts: LiveAlertsConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LiveStartupRecoveryConfig {
+    #[serde(default)]
+    pub unmatched_open_orders: LiveStartupRecoveryUnmatchedOpenOrders,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveStartupRecoveryUnmatchedOpenOrders {
+    #[default]
+    Fail,
+    WarnOnly,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

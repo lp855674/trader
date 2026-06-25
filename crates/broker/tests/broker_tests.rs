@@ -414,6 +414,36 @@ async fn fake_broker_returns_deterministic_position_snapshots() {
     assert_eq!(positions[0].unrealized_pnl, dec!(12.5));
 }
 
+#[tokio::test]
+async fn fake_broker_open_orders_is_empty_when_startup_injection_is_disabled() {
+    let broker = FakeBrokerAdapter::new(BrokerKind::Binance);
+
+    let open_orders = broker.open_orders("paper").await.unwrap();
+
+    assert!(open_orders.is_empty());
+}
+
+#[tokio::test]
+async fn fake_broker_open_orders_injects_startup_order_when_enabled() {
+    let broker =
+        FakeBrokerAdapter::new(BrokerKind::Binance).with_startup_unmatched_open_order(true);
+
+    let open_orders = broker.open_orders("paper").await.unwrap();
+
+    assert_eq!(open_orders.len(), 1);
+    let order = &open_orders[0];
+    assert_eq!(order.broker_order_id, "fake-startup-unmatched-open-order");
+    assert_eq!(order.client_order_id, "fake-startup-unmatched-client-order");
+    assert_eq!(order.account_id, "paper");
+    assert_eq!(order.symbol, "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(order.side, OrderSide::Buy);
+    assert_eq!(order.order_type, OrderType::Limit);
+    assert_eq!(order.price, Some(dec!(185)));
+    assert_eq!(order.qty, dec!(1));
+    assert_eq!(order.filled_qty, dec!(0));
+    assert_eq!(order.status, "SUBMITTED");
+}
+
 #[test]
 fn binance_testnet_adapter_builds_signed_account_url() {
     let adapter = BinanceSpotTestnetAdapter::new(BinanceSpotTestnetSettings {
@@ -500,6 +530,33 @@ async fn binance_testnet_adapter_routes_readonly_calls_through_http_client_bound
     assert_eq!(calls[1].method, "GET");
     assert!(calls[1].url.contains("/v3/openOrders?symbol=BTCUSDT"));
     assert_eq!(calls[1].api_key.as_deref(), Some("test-key"));
+}
+
+#[tokio::test]
+async fn binance_testnet_adapter_maps_trade_side_to_broker_executions() {
+    let client = Arc::new(FakeBinanceHttpClient::new([
+        r#"{"serverTime":1700000000000}"#,
+        r#"[{"id":8,"orderId":43,"symbol":"BTCUSDT","price":"10001","qty":"0.002","commission":"0.01","commissionAsset":"USDT","time":1700000000002,"isBuyer":false}]"#,
+    ]));
+    let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client.clone(),
+    );
+
+    let executions = adapter
+        .executions("paper", Some("CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT"))
+        .await
+        .unwrap();
+
+    assert_eq!(executions.len(), 1);
+    assert_eq!(executions[0].side, OrderSide::Sell);
+    let calls = client.calls();
+    assert!(calls[1].url.contains("/v3/myTrades?symbol=BTCUSDT"));
 }
 
 #[tokio::test]
@@ -643,6 +700,16 @@ fn binance_trade_response_maps_to_domain_trade() {
     assert_eq!(trades[0].qty, dec!(0.001));
     assert_eq!(trades[0].fee, dec!(0.000001));
     assert_eq!(trades[0].ts_ms, 1700000000001);
+}
+
+#[test]
+fn binance_trade_response_maps_is_buyer_to_trade_side() {
+    let trades = BinanceSpotTestnetAdapter::parse_trades_json(
+        r#"[{"id":8,"orderId":43,"symbol":"BTCUSDT","price":"10001","qty":"0.002","commission":"0.01","commissionAsset":"USDT","time":1700000000002,"isBuyer":false}]"#,
+    )
+    .unwrap();
+
+    assert_eq!(trades[0].side, OrderSide::Sell);
 }
 
 #[test]

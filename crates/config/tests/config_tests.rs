@@ -74,8 +74,13 @@ fn parses_backtest_config() {
     assert_eq!(config.broker.kind, config::BrokerKind::Simulated);
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert!(!config.broker.order_submit_enabled);
+    assert!(!config.broker.fake_startup_unmatched_open_order);
     assert!(!config.live.enabled);
     assert_eq!(config.live.broker_snapshot_interval_ms, Some(250));
+    assert_eq!(
+        config.live.startup_recovery.unmatched_open_orders,
+        config::LiveStartupRecoveryUnmatchedOpenOrders::Fail
+    );
     assert!(!config.live.alerts.enabled);
     assert_eq!(config.live.alerts.sink.as_deref(), None);
     assert!(config.live.alerts.sinks.is_empty());
@@ -87,6 +92,119 @@ fn parses_backtest_config() {
     assert_eq!(config.live.alerts.webhook_auth_token.as_deref(), None);
     assert!(!config.ingestion.enabled);
     assert_eq!(config.ingestion.fetch_interval_minutes, 60);
+}
+
+#[test]
+fn parses_live_startup_recovery_warn_only_policy() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "live-recovery-policy"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "interactive_brokers"
+        mode = "paper"
+
+        [paper]
+        account_id = "DU12345"
+        slippage_bps = "0"
+        fee_bps = "0"
+
+        [live]
+        enabled = true
+
+        [live.startup_recovery]
+        unmatched_open_orders = "warn_only"
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert_eq!(
+        config.live.startup_recovery.unmatched_open_orders,
+        config::LiveStartupRecoveryUnmatchedOpenOrders::WarnOnly
+    );
+}
+
+#[test]
+fn parses_fake_broker_startup_unmatched_open_order_flag() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "live-recovery-fake-open-order"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+        fake_startup_unmatched_open_order = true
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(config.broker.fake_startup_unmatched_open_order);
 }
 
 #[test]

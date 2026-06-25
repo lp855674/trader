@@ -5,7 +5,7 @@ use broker::{
 };
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
     BrokerPositionSnapshotCommand, Db, DbSystemLogSink, LiveRunCommand, NewFill,
@@ -50,6 +50,14 @@ pub struct LiveRuntime {
     db: Db,
     settings: LiveRuntimeSettings,
     broker: Arc<dyn Broker>,
+    startup_recovery_unmatched_open_orders_policy: StartupRecoveryUnmatchedOpenOrdersPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StartupRecoveryUnmatchedOpenOrdersPolicy {
+    #[default]
+    Fail,
+    WarnOnly,
 }
 
 impl LiveRuntime {
@@ -59,6 +67,8 @@ impl LiveRuntime {
             db,
             settings,
             broker,
+            startup_recovery_unmatched_open_orders_policy:
+                StartupRecoveryUnmatchedOpenOrdersPolicy::Fail,
         }
     }
 
@@ -67,7 +77,17 @@ impl LiveRuntime {
             db,
             settings,
             broker,
+            startup_recovery_unmatched_open_orders_policy:
+                StartupRecoveryUnmatchedOpenOrdersPolicy::Fail,
         }
+    }
+
+    pub fn with_startup_recovery_unmatched_open_orders_policy(
+        mut self,
+        policy: StartupRecoveryUnmatchedOpenOrdersPolicy,
+    ) -> Self {
+        self.startup_recovery_unmatched_open_orders_policy = policy;
+        self
     }
 
     pub async fn broker_status(&self) -> anyhow::Result<BrokerStatus> {
@@ -109,7 +129,13 @@ impl LiveRuntime {
             }),
         )
         .await?;
-        self.recover_startup_orders().await?;
+        if let Err(error) = self.recover_startup_orders().await {
+            self.record_startup_recovery_failure(&error).await?;
+            if let Some(log_scope) = log_scope {
+                log_scope.shutdown().await;
+            }
+            return Err(error);
+        }
         self.record_baseline_snapshot(started_at_ms).await?;
 
         while !cancel.is_cancelled() {
@@ -188,6 +214,19 @@ impl LiveRuntime {
                     .await?,
             );
         }
+        let existing_fills = self.db.list_fills(&self.settings.run_id).await?;
+        let mut existing_fill_ids_by_order = HashMap::<String, HashSet<String>>::new();
+        let mut existing_filled_qty_by_order = HashMap::<String, Decimal>::new();
+        for fill in existing_fills {
+            existing_fill_ids_by_order
+                .entry(fill.order_id.clone())
+                .or_default()
+                .insert(fill.id);
+            let qty = fill.qty.parse::<Decimal>()?;
+            *existing_filled_qty_by_order
+                .entry(fill.order_id)
+                .or_default() += qty;
+        }
 
         let mut recovered = 0usize;
         let mut recovered_execution_ids = HashSet::new();
@@ -221,30 +260,54 @@ impl LiveRuntime {
                         .first()
                         .map(|execution| execution.broker_order_id.as_str())
                 })
+                .unwrap_or_default()
+                .to_string();
+            let existing_fill_ids = existing_fill_ids_by_order
+                .get(&order.id)
+                .cloned()
                 .unwrap_or_default();
-            let filled_qty = matched_executions
+            let new_execution_qty = matched_executions
                 .iter()
+                .filter(|execution| !existing_fill_ids.contains(&execution.trade_id))
                 .map(|execution| execution.qty)
                 .sum::<Decimal>();
+            let mut filled_qty = existing_filled_qty_by_order
+                .get(&order.id)
+                .copied()
+                .unwrap_or_default()
+                + new_execution_qty;
+            let local_filled_qty = order.filled_qty.parse::<Decimal>()?;
+            if local_filled_qty > filled_qty {
+                filled_qty = local_filled_qty;
+            }
+            if let Some(open_order) = open_order
+                && open_order.filled_qty > filled_qty
+            {
+                filled_qty = open_order.filled_qty;
+            }
+            let matched_execution_count = matched_executions.len();
             let status = recovered_order_status(order, open_order, filled_qty)?;
+            let updated_at_ms = chrono::Utc::now().timestamp_millis();
             self.db
                 .update_order_execution_by_client_order_id(
                     &order.client_order_id,
-                    broker_order_id,
+                    &broker_order_id,
                     &status,
                     &filled_qty.to_string(),
-                    chrono::Utc::now().timestamp_millis(),
+                    updated_at_ms,
                 )
                 .await?;
 
             for execution in matched_executions {
-                if recovered_execution_ids.insert(execution.trade_id.clone()) {
+                if !existing_fill_ids.contains(&execution.trade_id)
+                    && recovered_execution_ids.insert(execution.trade_id.clone())
+                {
                     self.db
                         .insert_fill(NewFill {
                             id: execution.trade_id.clone(),
                             order_id: order.id.clone(),
                             run_id: self.settings.run_id.clone(),
-                            symbol: execution.symbol.clone(),
+                            symbol: order.symbol.clone(),
                             side: order_side_slug(execution.side).to_string(),
                             price: execution.price.to_string(),
                             qty: execution.qty.to_string(),
@@ -254,6 +317,26 @@ impl LiveRuntime {
                         .await?;
                 }
             }
+            self.db
+                .record_runtime_event(RuntimeEventCommand {
+                    ts_ms: updated_at_ms,
+                    source: self.settings.run_id.clone(),
+                    category: "broker.order.recovered".to_string(),
+                    payload: serde_json::json!({
+                        "run_id": &self.settings.run_id,
+                        "order_id": &order.id,
+                        "client_order_id": &order.client_order_id,
+                        "broker_order_id": broker_order_id,
+                        "account_id": &order.account_id,
+                        "symbol": &order.symbol,
+                        "status": &status,
+                        "filled_qty": filled_qty.to_string(),
+                        "executions": matched_execution_count,
+                        "recovery_source": "startup",
+                        "message": "startup recovery matched broker order state",
+                    }),
+                })
+                .await?;
             recovered += 1;
         }
 
@@ -272,15 +355,24 @@ impl LiveRuntime {
             .filter(|execution| !matched_execution_ids.contains(&execution.trade_id))
             .map(|execution| execution.trade_id.clone())
             .collect::<Vec<_>>();
-        self.record_startup_recovery_log(&StartupRecoverySummary {
+        let summary = StartupRecoverySummary {
             scanned: recoverable.len(),
             recovered,
             remaining,
             executions: recovered_execution_ids.len(),
             unmatched_open_orders,
             unmatched_executions,
-        })
-        .await?;
+        };
+        self.record_startup_recovery_log(&summary).await?;
+        if !summary.unmatched_open_orders.is_empty()
+            && self.startup_recovery_unmatched_open_orders_policy
+                == StartupRecoveryUnmatchedOpenOrdersPolicy::Fail
+        {
+            anyhow::bail!(
+                "unmatched remote open orders during startup recovery: {}",
+                summary.unmatched_open_orders.join(",")
+            );
+        }
         Ok(())
     }
 
@@ -310,6 +402,47 @@ impl LiveRuntime {
                 "unmatched_executions": summary.unmatched_executions.len(),
                 "unmatched_open_order_ids": summary.unmatched_open_orders,
                 "unmatched_execution_ids": summary.unmatched_executions,
+            }),
+        )
+        .await
+    }
+
+    async fn record_startup_recovery_failure(
+        &self,
+        error: &anyhow::Error,
+    ) -> storage::StorageResult<()> {
+        let ended_at_ms = chrono::Utc::now().timestamp_millis();
+        let error_message = error.to_string();
+        self.db
+            .update_strategy_run_status(
+                &self.settings.run_id,
+                "failed",
+                Some(ended_at_ms),
+                Some(&error_message),
+            )
+            .await?;
+        self.db
+            .record_runtime_event(RuntimeEventCommand {
+                ts_ms: ended_at_ms,
+                source: self.settings.run_id.clone(),
+                category: "live.startup_recovery.failed".to_string(),
+                payload: serde_json::json!({
+                    "run_id": &self.settings.run_id,
+                    "broker_kind": self.settings.broker_kind,
+                    "account_id": &self.settings.account_id,
+                    "error": error_message,
+                }),
+            })
+            .await?;
+        self.record_system_log(
+            "ERROR",
+            "runtime.startup_recovery",
+            "startup_recovery.failed",
+            serde_json::json!({
+                "run_id": &self.settings.run_id,
+                "broker_kind": self.settings.broker_kind,
+                "account_id": &self.settings.account_id,
+                "error": error.to_string(),
             }),
         )
         .await

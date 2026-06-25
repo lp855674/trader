@@ -5,8 +5,8 @@ use rust_decimal::Decimal;
 use std::path::PathBuf;
 use storage::{
     CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
-    FundingRateCommand, PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
-    StrategyRunStartCommand, SystemLogCommand,
+    FundingRateCommand, NewOrder, PaperPortfolioSnapshotCommand, PositionCommand,
+    RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
 };
 use tower::ServiceExt;
 
@@ -338,6 +338,79 @@ async fn run_order_events_route_returns_audit_projection() {
 }
 
 #[tokio::test]
+async fn run_order_events_route_filters_structured_audit_projection() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 10,
+        category: "broker.order.submitted".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "order_id": "order-a",
+            "client_order_id": "client-a",
+            "broker_order_id": "broker-a",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "status": "SUBMITTED"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 20,
+        category: "broker.order.recovered".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "order_id": "order-a",
+            "client_order_id": "client-a",
+            "broker_order_id": "broker-a",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "status": "FILLED",
+            "message": "startup recovery matched broker order state"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/order-events?status=FILLED&event_type=broker.order.recovered&from_ms=15&to_ms=25&limit=1")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["event_type"], "broker.order.recovered");
+    assert_eq!(rows[0]["status"], "FILLED");
+    assert_eq!(
+        rows[0]["message"],
+        "startup recovery matched broker order state"
+    );
+}
+
+#[tokio::test]
 async fn run_risk_events_route_returns_audit_projection() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -385,6 +458,77 @@ async fn run_risk_events_route_returns_audit_projection() {
     assert!(body.contains("\"risk_type\":\"pre_trade\""));
     assert!(body.contains("\"decision\":\"rejected\""));
     assert!(body.contains("\"reason\":\"max_exposure\""));
+}
+
+#[tokio::test]
+async fn run_risk_events_route_filters_structured_audit_projection() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "run-a".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 10,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "reconciliation_drift",
+            "decision": "warn",
+            "reason": "position_qty_drift",
+            "threshold": "1",
+            "observed_value": "2"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 20,
+        category: "algorithm.risk.rejected".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "account_id": "paper",
+            "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+            "risk_type": "max_exposure",
+            "decision": "rejected",
+            "reason": "too_large",
+            "threshold": "100",
+            "observed_value": "120"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let response = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/runs/run-a/risk-events?risk_type=reconciliation_drift&decision=warn&account_id=paper&from_ms=5&to_ms=15&limit=1")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["risk_type"], "reconciliation_drift");
+    assert_eq!(rows[0]["decision"], "warn");
+    assert_eq!(rows[0]["reason"], "position_qty_drift");
 }
 
 #[tokio::test]
@@ -2140,12 +2284,210 @@ fn dec(value: &str) -> Decimal {
     value.parse().unwrap()
 }
 
+#[tokio::test]
+async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_orders() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    insert_recoverable_order(&db, "api-live-startup-recovery-fail").await;
+    let config_path = temp_config_path("trader-live-startup-recovery-fail");
+    std::fs::write(
+        &config_path,
+        live_startup_recovery_config(
+            "api-live-startup-recovery-fail",
+            true,
+            None,
+        ),
+    )
+    .unwrap();
+    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/live-runs/api-live-startup-recovery-fail/status",
+        "\"status\":\"failed\"",
+    )
+    .await;
+    wait_for_body_fragment(
+        app,
+        "/api/v1/runs/api-live-startup-recovery-fail/system-logs?target=runtime.startup_recovery",
+        "startup_recovery.failed",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_orders() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    insert_recoverable_order(&db, "api-live-startup-recovery-warn-only").await;
+    let config_path = temp_config_path("trader-live-startup-recovery-warn-only");
+    std::fs::write(
+        &config_path,
+        live_startup_recovery_config(
+            "api-live-startup-recovery-warn-only",
+            true,
+            Some("warn_only"),
+        ),
+    )
+    .unwrap();
+    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/live-runs/api-live-startup-recovery-warn-only/status",
+        "\"status\":\"running\"",
+    )
+    .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/runs/api-live-startup-recovery-warn-only/system-logs?target=runtime.startup_recovery",
+        "\"unmatched_open_orders\":1",
+    )
+    .await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs/api-live-startup-recovery-warn-only/stop")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 fn workspace_root() -> std::path::PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
         .expect("api crate should be under crates/api")
         .to_path_buf()
+}
+
+fn temp_config_path(prefix: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}.toml", std::process::id()))
+}
+
+fn live_startup_recovery_config(
+    run_id: &str,
+    fake_startup_unmatched_open_order: bool,
+    unmatched_open_orders_policy: Option<&str>,
+) -> String {
+    let startup_recovery = unmatched_open_orders_policy
+        .map(|policy| {
+            format!(
+                r#"
+        [live.startup_recovery]
+        unmatched_open_orders = "{policy}"
+"#
+            )
+        })
+        .unwrap_or_default();
+
+    format!(
+        r#"
+        [runtime]
+        mode = "live"
+        run_id = "{run_id}"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "25000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+        fake_startup_unmatched_open_order = {fake_startup_unmatched_open_order}
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        {startup_recovery}
+        "#
+    )
+}
+
+async fn insert_recoverable_order(db: &Db, run_id: &str) {
+    db.insert_order(NewOrder {
+        id: format!("{run_id}-order"),
+        run_id: run_id.to_string(),
+        client_order_id: format!("{run_id}-client-order"),
+        broker_order_id: Some(format!("{run_id}-broker-order")),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("185.00".to_string()),
+        qty: "1".to_string(),
+        filled_qty: "0".to_string(),
+        status: "SUBMITTED".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    })
+    .await
+    .unwrap();
 }
 
 async fn wait_for_body_fragment(app: axum::Router, uri: &str, fragment: &str) {

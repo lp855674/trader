@@ -10,6 +10,7 @@
 | `crates.md` | Rust workspace、crate 职责、依赖方向、feature flags、测试策略。 |
 | `database.md` | SQLite 表、Parquet schema、repository、migration、状态恢复。 |
 | `api.md` | REST / WebSocket 端点、消息格式、错误码、安全设计。 |
+| `web-admin-api.md` | Web 管理页页面映射、常用接口、轮询与实时更新约定。 |
 | `events.md` | Event envelope、事件分类、事件流、事件持久化。 |
 | `strategy.md` | Strategy trait、StrategyContext、信号模型、策略边界。 |
 | `broker.md` | Broker trait、路由、订单/成交/持仓映射、回报、重连、限流。 |

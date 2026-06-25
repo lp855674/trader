@@ -45,3 +45,6 @@ fee_bps = "2"
 
 [live]
 enabled = false
+
+[live.startup_recovery]
+unmatched_open_orders = "fail"

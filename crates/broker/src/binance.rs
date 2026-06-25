@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::{fmt, sync::Arc};
-use trader_core::OrderRequest;
+use trader_core::{OrderRequest, OrderSide};
 
 use crate::{
     Broker, BrokerAccountSnapshot, BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder,
@@ -63,6 +63,7 @@ pub struct BinanceTrade {
     pub trade_id: u64,
     pub order_id: u64,
     pub symbol: String,
+    pub side: OrderSide,
     pub price: Decimal,
     pub qty: Decimal,
     pub fee: Decimal,
@@ -616,6 +617,7 @@ struct BinanceTradeResponse {
     id: u64,
     order_id: u64,
     symbol: String,
+    is_buyer: Option<bool>,
     price: String,
     qty: String,
     commission: String,
@@ -700,6 +702,11 @@ impl BinanceTradeResponse {
             trade_id: self.id,
             order_id: self.order_id,
             symbol: self.symbol,
+            side: if self.is_buyer.unwrap_or(true) {
+                OrderSide::Buy
+            } else {
+                OrderSide::Sell
+            },
             price: self
                 .price
                 .parse::<Decimal>()
@@ -806,8 +813,9 @@ impl Broker for BinanceSpotTestnetAdapter {
         let Some(symbol) = symbol else {
             return Ok(Vec::new());
         };
+        let symbol = binance_native_symbol(symbol)?;
         Ok(self
-            .my_trades_for_symbol(symbol)
+            .my_trades_for_symbol(&symbol)
             .await?
             .into_iter()
             .map(|trade| BrokerExecution {
@@ -816,7 +824,7 @@ impl Broker for BinanceSpotTestnetAdapter {
                 client_order_id: None,
                 account_id: account_id.to_string(),
                 symbol: trade.symbol,
-                side: trader_core::OrderSide::Buy,
+                side: trade.side,
                 price: trade.price,
                 qty: trade.qty,
                 fee: trade.fee,
@@ -842,6 +850,22 @@ fn parse_broker_order_side(side: &str) -> trader_core::OrderSide {
     } else {
         trader_core::OrderSide::Buy
     }
+}
+
+fn binance_native_symbol(symbol: &str) -> Result<String, BrokerError> {
+    if !symbol.contains(':') {
+        return Ok(symbol.to_string());
+    }
+    let parts = symbol.split(':').collect::<Vec<_>>();
+    if parts.len() == 4 && parts[0] == "CRYPTO" && parts[1] == "BINANCE" {
+        return Ok(parts[2]
+            .strip_suffix("_PERP")
+            .unwrap_or(parts[2])
+            .to_string());
+    }
+    Err(BrokerError::Config(format!(
+        "unsupported Binance symbol {symbol}"
+    )))
 }
 
 #[derive(Debug, Deserialize)]

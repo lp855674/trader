@@ -1151,53 +1151,38 @@ ON orders(created_at);
 
 # 8.12 order_events
 
-订单事件表。
+订单事件结构化审计投影。
 
-一张订单可能对应多个事件。
+真实不可变事件仍写入 `event_store`；`order_events` 是从 `broker.order.*` 与 `algorithm.oms.*` 事件派生出来的只读查询面，用于按 run、订单标识、状态和时间范围直接排查下单/恢复路径。
 
 ```sql
 CREATE TABLE IF NOT EXISTS order_events (
     id TEXT PRIMARY KEY,
-
+    event_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
-    order_id TEXT NOT NULL,
-
-    event_type TEXT NOT NULL,
-
-    old_status TEXT,
-    new_status TEXT,
-
+    order_id TEXT,
+    client_order_id TEXT,
     broker_order_id TEXT,
-
-    filled_qty TEXT,
-    remaining_qty TEXT,
-    avg_fill_price TEXT,
-
+    account_id TEXT,
+    symbol TEXT,
+    status TEXT NOT NULL,
+    event_type TEXT NOT NULL,
     message TEXT,
-    raw_json TEXT,
-
-    ts INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-
-    FOREIGN KEY(run_id) REFERENCES strategy_runs(id),
-    FOREIGN KEY(order_id) REFERENCES orders(id)
+    ts_ms INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY(event_id) REFERENCES event_store(event_id)
 );
 ```
 
 event_type 示例：
 
 ```text
-CREATED
-SUBMITTED
-ACCEPTED
-PARTIALLY_FILLED
-FILLED
-CANCEL_REQUESTED
-CANCELLED
-REJECTED
-EXPIRED
-SYNCED
-ERROR
+broker.order.submitted
+broker.order.partially_filled
+broker.order.filled
+broker.order.failed
+broker.order.recovered
+algorithm.oms.cancel_requested
 ```
 
 ```sql
@@ -1208,7 +1193,7 @@ CREATE INDEX IF NOT EXISTS idx_order_events_order_id
 ON order_events(order_id);
 
 CREATE INDEX IF NOT EXISTS idx_order_events_ts
-ON order_events(ts);
+ON order_events(ts_ms);
 ```
 
 ---
@@ -1616,34 +1601,25 @@ ON portfolio_snapshots(run_id, ts);
 
 # 8.20 risk_events
 
-风控事件表。
+风控结构化审计投影。
+
+真实不可变事件仍写入 `event_store`；`risk_events` 当前从 `algorithm.risk.*` 事件派生，用于查询 pre-trade 风控决策和 live reconciliation drift 这类审计记录。
 
 ```sql
 CREATE TABLE IF NOT EXISTS risk_events (
     id TEXT PRIMARY KEY,
-
+    event_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
-
-    ts INTEGER NOT NULL,
-
-    market TEXT,
-    exchange TEXT,
+    account_id TEXT,
     symbol TEXT,
-    asset_class TEXT,
-
     risk_type TEXT NOT NULL,
-    severity TEXT NOT NULL,
-
-    action TEXT NOT NULL,
-
-    message TEXT NOT NULL,
-
-    order_id TEXT,
-    raw_json TEXT,
-
-    created_at INTEGER NOT NULL,
-
-    FOREIGN KEY(run_id) REFERENCES strategy_runs(id)
+    decision TEXT NOT NULL,
+    reason TEXT,
+    threshold TEXT,
+    observed_value TEXT,
+    ts_ms INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY(event_id) REFERENCES event_store(event_id)
 );
 ```
 
@@ -1667,40 +1643,26 @@ EXCHANGE_RATE_LIMIT
 MIN_NOTIONAL
 POST_ONLY_REJECT
 REDUCE_ONLY_VIOLATION
+reconciliation_drift
 ```
 
-severity：
+decision 示例：
 
 ```text
-INFO
-WARNING
-ERROR
-CRITICAL
-```
-
-action：
-
-```text
-ALLOW
-ADJUST
-REJECT
-LIQUIDATE
-STOP_STRATEGY
-STOP_TRADING
+approved
+warn
+rejected
 ```
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_risk_events_run_id
 ON risk_events(run_id);
 
+CREATE INDEX IF NOT EXISTS idx_risk_events_symbol
+ON risk_events(symbol);
+
 CREATE INDEX IF NOT EXISTS idx_risk_events_ts
-ON risk_events(ts);
-
-CREATE INDEX IF NOT EXISTS idx_risk_events_type
-ON risk_events(risk_type);
-
-CREATE INDEX IF NOT EXISTS idx_risk_events_asset_class
-ON risk_events(asset_class);
+ON risk_events(ts_ms);
 ```
 
 ---
@@ -2475,7 +2437,8 @@ pub trait PortfolioSnapshotRepository {
   立即写入
 
 订单状态变化：
-  立即写入 order_events
+  先写 event_store
+  再写 order_events 投影
   同步更新 orders
 
 成交：
@@ -2483,10 +2446,15 @@ pub trait PortfolioSnapshotRepository {
   同步更新 orders
   同步更新 positions / crypto_positions / account_balances
 
+风控决策 / reconciliation drift：
+  先写 event_store
+  再写 risk_events 投影
+
 组合快照：
   Backtest 可按 bar 写入
   Replay 可按秒或 bar 写入
   Paper / Live 可按事件或固定 interval 写入
+  Live 启动时写 baseline cash snapshot，并可按 broker snapshot interval 持续写入 broker cash/position snapshots
 
 系统日志：
   关键错误写 SQLite
@@ -2537,6 +2505,15 @@ portfolio_snapshots
 configs
 ```
 
+当前 live 启动恢复额外依赖：
+
+```text
+broker open orders
+broker executions
+order_events
+system_logs
+```
+
 恢复流程：
 
 ```text
@@ -2544,15 +2521,19 @@ configs
   ↓
 读取 orders 中未完成订单
   ↓
+读取本地 fills 作为已成交下限
+  ↓
 读取 positions / crypto_positions 当前持仓
   ↓
 读取 account_balances 当前账户余额
   ↓
-向 Broker 查询真实订单状态
+向 Broker 查询 open orders / executions
   ↓
-同步本地状态
+同步本地订单状态与 fills
   ↓
-继续运行或标记为 FAILED
+写 broker.order.recovered / startup_recovery.* 审计记录
+  ↓
+  继续运行或标记为 FAILED
 ```
 
 ---
@@ -2576,7 +2557,8 @@ Broker 返回 broker_order_id 后建立映射
 ```text
 orders.client_order_id
 orders.broker_order_id
-order_events.raw_json
+order_events.payload_json
+event_store.payload_json
 ```
 
 ---
@@ -2806,14 +2788,11 @@ ORDER BY asset ASC;
 ```text
 migrations/
 ├── 0001_init.sql
-├── 0002_market_reference.sql
-├── 0003_crypto_reference.sql
-├── 0004_orders.sql
-├── 0005_portfolio.sql
-├── 0006_risk.sql
-├── 0007_signals.sql
-├── 0008_configs.sql
-└── 0009_indexes.sql
+├── 0002_audit_projections.sql
+├── 0003_market_rules.sql
+├── 0004_contract_accounting.sql
+├── 0005_reference_snapshots_and_ops.sql
+└── 0006_config_lifecycle.sql
 ```
 
 ---
@@ -2830,95 +2809,68 @@ PRAGMA busy_timeout = 5000;
 
 ---
 
-## 19.2 0002_market_reference.sql
+## 19.2 0002_audit_projections.sql
 
 包含：
 
 ```text
-instruments
-market_calendars
-trading_sessions
-fee_rules
-lot_size_rules
-price_limit_rules
-corporate_actions_meta
-```
-
----
-
-## 19.3 0003_crypto_reference.sql
-
-包含：
-
-```text
-crypto_market_meta
-funding_rates
-```
-
----
-
-## 19.4 0004_orders.sql
-
-包含：
-
-```text
-orders
 order_events
-fills
-```
-
----
-
-## 19.5 0005_portfolio.sql
-
-包含：
-
-```text
-positions
-crypto_positions
-account_balances
-cash_snapshots
-position_snapshots
-portfolio_snapshots
-```
-
----
-
-## 19.6 0006_risk.sql
-
-包含：
-
-```text
 risk_events
-```
-
----
-
-## 19.7 0007_signals.sql
-
-包含：
-
-```text
 insights
 portfolio_targets
 ```
 
 ---
 
-## 19.8 0008_configs.sql
+## 19.3 0003_market_rules.sql
 
 包含：
 
 ```text
+market_calendars
+trading_sessions
+fee_rules
+lot_size_rules
+price_limit_rules
+```
+
+---
+
+## 19.4 0004_contract_accounting.sql
+
+包含：
+
+```text
+crypto_positions
+funding_rates
+```
+
+---
+
+## 19.5 0005_reference_snapshots_and_ops.sql
+
+包含：
+
+```text
+crypto_market_meta
+corporate_actions_meta
+cash_snapshots
+position_snapshots
 configs
 system_logs
 ```
 
 ---
 
-## 19.9 0009_indexes.sql
+## 19.6 0006_config_lifecycle.sql
 
-包含所有索引。
+包含：
+
+```text
+config_releases
+run_config_versions
+config_audits
+```
 
 ---
 

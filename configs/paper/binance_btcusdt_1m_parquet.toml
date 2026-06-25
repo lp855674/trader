@@ -47,6 +47,9 @@ fee_bps = "10"
 [live]
 enabled = false
 
+[live.startup_recovery]
+unmatched_open_orders = "fail"
+
 [ingestion]
 enabled = true
 sources = ["binance"]

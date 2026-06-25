@@ -372,6 +372,7 @@ impl Broker for MockBroker {
 pub struct FakeBrokerAdapter {
     kind: BrokerKind,
     orders: Arc<Mutex<HashMap<String, BrokerOrder>>>,
+    startup_unmatched_open_order: bool,
 }
 
 impl FakeBrokerAdapter {
@@ -379,7 +380,13 @@ impl FakeBrokerAdapter {
         Self {
             kind,
             orders: Arc::new(Mutex::new(HashMap::new())),
+            startup_unmatched_open_order: false,
         }
+    }
+
+    pub fn with_startup_unmatched_open_order(mut self, enabled: bool) -> Self {
+        self.startup_unmatched_open_order = enabled;
+        self
     }
 
     pub fn futu() -> Self {
@@ -457,6 +464,24 @@ impl Broker for FakeBrokerAdapter {
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
         Ok(fake_position_snapshots(account_id, self.kind))
+    }
+
+    async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        if !self.startup_unmatched_open_order {
+            return Ok(Vec::new());
+        }
+        Ok(vec![BrokerOpenOrder {
+            broker_order_id: "fake-startup-unmatched-open-order".to_string(),
+            client_order_id: "fake-startup-unmatched-client-order".to_string(),
+            account_id: account_id.to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            price: Some(Decimal::from(185)),
+            qty: Decimal::ONE,
+            filled_qty: Decimal::ZERO,
+            status: "SUBMITTED".to_string(),
+        }])
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {

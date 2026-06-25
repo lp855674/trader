@@ -959,6 +959,85 @@ async fn risk_events_can_be_filtered_for_reconciliation_audit() {
 }
 
 #[tokio::test]
+async fn order_events_can_be_filtered_for_startup_recovery_audit() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 100,
+        category: "broker.order.submitted".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "order_id": "order-a",
+            "client_order_id": "client-a",
+            "broker_order_id": "broker-a",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "status": "SUBMITTED"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-a".to_string(),
+        ts_ms: 200,
+        category: "broker.order.recovered".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-a",
+            "order_id": "order-a",
+            "client_order_id": "client-a",
+            "broker_order_id": "broker-a",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "status": "FILLED",
+            "message": "startup recovery matched broker order state"
+        }),
+    })
+    .await
+    .unwrap();
+    db.record_runtime_event(RuntimeEventCommand {
+        source: "run-b".to_string(),
+        ts_ms: 300,
+        category: "broker.order.failed".to_string(),
+        payload: serde_json::json!({
+            "run_id": "run-b",
+            "order_id": "order-b",
+            "client_order_id": "client-b",
+            "broker_order_id": "broker-b",
+            "account_id": "paper",
+            "symbol": "US:NASDAQ:MSFT:EQUITY",
+            "status": "REJECTED",
+            "message": "risk rejected"
+        }),
+    })
+    .await
+    .unwrap();
+
+    let filtered = db
+        .list_order_events_filtered(storage::OrderEventFilter {
+            run_id: Some("run-a".to_string()),
+            status: Some("FILLED".to_string()),
+            event_type: Some("broker.order.recovered".to_string()),
+            from_ms: Some(150),
+            to_ms: Some(250),
+            limit: Some(1),
+            ..storage::OrderEventFilter::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].run_id, "run-a");
+    assert_eq!(filtered[0].event_type, "broker.order.recovered");
+    assert_eq!(filtered[0].status, "FILLED");
+    assert_eq!(
+        filtered[0].message.as_deref(),
+        Some("startup recovery matched broker order state")
+    );
+}
+
+#[tokio::test]
 async fn market_rule_reference_records_prefer_symbol_specific_rules() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

@@ -256,6 +256,52 @@ enum Command {
         #[arg(long)]
         run_id: String,
     },
+    OrderEvents {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        order_id: Option<String>,
+        #[arg(long)]
+        client_order_id: Option<String>,
+        #[arg(long)]
+        broker_order_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        event_type: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    RiskEvents {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        risk_type: Option<String>,
+        #[arg(long)]
+        decision: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     ReconciliationDrifts {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -2312,6 +2358,91 @@ async fn run_command(command: Command) -> Result<()> {
                 );
             }
         }
+        Command::OrderEvents {
+            config,
+            run_id,
+            order_id,
+            client_order_id,
+            broker_order_id,
+            account_id,
+            symbol,
+            status,
+            event_type,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let events = db
+                .list_order_events_filtered(storage::OrderEventFilter {
+                    run_id,
+                    order_id,
+                    client_order_id,
+                    broker_order_id,
+                    account_id,
+                    symbol,
+                    status,
+                    event_type,
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            for event in events {
+                println!(
+                    "order_event: run_id={} ts_ms={} order_id={} client_order_id={} broker_order_id={} account={} symbol={} status={} event_type={} message={}",
+                    event.run_id,
+                    event.ts_ms,
+                    event.order_id.as_deref().unwrap_or(""),
+                    event.client_order_id.as_deref().unwrap_or(""),
+                    event.broker_order_id.as_deref().unwrap_or(""),
+                    event.account_id.as_deref().unwrap_or(""),
+                    event.symbol.as_deref().unwrap_or(""),
+                    event.status,
+                    event.event_type,
+                    event.message.as_deref().unwrap_or("")
+                );
+            }
+        }
+        Command::RiskEvents {
+            config,
+            run_id,
+            risk_type,
+            decision,
+            account_id,
+            symbol,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let events = db
+                .list_risk_events_filtered(storage::RiskEventFilter {
+                    run_id,
+                    risk_type,
+                    decision,
+                    account_id,
+                    symbol,
+                    from_ms,
+                    to_ms,
+                    limit,
+                })
+                .await?;
+            for event in events {
+                println!(
+                    "risk_event: run_id={} ts_ms={} account={} symbol={} risk_type={} decision={} reason={} threshold={} observed_value={}",
+                    event.run_id,
+                    event.ts_ms,
+                    event.account_id.as_deref().unwrap_or(""),
+                    event.symbol.as_deref().unwrap_or(""),
+                    event.risk_type,
+                    event.decision,
+                    event.reason.as_deref().unwrap_or(""),
+                    event.threshold.as_deref().unwrap_or(""),
+                    event.observed_value.as_deref().unwrap_or("")
+                );
+            }
+        }
         Command::ReconciliationDrifts {
             config,
             run_id,
@@ -2326,6 +2457,7 @@ async fn run_command(command: Command) -> Result<()> {
                 .list_risk_events_filtered(storage::RiskEventFilter {
                     run_id,
                     risk_type: Some("reconciliation_drift".to_string()),
+                    decision: None,
                     account_id,
                     symbol,
                     from_ms,

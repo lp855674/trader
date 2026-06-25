@@ -82,13 +82,13 @@ GET  /ws
 
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
 
-`GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path.
+`GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path. `order-events` supports `order_id`, `client_order_id`, `broker_order_id`, `account_id`, `symbol`, `status`, `event_type`, `from_ms`, `to_ms`, and `limit` filters for startup recovery / order lifecycle troubleshooting. `risk-events` supports `risk_type`, `decision`, `account_id`, `symbol`, `from_ms`, `to_ms`, and `limit` filters for pre-trade rejection and reconciliation drift audit.
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/logs` exposes paginated runtime/system logs with `run_id`, `level`, `target`, `from_ms`, `to_ms`, `search`, `limit`, and `offset` filters and returns `{ logs, total, limit, offset }`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` remain available for direct list readback. `GET /api/v1/ops/logging/metrics` exposes in-process writer dropped-log metrics plus active `[logging]` writer settings; CLI also supports retention purge, `logs count` / `logs tail` / `logs metrics`, JSONL export, and `logs ship` for HTTP NDJSON collector handoff. `trader-server` runs a background retention scheduler using `[logging].retention_days`; CLI/API run launch paths also perform startup cleanup. `logs ship` accepts optional `--max-retries`, `--retry-backoff-ms`, and `--signature-secret-env`; network errors, HTTP 429, and HTTP 5xx are retried with linearly increasing backoff, while non-retryable 4xx statuses fail immediately. When signing is enabled, requests include `X-Trader-Log-Timestamp` and `X-Trader-Log-Signature: v1=<hmac-sha256>`, signing `timestamp.body`.
 
-`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; when `[live.alerts]` is enabled, downstream alert routing supports legacy single-sink fields (`sink = "file"` with `file_path`, or `sink = "webhook"` with `webhook_url`) and multi-sink `[[live.alerts.sinks]]` entries so file JSONL append and webhook JSON POST delivery can run together. Optional `cooldown_ms` suppresses repeated downstream sends for the same alert dedup key within the cooldown window; sink-level values override `[live.alerts]` defaults. Webhook sinks also support `webhook_timeout_ms`, `webhook_max_retries`, and `webhook_auth_token` for a bearer-authenticated local MVP delivery policy; `system_logs` and drift audit surfaces still record every alert. Real broker-reported cash/position scheduling remains production hardening work.
+`GET /api/v1/runs/{run_id}/cash-snapshots` and `GET /api/v1/runs/{run_id}/position-snapshots` query paper/live reconciliation snapshot storage by explicit run id. They support optional time and symbol/currency filters. Decimal values are returned as strings. Live runs write a baseline cash snapshot at startup and can periodically capture fake broker cash/position snapshots when `[live].broker_snapshot_interval_ms` is configured. Startup recovery also reads broker open orders and executions for any local recoverable orders before the main loop begins. The default policy is `[live.startup_recovery] unmatched_open_orders = "fail"`, which marks the run failed when the broker reports an unknown remote open order; set `warn_only` only when the operator explicitly accepts that degraded recovery path. Cash drift and broker position missing/quantity drift against the latest runtime snapshots are projected as `reconciliation_drift` risk events; when `[live.alerts]` is enabled, downstream alert routing supports legacy single-sink fields (`sink = "file"` with `file_path`, or `sink = "webhook"` with `webhook_url`) and multi-sink `[[live.alerts.sinks]]` entries so file JSONL append and webhook JSON POST delivery can run together. Optional `cooldown_ms` suppresses repeated downstream sends for the same alert dedup key within the cooldown window; sink-level values override `[live.alerts]` defaults. Webhook sinks also support `webhook_timeout_ms`, `webhook_max_retries`, and `webhook_auth_token` for a bearer-authenticated local MVP delivery policy; `system_logs` and drift audit surfaces still record every alert. Real broker-reported cash/position scheduling remains production hardening work.
 
 `GET /api/v1/runs/{run_id}/reconciliation` summarizes persisted cash snapshots, position snapshots, and `risk_events` with `risk_type = "reconciliation_drift"` for the run. `GET /api/v1/reconciliation-drifts` and `GET /api/v1/runs/{run_id}/reconciliation-drifts` provide drift-audit readback with `run_id` / `account_id` / `symbol` / `from_ms` / `to_ms` / `limit` filters. `GET /api/v1/reconciliation-alerts/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alerts/summary` aggregate `runtime.alert` log records for persisted reconciliation alerts. `GET /api/v1/reconciliation-alert-deliveries/summary` and `GET /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary` aggregate `runtime.alert_delivery` records for downstream delivery status by sink and outcome.
 
@@ -131,7 +131,7 @@ subscribe       -> replay persisted events for run_id
 replay_control  -> pause / resume / seek / speed
 ```
 
-Broker status 返回 Futu、Binance、OKX、Interactive Brokers 的 deterministic fake adapters。Live runtime 验证本地 lifecycle、broker status、stop，以及可配置的 fake broker cash/position snapshot 调度；不连接真实 broker、不接收凭证、不发真实订单。
+Broker status 返回 Futu、Binance、OKX、Interactive Brokers 的 deterministic fake adapters。Live runtime 验证本地 lifecycle、broker status、stop，以及可配置的 fake broker cash/position snapshot 调度；不连接真实 broker、不接收凭证、不发真实订单。仅用于本地 smoke 的 fake adapter 还支持 `[broker] fake_startup_unmatched_open_order = true`，用于触发 startup recovery 未匹配远端 open order 分支并验证默认 `fail` / 显式 `warn_only` 策略。
 
 ---
 
@@ -703,7 +703,120 @@ GET /api/v1/system-logs
 
 ---
 
-## 9.4 查询策略信号投影
+## 9.4 查询订单事件投影
+
+```http
+GET /api/v1/runs/{run_id}/order-events
+```
+
+当前 V1 返回由 `broker.order.*` 与 `algorithm.oms.*` 运行事件派生的只读订单审计投影。`payload` 是结构化 JSON，不返回 `payload_json` 字符串。该接口支持以下 Query 参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| order_id | string | 过滤本地订单 ID |
+| client_order_id | string | 过滤幂等 client order id |
+| broker_order_id | string | 过滤远端 broker order id |
+| account_id | string | 过滤账户 |
+| symbol | string | 过滤标的 |
+| status | string | 过滤投影状态，例如 `SUBMITTED` / `FILLED` |
+| event_type | string | 过滤事件类型，例如 `broker.order.recovered` |
+| from_ms | integer | 起始时间 |
+| to_ms | integer | 结束时间 |
+| limit | integer | 返回条数上限 |
+
+典型用途：
+
+- 查 live 启动恢复写入的 `broker.order.recovered`
+- 按 `client_order_id` 或 `broker_order_id` 追单
+- 定位 `broker.order.failed` / `algorithm.oms.*` 分支
+
+响应示例：
+
+```json
+[
+  {
+    "id": "order_event_001",
+    "event_id": "event_001",
+    "run_id": "live-startup-recovery",
+    "order_id": "order-recover",
+    "client_order_id": "client-recover",
+    "broker_order_id": "broker-recover",
+    "account_id": "paper",
+    "symbol": "US:NASDAQ:AAPL:EQUITY",
+    "status": "FILLED",
+    "event_type": "broker.order.recovered",
+    "message": "startup recovery matched broker order state",
+    "ts_ms": 1700000000000,
+    "payload": {
+      "run_id": "live-startup-recovery",
+      "order_id": "order-recover",
+      "client_order_id": "client-recover",
+      "broker_order_id": "broker-recover",
+      "status": "FILLED",
+      "executions": 1,
+      "recovery_source": "startup"
+    }
+  }
+]
+```
+
+---
+
+## 9.5 查询风控事件投影
+
+```http
+GET /api/v1/runs/{run_id}/risk-events
+```
+
+当前 V1 返回由 `algorithm.risk.*` 运行事件派生的只读风控审计投影。`payload` 是结构化 JSON，不返回 `payload_json` 字符串。该接口支持以下 Query 参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| risk_type | string | 过滤风险类型，例如 `reconciliation_drift` |
+| decision | string | 过滤决策，例如 `approved` / `warn` / `rejected` |
+| account_id | string | 过滤账户 |
+| symbol | string | 过滤标的 |
+| from_ms | integer | 起始时间 |
+| to_ms | integer | 结束时间 |
+| limit | integer | 返回条数上限 |
+
+典型用途：
+
+- 查询 pre-trade 风控拒单
+- 查询 live reconciliation drift 投影
+- 按账户/标的回放风险决策时间线
+
+响应示例：
+
+```json
+[
+  {
+    "id": "risk_event_001",
+    "event_id": "event_002",
+    "run_id": "live-cash-drift",
+    "account_id": "live-account",
+    "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+    "risk_type": "reconciliation_drift",
+    "decision": "warn",
+    "reason": "position_qty_drift",
+    "threshold": "1",
+    "observed_value": "2",
+    "ts_ms": 1700000000000,
+    "payload": {
+      "run_id": "live-cash-drift",
+      "risk_type": "reconciliation_drift",
+      "decision": "warn",
+      "reason": "position_qty_drift",
+      "threshold": "1",
+      "observed_value": "2"
+    }
+  }
+]
+```
+
+---
+
+## 9.6 查询策略信号投影
 
 ```http
 GET /api/v1/runs/{run_id}/insights
@@ -734,7 +847,7 @@ GET /api/v1/runs/{run_id}/insights
 
 ---
 
-## 9.5 查询组合目标投影
+## 9.7 查询组合目标投影
 
 ```http
 GET /api/v1/runs/{run_id}/portfolio-targets
@@ -764,7 +877,7 @@ GET /api/v1/runs/{run_id}/portfolio-targets
 
 ---
 
-## 9.6 停止运行
+## 9.8 停止运行
 
 ```http
 POST /api/v1/runs/{run_id}/stop

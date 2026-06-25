@@ -45,6 +45,17 @@ function Assert-True {
     if (-not $Condition) { throw $Message }
 }
 
+function Invoke-StartupRecoverySmoke {
+    $apiTests = @(
+        "live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_orders",
+        "live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_orders"
+    )
+
+    foreach ($testName in $apiTests) {
+        Invoke-CheckedCargo @("test", "-p", "api", $testName, "--test", "api_tests")
+    }
+}
+
 function Wait-RunStatus {
     param([string]$BaseUrl, [string]$RunId, [string]$Expected)
 
@@ -99,6 +110,7 @@ try {
     Write-Host "Ops smoke database: $databaseUrl"
 
     Invoke-CheckedCargo @("build", "-p", "trader-cli", "-p", "trader-server")
+    Invoke-StartupRecoverySmoke
 
     $env:TRADER_CONFIG = $configPath
     $env:TRADER_DATABASE_URL = $databaseUrl
