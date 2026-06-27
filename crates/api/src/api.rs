@@ -878,6 +878,27 @@ pub fn spawn_logging_retention_scheduler(
     })
 }
 
+pub fn spawn_server_logging_retention_scheduler(
+    db: storage::Db,
+    logging: config::LoggingConfig,
+    interval: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            if let Err(error) = db
+                .purge_system_logs_by_retention(
+                    chrono::Utc::now().timestamp_millis(),
+                    system_log_retention_policy_from_logging(&logging),
+                )
+                .await
+            {
+                tracing::warn!(error = %error, "failed to run logging retention cleanup");
+            }
+        }
+    })
+}
+
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
@@ -957,7 +978,7 @@ async fn broker_account(
     State(state): State<AppState>,
     Path(account_id): Path<String>,
 ) -> Result<Json<BrokerAccountSnapshot>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     let snapshot = FakeBrokerAdapter::new(broker_kind(app_config.broker.kind))
         .account_snapshot(&account_id)
         .await
@@ -968,7 +989,7 @@ async fn broker_account(
 async fn paper_preflight(
     State(state): State<AppState>,
 ) -> Result<Json<PaperPreflightResponse>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     let settings = paper_settings(&app_config)?;
     if app_config.runtime.mode != config::RuntimeMode::Paper {
         return Err(ApiError(anyhow::anyhow!(
@@ -1170,7 +1191,7 @@ async fn prepare_launch(
     endpoint: &str,
     request: Option<Json<RunLaunchRequest>>,
 ) -> Result<PreparedLaunch, ApiError> {
-    let spec = run_launch_spec_from_request(&state.config_path, request)?;
+    let spec = run_launch_spec_from_request(default_run_config_path(&state)?, request)?;
     let launch_config = resolve_launch_config_source(state, &spec.source).await?;
     let (app_config, run_spec, snapshot) = materialize_run_spec(launch_config, &spec.patch)?;
     ensure_launch_mode(&run_spec, expected_mode, endpoint)?;
@@ -1691,7 +1712,7 @@ async fn stop_live_run(
 }
 
 async fn list_orders(State(state): State<AppState>) -> Result<Json<Vec<OrderResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     order_response(&state.db, &app_config.runtime.run_id).await
 }
 
@@ -1731,7 +1752,7 @@ async fn order_response(
 }
 
 async fn list_fills(State(state): State<AppState>) -> Result<Json<Vec<FillResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     fill_response(&state.db, &app_config.runtime.run_id).await
 }
 
@@ -1768,7 +1789,7 @@ async fn fill_response(
 async fn list_positions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PositionResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     position_response(&state.db, &app_config.runtime.run_id).await
 }
 
@@ -1863,7 +1884,7 @@ async fn list_corporate_actions(
 async fn list_account_balances(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     account_balance_response(&state.db, &app_config.runtime.run_id).await
 }
 
@@ -1898,7 +1919,7 @@ async fn account_balance_response(
 async fn list_cash_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<CashSnapshotResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     snapshot_cash_response(&state.db, &app_config.runtime.run_id, None, None, None).await
 }
 
@@ -1945,7 +1966,7 @@ async fn snapshot_cash_response(
 async fn list_position_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PositionSnapshotResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     snapshot_position_response(
         &state.db,
         &app_config.runtime.run_id,
@@ -2049,12 +2070,12 @@ async fn get_run_reconciliation(
 async fn list_portfolio_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PortfolioSnapshotResponse>>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     portfolio_snapshot_response(&state.db, &app_config.runtime.run_id).await
 }
 
 async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSummary>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let app_config = config::AppConfig::from_toml_file(default_run_config_path(&state)?)?;
     metrics_summary_for_run(&state.db, &app_config.runtime.run_id).await
 }
 
@@ -2532,8 +2553,10 @@ async fn list_logs(
 async fn logging_metrics(
     State(state): State<AppState>,
 ) -> Result<Json<LoggingMetricsResponse>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let settings = log_writer_settings_with_metrics(&app_config, state.log_writer_metrics.clone());
+    let settings = log_writer_settings_from_logging(
+        &state.server_config.logging,
+        state.log_writer_metrics.clone(),
+    );
     Ok(Json(LoggingMetricsResponse {
         metrics: settings.metrics.snapshot(),
         enabled: settings.enabled,
@@ -3650,12 +3673,19 @@ fn log_writer_settings_with_metrics(
     app_config: &config::AppConfig,
     metrics: events::LogWriterMetrics,
 ) -> LogWriterSettings {
+    log_writer_settings_from_logging(&app_config.logging, metrics)
+}
+
+fn log_writer_settings_from_logging(
+    logging: &config::LoggingConfig,
+    metrics: events::LogWriterMetrics,
+) -> LogWriterSettings {
     LogWriterSettings {
-        enabled: app_config.logging.enabled,
-        buffer_size: app_config.logging.buffer_size,
-        flush_interval_ms: app_config.logging.flush_interval_ms,
-        min_level: app_config.logging.level.clone(),
-        categories: app_config.logging.categories.clone(),
+        enabled: logging.enabled,
+        buffer_size: logging.buffer_size,
+        flush_interval_ms: logging.flush_interval_ms,
+        min_level: logging.level.clone(),
+        categories: logging.categories.clone(),
         metrics,
         ..LogWriterSettings::default()
     }
@@ -3664,8 +3694,14 @@ fn log_writer_settings_with_metrics(
 fn system_log_retention_policy(
     app_config: &config::AppConfig,
 ) -> storage::SystemLogRetentionPolicy {
+    system_log_retention_policy_from_logging(&app_config.logging)
+}
+
+fn system_log_retention_policy_from_logging(
+    logging: &config::LoggingConfig,
+) -> storage::SystemLogRetentionPolicy {
     storage::SystemLogRetentionPolicy {
-        retention_days: app_config.logging.retention_days,
+        retention_days: logging.retention_days,
     }
 }
 
@@ -4030,6 +4066,14 @@ impl std::error::Error for ApiBadRequest {}
 
 fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(anyhow::Error::new(ApiBadRequest(message.into())))
+}
+
+fn default_run_config_path(state: &AppState) -> Result<&str, ApiError> {
+    state.default_run_config_path().ok_or_else(|| {
+        bad_request(
+            "request must include an explicit run config because the server has no default run config path",
+        )
+    })
 }
 
 impl axum::response::IntoResponse for ApiError {

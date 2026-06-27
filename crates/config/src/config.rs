@@ -61,6 +61,28 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ServerConfig {
+    pub database: DatabaseConfig,
+    #[serde(default)]
+    pub server: ServerSettings,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
+    pub run_defaults: ServerRunDefaults,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerSettings {
+    #[serde(default = "default_server_bind")]
+    pub bind: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ServerRunDefaults {
+    pub config_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RuntimeConfig {
     pub mode: RuntimeMode,
     pub run_id: String,
@@ -334,8 +356,33 @@ impl Default for LoggingConfig {
     }
 }
 
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            bind: default_server_bind(),
+        }
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            database: DatabaseConfig {
+                url: "sqlite::memory:".to_string(),
+            },
+            server: ServerSettings::default(),
+            logging: LoggingConfig::default(),
+            run_defaults: ServerRunDefaults::default(),
+        }
+    }
+}
+
 fn default_ingestion_fetch_interval_minutes() -> u64 {
     60
+}
+
+fn default_server_bind() -> String {
+    "127.0.0.1:8080".to_string()
 }
 
 fn default_logging_enabled() -> bool {
@@ -382,6 +429,46 @@ impl AppConfig {
 
     pub fn shortable_symbols(&self) -> BTreeSet<String> {
         self.risk.shortable_symbols(&self.strategy.symbols)
+    }
+}
+
+impl ServerConfig {
+    pub fn from_toml_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        let path_ref = path.as_ref();
+        let input = std::fs::read_to_string(path_ref).map_err(|source| ConfigError::Read {
+            path: path_ref.display().to_string(),
+            source,
+        })?;
+        Self::from_toml_str(&input)
+    }
+
+    pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
+        Ok(toml::from_str(input)?)
+    }
+
+    pub fn with_default_run_config_path(config_path: String) -> Self {
+        Self {
+            run_defaults: ServerRunDefaults {
+                config_path: Some(config_path),
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn default_run_config_path(&self) -> Option<&str> {
+        self.run_defaults.config_path.as_deref()
+    }
+}
+
+impl From<String> for ServerConfig {
+    fn from(config_path: String) -> Self {
+        Self::with_default_run_config_path(config_path)
+    }
+}
+
+impl From<&str> for ServerConfig {
+    fn from(config_path: &str) -> Self {
+        Self::with_default_run_config_path(config_path.to_string())
     }
 }
 

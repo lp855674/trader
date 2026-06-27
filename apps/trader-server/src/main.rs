@@ -4,30 +4,28 @@ use std::net::SocketAddr;
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    let config_path =
-        std::env::var("TRADER_CONFIG").unwrap_or_else(|_| "configs/backtest/ma_cross.toml".into());
-    let app_config = config::AppConfig::from_toml_file(&config_path)?;
+    let config_path = std::env::var("TRADER_SERVER_CONFIG")
+        .or_else(|_| std::env::var("TRADER_CONFIG"))
+        .unwrap_or_else(|_| "configs/deploy/trader-server.example.toml".into());
+    let server_config = config::ServerConfig::from_toml_file(&config_path)?;
     let database_url =
-        std::env::var("TRADER_DATABASE_URL").unwrap_or_else(|_| app_config.database.url.clone());
+        std::env::var("TRADER_DATABASE_URL").unwrap_or_else(|_| server_config.database.url.clone());
     ensure_database_parent(&database_url)?;
     let db = storage::Db::connect(&database_url).await?;
     db.migrate().await?;
-    let _retention_scheduler = api::spawn_logging_retention_scheduler(
+    let _retention_scheduler = api::spawn_server_logging_retention_scheduler(
         db.clone(),
-        config_path.clone(),
+        server_config.logging.clone(),
         std::time::Duration::from_secs(86_400),
     );
-    let state = api::AppState::new(db, config_path);
-    let address = server_bind_address()?;
+    let address: SocketAddr = std::env::var("TRADER_SERVER_BIND")
+        .unwrap_or_else(|_| server_config.server.bind.clone())
+        .parse()?;
+    let state = api::AppState::with_server_config(db, server_config);
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, "trader-server listening");
     axum::serve(listener, api::router_with_state(state)).await?;
     Ok(())
-}
-
-fn server_bind_address() -> Result<SocketAddr> {
-    let bind = std::env::var("TRADER_SERVER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-    Ok(bind.parse()?)
 }
 
 fn ensure_database_parent(database_url: &str) -> Result<()> {

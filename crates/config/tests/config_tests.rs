@@ -1,4 +1,36 @@
-use config::{AppConfig, RuntimeMode};
+use config::{AppConfig, RuntimeMode, ServerConfig};
+
+#[test]
+fn server_config_parses_deployment_only_file() {
+    let input = r#"
+        [database]
+        url = "sqlite://data/trader-server.sqlite"
+
+        [server]
+        bind = "0.0.0.0:9090"
+
+        [logging]
+        enabled = true
+        level = "debug"
+        categories = ["api", "runtime"]
+        buffer_size = 256
+        flush_interval_ms = 1000
+        retention_days = 14
+        console_output = false
+    "#;
+
+    let config = ServerConfig::from_toml_str(input).unwrap();
+
+    assert_eq!(config.database.url, "sqlite://data/trader-server.sqlite");
+    assert_eq!(config.server.bind, "0.0.0.0:9090");
+    assert!(config.logging.enabled);
+    assert_eq!(config.logging.level, "debug");
+    assert_eq!(config.logging.categories, vec!["api", "runtime"]);
+    assert_eq!(config.logging.buffer_size, 256);
+    assert_eq!(config.logging.flush_interval_ms, 1000);
+    assert_eq!(config.logging.retention_days, 14);
+    assert!(!config.logging.console_output);
+}
 
 #[test]
 fn parses_backtest_config() {
