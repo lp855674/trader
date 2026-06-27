@@ -2137,7 +2137,10 @@ async fn live_runtime_routes_start_report_status_and_stop() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/live-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "mode": "live" }).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -2607,6 +2610,231 @@ async fn replay_launch_can_bind_to_referenced_config_version() {
 }
 
 #[tokio::test]
+async fn replay_launch_rejects_multiple_config_sources() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-multiple-source-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n",
+    )
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let payload = serde_json::json!({
+        "config_toml": replay_launch_config_toml("multiple-source-replay", &bars_path),
+        "config": serde_json::json!({}),
+        "mode": "replay"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        db.get_strategy_run("multiple-source-replay")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn replay_launch_can_override_run_id_from_referenced_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-ref-override-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let config_toml = replay_launch_config_toml("template-replay-run", &bars_path);
+    let config_value: toml::Value = toml::from_str(&config_toml).unwrap();
+    let content_json = serde_json::to_string(&config_value).unwrap();
+    db.create_config_version(NewConfigVersion {
+        name: "managed-replay-template".to_string(),
+        content_json,
+        created_by: "test".to_string(),
+        parent_version: None,
+        target_env: None,
+        rollout: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let payload = serde_json::json!({
+        "config_ref": {
+            "name": "managed-replay-template",
+            "version": 1
+        },
+        "run_id": "request-override-replay"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    assert!(
+        db.get_strategy_run("template-replay-run")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let run = db
+        .get_strategy_run("request-override-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.mode, "replay");
+    let run_config: serde_json::Value = serde_json::from_str(&run.config_json).unwrap();
+    assert_eq!(run_config["runtime"]["run_id"], "request-override-replay");
+    let binding = db
+        .get_run_config_version_binding("request-override-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.config_id, "config:managed-replay-template:v1");
+    assert_eq!(binding.version, "1");
+}
+
+#[tokio::test]
+async fn replay_launch_can_override_mode_from_referenced_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-ref-mode-override-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let config_toml =
+        replay_launch_config_toml_with_mode("template-mode-replay-run", "backtest", &bars_path);
+    let config_value: toml::Value = toml::from_str(&config_toml).unwrap();
+    let content_json = serde_json::to_string(&config_value).unwrap();
+    db.create_config_version(NewConfigVersion {
+        name: "managed-replay-mode-template".to_string(),
+        content_json,
+        created_by: "test".to_string(),
+        parent_version: None,
+        target_env: None,
+        rollout: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let payload = serde_json::json!({
+        "config_ref": {
+            "name": "managed-replay-mode-template",
+            "version": 1
+        },
+        "run_id": "request-mode-override-replay",
+        "mode": "replay"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    assert!(
+        db.get_strategy_run("template-mode-replay-run")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let run = db
+        .get_strategy_run("request-mode-override-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.mode, "replay");
+    let run_config: serde_json::Value = serde_json::from_str(&run.config_json).unwrap();
+    assert_eq!(
+        run_config["runtime"]["run_id"],
+        "request-mode-override-replay"
+    );
+    assert_eq!(run_config["runtime"]["mode"], "replay");
+}
+
+#[tokio::test]
+async fn replay_launch_rejects_mode_mismatch_after_overrides() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-mode-mismatch-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let payload = serde_json::json!({
+        "config_toml": replay_launch_config_toml("mode-mismatch-replay", &bars_path),
+        "mode": "paper"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        db.get_strategy_run("mode-mismatch-replay")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn run_status_prefers_in_memory_runtime_state_for_active_run() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -2918,10 +3146,18 @@ fn temp_config_path(prefix: &str) -> std::path::PathBuf {
 }
 
 fn replay_launch_config_toml(run_id: &str, data_path: &std::path::Path) -> String {
+    replay_launch_config_toml_with_mode(run_id, "replay", data_path)
+}
+
+fn replay_launch_config_toml_with_mode(
+    run_id: &str,
+    runtime_mode: &str,
+    data_path: &std::path::Path,
+) -> String {
     format!(
         r#"
         [runtime]
-        mode = "replay"
+        mode = "{runtime_mode}"
         run_id = "{run_id}"
 
         [database]

@@ -1040,7 +1040,8 @@ async fn post_paper_run_runs_multi_symbol_data_inputs() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1067,7 +1068,8 @@ async fn post_replay_returns_created_and_persists_events() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/replays")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("replay"))
                 .unwrap(),
         )
         .await
@@ -1197,7 +1199,8 @@ async fn post_replay_publishes_market_events_to_event_bus() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/replays")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("replay"))
                 .unwrap(),
         )
         .await
@@ -1306,7 +1309,8 @@ async fn post_paper_run_returns_accepted_run_start() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1336,7 +1340,8 @@ async fn post_paper_run_publishes_algorithm_events_to_event_bus() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1378,7 +1383,8 @@ async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1405,7 +1411,8 @@ async fn post_paper_run_populates_query_routes() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1493,13 +1500,12 @@ async fn post_paper_run_populates_query_routes() {
     let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(config["name"], "sample-ma-cross");
     assert_eq!(config["config_type"], "RUN");
-    assert_eq!(config["format"], "TOML");
-    assert!(config["content"].as_str().unwrap().contains("[runtime]"));
+    assert_eq!(config["format"], "JSON");
     assert!(
         config["content"]
             .as_str()
             .unwrap()
-            .contains("run_id = \"sample-ma-cross\"")
+            .contains("\"run_id\": \"sample-ma-cross\"")
     );
     assert!(config["checksum"].as_str().unwrap().starts_with("fnv1a64:"));
 
@@ -1522,8 +1528,11 @@ async fn post_paper_run_populates_query_routes() {
     assert!(configs.iter().any(|config| {
         config["name"] == "sample-ma-cross"
             && config["config_type"] == "RUN"
-            && config["format"] == "TOML"
-            && config["content"].as_str().unwrap().contains("[runtime]")
+            && config["format"] == "JSON"
+            && config["content"]
+                .as_str()
+                .unwrap()
+                .contains("\"mode\": \"paper\"")
             && config["checksum"].as_str().unwrap().starts_with("fnv1a64:")
     }));
 
@@ -1569,7 +1578,8 @@ async fn completed_paper_run_status_is_preserved_after_late_cancel() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1699,7 +1709,8 @@ async fn failed_paper_run_records_failed_status_and_error() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1746,7 +1757,8 @@ async fn active_paper_run_can_be_cancelled() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/paper-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("paper"))
                 .unwrap(),
         )
         .await
@@ -1793,6 +1805,10 @@ fn temp_config_with_enabled_broker_submit() -> PathBuf {
     );
     std::fs::write(&path, content).unwrap();
     path
+}
+
+fn launch_request_body(mode: &str) -> Body {
+    Body::from(serde_json::json!({ "mode": mode }).to_string())
 }
 
 fn write_multi_symbol_config(run_id: &str, runtime_mode: &str) -> PathBuf {
