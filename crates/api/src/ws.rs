@@ -6,10 +6,8 @@ use axum::{
     response::IntoResponse,
 };
 use events::{AnyEventEnvelope, TraderEvent};
-use replay::{ReplayController, ReplayState};
+use replay::ReplayState;
 use serde::Deserialize;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::AppState;
 
@@ -157,13 +155,20 @@ async fn send_replay_control(
     request: WebSocketRequest,
 ) -> Result<(), axum::Error> {
     let replay_state = {
-        let mut controllers = state.replay_controllers.lock().await;
-        let controller = controllers
-            .entry(request.run_id.clone())
-            .or_insert_with(|| {
-                Arc::new(Mutex::new(ReplayController::new(request.run_id.clone(), 1)))
-            })
-            .clone();
+        let controllers = state.replay_controllers.lock().await;
+        let Some(controller) = controllers.get(&request.run_id).cloned() else {
+            return socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "error",
+                        "error": "unknown_replay_run",
+                        "run_id": request.run_id
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+        };
         drop(controllers);
         let mut controller = controller.lock().await;
         match request.action.as_deref() {

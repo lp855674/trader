@@ -6,9 +6,12 @@ use feature_store::{
     FeatureBuildContract, FeatureManifestInput, FeatureRecord, build_feature_manifest,
     build_feature_manifest_with_contract, write_feature_manifest, write_feature_records_to_parquet,
 };
+use replay::ReplayController;
 use rust_decimal::Decimal;
 use std::path::PathBuf;
+use std::sync::Arc;
 use storage::Db;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -1225,7 +1228,9 @@ async fn replay_control_routes_update_replay_state() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    register_replay_controller(&state, "sample-ma-cross").await;
+    let app = router_with_state(state);
 
     for (uri, expected_status, expected_fragment) in [
         (
@@ -1295,6 +1300,29 @@ async fn replay_control_routes_update_replay_state() {
             .windows("replay.speed".len())
             .any(|window| window == b"replay.speed")
     );
+}
+
+#[tokio::test]
+async fn replay_control_routes_reject_unknown_run() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    register_replay_controller(&state, "sample-ma-cross").await;
+    let app = router_with_state(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replay/missing-run/pause")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -1809,6 +1837,13 @@ fn temp_config_with_enabled_broker_submit() -> PathBuf {
 
 fn launch_request_body(mode: &str) -> Body {
     Body::from(serde_json::json!({ "mode": mode }).to_string())
+}
+
+async fn register_replay_controller(state: &AppState, run_id: &str) {
+    state.replay_controllers.lock().await.insert(
+        run_id.to_string(),
+        Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1))),
+    );
 }
 
 fn write_multi_symbol_config(run_id: &str, runtime_mode: &str) -> PathBuf {

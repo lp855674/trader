@@ -1,7 +1,10 @@
 use api::{AppState, router_with_state};
 use events::{RuntimeEvent, TraderEvent, envelope};
 use futures::{SinkExt, StreamExt};
+use replay::ReplayController;
+use std::sync::Arc;
 use storage::{Db, RuntimeEventCommand};
+use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
@@ -145,7 +148,9 @@ async fn websocket_subscribe_filters_runtime_events_by_envelope_source() {
 async fn websocket_replay_control_message_updates_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let url = spawn_server(db).await;
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    register_replay_controller(&state, "run-a").await;
+    let url = spawn_server_with_state(state).await;
     let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
 
     socket
@@ -167,8 +172,42 @@ async fn websocket_replay_control_message_updates_state() {
     assert!(text.contains("\"run_id\":\"run-a\""));
 }
 
+#[tokio::test]
+async fn websocket_replay_control_rejects_unknown_run() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let url = spawn_server(db).await;
+    let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({
+                "type": "replay_control",
+                "run_id": "missing-run",
+                "action": "pause"
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let message = socket.next().await.unwrap().unwrap();
+    let text = message.to_text().unwrap();
+    assert!(text.contains("\"type\":\"error\""));
+    assert!(text.contains("\"error\":\"unknown_replay_run\""));
+    assert!(text.contains("\"run_id\":\"missing-run\""));
+}
+
 async fn spawn_server(db: Db) -> String {
     spawn_server_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into())).await
+}
+
+async fn register_replay_controller(state: &AppState, run_id: &str) {
+    state.replay_controllers.lock().await.insert(
+        run_id.to_string(),
+        Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1))),
+    );
 }
 
 async fn spawn_server_with_state(state: AppState) -> String {

@@ -3431,11 +3431,11 @@ async fn update_replay_controller(
     update: impl FnOnce(&mut ReplayController),
 ) -> Result<Json<ReplayState>, ApiError> {
     let replay_state = {
-        let mut controllers = state.replay_controllers.lock().await;
+        let controllers = state.replay_controllers.lock().await;
         let controller = controllers
-            .entry(run_id.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(ReplayController::new(run_id.clone(), 1))))
-            .clone();
+            .get(&run_id)
+            .cloned()
+            .ok_or_else(|| not_found(format!("unknown replay run: {run_id}")))?;
         drop(controllers);
         let mut controller = controller.lock().await;
         update(&mut controller);
@@ -4056,16 +4056,30 @@ struct ApiError(anyhow::Error);
 #[derive(Debug)]
 struct ApiBadRequest(String);
 
+#[derive(Debug)]
+struct ApiNotFound(String);
+
 impl std::fmt::Display for ApiBadRequest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
+impl std::fmt::Display for ApiNotFound {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 impl std::error::Error for ApiBadRequest {}
+impl std::error::Error for ApiNotFound {}
 
 fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(anyhow::Error::new(ApiBadRequest(message.into())))
+}
+
+fn not_found(message: impl Into<String>) -> ApiError {
+    ApiError(anyhow::Error::new(ApiNotFound(message.into())))
 }
 
 fn default_run_config_path(state: &AppState) -> Result<&str, ApiError> {
@@ -4080,6 +4094,7 @@ impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status = match self.0.downcast_ref::<storage::StorageError>() {
             Some(storage::StorageError::Protocol(_)) => StatusCode::BAD_REQUEST,
+            _ if self.0.downcast_ref::<ApiNotFound>().is_some() => StatusCode::NOT_FOUND,
             _ if self.0.downcast_ref::<ApiBadRequest>().is_some() => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
