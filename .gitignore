@@ -12,6 +12,7 @@ datasets/ibkr/*.parquet
 .DS_Store
 target*
 **/.tmp*
+*.local.ps1
 
 **/.venv/**
 

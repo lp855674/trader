@@ -26,10 +26,10 @@ Source of Truth: `crates/api/src/api.rs`
 
 | 页面 | 主要接口 |
 | --- | --- |
-| 总览 | `/health` `/metrics` `/brokers/status` `/brokers/account/{account_id}` `/ingestion/status` `/ops/logging/metrics` `/runs` |
+| 总览 | `/health` `/metrics` `/runs/{run_id}/metrics` `/brokers/status` `/brokers/account/{account_id}` `/ingestion/status` `/ops/logging/metrics` `/runs` |
 | 运行管理 | `/preflight/paper` `/backtests` `/paper-runs` `/replays` `/live-runs` `/runs/{run_id}` `/runs/{run_id}/status` `/runs/{run_id}/cancel` `/live-runs/{run_id}/stop` |
 | Replay 控制 | `/replay/{run_id}/pause` `/replay/{run_id}/resume` `/replay/{run_id}/seek/{offset}` `/replay/{run_id}/speed/{speed}` |
-| 订单/成交/持仓 | `/orders` `/fills` `/positions` `/account-balances` `/portfolio/snapshots` `/cash/snapshots` `/positions/snapshots` |
+| 订单/成交/持仓 | `/runs/{run_id}/orders` `/runs/{run_id}/fills` `/runs/{run_id}/positions` `/runs/{run_id}/account-balances` `/runs/{run_id}/portfolio-snapshots` `/runs/{run_id}/cash-snapshots` `/runs/{run_id}/position-snapshots` |
 | 风控/审计 | `/runs/{run_id}/reconciliation` `/reconciliation-drifts` `/reconciliation-alerts/summary` `/reconciliation-alert-deliveries/summary` `/runs/{run_id}/risk-events` |
 | 配置管理 | `/configs` `/configs/{name}` `/configs/{name}/latest` `/configs/{name}/published` `/configs/{name}/{version}` `/configs/{name}/{version}/state` `/configs/{name}/{version}/rollback` `/config-approvals/pending` `/configs/{name}/diff` `/configs/{config_id}/releases` `/configs/{config_id}/audits` `/runs/{run_id}/config-version` |
 | 日志中心 | `/logs` `/system-logs` `/runs/{run_id}/system-logs` `/events` `/runs/{run_id}/events` `/runs/{run_id}/order-events` `/runs/{run_id}/risk-events` `/runs/{run_id}/insights` `/runs/{run_id}/portfolio-targets` |
@@ -49,8 +49,10 @@ Source of Truth: `crates/api/src/api.rs`
 
 `GET /api/v1/metrics`
 
+推荐在多运行场景使用 `GET /api/v1/runs/{run_id}/metrics`。顶层 `/metrics` 目前仍保留兼容，但语义仍绑定当前 server 加载的配置。
+
 用于展示订单数、成交数、权益曲线摘要等。
-返回重点字段：`total_orders`、`total_fills`、`equity`、`returns`。
+返回重点字段：`order_count`、`fill_count`、`total_return`、`sharpe`、`sortino`、`max_drawdown`、`win_rate`。
 
 ### 4.3 Broker 状态
 
@@ -123,10 +125,10 @@ Source of Truth: `crates/api/src/api.rs`
 
 ### 7.1 列表接口
 
-- `GET /api/v1/orders`
-- `GET /api/v1/fills`
-- `GET /api/v1/positions`
-- `GET /api/v1/account-balances`
+- `GET /api/v1/runs/{run_id}/orders`
+- `GET /api/v1/runs/{run_id}/fills`
+- `GET /api/v1/runs/{run_id}/positions`
+- `GET /api/v1/runs/{run_id}/account-balances`
 
 字段重点：
 - `orders`: `client_order_id`、`broker_order_id`、`symbol`、`side`、`order_type`、`price`、`qty`、`filled_qty`、`status`
@@ -136,12 +138,16 @@ Source of Truth: `crates/api/src/api.rs`
 
 ### 7.2 快照接口
 
-- `GET /api/v1/portfolio/snapshots`
-- `GET /api/v1/cash/snapshots`
-- `GET /api/v1/positions/snapshots`
+- `GET /api/v1/runs/{run_id}/portfolio-snapshots`
+- `GET /api/v1/runs/{run_id}/cash-snapshots`
+- `GET /api/v1/runs/{run_id}/position-snapshots`
 
 建议默认按 `run_id` 或时间区间过滤，不要一次性拉全量。
 `cash-snapshots` 支持 `currency/from_ms/to_ms`，`position-snapshots` 支持 `symbol/position_side/from_ms/to_ms`。
+
+兼容说明：
+- 顶层 `/orders` `/fills` `/positions` `/account-balances` `/portfolio/snapshots` `/cash/snapshots` `/positions/snapshots` 仍可用，但只适合当前单配置本地验证链路。
+- Web 管理页接入多 run 时，应统一改用显式 `runs/{run_id}` 路由。
 
 ---
 

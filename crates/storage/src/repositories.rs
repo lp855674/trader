@@ -5340,7 +5340,9 @@ impl Db {
                 .push_bind(broker_order_id);
         }
         if let Some(account_id) = filter.account_id.as_deref() {
-            query_builder.push(" AND account_id = ").push_bind(account_id);
+            query_builder
+                .push(" AND account_id = ")
+                .push_bind(account_id);
         }
         if let Some(symbol) = filter.symbol.as_deref() {
             query_builder.push(" AND symbol = ").push_bind(symbol);
@@ -5349,7 +5351,9 @@ impl Db {
             query_builder.push(" AND status = ").push_bind(status);
         }
         if let Some(event_type) = filter.event_type.as_deref() {
-            query_builder.push(" AND event_type = ").push_bind(event_type);
+            query_builder
+                .push(" AND event_type = ")
+                .push_bind(event_type);
         }
         if let Some(from_ms) = filter.from_ms {
             query_builder.push(" AND ts_ms >= ").push_bind(from_ms);

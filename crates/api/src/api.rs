@@ -25,7 +25,8 @@ use paper::{
 };
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
 use runtime::{
-    AlertSinkSettings, LiveRuntime, LiveRuntimeSettings, StartupRecoveryUnmatchedOpenOrdersPolicy,
+    AlertSinkSettings, LiveRuntime, LiveRuntimeSettings, RunSpec, RuntimeRunMetadata,
+    RuntimeRunSnapshot, RuntimeRunStatus, StartupRecoveryUnmatchedOpenOrdersPolicy,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,12 @@ struct RunStatusResponse {
     run_id: String,
     status: String,
     error: Option<String>,
+    mode: Option<String>,
+    started_at_ms: Option<i64>,
+    last_state_change_at_ms: Option<i64>,
+    status_source: &'static str,
+    mode_source: Option<&'static str>,
+    timestamp_source: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -57,16 +64,64 @@ struct RunStartResponse {
     status: String,
 }
 
+#[derive(Deserialize)]
+struct RunLaunchRequest {
+    config: Option<serde_json::Value>,
+    config_ref: Option<RunConfigReference>,
+    config_toml: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RunConfigReference {
+    name: String,
+    version: Option<u32>,
+    #[serde(default = "default_true_bool")]
+    published: bool,
+}
+
+struct LaunchConfig {
+    app_config: config::AppConfig,
+    config_binding: Option<LaunchConfigBinding>,
+    snapshot_content: String,
+    snapshot_format: &'static str,
+    snapshot_json: serde_json::Value,
+}
+
+struct LaunchConfigBinding {
+    config_id: String,
+    version: String,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
 #[derive(Serialize)]
 struct RunResponse {
     id: String,
     name: String,
     mode: String,
+    mode_source: &'static str,
     status: String,
+    status_source: &'static str,
     started_at_ms: i64,
+    started_at_ms_source: &'static str,
     ended_at_ms: Option<i64>,
+    ended_at_ms_source: Option<&'static str>,
+    last_state_change_at_ms: Option<i64>,
+    last_state_change_at_ms_source: Option<&'static str>,
     error: Option<String>,
     config: serde_json::Value,
+    runtime: Option<ActiveRuntimeResponse>,
+}
+
+#[derive(Serialize)]
+struct ActiveRuntimeResponse {
+    mode: Option<String>,
+    status: String,
+    started_at_ms: i64,
+    last_state_change_at_ms: i64,
+    source: &'static str,
 }
 
 #[derive(Serialize)]
@@ -621,17 +676,32 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/live-runs/{run_id}/status", get(get_run_status))
         .route("/api/v1/live-runs/{run_id}/stop", post(stop_live_run))
         .route("/api/v1/orders", get(list_orders))
+        .route("/api/v1/runs/{run_id}/orders", get(list_run_orders))
         .route("/api/v1/fills", get(list_fills))
+        .route("/api/v1/runs/{run_id}/fills", get(list_run_fills))
         .route("/api/v1/positions", get(list_positions))
+        .route("/api/v1/runs/{run_id}/positions", get(list_run_positions))
         .route("/api/v1/funding-rates", get(list_funding_rates))
         .route("/api/v1/crypto-market-meta", get(list_crypto_market_meta))
         .route("/api/v1/corporate-actions", get(list_corporate_actions))
         .route("/api/v1/ingestion/status", get(ingestion_status))
         .route("/api/v1/account-balances", get(list_account_balances))
+        .route(
+            "/api/v1/runs/{run_id}/account-balances",
+            get(list_run_account_balances),
+        )
         .route("/api/v1/portfolio/snapshots", get(list_portfolio_snapshots))
+        .route(
+            "/api/v1/runs/{run_id}/portfolio-snapshots",
+            get(list_run_portfolio_snapshots),
+        )
         .route("/api/v1/cash/snapshots", get(list_cash_snapshots))
         .route("/api/v1/positions/snapshots", get(list_position_snapshots))
         .route("/api/v1/metrics", get(metrics_summary))
+        .route(
+            "/api/v1/runs/{run_id}/metrics",
+            get(get_run_metrics_summary),
+        )
         .route("/api/v1/brokers/status", get(broker_status))
         .route("/api/v1/brokers/account/{account_id}", get(broker_account))
         .route("/api/v1/runs", get(list_runs))
@@ -898,34 +968,140 @@ async fn paper_preflight(
     }))
 }
 
-async fn persist_run_config_snapshot(
+async fn launch_config_from_request(
     state: &AppState,
-    app_config: &config::AppConfig,
-    timestamp_ms: i64,
-) -> Result<String, ApiError> {
-    let content = std::fs::read_to_string(&state.config_path).map_err(|source| {
+    request: Option<Json<RunLaunchRequest>>,
+) -> Result<LaunchConfig, ApiError> {
+    let Some(Json(request)) = request else {
+        return launch_config_from_path(&state.config_path);
+    };
+
+    if let Some(config_ref) = request.config_ref {
+        return launch_config_from_ref(&state.db, config_ref).await;
+    }
+
+    if let Some(config_toml) = request.config_toml {
+        return launch_config_from_toml(config_toml);
+    }
+
+    if let Some(config_json) = request.config {
+        let app_config: config::AppConfig =
+            serde_json::from_value(config_json.clone()).map_err(|error| {
+                ApiError(anyhow::anyhow!("failed to parse JSON run config: {error}"))
+            })?;
+        let snapshot_content = serde_json::to_string_pretty(&config_json)
+            .map_err(|error| ApiError(anyhow::anyhow!("failed to encode JSON config: {error}")))?;
+        return Ok(LaunchConfig {
+            app_config,
+            config_binding: None,
+            snapshot_content,
+            snapshot_format: "JSON",
+            snapshot_json: config_json,
+        });
+    }
+
+    Err(ApiError(anyhow::anyhow!(
+        "run launch request must include config_ref, config_toml, or config"
+    )))
+}
+
+async fn launch_config_from_ref(
+    db: &storage::Db,
+    config_ref: RunConfigReference,
+) -> Result<LaunchConfig, ApiError> {
+    let config = if let Some(version) = config_ref.version {
+        db.get_config(&config_ref.name, version).await?
+    } else if config_ref.published {
+        db.get_published_config(&config_ref.name).await?
+    } else {
+        db.get_latest_config(&config_ref.name).await?
+    }
+    .ok_or_else(|| {
         ApiError(anyhow::anyhow!(
-            "failed to read config snapshot {}: {source}",
-            state.config_path
+            "config reference {} was not found",
+            config_ref.name
         ))
     })?;
+
+    let snapshot_json = payload_response(config.content_json.clone());
+    let app_config: config::AppConfig =
+        serde_json::from_value(snapshot_json.clone()).map_err(|error| {
+            ApiError(anyhow::anyhow!(
+                "failed to parse referenced config {}:{} as run config: {error}",
+                config.name,
+                config.version
+            ))
+        })?;
+
+    Ok(LaunchConfig {
+        app_config,
+        config_binding: Some(LaunchConfigBinding {
+            config_id: config.id,
+            version: config.version.to_string(),
+        }),
+        snapshot_content: config.content_json,
+        snapshot_format: "JSON",
+        snapshot_json,
+    })
+}
+
+fn launch_config_from_path(config_path: &str) -> Result<LaunchConfig, ApiError> {
+    let content = std::fs::read_to_string(config_path).map_err(|source| {
+        ApiError(anyhow::anyhow!(
+            "failed to read config snapshot {}: {source}",
+            config_path
+        ))
+    })?;
+    launch_config_from_toml(content)
+}
+
+fn launch_config_from_toml(content: String) -> Result<LaunchConfig, ApiError> {
+    let app_config = config::AppConfig::from_toml_str(&content)?;
     let config_value: toml::Value = toml::from_str(&content)
         .map_err(|error| ApiError(anyhow::anyhow!("failed to parse config snapshot: {error}")))?;
-    let config_json = serde_json::to_value(config_value)
+    let snapshot_json = serde_json::to_value(config_value)
         .map_err(|error| ApiError(anyhow::anyhow!("failed to encode config snapshot: {error}")))?;
+
+    Ok(LaunchConfig {
+        app_config,
+        config_binding: None,
+        snapshot_content: content,
+        snapshot_format: "TOML",
+        snapshot_json,
+    })
+}
+
+async fn persist_run_config_snapshot(
+    state: &AppState,
+    run_spec: &RunSpec,
+    launch_config: &LaunchConfig,
+    timestamp_ms: i64,
+) -> Result<String, ApiError> {
+    if let Some(binding) = &launch_config.config_binding {
+        state
+            .db
+            .bind_run_config_version(storage::RunConfigVersionBindingCommand {
+                run_id: run_spec.run_id.clone(),
+                config_id: binding.config_id.clone(),
+                version: binding.version.clone(),
+                ts_ms: timestamp_ms,
+            })
+            .await?;
+        return Ok(launch_config.snapshot_json.to_string());
+    }
 
     state
         .db
         .record_run_config_snapshot(storage::RunConfigSnapshotCommand {
-            run_id: app_config.runtime.run_id.clone(),
-            content: content.clone(),
-            format: "TOML".to_string(),
-            checksum: Some(stable_bytes_hash(content.as_bytes())),
+            run_id: run_spec.run_id.clone(),
+            content: launch_config.snapshot_content.clone(),
+            format: launch_config.snapshot_format.to_string(),
+            checksum: Some(stable_bytes_hash(launch_config.snapshot_content.as_bytes())),
             ts_ms: timestamp_ms,
         })
         .await?;
 
-    Ok(config_json.to_string())
+    Ok(launch_config.snapshot_json.to_string())
 }
 
 async fn record_system_log(
@@ -949,21 +1125,25 @@ async fn record_system_log(
 
 async fn run_backtest(
     State(state): State<AppState>,
+    request: Option<Json<RunLaunchRequest>>,
 ) -> Result<(StatusCode, Json<backtest::BacktestSummary>), ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let launch_config = launch_config_from_request(&state, request).await?;
+    let app_config = launch_config.app_config.clone();
+    let run_spec = RunSpec::from(&app_config);
     run_configured_log_retention(&state.db, &app_config).await?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
-    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    let config_json =
+        persist_run_config_snapshot(&state, &run_spec, &launch_config, started_at_ms).await?;
     insert_event(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "backtest.started",
-        &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+        &serde_json::json!({ "run_id": &run_spec.run_id }).to_string(),
     )
     .await?;
     record_system_log(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "INFO",
         "backtest run started",
         serde_json::json!({
@@ -980,21 +1160,15 @@ async fn run_backtest(
         .run_market_slices(market_slices)
         .await?;
     let payload = serde_json::json!({
-        "run_id": &app_config.runtime.run_id,
+        "run_id": &run_spec.run_id,
         "signals": summary.signals,
         "orders": summary.orders
     })
     .to_string();
-    insert_event(
-        &state.db,
-        &app_config.runtime.run_id,
-        "backtest.completed",
-        &payload,
-    )
-    .await?;
+    insert_event(&state.db, &run_spec.run_id, "backtest.completed", &payload).await?;
     record_system_log(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "INFO",
         "backtest run completed",
         serde_json::json!({
@@ -1010,11 +1184,15 @@ async fn run_backtest(
 
 async fn run_paper(
     State(state): State<AppState>,
+    request: Option<Json<RunLaunchRequest>>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let launch_config = launch_config_from_request(&state, request).await?;
+    let app_config = launch_config.app_config.clone();
+    let run_spec = RunSpec::from(&app_config);
     run_configured_log_retention(&state.db, &app_config).await?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
-    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    let config_json =
+        persist_run_config_snapshot(&state, &run_spec, &launch_config, started_at_ms).await?;
     let mut settings = paper_settings_with_config_json(&app_config, config_json.clone())?;
     settings.logging.metrics = state.log_writer_metrics.clone();
 
@@ -1022,7 +1200,7 @@ async fn run_paper(
         .db
         .start_strategy_run(storage::StrategyRunStartCommand {
             run_id: settings.run_id.clone(),
-            name: settings.strategy_name.clone(),
+            name: run_spec.strategy.name.clone(),
             mode: "paper".to_string(),
             started_at_ms,
             config: payload_response(config_json),
@@ -1064,72 +1242,79 @@ async fn run_paper(
         .with_event_bus(state.event_bus.clone());
     state
         .runtime_manager
-        .spawn(run_id.clone(), move |cancel| async move {
-            let result = runtime
-                .run_market_slices_with_cancel(market_slices, cancel)
-                .await;
+        .spawn_with_metadata(
+            run_id.clone(),
+            RuntimeRunMetadata {
+                mode: Some("paper".to_string()),
+            },
+            move |cancel| async move {
+                let result = runtime
+                    .run_market_slices_with_cancel(market_slices, cancel)
+                    .await;
 
-            match result {
-                Ok(summary) => {
-                    let payload = serde_json::json!({
-                        "run_id": &task_settings.run_id,
-                        "signals": summary.signals,
-                        "orders": summary.orders
-                    })
-                    .to_string();
-                    let _ =
-                        insert_event(&db, &task_settings.run_id, "paper.completed", &payload).await;
-                    let _ = record_system_log(
-                        &db,
-                        &task_settings.run_id,
-                        "INFO",
-                        "paper run completed",
-                        serde_json::json!({
-                            "mode": "paper",
-                            "status": "completed",
+                match result {
+                    Ok(summary) => {
+                        let payload = serde_json::json!({
+                            "run_id": &task_settings.run_id,
                             "signals": summary.signals,
                             "orders": summary.orders
-                        }),
-                    )
-                    .await;
-                }
-                Err(error) => {
-                    if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
-                        && existing.status == "cancelled"
-                    {
-                        return;
-                    }
-                    let status = if error
-                        .downcast_ref::<paper::PaperRunError>()
-                        .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
-                    {
-                        "cancelled"
-                    } else {
-                        "failed"
-                    };
-                    let _ = db
-                        .update_strategy_run_status(
+                        })
+                        .to_string();
+                        let _ =
+                            insert_event(&db, &task_settings.run_id, "paper.completed", &payload)
+                                .await;
+                        let _ = record_system_log(
+                            &db,
                             &task_settings.run_id,
-                            status,
-                            Some(chrono::Utc::now().timestamp_millis()),
-                            Some(&error.to_string()),
+                            "INFO",
+                            "paper run completed",
+                            serde_json::json!({
+                                "mode": "paper",
+                                "status": "completed",
+                                "signals": summary.signals,
+                                "orders": summary.orders
+                            }),
                         )
                         .await;
-                    let _ = record_system_log(
-                        &db,
-                        &task_settings.run_id,
-                        "ERROR",
-                        "paper run failed",
-                        serde_json::json!({
-                            "mode": "paper",
-                            "status": status,
-                            "error": error.to_string()
-                        }),
-                    )
-                    .await;
+                    }
+                    Err(error) => {
+                        if let Ok(Some(existing)) = db.get_strategy_run(&task_settings.run_id).await
+                            && existing.status == "cancelled"
+                        {
+                            return;
+                        }
+                        let status = if error
+                            .downcast_ref::<paper::PaperRunError>()
+                            .is_some_and(|error| error == &paper::PaperRunError::Cancelled)
+                        {
+                            "cancelled"
+                        } else {
+                            "failed"
+                        };
+                        let _ = db
+                            .update_strategy_run_status(
+                                &task_settings.run_id,
+                                status,
+                                Some(chrono::Utc::now().timestamp_millis()),
+                                Some(&error.to_string()),
+                            )
+                            .await;
+                        let _ = record_system_log(
+                            &db,
+                            &task_settings.run_id,
+                            "ERROR",
+                            "paper run failed",
+                            serde_json::json!({
+                                "mode": "paper",
+                                "status": status,
+                                "error": error.to_string()
+                            }),
+                        )
+                        .await;
+                    }
                 }
-            }
-        })
+            },
+        )
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
 
@@ -1144,39 +1329,43 @@ async fn run_paper(
 
 async fn run_replay(
     State(state): State<AppState>,
+    request: Option<Json<RunLaunchRequest>>,
 ) -> Result<(StatusCode, Json<ReplaySummary>), ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let launch_config = launch_config_from_request(&state, request).await?;
+    let app_config = launch_config.app_config.clone();
+    let run_spec = RunSpec::from(&app_config);
     let started_at_ms = chrono::Utc::now().timestamp_millis();
-    let config_json = persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    let config_json =
+        persist_run_config_snapshot(&state, &run_spec, &launch_config, started_at_ms).await?;
     state
         .db
         .start_strategy_run(storage::StrategyRunStartCommand {
-            run_id: app_config.runtime.run_id.clone(),
-            name: app_config.strategy.name.clone(),
+            run_id: run_spec.run_id.clone(),
+            name: run_spec.strategy.name.clone(),
             mode: "replay".to_string(),
             started_at_ms,
             config: payload_response(config_json),
         })
         .await?;
     let replay_controller = Arc::new(Mutex::new(ReplayController::new(
-        app_config.runtime.run_id.clone(),
+        run_spec.run_id.clone(),
         100_000,
     )));
     state
         .replay_controllers
         .lock()
         .await
-        .insert(app_config.runtime.run_id.clone(), replay_controller.clone());
+        .insert(run_spec.run_id.clone(), replay_controller.clone());
     insert_event(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "replay.started",
-        &serde_json::json!({ "run_id": &app_config.runtime.run_id }).to_string(),
+        &serde_json::json!({ "run_id": &run_spec.run_id }).to_string(),
     )
     .await?;
     record_system_log(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "INFO",
         "replay run started",
         serde_json::json!({
@@ -1187,7 +1376,7 @@ async fn run_replay(
     .await?;
 
     let bars = data::load_bars(&app_config.data.source, &app_config.data.path)?;
-    let summary = ReplayRuntime::new_for_run(app_config.runtime.run_id.clone(), 100_000)
+    let summary = ReplayRuntime::new_for_run(run_spec.run_id.clone(), 100_000)
         .with_event_bus(state.event_bus.clone())
         .with_controller(replay_controller)
         .replay_bars(bars)
@@ -1195,28 +1384,22 @@ async fn run_replay(
     state
         .db
         .update_strategy_run_status(
-            &app_config.runtime.run_id,
+            &run_spec.run_id,
             "completed",
             Some(chrono::Utc::now().timestamp_millis()),
             None,
         )
         .await?;
     let payload = serde_json::json!({
-        "run_id": &app_config.runtime.run_id,
+        "run_id": &run_spec.run_id,
         "bars": summary.bars,
         "speed": summary.speed
     })
     .to_string();
-    insert_event(
-        &state.db,
-        &app_config.runtime.run_id,
-        "replay.completed",
-        &payload,
-    )
-    .await?;
+    insert_event(&state.db, &run_spec.run_id, "replay.completed", &payload).await?;
     record_system_log(
         &state.db,
-        &app_config.runtime.run_id,
+        &run_spec.run_id,
         "INFO",
         "replay run completed",
         serde_json::json!({
@@ -1233,19 +1416,22 @@ async fn run_replay(
 
 async fn start_live_run(
     State(state): State<AppState>,
+    request: Option<Json<RunLaunchRequest>>,
 ) -> Result<(StatusCode, Json<RunStartResponse>), ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    let launch_config = launch_config_from_request(&state, request).await?;
+    let app_config = launch_config.app_config.clone();
+    let run_spec = RunSpec::from(&app_config);
     run_configured_log_retention(&state.db, &app_config).await?;
-    let run_id = app_config.runtime.run_id.clone();
-    let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
+    let run_id = run_spec.run_id.clone();
+    let initial_cash = Decimal::from_str(&run_spec.portfolio.initial_cash)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
-    persist_run_config_snapshot(&state, &app_config, started_at_ms).await?;
+    persist_run_config_snapshot(&state, &run_spec, &launch_config, started_at_ms).await?;
     let broker = live_broker_for_config(&app_config)?;
     let settings = LiveRuntimeSettings {
         run_id: run_id.clone(),
         broker_kind: broker_kind(app_config.broker.kind),
-        account_id: app_config.paper.account_id.clone(),
-        base_currency: app_config.portfolio.base_currency.clone(),
+        account_id: run_spec.paper.account_id.clone(),
+        base_currency: run_spec.portfolio.base_currency.clone(),
         initial_cash,
         broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
         alert_sink: alert_sink_settings(&app_config.live.alerts),
@@ -1254,13 +1440,19 @@ async fn start_live_run(
     let db = state.db.clone();
     state
         .runtime_manager
-        .spawn(run_id.clone(), move |cancel| async move {
-            let runtime = LiveRuntime::new_with_broker(db, settings, broker)
-                .with_startup_recovery_unmatched_open_orders_policy(
-                    startup_recovery_unmatched_open_orders_policy(&app_config),
-                );
-            let _ = runtime.run(cancel).await;
-        })
+        .spawn_with_metadata(
+            run_id.clone(),
+            RuntimeRunMetadata {
+                mode: Some("live".to_string()),
+            },
+            move |cancel| async move {
+                let runtime = LiveRuntime::new_with_broker(db, settings, broker)
+                    .with_startup_recovery_unmatched_open_orders_policy(
+                        startup_recovery_unmatched_open_orders_policy(&app_config),
+                    );
+                let _ = runtime.run(cancel).await;
+            },
+        )
         .await
         .map_err(|error| ApiError(anyhow::anyhow!("{error:?}")))?;
 
@@ -1318,9 +1510,22 @@ async fn stop_live_run(
 
 async fn list_orders(State(state): State<AppState>) -> Result<Json<Vec<OrderResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let orders = state
-        .db
-        .list_orders(&app_config.runtime.run_id)
+    order_response(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn list_run_orders(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<OrderResponse>>, ApiError> {
+    order_response(&state.db, &run_id).await
+}
+
+async fn order_response(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<Vec<OrderResponse>>, ApiError> {
+    let orders = db
+        .list_orders(run_id)
         .await?
         .into_iter()
         .map(|order| OrderResponse {
@@ -1345,9 +1550,22 @@ async fn list_orders(State(state): State<AppState>) -> Result<Json<Vec<OrderResp
 
 async fn list_fills(State(state): State<AppState>) -> Result<Json<Vec<FillResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let fills = state
-        .db
-        .list_fills(&app_config.runtime.run_id)
+    fill_response(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn list_run_fills(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<FillResponse>>, ApiError> {
+    fill_response(&state.db, &run_id).await
+}
+
+async fn fill_response(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<Vec<FillResponse>>, ApiError> {
+    let fills = db
+        .list_fills(run_id)
         .await?
         .into_iter()
         .map(|fill| FillResponse {
@@ -1369,9 +1587,22 @@ async fn list_positions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PositionResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let positions = state
-        .db
-        .list_positions(&app_config.runtime.run_id)
+    position_response(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn list_run_positions(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<PositionResponse>>, ApiError> {
+    position_response(&state.db, &run_id).await
+}
+
+async fn position_response(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<Vec<PositionResponse>>, ApiError> {
+    let positions = db
+        .list_positions(run_id)
         .await?
         .into_iter()
         .map(|position| PositionResponse {
@@ -1451,9 +1682,22 @@ async fn list_account_balances(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let balances = state
-        .db
-        .list_account_balances(&app_config.runtime.run_id)
+    account_balance_response(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn list_run_account_balances(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
+    account_balance_response(&state.db, &run_id).await
+}
+
+async fn account_balance_response(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<Vec<AccountBalanceResponse>>, ApiError> {
+    let balances = db
+        .list_account_balances(run_id)
         .await?
         .into_iter()
         .map(|balance| AccountBalanceResponse {
@@ -1624,9 +1868,27 @@ async fn list_portfolio_snapshots(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PortfolioSnapshotResponse>>, ApiError> {
     let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let snapshots = state
-        .db
-        .list_portfolio_snapshots(&app_config.runtime.run_id)
+    portfolio_snapshot_response(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSummary>, ApiError> {
+    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
+    metrics_summary_for_run(&state.db, &app_config.runtime.run_id).await
+}
+
+async fn list_run_portfolio_snapshots(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<Vec<PortfolioSnapshotResponse>>, ApiError> {
+    portfolio_snapshot_response(&state.db, &run_id).await
+}
+
+async fn portfolio_snapshot_response(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<Vec<PortfolioSnapshotResponse>>, ApiError> {
+    let snapshots = db
+        .list_portfolio_snapshots(run_id)
         .await?
         .into_iter()
         .map(|snapshot| PortfolioSnapshotResponse {
@@ -1644,12 +1906,20 @@ async fn list_portfolio_snapshots(
     Ok(Json(snapshots))
 }
 
-async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSummary>, ApiError> {
-    let app_config = config::AppConfig::from_toml_file(&state.config_path)?;
-    let run_id = &app_config.runtime.run_id;
-    let orders = state.db.list_orders(run_id).await?;
-    let fills = state.db.list_fills(run_id).await?;
-    let snapshots = state.db.list_portfolio_snapshots(run_id).await?;
+async fn get_run_metrics_summary(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<MetricsSummary>, ApiError> {
+    metrics_summary_for_run(&state.db, &run_id).await
+}
+
+async fn metrics_summary_for_run(
+    db: &storage::Db,
+    run_id: &str,
+) -> Result<Json<MetricsSummary>, ApiError> {
+    let orders = db.list_orders(run_id).await?;
+    let fills = db.list_fills(run_id).await?;
+    let snapshots = db.list_portfolio_snapshots(run_id).await?;
     let equity = snapshots
         .iter()
         .map(|snapshot| Decimal::from_str(&snapshot.equity))
@@ -1665,13 +1935,11 @@ async fn metrics_summary(State(state): State<AppState>) -> Result<Json<MetricsSu
 }
 
 async fn list_runs(State(state): State<AppState>) -> Result<Json<Vec<RunResponse>>, ApiError> {
-    let runs = state
-        .db
-        .list_strategy_runs()
-        .await?
-        .into_iter()
-        .map(run_response)
-        .collect();
+    let mut runs = Vec::new();
+    for run in state.db.list_strategy_runs().await? {
+        let runtime_snapshot = state.runtime_manager.snapshot(&run.id).await;
+        runs.push(run_response_with_runtime_snapshot(run, runtime_snapshot));
+    }
     Ok(Json(runs))
 }
 
@@ -1682,7 +1950,8 @@ async fn get_run(
     let Some(run) = state.db.get_strategy_run(&run_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    Ok(Json(run_response(run)).into_response())
+    let runtime_snapshot = state.runtime_manager.snapshot(&run_id).await;
+    Ok(Json(run_response_with_runtime_snapshot(run, runtime_snapshot)).into_response())
 }
 
 async fn list_configs(
@@ -1981,7 +2250,7 @@ async fn list_run_reconciliation_drifts(
     Path(run_id): Path<String>,
     Query(query): Query<ReconciliationDriftsQuery>,
 ) -> Result<Json<Vec<RiskEventResponse>>, ApiError> {
-        reconciliation_drifts_response(
+    reconciliation_drifts_response(
         &state.db,
         storage::RiskEventFilter {
             run_id: Some(run_id),
@@ -2456,18 +2725,80 @@ fn alert_sink_from_config(
     }
 }
 
-fn run_response(run: storage::StrategyRunRecord) -> RunResponse {
+fn run_response_with_runtime_snapshot(
+    run: storage::StrategyRunRecord,
+    runtime_snapshot: Option<RuntimeRunSnapshot>,
+) -> RunResponse {
     let config = serde_json::from_str(&run.config_json)
         .unwrap_or(serde_json::Value::String(run.config_json));
+    let active_runtime = runtime_snapshot.as_ref().map(active_runtime_response);
+    let status = runtime_snapshot
+        .as_ref()
+        .map(|snapshot| runtime_run_status_label(snapshot.info.status).to_string())
+        .unwrap_or(run.status);
+    let mode = runtime_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.metadata.mode.clone())
+        .unwrap_or(run.mode);
+    let mode_source = runtime_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.metadata.mode.as_ref())
+        .map(|_| "runtime_registry")
+        .unwrap_or("storage");
+    let started_at_ms = runtime_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.info.started_at_ms)
+        .unwrap_or(run.started_at_ms);
     RunResponse {
         id: run.id,
         name: run.name,
-        mode: run.mode,
-        status: run.status,
-        started_at_ms: run.started_at_ms,
+        mode,
+        mode_source,
+        status,
+        status_source: if runtime_snapshot.is_some() {
+            "runtime_registry"
+        } else {
+            "storage"
+        },
+        started_at_ms,
+        started_at_ms_source: if runtime_snapshot.is_some() {
+            "runtime_registry"
+        } else {
+            "storage"
+        },
         ended_at_ms: run.ended_at_ms,
+        ended_at_ms_source: run.ended_at_ms.map(|_| "storage"),
+        last_state_change_at_ms: runtime_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.info.last_state_change_at_ms)
+            .or(run.ended_at_ms),
+        last_state_change_at_ms_source: if runtime_snapshot.is_some() {
+            Some("runtime_registry")
+        } else if run.ended_at_ms.is_some() {
+            Some("storage")
+        } else {
+            None
+        },
         error: run.error,
         config,
+        runtime: active_runtime,
+    }
+}
+
+fn active_runtime_response(snapshot: &RuntimeRunSnapshot) -> ActiveRuntimeResponse {
+    ActiveRuntimeResponse {
+        mode: snapshot.metadata.mode.clone(),
+        status: runtime_run_status_label(snapshot.info.status).to_string(),
+        started_at_ms: snapshot.info.started_at_ms,
+        last_state_change_at_ms: snapshot.info.last_state_change_at_ms,
+        source: "runtime_registry",
+    }
+}
+
+fn runtime_run_status_label(status: RuntimeRunStatus) -> &'static str {
+    match status {
+        RuntimeRunStatus::Running => "running",
+        RuntimeRunStatus::CancelRequested => "cancel_requested",
     }
 }
 
@@ -2728,6 +3059,21 @@ async fn get_run_status(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
+    if let Some(snapshot) = state.runtime_manager.snapshot(&run_id).await {
+        return Ok(Json(RunStatusResponse {
+            run_id,
+            status: runtime_run_status_label(snapshot.info.status).to_string(),
+            error: None,
+            mode: snapshot.metadata.mode.clone(),
+            started_at_ms: Some(snapshot.info.started_at_ms),
+            last_state_change_at_ms: Some(snapshot.info.last_state_change_at_ms),
+            status_source: "runtime_registry",
+            mode_source: snapshot.metadata.mode.as_ref().map(|_| "runtime_registry"),
+            timestamp_source: Some("runtime_registry"),
+        })
+        .into_response());
+    }
+
     let Some(run) = state.db.get_strategy_run(&run_id).await? else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
@@ -2735,6 +3081,12 @@ async fn get_run_status(
         run_id: run.id,
         status: run.status,
         error: run.error,
+        mode: Some(run.mode),
+        started_at_ms: Some(run.started_at_ms),
+        last_state_change_at_ms: run.ended_at_ms,
+        status_source: "storage",
+        mode_source: Some("storage"),
+        timestamp_source: Some("storage"),
     })
     .into_response())
 }
@@ -2784,6 +3136,12 @@ fn run_status_response(run: storage::StrategyRunRecord) -> axum::response::Respo
         run_id: run.id,
         status: run.status,
         error: run.error,
+        mode: Some(run.mode),
+        started_at_ms: Some(run.started_at_ms),
+        last_state_change_at_ms: run.ended_at_ms,
+        status_source: "storage",
+        mode_source: Some("storage"),
+        timestamp_source: Some("storage"),
     })
     .into_response()
 }

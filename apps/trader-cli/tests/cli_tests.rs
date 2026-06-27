@@ -1961,7 +1961,9 @@ fn order_events_lists_filtered_audit_rows() {
         .stdout(contains("order_event: run_id=cli-contract-run"))
         .stdout(contains("status=FILLED"))
         .stdout(contains("event_type=broker.order.recovered"))
-        .stdout(contains("message=startup recovery matched broker order state"))
+        .stdout(contains(
+            "message=startup recovery matched broker order state",
+        ))
         .stdout(predicates::str::contains("order-two").not());
 
     std::fs::remove_file(config).unwrap();

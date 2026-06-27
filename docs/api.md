@@ -26,17 +26,23 @@ POST /api/v1/live-runs/{run_id}/stop
 GET  /api/v1/brokers/status
 GET  /api/v1/brokers/account/{account_id}
 GET  /api/v1/orders
+GET  /api/v1/runs/{run_id}/orders
 GET  /api/v1/fills
+GET  /api/v1/runs/{run_id}/fills
 GET  /api/v1/positions
+GET  /api/v1/runs/{run_id}/positions
 GET  /api/v1/funding-rates
 GET  /api/v1/crypto-market-meta
 GET  /api/v1/corporate-actions
 GET  /api/v1/ingestion/status
 GET  /api/v1/account-balances
+GET  /api/v1/runs/{run_id}/account-balances
 GET  /api/v1/portfolio/snapshots
+GET  /api/v1/runs/{run_id}/portfolio-snapshots
 GET  /api/v1/cash/snapshots
 GET  /api/v1/positions/snapshots
 GET  /api/v1/metrics
+GET  /api/v1/runs/{run_id}/metrics
 GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
 GET  /api/v1/configs
@@ -85,6 +91,19 @@ REST event query responses use an API-owned response model. `payload` is returne
 `GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path. `order-events` supports `order_id`, `client_order_id`, `broker_order_id`, `account_id`, `symbol`, `status`, `event_type`, `from_ms`, `to_ms`, and `limit` filters for startup recovery / order lifecycle troubleshooting. `risk-events` supports `risk_type`, `decision`, `account_id`, `symbol`, `from_ms`, `to_ms`, and `limit` filters for pre-trade rejection and reconciliation drift audit.
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
+
+Run-owned read models are moving toward explicit run-scoped routes. The recommended query shape is:
+
+- `GET /api/v1/runs/{run_id}/orders`
+- `GET /api/v1/runs/{run_id}/fills`
+- `GET /api/v1/runs/{run_id}/positions`
+- `GET /api/v1/runs/{run_id}/account-balances`
+- `GET /api/v1/runs/{run_id}/portfolio-snapshots`
+- `GET /api/v1/runs/{run_id}/cash-snapshots`
+- `GET /api/v1/runs/{run_id}/position-snapshots`
+- `GET /api/v1/runs/{run_id}/metrics`
+
+Legacy top-level endpoints such as `GET /api/v1/orders`, `GET /api/v1/fills`, `GET /api/v1/positions`, `GET /api/v1/account-balances`, `GET /api/v1/portfolio/snapshots`, `GET /api/v1/cash/snapshots`, `GET /api/v1/positions/snapshots`, and `GET /api/v1/metrics` still exist for compatibility in the current local-verifiable phase, but they remain bound to the server's currently loaded config and should not be used as the long-term multi-run integration contract.
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/logs` exposes paginated runtime/system logs with `run_id`, `level`, `target`, `from_ms`, `to_ms`, `search`, `limit`, and `offset` filters and returns `{ logs, total, limit, offset }`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` remain available for direct list readback. `GET /api/v1/ops/logging/metrics` exposes in-process writer dropped-log metrics plus active `[logging]` writer settings; CLI also supports retention purge, `logs count` / `logs tail` / `logs metrics`, JSONL export, and `logs ship` for HTTP NDJSON collector handoff. `trader-server` runs a background retention scheduler using `[logging].retention_days`; CLI/API run launch paths also perform startup cleanup. `logs ship` accepts optional `--max-retries`, `--retry-backoff-ms`, and `--signature-secret-env`; network errors, HTTP 429, and HTTP 5xx are retried with linearly increasing backoff, while non-retryable 4xx statuses fail immediately. When signing is enabled, requests include `X-Trader-Log-Timestamp` and `X-Trader-Log-Signature: v1=<hmac-sha256>`, signing `timestamp.body`.
 

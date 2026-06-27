@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            cmake \
+            clang \
+            libclang-dev \
+            nasm \
+            perl
+
+      - name: Check workspace
+        run: cargo check --workspace --locked
+
+      - name: Build release binaries
+        run: cargo build --release --locked -p trader-cli -p trader-server
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+
+          case "${VERSION}" in
+            v*.*.*) ;;
+            *)
+              echo "Release tag must look like v1.2.3, got: ${VERSION}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+
+          rm -rf dist/package
+          mkdir -p dist/package/configs
+
+          cp target/release/trader dist/package/trader
+          cp target/release/trader-server dist/package/trader-server
+          cp scripts/linux-service.sh dist/package/linux-service.sh
+          cp configs/deploy/trader-server.example.toml dist/package/configs/trader-server.example.toml
+          cp README.md dist/package/README.md
+          cp docs/api.md dist/package/api.md
+          cp docs/linux-deployment-runbook.md dist/package/linux-deployment-runbook.md
+          chmod +x dist/package/trader dist/package/trader-server dist/package/linux-service.sh
+
+          echo "${VERSION}" > dist/package/VERSION
+
+          tar -czf trader-${VERSION}-linux-x86_64.tar.gz -C dist/package .
+          sha256sum trader-${VERSION}-linux-x86_64.tar.gz > trader-${VERSION}-linux-x86_64.tar.gz.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          files: |
+            trader-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+            trader-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trader-${{ steps.version.outputs.version }}-linux-x86_64
+          path: |
+            trader-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+            trader-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error

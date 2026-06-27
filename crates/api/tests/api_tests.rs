@@ -1,13 +1,17 @@
 use api::router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use runtime::RuntimeRunMetadata;
 use rust_decimal::Decimal;
 use std::path::PathBuf;
+use std::sync::Arc;
 use storage::{
     CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
-    FundingRateCommand, NewOrder, PaperPortfolioSnapshotCommand, PositionCommand,
-    RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
+    FundingRateCommand, NewAccountBalance, NewConfigVersion, NewFill, NewOrder,
+    NewPortfolioSnapshot, PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
+    StrategyRunStartCommand, SystemLogCommand,
 };
+use tokio::sync::Notify;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -2285,6 +2289,521 @@ fn dec(value: &str) -> Decimal {
 }
 
 #[tokio::test]
+async fn explicit_run_scoped_routes_only_return_requested_run_data() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for run_id in ["run-a", "run-b"] {
+        db.start_strategy_run(StrategyRunStartCommand {
+            run_id: run_id.to_string(),
+            name: format!("strategy-{run_id}"),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({ "run_id": run_id }),
+        })
+        .await
+        .unwrap();
+    }
+    db.insert_order(NewOrder {
+        id: "order-a".to_string(),
+        run_id: "run-a".to_string(),
+        client_order_id: "client-a".to_string(),
+        broker_order_id: Some("broker-a".to_string()),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: Some("100".to_string()),
+        qty: "1".to_string(),
+        filled_qty: "1".to_string(),
+        status: "FILLED".to_string(),
+        created_at_ms: 10,
+        updated_at_ms: 10,
+    })
+    .await
+    .unwrap();
+    db.insert_order(NewOrder {
+        id: "order-b".to_string(),
+        run_id: "run-b".to_string(),
+        client_order_id: "client-b".to_string(),
+        broker_order_id: Some("broker-b".to_string()),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+        side: "SELL".to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some("200".to_string()),
+        qty: "2".to_string(),
+        filled_qty: "0".to_string(),
+        status: "NEW".to_string(),
+        created_at_ms: 20,
+        updated_at_ms: 20,
+    })
+    .await
+    .unwrap();
+    db.insert_fill(NewFill {
+        id: "fill-a".to_string(),
+        order_id: "order-a".to_string(),
+        run_id: "run-a".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        side: "BUY".to_string(),
+        price: "100".to_string(),
+        qty: "1".to_string(),
+        fee: "0.5".to_string(),
+        ts_ms: 11,
+    })
+    .await
+    .unwrap();
+    db.insert_fill(NewFill {
+        id: "fill-b".to_string(),
+        order_id: "order-b".to_string(),
+        run_id: "run-b".to_string(),
+        symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+        side: "SELL".to_string(),
+        price: "200".to_string(),
+        qty: "2".to_string(),
+        fee: "1.0".to_string(),
+        ts_ms: 21,
+    })
+    .await
+    .unwrap();
+    db.record_position(PositionCommand {
+        run_id: "run-a".to_string(),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        qty: dec("1"),
+        avg_price: dec("100"),
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+    db.record_position(PositionCommand {
+        run_id: "run-b".to_string(),
+        account_id: "paper".to_string(),
+        symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+        qty: dec("2"),
+        avg_price: dec("200"),
+        updated_at_ms: 21,
+    })
+    .await
+    .unwrap();
+    db.upsert_account_balance(NewAccountBalance {
+        run_id: "run-a".to_string(),
+        account_id: "paper".to_string(),
+        asset: "USD".to_string(),
+        total: "1000".to_string(),
+        available: "900".to_string(),
+        frozen: "100".to_string(),
+        updated_at_ms: 11,
+    })
+    .await
+    .unwrap();
+    db.upsert_account_balance(NewAccountBalance {
+        run_id: "run-b".to_string(),
+        account_id: "paper".to_string(),
+        asset: "USD".to_string(),
+        total: "2000".to_string(),
+        available: "1800".to_string(),
+        frozen: "200".to_string(),
+        updated_at_ms: 21,
+    })
+    .await
+    .unwrap();
+    db.insert_portfolio_snapshot(NewPortfolioSnapshot {
+        id: "snapshot-a".to_string(),
+        run_id: "run-a".to_string(),
+        account_id: "paper".to_string(),
+        ts_ms: 11,
+        cash: "900".to_string(),
+        market_value: "100".to_string(),
+        equity: "1000".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_portfolio_snapshot(NewPortfolioSnapshot {
+        id: "snapshot-b".to_string(),
+        run_id: "run-b".to_string(),
+        account_id: "paper".to_string(),
+        ts_ms: 21,
+        cash: "1800".to_string(),
+        market_value: "200".to_string(),
+        equity: "2000".to_string(),
+        realized_pnl: "0".to_string(),
+        unrealized_pnl: "0".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    for (uri, expected_fragment, unexpected_fragment) in [
+        (
+            "/api/v1/runs/run-a/orders",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/runs/run-a/fills",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/runs/run-a/positions",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/runs/run-a/account-balances",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/runs/run-a/portfolio-snapshots",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(body.contains(expected_fragment), "{uri}: {body}");
+        assert!(!body.contains(unexpected_fragment), "{uri}: {body}");
+    }
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs/run-a/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let metrics: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(metrics["order_count"], 1);
+    assert_eq!(metrics["fill_count"], 1);
+}
+
+#[tokio::test]
+async fn replay_launch_uses_request_config_toml_for_distinct_runs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-driven-replay-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    for run_id in ["request-replay-a", "request-replay-b"] {
+        let payload = serde_json::json!({
+            "config_toml": replay_launch_config_toml(run_id, &bars_path),
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/replays")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED, "{run_id}");
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(summary["bars"], 2);
+    }
+
+    let runs = db.list_strategy_runs().await.unwrap();
+    assert!(runs.iter().any(|run| run.id == "request-replay-a"));
+    assert!(runs.iter().any(|run| run.id == "request-replay-b"));
+
+    for run_id in ["request-replay-a", "request-replay-b"] {
+        let binding = db.get_run_config_version_binding(run_id).await.unwrap();
+        assert!(binding.is_some(), "{run_id}");
+    }
+}
+
+#[tokio::test]
+async fn replay_launch_can_bind_to_referenced_config_version() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-ref-replay-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let config_toml = replay_launch_config_toml("request-ref-replay", &bars_path);
+    let config_value: toml::Value = toml::from_str(&config_toml).unwrap();
+    let content_json = serde_json::to_string(&config_value).unwrap();
+    db.create_config_version(NewConfigVersion {
+        name: "managed-replay-run".to_string(),
+        content_json,
+        created_by: "test".to_string(),
+        parent_version: None,
+        target_env: None,
+        rollout: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::new(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let payload = serde_json::json!({
+        "config_ref": {
+            "name": "managed-replay-run",
+            "version": 1
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let run = db
+        .get_strategy_run("request-ref-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.mode, "replay");
+    let binding = db
+        .get_run_config_version_binding("request-ref-replay")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.config_id, "config:managed-replay-run:v1");
+    assert_eq!(binding.version, "1");
+}
+
+#[tokio::test]
+async fn run_status_prefers_in_memory_runtime_state_for_active_run() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "active-run".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let release = Arc::new(Notify::new());
+    let release_for_task = release.clone();
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            "active-run".to_string(),
+            RuntimeRunMetadata {
+                mode: Some("paper".to_string()),
+            },
+            move |cancel| async move {
+                while !cancel.is_cancelled() {
+                    release_for_task.notified().await;
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = api::router_with_state(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs/active-run/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["run_id"], "active-run");
+    assert_eq!(body["status"], "running");
+    assert_eq!(body["mode"], "paper");
+    assert_eq!(body["status_source"], "runtime_registry");
+    assert_eq!(body["mode_source"], "runtime_registry");
+    assert_eq!(body["timestamp_source"], "runtime_registry");
+    assert!(body["started_at_ms"].as_i64().unwrap() > 0);
+    assert!(body["last_state_change_at_ms"].as_i64().unwrap() > 0);
+
+    state.runtime_manager.cancel("active-run").await;
+    release.notify_waiters();
+    state.runtime_manager.wait_for_idle("active-run").await;
+}
+
+#[tokio::test]
+async fn run_detail_prefers_in_memory_runtime_state_for_active_run() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "detail-run".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let release = Arc::new(Notify::new());
+    let release_for_task = release.clone();
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            "detail-run".to_string(),
+            RuntimeRunMetadata {
+                mode: Some("paper".to_string()),
+            },
+            move |cancel| async move {
+                while !cancel.is_cancelled() {
+                    release_for_task.notified().await;
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = api::router_with_state(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs/detail-run")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["id"], "detail-run");
+    assert_eq!(body["status"], "running");
+    assert_eq!(body["mode"], "paper");
+    assert_eq!(body["status_source"], "runtime_registry");
+    assert_eq!(body["mode_source"], "runtime_registry");
+    assert_eq!(body["started_at_ms_source"], "runtime_registry");
+    assert_eq!(body["last_state_change_at_ms_source"], "runtime_registry");
+    assert!(body["started_at_ms"].as_i64().unwrap() > 0);
+    assert!(body["last_state_change_at_ms"].as_i64().unwrap() > 0);
+    assert_eq!(body["runtime"]["source"], "runtime_registry");
+    assert_eq!(body["runtime"]["mode"], "paper");
+    assert_eq!(body["runtime"]["status"], "running");
+
+    state.runtime_manager.cancel("detail-run").await;
+    release.notify_waiters();
+    state.runtime_manager.wait_for_idle("detail-run").await;
+}
+
+#[tokio::test]
+async fn run_list_prefers_in_memory_runtime_state_for_active_run() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for run_id in ["list-active", "list-idle"] {
+        db.start_strategy_run(StrategyRunStartCommand {
+            run_id: run_id.to_string(),
+            name: "sample".to_string(),
+            mode: "paper".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+    db.update_strategy_run_status("list-idle", "completed", Some(2), None)
+        .await
+        .unwrap();
+
+    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let release = Arc::new(Notify::new());
+    let release_for_task = release.clone();
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            "list-active".to_string(),
+            RuntimeRunMetadata {
+                mode: Some("paper".to_string()),
+            },
+            move |cancel| async move {
+                while !cancel.is_cancelled() {
+                    release_for_task.notified().await;
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = api::router_with_state(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let runs = body.as_array().unwrap();
+    let active = runs.iter().find(|run| run["id"] == "list-active").unwrap();
+    let idle = runs.iter().find(|run| run["id"] == "list-idle").unwrap();
+    assert_eq!(active["status"], "running");
+    assert_eq!(active["mode"], "paper");
+    assert_eq!(active["status_source"], "runtime_registry");
+    assert_eq!(active["mode_source"], "runtime_registry");
+    assert_eq!(active["started_at_ms_source"], "runtime_registry");
+    assert_eq!(active["last_state_change_at_ms_source"], "runtime_registry");
+    assert_eq!(active["runtime"]["source"], "runtime_registry");
+    assert_eq!(idle["status"], "completed");
+    assert_eq!(idle["status_source"], "storage");
+    assert_eq!(idle["mode_source"], "storage");
+    assert_eq!(idle["started_at_ms_source"], "storage");
+    assert_eq!(idle["ended_at_ms_source"], "storage");
+    assert_eq!(idle["last_state_change_at_ms_source"], "storage");
+
+    state.runtime_manager.cancel("list-active").await;
+    release.notify_waiters();
+    state.runtime_manager.wait_for_idle("list-active").await;
+}
+
+#[tokio::test]
 async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_orders() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -2293,11 +2812,7 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
     let config_path = temp_config_path("trader-live-startup-recovery-fail");
     std::fs::write(
         &config_path,
-        live_startup_recovery_config(
-            "api-live-startup-recovery-fail",
-            true,
-            None,
-        ),
+        live_startup_recovery_config("api-live-startup-recovery-fail", true, None),
     )
     .unwrap();
     let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
@@ -2400,6 +2915,57 @@ fn temp_config_path(prefix: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}.toml", std::process::id()))
+}
+
+fn replay_launch_config_toml(run_id: &str, data_path: &std::path::Path) -> String {
+    format!(
+        r#"
+        [runtime]
+        mode = "replay"
+        run_id = "{run_id}"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = '{}'
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "0"
+        fee_bps = "0"
+
+        [live]
+        enabled = false
+        "#,
+        data_path.display()
+    )
 }
 
 fn live_startup_recovery_config(

@@ -18,11 +18,16 @@ async fn main() -> Result<()> {
         std::time::Duration::from_secs(86_400),
     );
     let state = api::AppState::new(db, config_path);
-    let address = SocketAddr::from(([127, 0, 0, 1], 8080));
+    let address = server_bind_address()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, "trader-server listening");
     axum::serve(listener, api::router_with_state(state)).await?;
     Ok(())
+}
+
+fn server_bind_address() -> Result<SocketAddr> {
+    let bind = std::env::var("TRADER_SERVER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    Ok(bind.parse()?)
 }
 
 fn ensure_database_parent(database_url: &str) -> Result<()> {
