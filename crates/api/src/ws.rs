@@ -7,6 +7,7 @@ use axum::{
 };
 use events::{AnyEventEnvelope, TraderEvent};
 use replay::ReplayState;
+use runtime::RuntimeRunStatus;
 use serde::Deserialize;
 
 use crate::AppState;
@@ -170,6 +171,19 @@ async fn send_replay_control(
                 .await;
         };
         drop(controllers);
+        if !is_active_replay_run(state, &request.run_id).await {
+            return socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "error",
+                        "error": "inactive_replay_run",
+                        "run_id": request.run_id
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+        }
         let mut controller = controller.lock().await;
         match request.action.as_deref() {
             Some("pause") => controller.pause(),
@@ -209,6 +223,17 @@ async fn send_replay_control(
             .into(),
         ))
         .await
+}
+
+async fn is_active_replay_run(state: &AppState, run_id: &str) -> bool {
+    state
+        .runtime_manager
+        .snapshot(run_id)
+        .await
+        .is_some_and(|snapshot| {
+            snapshot.info.status == RuntimeRunStatus::Running
+                && snapshot.metadata.mode.as_deref() == Some("replay")
+        })
 }
 
 async fn persist_replay_control_event(

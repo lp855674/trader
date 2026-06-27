@@ -6,12 +6,13 @@ use feature_store::{
     FeatureBuildContract, FeatureManifestInput, FeatureRecord, build_feature_manifest,
     build_feature_manifest_with_contract, write_feature_manifest, write_feature_records_to_parquet,
 };
-use replay::ReplayController;
+use replay::{ReplayController, ReplayStatus};
+use runtime::RuntimeRunMetadata;
 use rust_decimal::Decimal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::Db;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -1229,8 +1230,9 @@ async fn replay_control_routes_update_replay_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let released = spawn_active_replay_runtime(&state, "sample-ma-cross").await;
     register_replay_controller(&state, "sample-ma-cross").await;
-    let app = router_with_state(state);
+    let app = router_with_state(state.clone());
 
     for (uri, expected_status, expected_fragment) in [
         (
@@ -1300,6 +1302,8 @@ async fn replay_control_routes_update_replay_state() {
             .windows("replay.speed".len())
             .any(|window| window == b"replay.speed")
     );
+    released.notify_one();
+    state.runtime_manager.wait_for_idle("sample-ma-cross").await;
 }
 
 #[tokio::test]
@@ -1323,6 +1327,41 @@ async fn replay_control_routes_reject_unknown_run() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn replay_control_routes_reject_stale_controller_for_inactive_run() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let released = spawn_active_replay_runtime(&state, "run-active").await;
+    register_replay_controller(&state, "run-active").await;
+    let stale_controller = register_replay_controller(&state, "run-stale").await;
+    let app = router_with_state(state.clone());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replay/run-stale/pause")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("inactive replay run"), "{body}");
+    assert_eq!(
+        stale_controller.lock().await.state().status,
+        ReplayStatus::Running
+    );
+
+    released.notify_one();
+    state.runtime_manager.wait_for_idle("run-active").await;
 }
 
 #[tokio::test]
@@ -1839,11 +1878,36 @@ fn launch_request_body(mode: &str) -> Body {
     Body::from(serde_json::json!({ "mode": mode }).to_string())
 }
 
-async fn register_replay_controller(state: &AppState, run_id: &str) {
-    state.replay_controllers.lock().await.insert(
-        run_id.to_string(),
-        Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1))),
-    );
+async fn register_replay_controller(
+    state: &AppState,
+    run_id: &str,
+) -> Arc<Mutex<ReplayController>> {
+    let controller = Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1)));
+    state
+        .replay_controllers
+        .lock()
+        .await
+        .insert(run_id.to_string(), controller.clone());
+    controller
+}
+
+async fn spawn_active_replay_runtime(state: &AppState, run_id: &str) -> Arc<Notify> {
+    let released = Arc::new(Notify::new());
+    let released_for_task = released.clone();
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            run_id.to_string(),
+            RuntimeRunMetadata {
+                mode: Some("replay".to_string()),
+            },
+            move |_cancel| async move {
+                released_for_task.notified().await;
+            },
+        )
+        .await
+        .unwrap();
+    released
 }
 
 fn write_multi_symbol_config(run_id: &str, runtime_mode: &str) -> PathBuf {

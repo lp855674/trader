@@ -3437,6 +3437,7 @@ async fn update_replay_controller(
             .cloned()
             .ok_or_else(|| not_found(format!("unknown replay run: {run_id}")))?;
         drop(controllers);
+        ensure_active_replay_run(&state, &run_id).await?;
         let mut controller = controller.lock().await;
         update(&mut controller);
         controller.state().clone()
@@ -3445,6 +3446,18 @@ async fn update_replay_controller(
         serde_json::to_string(&replay_state).map_err(|error| ApiError(anyhow::anyhow!(error)))?;
     insert_event(&state.db, &run_id, category, &payload).await?;
     Ok(Json(replay_state))
+}
+
+async fn ensure_active_replay_run(state: &AppState, run_id: &str) -> Result<(), ApiError> {
+    let Some(snapshot) = state.runtime_manager.snapshot(run_id).await else {
+        return Err(not_found(format!("inactive replay run: {run_id}")));
+    };
+    if snapshot.info.status != RuntimeRunStatus::Running
+        || snapshot.metadata.mode.as_deref() != Some("replay")
+    {
+        return Err(not_found(format!("inactive replay run: {run_id}")));
+    }
+    Ok(())
 }
 
 fn load_configured_market_slices(

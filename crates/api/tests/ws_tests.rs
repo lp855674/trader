@@ -1,10 +1,11 @@
 use api::{AppState, router_with_state};
 use events::{RuntimeEvent, TraderEvent, envelope};
 use futures::{SinkExt, StreamExt};
-use replay::ReplayController;
+use replay::{ReplayController, ReplayStatus};
+use runtime::RuntimeRunMetadata;
 use std::sync::Arc;
 use storage::{Db, RuntimeEventCommand};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
@@ -149,8 +150,9 @@ async fn websocket_replay_control_message_updates_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let released = spawn_active_replay_runtime(&state, "run-a").await;
     register_replay_controller(&state, "run-a").await;
-    let url = spawn_server_with_state(state).await;
+    let url = spawn_server_with_state(state.clone()).await;
     let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
 
     socket
@@ -170,6 +172,8 @@ async fn websocket_replay_control_message_updates_state() {
     let text = message.to_text().unwrap();
     assert!(text.contains("\"status\":\"paused\""));
     assert!(text.contains("\"run_id\":\"run-a\""));
+    released.notify_one();
+    state.runtime_manager.wait_for_idle("run-a").await;
 }
 
 #[tokio::test]
@@ -199,15 +203,78 @@ async fn websocket_replay_control_rejects_unknown_run() {
     assert!(text.contains("\"run_id\":\"missing-run\""));
 }
 
+#[tokio::test]
+async fn websocket_replay_control_rejects_stale_controller_for_inactive_run() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let released = spawn_active_replay_runtime(&state, "run-active").await;
+    register_replay_controller(&state, "run-active").await;
+    let stale_controller = register_replay_controller(&state, "run-stale").await;
+    let url = spawn_server_with_state(state.clone()).await;
+    let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
+
+    socket
+        .send(Message::Text(
+            serde_json::json!({
+                "type": "replay_control",
+                "run_id": "run-stale",
+                "action": "pause"
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let message = socket.next().await.unwrap().unwrap();
+    let text = message.to_text().unwrap();
+    assert!(text.contains("\"type\":\"error\""));
+    assert!(text.contains("\"error\":\"inactive_replay_run\""));
+    assert!(text.contains("\"run_id\":\"run-stale\""));
+    assert_eq!(
+        stale_controller.lock().await.state().status,
+        ReplayStatus::Running
+    );
+
+    released.notify_one();
+    state.runtime_manager.wait_for_idle("run-active").await;
+}
+
 async fn spawn_server(db: Db) -> String {
     spawn_server_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into())).await
 }
 
-async fn register_replay_controller(state: &AppState, run_id: &str) {
-    state.replay_controllers.lock().await.insert(
-        run_id.to_string(),
-        Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1))),
-    );
+async fn register_replay_controller(
+    state: &AppState,
+    run_id: &str,
+) -> Arc<Mutex<ReplayController>> {
+    let controller = Arc::new(Mutex::new(ReplayController::new(run_id.to_string(), 1)));
+    state
+        .replay_controllers
+        .lock()
+        .await
+        .insert(run_id.to_string(), controller.clone());
+    controller
+}
+
+async fn spawn_active_replay_runtime(state: &AppState, run_id: &str) -> Arc<Notify> {
+    let released = Arc::new(Notify::new());
+    let released_for_task = released.clone();
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            run_id.to_string(),
+            RuntimeRunMetadata {
+                mode: Some("replay".to_string()),
+            },
+            move |_cancel| async move {
+                released_for_task.notified().await;
+            },
+        )
+        .await
+        .unwrap();
+    released
 }
 
 async fn spawn_server_with_state(state: AppState) -> String {
