@@ -26,7 +26,7 @@ Source of Truth: `crates/api/src/api.rs`
 
 | 页面 | 主要接口 |
 | --- | --- |
-| 总览 | `/health` `/metrics` `/runs/{run_id}/metrics` `/brokers/status` `/brokers/account/{account_id}` `/ingestion/status` `/ops/logging/metrics` `/runs` |
+| 总览 | `/health` `/runs/{run_id}/metrics` `/brokers/status` `/brokers/account/{account_id}` `/ingestion/status` `/ops/logging/metrics` `/runs` |
 | 运行管理 | `/preflight/paper` `/backtests` `/paper-runs` `/replays` `/live-runs` `/runs/{run_id}` `/runs/{run_id}/status` `/runs/{run_id}/cancel` `/live-runs/{run_id}/stop` |
 | Replay 控制 | `/replay/{run_id}/pause` `/replay/{run_id}/resume` `/replay/{run_id}/seek/{offset}` `/replay/{run_id}/speed/{speed}` |
 | 订单/成交/持仓 | `/runs/{run_id}/orders` `/runs/{run_id}/fills` `/runs/{run_id}/positions` `/runs/{run_id}/account-balances` `/runs/{run_id}/portfolio-snapshots` `/runs/{run_id}/cash-snapshots` `/runs/{run_id}/position-snapshots` |
@@ -47,9 +47,9 @@ Source of Truth: `crates/api/src/api.rs`
 
 ### 4.2 指标
 
-`GET /api/v1/metrics`
+`GET /api/v1/runs/{run_id}/metrics`
 
-推荐在多运行场景使用 `GET /api/v1/runs/{run_id}/metrics`。顶层 `/metrics` 目前仍保留兼容，但语义仍绑定当前 server 加载的配置。
+Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metrics` 目前仍保留兼容，但只用于默认模板本地链路，不作为多运行页面的数据源。
 
 用于展示订单数、成交数、权益曲线摘要等。
 返回重点字段：`order_count`、`fill_count`、`total_return`、`sharpe`、`sortino`、`max_drawdown`、`win_rate`。
@@ -117,7 +117,7 @@ Source of Truth: `crates/api/src/api.rs`
 `POST /api/v1/replay/{run_id}/seek/{offset}`
 `POST /api/v1/replay/{run_id}/speed/{speed}`
 
-适合做成固定控制条。
+适合做成固定控制条。Replay 控制只对运行注册表中仍处于 `running` 状态且 mode 为 `replay` 的 run 生效；已完成或非 replay 的 run 会返回 `inactive_replay_run`。
 
 ---
 
@@ -146,7 +146,7 @@ Source of Truth: `crates/api/src/api.rs`
 `cash-snapshots` 支持 `currency/from_ms/to_ms`，`position-snapshots` 支持 `symbol/position_side/from_ms/to_ms`。
 
 兼容说明：
-- 顶层 `/orders` `/fills` `/positions` `/account-balances` `/portfolio/snapshots` `/cash/snapshots` `/positions/snapshots` 仍可用，但只适合当前单配置本地验证链路。
+- 顶层 `/orders` `/fills` `/positions` `/account-balances` `/portfolio/snapshots` `/cash/snapshots` `/positions/snapshots` 仍可用，但只适合默认模板本地验证链路。
 - Web 管理页接入多 run 时，应统一改用显式 `runs/{run_id}` 路由。
 
 ---
@@ -245,8 +245,8 @@ Rollback 请求字段：`actor`、`reason`。
 
 ### 11.3 消息类型
 
-- 客户端：`Subscribe`、`Unsubscribe`、`Ping`、`ReplayControl`
-- 服务端：`Subscribed`、`CommandAck`、`MarketEvent`、`OrderEvent`、`FillEvent`、`PositionEvent`、`PortfolioEvent`、`AccountEvent`、`RiskEvent`、`SystemEvent`、`ReplayEvent`、`Pong`、`Error`
+- 客户端：`subscribe`、`replay_control`
+- 服务端：`event`、`replay_state`、`error`
 
 ---
 

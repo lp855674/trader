@@ -25,23 +25,17 @@ GET  /api/v1/live-runs/{run_id}/status
 POST /api/v1/live-runs/{run_id}/stop
 GET  /api/v1/brokers/status
 GET  /api/v1/brokers/account/{account_id}
-GET  /api/v1/orders
 GET  /api/v1/runs/{run_id}/orders
-GET  /api/v1/fills
 GET  /api/v1/runs/{run_id}/fills
-GET  /api/v1/positions
 GET  /api/v1/runs/{run_id}/positions
 GET  /api/v1/funding-rates
 GET  /api/v1/crypto-market-meta
 GET  /api/v1/corporate-actions
 GET  /api/v1/ingestion/status
-GET  /api/v1/account-balances
 GET  /api/v1/runs/{run_id}/account-balances
-GET  /api/v1/portfolio/snapshots
 GET  /api/v1/runs/{run_id}/portfolio-snapshots
-GET  /api/v1/cash/snapshots
-GET  /api/v1/positions/snapshots
-GET  /api/v1/metrics
+GET  /api/v1/runs/{run_id}/cash-snapshots
+GET  /api/v1/runs/{run_id}/position-snapshots
 GET  /api/v1/runs/{run_id}/metrics
 GET  /api/v1/runs
 GET  /api/v1/runs/{run_id}
@@ -92,7 +86,7 @@ REST event query responses use an API-owned response model. `payload` is returne
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
 
-Run-owned read models are moving toward explicit run-scoped routes. The recommended query shape is:
+Run-owned read models should be queried through explicit run-scoped routes:
 
 - `GET /api/v1/runs/{run_id}/orders`
 - `GET /api/v1/runs/{run_id}/fills`
@@ -103,7 +97,7 @@ Run-owned read models are moving toward explicit run-scoped routes. The recommen
 - `GET /api/v1/runs/{run_id}/position-snapshots`
 - `GET /api/v1/runs/{run_id}/metrics`
 
-Legacy top-level endpoints such as `GET /api/v1/orders`, `GET /api/v1/fills`, `GET /api/v1/positions`, `GET /api/v1/account-balances`, `GET /api/v1/portfolio/snapshots`, `GET /api/v1/cash/snapshots`, `GET /api/v1/positions/snapshots`, and `GET /api/v1/metrics` still exist for compatibility in the current local-verifiable phase, but they remain bound to the server's currently loaded config and should not be used as the long-term multi-run integration contract.
+Legacy top-level endpoints such as `GET /api/v1/orders`, `GET /api/v1/fills`, `GET /api/v1/positions`, `GET /api/v1/account-balances`, `GET /api/v1/portfolio/snapshots`, `GET /api/v1/cash/snapshots`, `GET /api/v1/positions/snapshots`, and `GET /api/v1/metrics` still exist for compatibility with default-template local workflows. They resolve run scope through `[run_defaults].config_path` and are not the multi-run control-plane contract. New integrations should use the explicit `GET /api/v1/runs/{run_id}/...` routes.
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/logs` exposes paginated runtime/system logs with `run_id`, `level`, `target`, `from_ms`, `to_ms`, `search`, `limit`, and `offset` filters and returns `{ logs, total, limit, offset }`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` remain available for direct list readback. `GET /api/v1/ops/logging/metrics` exposes in-process writer dropped-log metrics plus active `[logging]` writer settings; CLI also supports retention purge, `logs count` / `logs tail` / `logs metrics`, JSONL export, and `logs ship` for HTTP NDJSON collector handoff. `trader-server` runs a background retention scheduler using `[logging].retention_days`; CLI/API run launch paths also perform startup cleanup. `logs ship` accepts optional `--max-retries`, `--retry-backoff-ms`, and `--signature-secret-env`; network errors, HTTP 429, and HTTP 5xx are retried with linearly increasing backoff, while non-retryable 4xx statuses fail immediately. When signing is enabled, requests include `X-Trader-Log-Timestamp` and `X-Trader-Log-Signature: v1=<hmac-sha256>`, signing `timestamp.body`.
 
@@ -258,7 +252,7 @@ WebSocket URL: ws://127.0.0.1:8080/ws
 ```text
 GET  /api/v1/health
 POST /api/v1/strategies/start
-GET  /api/v1/orders
+GET  /api/v1/runs/{run_id}/orders
 ```
 
 ---
@@ -2828,16 +2822,12 @@ ws://127.0.0.1:8080/ws
 
 # 22.2 WebSocket 消息格式
 
-所有 WebSocket 消息使用统一 envelope。
+当前本地实现支持两个客户端消息类型：按 `run_id` 订阅事件，以及控制 active replay run。
 
 ```json
 {
-  "id": "msg_001",
-  "type": "Subscribe",
-  "channel": "system",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {}
+  "type": "subscribe",
+  "run_id": "run_001"
 }
 ```
 
@@ -2845,25 +2835,19 @@ ws://127.0.0.1:8080/ws
 
 | 字段      | 说明      |
 | ------- | ------- |
-| id      | 消息 ID   |
 | type    | 消息类型    |
-| channel | 频道      |
-| run_id  | 可选运行 ID |
-| ts      | 时间戳     |
-| data    | 消息数据    |
+| run_id  | 运行 ID |
+| action  | replay_control 使用 |
+| offset  | seek 使用 |
+| speed   | speed 使用 |
 
 ---
 
 # 22.3 客户端消息类型
 
 ```text
-Subscribe
-Unsubscribe
-StartStrategy
-StopStrategy
-UpdateParams
-ReplayControl
-Ping
+subscribe
+replay_control
 ```
 
 ---
@@ -2871,292 +2855,104 @@ Ping
 # 22.4 服务端消息类型
 
 ```text
-Subscribed
-Unsubscribed
-CommandAck
-CommandRejected
-MarketEvent
-OrderEvent
-FillEvent
-PositionEvent
-PortfolioEvent
-AccountEvent
-RiskEvent
-SystemEvent
-ReplayEvent
-Pong
-Error
+event
+replay_state
+error
 ```
 
 ---
 
 # 22.5 WebSocket Channel
 
-```text
-market
-orders
-fills
-positions
-crypto_positions
-portfolio
-accounts
-risk
-metrics
-system
-replay
-```
+WebSocket 当前按 `run_id` 过滤 persisted/runtime events，不维护独立 channel 订阅列表。
 
 ---
 
-# 22.6 Subscribe
+# 22.6 subscribe
 
 客户端发送：
 
 ```json
 {
-  "id": "msg_001",
-  "type": "Subscribe",
-  "channel": "system",
-  "run_id": null,
-  "ts": 1700000000000,
-  "data": {
-    "channels": [
-      "market",
-      "orders",
-      "fills",
-      "positions",
-      "portfolio",
-      "risk",
-      "system",
-      "replay"
-    ],
-    "run_id": "run_001"
-  }
+  "type": "subscribe",
+  "run_id": "run_001"
 }
 ```
 
-服务端响应：
+服务端先回放该 run 已持久化的事件，再持续推送匹配该 run 的 runtime event：
 
 ```json
 {
-  "id": "msg_001",
-  "type": "Subscribed",
-  "channel": "system",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "channels": [
-      "market",
-      "orders",
-      "fills",
-      "positions",
-      "portfolio",
-      "risk",
-      "system",
-      "replay"
-    ]
+  "type": "event",
+  "event": {
+    "source": "run_001",
+    "payload": {}
   }
 }
 ```
 
 ---
 
-# 22.7 Unsubscribe
+# 22.7 关闭订阅
 
-客户端发送：
-
-```json
-{
-  "id": "msg_002",
-  "type": "Unsubscribe",
-  "channel": "system",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "channels": [
-      "market",
-      "orders"
-    ]
-  }
-}
-```
+当前未实现独立 unsubscribe 消息；关闭 WebSocket 连接即可停止订阅。
 
 ---
 
-# 22.8 Ping / Pong
+# 22.8 连接保活
 
-客户端发送：
-
-```json
-{
-  "id": "msg_ping_001",
-  "type": "Ping",
-  "channel": "system",
-  "run_id": null,
-  "ts": 1700000000000,
-  "data": {}
-}
-```
-
-服务端响应：
-
-```json
-{
-  "id": "msg_ping_001",
-  "type": "Pong",
-  "channel": "system",
-  "run_id": null,
-  "ts": 1700000000100,
-  "data": {}
-}
-```
+当前未实现独立 ping/pong 消息；连接存活由 WebSocket transport 处理。
 
 ---
 
 # 23. WebSocket 控制消息
 
----
+当前 WebSocket 控制面只实现 replay 控制。运行启动、停止、配置变更等控制操作走 REST API。
 
-## 23.1 StartStrategy
-
-```json
-{
-  "id": "msg_003",
-  "type": "StartStrategy",
-  "channel": "system",
-  "run_id": null,
-  "ts": 1700000000000,
-  "data": {
-    "name": "btc_ma_cross_paper",
-    "strategy_name": "ma_cross",
-    "mode": "PAPER",
-    "market": "CRYPTO",
-    "base_currency": "USDT",
-    "initial_cash": "10000",
-    "symbols": [
-      {
-        "market": "CRYPTO",
-        "exchange": "BINANCE",
-        "symbol": "BTCUSDT",
-        "asset_class": "CRYPTO_SPOT"
-      }
-    ],
-    "params": {
-      "fast": 20,
-      "slow": 60,
-      "target_percent": "0.5"
-    }
-  }
-}
-```
-
-服务端响应：
+## 23.1 replay_control
 
 ```json
 {
-  "id": "msg_003",
-  "type": "CommandAck",
-  "channel": "system",
+  "type": "replay_control",
   "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "command": "StartStrategy",
-    "status": "ACCEPTED",
-    "strategy_id": "strategy_001",
-    "run_id": "run_001"
-  }
-}
-```
-
----
-
-## 23.2 StopStrategy
-
-```json
-{
-  "id": "msg_004",
-  "type": "StopStrategy",
-  "channel": "system",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "strategy_id": "strategy_001",
-    "cancel_open_orders": true,
-    "reason": "manual stop"
-  }
-}
-```
-
----
-
-## 23.3 UpdateParams
-
-```json
-{
-  "id": "msg_005",
-  "type": "UpdateParams",
-  "channel": "system",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "strategy_id": "strategy_001",
-    "params": {
-      "fast": 30,
-      "slow": 90,
-      "target_percent": "0.4"
-    }
-  }
-}
-```
-
----
-
-## 23.4 ReplayControl
-
-```json
-{
-  "id": "msg_006",
-  "type": "ReplayControl",
-  "channel": "replay",
-  "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "action": "pause"
-  }
+  "action": "pause"
 }
 ```
 
 ```json
 {
-  "id": "msg_007",
-  "type": "ReplayControl",
-  "channel": "replay",
+  "type": "replay_control",
   "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "action": "seek",
-    "target_ts": 1704070800000
-  }
+  "action": "seek",
+  "offset": 25
 }
 ```
 
 ```json
 {
-  "id": "msg_008",
-  "type": "ReplayControl",
-  "channel": "replay",
+  "type": "replay_control",
   "run_id": "run_001",
-  "ts": 1700000000000,
-  "data": {
-    "action": "speed",
-    "speed": "50x"
-  }
+  "action": "speed",
+  "speed": 50
 }
 ```
+
+Replay control succeeds only when `{run_id}` is registered as a currently running replay run. Unknown run ids return `unknown_replay_run`; stale, completed, or non-replay run ids return `inactive_replay_run`.
 
 ---
 
 # 24. WebSocket 推送消息
+
+WebSocket 实际推送外层统一为：
+
+```json
+{
+  "type": "event",
+  "event": {}
+}
+```
+
+下面示例展示的是 `event` 内部可能承载的领域事件数据形态。
 
 ---
 
@@ -3479,17 +3275,9 @@ Client Connect
   ↓
 Server Accept
   ↓
-Client Subscribe
+Client subscribe
   ↓
-Server Subscribed
-  ↓
-Server Push Events
-  ↓
-Client Ping
-  ↓
-Server Pong
-  ↓
-Client Unsubscribe
+Server pushes event messages
   ↓
 Client Disconnect
 ```
