@@ -1705,6 +1705,28 @@ fn report_accepts_config_argument() {
 }
 
 #[test]
+fn report_accepts_explicit_run_id() {
+    let config = seed_report_cli_storage();
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "report",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-report-b",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("report: run_id=cli-report-b"))
+        .stdout(contains("snapshots=1"))
+        .stdout(contains("cli-report-a").not());
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn report_can_export_csv() {
     let output = temp_output("trader-report", "csv");
     run_paper();
@@ -2094,6 +2116,42 @@ fn cli_backtest_records_run_config_snapshot_binding() {
         ))
         .stdout(contains("config_id=run:cli-config-snapshot-backtest"))
         .stdout(contains("version=fnv1a64:"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn cli_backtest_config_snapshot_includes_run_spec_contract() {
+    let config = write_multi_symbol_cli_config("cli-run-spec-snapshot-backtest", "backtest");
+
+    let mut backtest = Command::cargo_bin("trader").unwrap();
+    backtest
+        .current_dir(workspace_root())
+        .args(["backtest", "--config", config.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("backtest completed"));
+
+    let app_config = config::AppConfig::from_toml_file(config.to_str().unwrap()).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let snapshot = runtime.block_on(async {
+        let db = storage::Db::connect(&app_config.database.url)
+            .await
+            .unwrap();
+        db.get_config_by_name("cli-run-spec-snapshot-backtest")
+            .await
+            .unwrap()
+            .unwrap()
+    });
+    assert_eq!(snapshot.id, "run:cli-run-spec-snapshot-backtest");
+    assert_eq!(snapshot.format, "JSON");
+    assert!(snapshot.content.contains("\"run_spec\""));
+    assert!(
+        snapshot
+            .content
+            .contains("\"run_id\":\"cli-run-spec-snapshot-backtest\"")
+    );
+    assert!(snapshot.content.contains("\"mode\":\"backtest\""));
 
     std::fs::remove_file(config).unwrap();
 }
@@ -3982,6 +4040,106 @@ fn seed_reconciliation_alert_delivery_cli_storage() -> PathBuf {
         }
     });
 
+    config
+}
+
+fn seed_report_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-report-storage", "sqlite");
+    let config = write_report_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        for (run_id, equity) in [
+            ("cli-report-a", dec!(100000)),
+            ("cli-report-b", dec!(101500)),
+        ] {
+            db.start_strategy_run(storage::StrategyRunStartCommand {
+                run_id: run_id.to_string(),
+                name: format!("strategy-{run_id}"),
+                mode: "paper".to_string(),
+                started_at_ms: 1,
+                config: serde_json::json!({ "run_id": run_id }),
+            })
+            .await
+            .unwrap();
+            db.record_paper_portfolio_snapshot(storage::PaperPortfolioSnapshotCommand {
+                run_id: run_id.to_string(),
+                account_id: "paper".to_string(),
+                ts_ms: 10,
+                base_currency: "USD".to_string(),
+                cash: equity,
+                market_value: dec!(0),
+                equity,
+                realized_pnl: dec!(0),
+                unrealized_pnl: dec!(0),
+                positions: Vec::new(),
+            })
+            .await
+            .unwrap();
+        }
+    });
+
+    config
+}
+
+fn write_report_cli_config(db_path: &std::path::Path) -> PathBuf {
+    let config = temp_output("trader-cli-report-storage", "toml");
+    std::fs::write(
+        &config,
+        format!(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "cli-report-a"
+
+            [database]
+            url = "sqlite://{}"
+
+            [data]
+            source = "csv"
+            path = "unused.csv"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 2
+            slow_window = 3
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = false
+            "#,
+            toml_path(db_path)
+        ),
+    )
+    .unwrap();
     config
 }
 

@@ -4925,6 +4925,7 @@ dependencies = [
  "predicates",
  "replay",
  "reqwest",
+ "runtime",
  "rust_decimal",
  "rust_decimal_macros",
  "serde_json",

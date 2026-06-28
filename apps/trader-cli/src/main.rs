@@ -225,6 +225,8 @@ enum Command {
     Report {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+        #[arg(long)]
+        run_id: Option<String>,
         #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
         format: ReportFormat,
         #[arg(long)]
@@ -1043,9 +1045,10 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Backtest { config } => {
             let (app_config, db) = load_db(&config).await?;
+            let run_spec = runtime::RunSpec::from(&app_config);
             db.migrate().await?;
             run_configured_log_retention(&db, &app_config).await?;
-            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
+            persist_cli_run_config_snapshot(&db, &run_spec, &config).await?;
             insert_event(
                 &db,
                 &app_config.runtime.run_id,
@@ -1078,9 +1081,10 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::PaperRun { config } => {
             let (app_config, db) = load_db(&config).await?;
+            let run_spec = runtime::RunSpec::from(&app_config);
             db.migrate().await?;
             run_configured_log_retention(&db, &app_config).await?;
-            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
+            persist_cli_run_config_snapshot(&db, &run_spec, &config).await?;
             let market_slices = load_configured_market_slices(&app_config).with_context(|| {
                 format!(
                     "failed to load market data from {}",
@@ -1679,8 +1683,9 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Replay { config } => {
             let (app_config, db) = load_db(&config).await?;
+            let run_spec = runtime::RunSpec::from(&app_config);
             db.migrate().await?;
-            persist_cli_run_config_snapshot(&db, &app_config, &config).await?;
+            persist_cli_run_config_snapshot(&db, &run_spec, &config).await?;
             let started_at_ms = chrono::Utc::now().timestamp_millis();
             db.start_strategy_run(storage::StrategyRunStartCommand {
                 run_id: app_config.runtime.run_id.clone(),
@@ -1722,21 +1727,22 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Report {
             config,
+            run_id,
             format,
             output,
         } => {
             let (app_config, db) = load_db(&config).await?;
             db.migrate().await?;
-            let run_id = &app_config.runtime.run_id;
+            let run_id = run_id.unwrap_or_else(|| app_config.runtime.run_id.clone());
             let run_status = db
-                .get_strategy_run(run_id)
+                .get_strategy_run(&run_id)
                 .await?
                 .map(|run| run.status)
                 .unwrap_or_else(|| "missing".to_string());
-            let orders = local_orders_from_storage(db.list_orders(run_id).await?);
-            let fills = local_fills_from_storage(db.list_fills(run_id).await?);
-            let balances = db.list_account_balances(run_id).await?;
-            let snapshots = db.list_portfolio_snapshots(run_id).await?;
+            let orders = local_orders_from_storage(db.list_orders(&run_id).await?);
+            let fills = local_fills_from_storage(db.list_fills(&run_id).await?);
+            let balances = db.list_account_balances(&run_id).await?;
+            let snapshots = db.list_portfolio_snapshots(&run_id).await?;
             let equity = snapshots
                 .iter()
                 .map(|snapshot| Decimal::from_str(&snapshot.equity))
@@ -1744,7 +1750,7 @@ async fn run_command(command: Command) -> Result<()> {
             let returns = equity_returns(&equity);
             let summary = paper_summary(orders.len(), fills.len(), &equity, &returns);
             let report = ReportData {
-                run_id: run_id.clone(),
+                run_id,
                 run_status,
                 orders: orders.len(),
                 fills: fills.len(),
@@ -4168,21 +4174,101 @@ fn alert_dedup_key_for_cli(message: &str, run_id: &str, fields: &serde_json::Val
 
 async fn persist_cli_run_config_snapshot(
     db: &storage::Db,
-    app_config: &config::AppConfig,
+    run_spec: &runtime::RunSpec,
     config_path: &str,
 ) -> Result<()> {
     let content = std::fs::read_to_string(config_path)
         .with_context(|| format!("failed to read config snapshot from {config_path}"))?;
+    let snapshot = serde_json::json!({
+        "run_spec": run_spec_snapshot_json(run_spec),
+        "template": {
+            "format": "TOML",
+            "content": content,
+        }
+    });
+    let snapshot_content = serde_json::to_string(&snapshot)?;
     let ts_ms = chrono::Utc::now().timestamp_millis();
     db.record_run_config_snapshot(storage::RunConfigSnapshotCommand {
-        run_id: app_config.runtime.run_id.clone(),
-        content: content.clone(),
-        format: "TOML".to_string(),
-        checksum: Some(stable_bytes_hash(content.as_bytes())),
+        run_id: run_spec.run_id.clone(),
+        content: snapshot_content.clone(),
+        format: "JSON".to_string(),
+        checksum: Some(stable_bytes_hash(snapshot_content.as_bytes())),
         ts_ms,
     })
     .await?;
     Ok(())
+}
+
+fn run_spec_snapshot_json(run_spec: &runtime::RunSpec) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_spec.run_id,
+        "mode": runtime_mode_slug(&run_spec.mode),
+        "strategy": {
+            "name": run_spec.strategy.name,
+            "universe": run_spec.strategy.universe,
+            "alpha": run_spec.strategy.alpha,
+            "alpha_conflict_resolution": run_spec.strategy.alpha_conflict_resolution,
+            "symbols": run_spec.strategy.symbols,
+            "fast_window": run_spec.strategy.fast_window,
+            "slow_window": run_spec.strategy.slow_window,
+        },
+        "data": {
+            "source": run_spec.data.source,
+            "path": run_spec.data.path,
+            "inputs": run_spec.data.inputs.iter().map(|input| {
+                serde_json::json!({
+                    "symbol": input.symbol,
+                    "source": input.source,
+                    "path": input.path,
+                })
+            }).collect::<Vec<_>>(),
+        },
+        "portfolio": {
+            "initial_cash": run_spec.portfolio.initial_cash,
+            "base_currency": run_spec.portfolio.base_currency,
+            "order_qty": run_spec.portfolio.order_qty,
+            "max_abs_qty": run_spec.portfolio.max_abs_qty,
+        },
+        "risk": {
+            "max_order_notional": run_spec.risk.max_order_notional,
+            "min_cash_after_order": run_spec.risk.min_cash_after_order,
+            "max_exposure": run_spec.risk.max_exposure,
+            "max_drawdown": run_spec.risk.max_drawdown,
+            "max_leverage": run_spec.risk.max_leverage,
+            "max_margin_used": run_spec.risk.max_margin_used,
+            "trading_halted": run_spec.risk.trading_halted,
+            "allow_short": run_spec.risk.allow_short,
+        },
+        "broker": {
+            "kind": broker_kind_slug(run_spec.broker.kind),
+            "mode": broker_mode_slug(run_spec.broker.mode),
+            "base_url": run_spec.broker.base_url,
+            "host": run_spec.broker.host,
+            "port": run_spec.broker.port,
+            "client_id": run_spec.broker.client_id,
+            "api_key_env": run_spec.broker.api_key_env,
+            "secret_key_env": run_spec.broker.secret_key_env,
+            "recv_window_ms": run_spec.broker.recv_window_ms,
+            "order_submit_enabled": run_spec.broker.order_submit_enabled,
+            "fake_startup_unmatched_open_order": run_spec.broker.fake_startup_unmatched_open_order,
+        },
+        "paper": {
+            "account_id": run_spec.paper.account_id,
+            "slippage_bps": run_spec.paper.slippage_bps,
+            "fee_bps": run_spec.paper.fee_bps,
+            "bar_delay_ms": run_spec.paper.bar_delay_ms,
+        },
+        "live_enabled": run_spec.live_enabled,
+    })
+}
+
+fn runtime_mode_slug(mode: &config::RuntimeMode) -> &'static str {
+    match mode {
+        config::RuntimeMode::Backtest => "backtest",
+        config::RuntimeMode::Replay => "replay",
+        config::RuntimeMode::Paper => "paper",
+        config::RuntimeMode::Live => "live",
+    }
 }
 
 fn load_configured_market_slices(app_config: &config::AppConfig) -> Result<Vec<data::MarketSlice>> {
