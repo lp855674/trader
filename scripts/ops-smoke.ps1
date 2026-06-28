@@ -4,6 +4,7 @@ $repoRoot = Get-Location
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-ops-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-ops-$id.toml"
+$serverConfigPath = Join-Path $env:TEMP "trader-ops-server-$id.toml"
 $alertFilePath = Join-Path $env:TEMP "trader-ops-alerts-$id.jsonl"
 $logExportPath = Join-Path $env:TEMP "trader-ops-system-logs-$id.jsonl"
 $alertExportPath = Join-Path $env:TEMP "trader-ops-reconciliation-alerts-$id.jsonl"
@@ -99,6 +100,21 @@ $config = $template `
     -replace 'enabled = false', "enabled = true`nbroker_snapshot_interval_ms = 5"
 $config = "$config`n`n[live.alerts]`nenabled = true`nsink = `"file`"`nfile_path = `"$($alertFilePath.Replace('\', '/'))`"`ncooldown_ms = 60000`n"
 Set-Content -Path $configPath -Value $config -Encoding UTF8
+$serverConfig = @"
+[database]
+url = "$databaseUrl"
+
+[server]
+bind = "127.0.0.1:8080"
+
+[logging]
+enabled = true
+level = "info"
+
+[run_defaults]
+config_path = "$($configPath.Replace('\', '/'))"
+"@
+Set-Content -Path $serverConfigPath -Value $serverConfig -Encoding UTF8
 
 $server = $null
 try {
@@ -112,7 +128,7 @@ try {
     Invoke-CheckedCargo @("build", "-p", "trader-cli", "-p", "trader-server")
     Invoke-StartupRecoverySmoke
 
-    $env:TRADER_CONFIG = $configPath
+    $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
     if (Test-Path $serverExe) {
         $server = Start-Process -FilePath $serverExe `
@@ -346,6 +362,7 @@ try {
         Stop-Process -Id $server.Id -Force
     }
     Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $serverConfigPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $databasePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-shm" -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-wal" -Force -ErrorAction SilentlyContinue

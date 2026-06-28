@@ -210,49 +210,20 @@ write_default_config_file() {
     cp "${INSTALL_DIR}/configs/trader-server.example.toml" "${CONFIG_FILE}"
   else
     cat >"${CONFIG_FILE}" <<EOF
-[runtime]
-mode = "backtest"
-run_id = "server-default"
-
 [database]
 url = "sqlite://${DATA_DIR}/trader.sqlite"
 
-[data]
-source = "csv"
-path = "${DATA_DIR}/datasets/sample/aapl_1d.csv"
+[server]
+bind = "127.0.0.1:8080"
 
-[strategy]
-name = "moving_average_cross"
-symbols = ["US:NASDAQ:AAPL:EQUITY"]
-fast_window = 2
-slow_window = 3
+[logging]
+enabled = true
+level = "info"
+retention_days = 30
 
-[portfolio]
-initial_cash = "100000"
-base_currency = "USD"
-order_qty = "1"
-max_abs_qty = "100"
-
-[risk]
-max_order_notional = "1000000"
-min_cash_after_order = "0"
-max_exposure = "1000000"
-max_drawdown = "1"
-max_leverage = "10"
-max_margin_used = "0"
-trading_halted = false
-
-[broker]
-kind = "simulated"
-mode = "paper"
-
-[paper]
-account_id = "paper"
-slippage_bps = "25"
-fee_bps = "10"
-
-[live]
-enabled = false
+[run_defaults]
+# Optional launch template for compatibility with no-body launch requests.
+config_path = "${INSTALL_DIR}/configs/backtest/ma_cross.toml"
 EOF
   fi
   chown root:"${SERVICE_GROUP}" "${CONFIG_FILE}"

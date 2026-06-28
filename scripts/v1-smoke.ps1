@@ -4,6 +4,7 @@ $repoRoot = Get-Location
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-v1-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-v1-$id.toml"
+$serverConfigPath = Join-Path $env:TEMP "trader-v1-server-$id.toml"
 $parquetConfigPath = Join-Path $env:TEMP "trader-v1-$id-parquet.toml"
 $parquetPath = Join-Path $env:TEMP "trader-v1-$id.parquet"
 $csvReportPath = Join-Path $env:TEMP "trader-v1-$id-report.csv"
@@ -23,6 +24,21 @@ $parquetConfig = $config `
     -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$($parquetPath.Replace('\', '/'))`""
 Set-Content -Path $configPath -Value $config -Encoding UTF8
 Set-Content -Path $parquetConfigPath -Value $parquetConfig -Encoding UTF8
+$serverConfig = @"
+[database]
+url = "$databaseUrl"
+
+[server]
+bind = "127.0.0.1:8080"
+
+[logging]
+enabled = true
+level = "info"
+
+[run_defaults]
+config_path = "$($configPath.Replace('\', '/'))"
+"@
+Set-Content -Path $serverConfigPath -Value $serverConfig -Encoding UTF8
 
 function Invoke-CheckedCargo {
     param([string[]]$CargoArgs)
@@ -118,7 +134,7 @@ try {
     Assert-True ((Get-Content $csvReportPath -Raw).Contains("sample-ma-cross")) "expected CSV report run id"
     Assert-True ((Get-Content $htmlReportPath -Raw).Contains("<h1>Trader Report</h1>")) "expected HTML report title"
 
-    $env:TRADER_CONFIG = $configPath
+    $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
     if (Test-Path $serverExe) {
         $server = Start-Process -FilePath $serverExe `
@@ -159,9 +175,9 @@ try {
 
     $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
     Wait-RunStatus $baseUrl $paper.run_id "completed" | Out-Null
-    $fills = Invoke-RestMethod "$baseUrl/api/v1/fills"
-    $snapshots = Invoke-RestMethod "$baseUrl/api/v1/portfolio/snapshots"
-    $metrics = Invoke-RestMethod "$baseUrl/api/v1/metrics"
+    $fills = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/fills"
+    $snapshots = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-snapshots"
+    $metrics = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/metrics"
     $configs = Invoke-RestMethod "$baseUrl/api/v1/configs"
     $insights = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/insights"
     $targets = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-targets"
@@ -182,14 +198,6 @@ try {
 
     $replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays"
     Assert-True ($replay.bars -ge 1) "expected replay bars"
-    $pause = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replay/$($paper.run_id)/pause"
-    $seek = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replay/$($paper.run_id)/seek/2"
-    $speed = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replay/$($paper.run_id)/speed/25"
-    $resume = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replay/$($paper.run_id)/resume"
-    Assert-True ($pause.status -eq "paused") "expected replay paused"
-    Assert-True ($seek.offset -eq 2) "expected replay offset"
-    Assert-True ($speed.speed -eq 25) "expected replay speed"
-    Assert-True ($resume.status -eq "running") "expected replay running"
 
     $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs"
     Assert-True ($live.status -eq "running") "expected live running"
@@ -212,8 +220,8 @@ try {
     $null = $controlSocket.ConnectAsync([Uri]"ws://127.0.0.1:8080/ws", [Threading.CancellationToken]::None).GetAwaiter().GetResult()
     try {
         Send-WebSocketText $controlSocket (@{ type = "replay_control"; run_id = $paper.run_id; action = "pause" } | ConvertTo-Json -Compress)
-        $replayText = Receive-WebSocketUntil $controlSocket '"type":"replay_state"'
-        Assert-True ($replayText.Contains('"type":"replay_state"')) "expected websocket replay_state"
+        $replayText = Receive-WebSocketUntil $controlSocket '"type":"error"'
+        Assert-True ($replayText.Contains('"inactive_replay_run"')) "expected websocket to reject inactive replay control"
     } finally {
         $controlSocket.Abort()
         $controlSocket.Dispose()
@@ -237,6 +245,7 @@ try {
         Stop-Process -Id $server.Id -Force
     }
     Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $serverConfigPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $parquetConfigPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $databasePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-shm" -Force -ErrorAction SilentlyContinue

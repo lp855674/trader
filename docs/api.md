@@ -472,43 +472,37 @@ Strategy
   GET  /api/v1/strategies/{strategy_id}
 
 Backtest
-  POST /api/v1/backtests/start
-  GET  /api/v1/backtests/{run_id}
-  GET  /api/v1/backtests/{run_id}/report
+  POST /api/v1/backtests
+  GET  /api/v1/runs/{run_id}
+  GET  /api/v1/runs/{run_id}/metrics
 
 Replay
-  POST /api/v1/replay/start
+  POST /api/v1/replays
   POST /api/v1/replay/{run_id}/pause
   POST /api/v1/replay/{run_id}/resume
-  POST /api/v1/replay/{run_id}/seek
-  POST /api/v1/replay/{run_id}/speed
-  POST /api/v1/replay/{run_id}/stop
+  POST /api/v1/replay/{run_id}/seek/{offset}
+  POST /api/v1/replay/{run_id}/speed/{speed}
 
 Orders
-  GET  /api/v1/orders
-  GET  /api/v1/orders/{order_id}
-  POST /api/v1/orders/{order_id}/cancel
+  GET  /api/v1/runs/{run_id}/orders
 
 Fills
-  GET  /api/v1/fills
+  GET  /api/v1/runs/{run_id}/fills
 
 Positions
-  GET  /api/v1/positions
+  GET  /api/v1/runs/{run_id}/positions
   GET  /api/v1/runs/{run_id}/crypto-positions
 
 Accounts
-  GET  /api/v1/account-balances
-  GET  /api/v1/cash
+  GET  /api/v1/runs/{run_id}/account-balances
+  GET  /api/v1/runs/{run_id}/cash-snapshots
 
 Portfolio
-  GET  /api/v1/portfolio
-  GET  /api/v1/portfolio/snapshots
-  GET  /api/v1/cash/snapshots
-  GET  /api/v1/positions/snapshots
+  GET  /api/v1/runs/{run_id}/portfolio-snapshots
+  GET  /api/v1/runs/{run_id}/position-snapshots
 
 Metrics
-  GET  /api/v1/metrics
-  GET  /api/v1/metrics/{run_id}
+  GET  /api/v1/runs/{run_id}/metrics
 
 Risk
   GET  /api/v1/risk-events
@@ -1463,14 +1457,19 @@ POST /api/v1/replay/{run_id}/stop
 ## 13.1 查询订单列表
 
 ```http
-GET /api/v1/orders
+GET /api/v1/runs/{run_id}/orders
 ```
+
+Path 参数：
+
+| 参数     | 类型     | 说明    |
+| ------ | ------ | ----- |
+| run_id | string | 运行 ID |
 
 Query 参数：
 
 | 参数          | 类型      | 说明                    |
 | ----------- | ------- | --------------------- |
-| run_id      | string  | 运行 ID                 |
 | market      | string  | CN / HK / US / CRYPTO |
 | exchange    | string  | 交易所                   |
 | symbol      | string  | 标的                    |
@@ -1483,7 +1482,7 @@ Query 参数：
 示例：
 
 ```http
-GET /api/v1/orders?run_id=run_001&status=FILLED&page=1&page_size=50
+GET /api/v1/runs/run_001/orders?status=FILLED&page=1&page_size=50
 ```
 
 响应：
@@ -1610,14 +1609,19 @@ POST /api/v1/orders/{order_id}/cancel
 ## 14.1 查询成交列表
 
 ```http
-GET /api/v1/fills
+GET /api/v1/runs/{run_id}/fills
 ```
+
+Path 参数：
+
+| 参数     | 类型     | 说明    |
+| ------ | ------ | ----- |
+| run_id | string | 运行 ID |
 
 Query 参数：
 
 | 参数          | 类型      | 说明    |
 | ----------- | ------- | ----- |
-| run_id      | string  | 运行 ID |
 | order_id    | string  | 订单 ID |
 | market      | string  | 市场    |
 | exchange    | string  | 交易所   |
@@ -1686,14 +1690,19 @@ A股
 ```
 
 ```http
-GET /api/v1/positions
+GET /api/v1/runs/{run_id}/positions
 ```
+
+Path 参数：
+
+| 参数     | 类型     | 说明    |
+| ------ | ------ | ----- |
+| run_id | string | 运行 ID |
 
 Query 参数：
 
 | 参数          | 类型     | 说明    |
 | ----------- | ------ | ----- |
-| run_id      | string | 运行 ID |
 | market      | string | 市场    |
 | exchange    | string | 交易所   |
 | symbol      | string | 标的    |
@@ -1786,14 +1795,19 @@ trader positions list --run-id run_001 --account paper --exchange BINANCE
 ## 16.1 查询账户余额
 
 ```http
-GET /api/v1/account-balances
+GET /api/v1/runs/{run_id}/account-balances
 ```
+
+Path 参数：
+
+| 参数     | 类型     | 说明    |
+| ------ | ------ | ----- |
+| run_id | string | 运行 ID |
 
 Query 参数：
 
 | 参数       | 类型     | 说明      |
 | -------- | ------ | ------- |
-| run_id   | string | 运行 ID   |
 | market   | string | 市场      |
 | exchange | string | 交易所     |
 | asset    | string | 币种 / 货币 |
@@ -1928,14 +1942,19 @@ Query 参数：
 ## 17.2 查询组合快照
 
 ```http
-GET /api/v1/portfolio/snapshots
+GET /api/v1/runs/{run_id}/portfolio-snapshots
 ```
+
+Path 参数：
+
+| 参数     | 类型     | 说明    |
+| ------ | ------ | ----- |
+| run_id | string | 运行 ID |
 
 Query 参数：
 
 | 参数       | 类型      | 说明    |
 | -------- | ------- | ----- |
-| run_id   | string  | 运行 ID |
 | start_ts | integer | 开始时间  |
 | end_ts   | integer | 结束时间  |
 
@@ -1975,11 +1994,10 @@ Query 参数：
 ## 17.3 查询现金快照
 
 ```http
-GET /api/v1/cash/snapshots
 GET /api/v1/runs/{run_id}/cash-snapshots?currency=USD&from_ms=1700000000000&to_ms=1700000600000
 ```
 
-当前 V1 根据服务配置中的 `runtime.run_id` 查询，或通过 run-scoped endpoint 查询指定运行。run-scoped endpoint 支持 `currency`、`from_ms`、`to_ms` 可选过滤。返回数组：
+通过 run-scoped endpoint 查询指定运行。支持 `currency`、`from_ms`、`to_ms` 可选过滤。返回数组：
 
 ```json
 [
@@ -2001,11 +2019,10 @@ GET /api/v1/runs/{run_id}/cash-snapshots?currency=USD&from_ms=1700000000000&to_m
 ## 17.4 查询持仓快照
 
 ```http
-GET /api/v1/positions/snapshots
 GET /api/v1/runs/{run_id}/position-snapshots?symbol=BTCUSDT_PERP&position_side=LONG&from_ms=1700000000000&to_ms=1700000600000
 ```
 
-当前 V1 根据服务配置中的 `runtime.run_id` 查询，或通过 run-scoped endpoint 查询指定运行。run-scoped endpoint 支持 `symbol`、`position_side`、`from_ms`、`to_ms` 可选过滤。返回数组：
+通过 run-scoped endpoint 查询指定运行。支持 `symbol`、`position_side`、`from_ms`、`to_ms` 可选过滤。返回数组：
 
 ```json
 [
@@ -2081,10 +2098,10 @@ GET /api/v1/runs/{run_id}/reconciliation
 ## 18.1 查询绩效指标
 
 ```http
-GET /api/v1/metrics
+GET /api/v1/runs/{run_id}/metrics
 ```
 
-Query 参数：
+Path 参数：
 
 | 参数     | 类型     | 说明    |
 | ------ | ------ | ----- |

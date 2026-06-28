@@ -4,6 +4,7 @@ $repoRoot = Get-Location
 $id = [guid]::NewGuid().ToString("N")
 $databasePath = Join-Path $env:TEMP "trader-paper-$id.sqlite"
 $configPath = Join-Path $env:TEMP "trader-paper-$id.toml"
+$serverConfigPath = Join-Path $env:TEMP "trader-paper-server-$id.toml"
 $stdoutPath = Join-Path $env:TEMP "trader-paper-server-$id.out.log"
 $stderrPath = Join-Path $env:TEMP "trader-paper-server-$id.err.log"
 $serverTargetDir = Join-Path $env:TEMP "trader-paper-server-target-$id"
@@ -16,6 +17,21 @@ $config = $template `
     -replace 'url = "sqlite://data/trader.sqlite"', "url = `"$databaseUrl`"" `
     -replace 'bar_delay_ms = 50', 'bar_delay_ms = 1'
 Set-Content -Path $configPath -Value $config -Encoding UTF8
+$serverConfig = @"
+[database]
+url = "$databaseUrl"
+
+[server]
+bind = "127.0.0.1:8080"
+
+[logging]
+enabled = true
+level = "info"
+
+[run_defaults]
+config_path = "$($configPath.Replace('\', '/'))"
+"@
+Set-Content -Path $serverConfigPath -Value $serverConfig -Encoding UTF8
 
 function Invoke-CheckedCargo {
     param([string[]]$CargoArgs)
@@ -65,7 +81,7 @@ try {
     Invoke-CheckedTrader @("paper-preflight", "--config", $configPath)
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
 
-    $env:TRADER_CONFIG = $configPath
+    $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
     $env:CARGO_TARGET_DIR = $serverTargetDir
     Invoke-CheckedCargo @("build", "-p", "trader-server")
@@ -103,11 +119,11 @@ try {
     $status = Wait-RunStatus $baseUrl $paper.run_id "completed"
 
     $run = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)"
-    $orders = Invoke-RestMethod "$baseUrl/api/v1/orders"
-    $fills = Invoke-RestMethod "$baseUrl/api/v1/fills"
-    $balances = Invoke-RestMethod "$baseUrl/api/v1/account-balances"
-    $snapshots = Invoke-RestMethod "$baseUrl/api/v1/portfolio/snapshots"
-    $metrics = Invoke-RestMethod "$baseUrl/api/v1/metrics"
+    $orders = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/orders"
+    $fills = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/fills"
+    $balances = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/account-balances"
+    $snapshots = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-snapshots"
+    $metrics = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/metrics"
     $events = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/events"
     $brokerAccount = Invoke-RestMethod "$baseUrl/api/v1/brokers/account/paper"
 
@@ -139,6 +155,7 @@ try {
         Stop-Process -Id $server.Id -Force
     }
     Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $serverConfigPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $databasePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-shm" -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath "$databasePath-wal" -Force -ErrorAction SilentlyContinue
