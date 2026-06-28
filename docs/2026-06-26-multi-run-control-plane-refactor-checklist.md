@@ -466,6 +466,8 @@ These can build on the multi-run control-plane foundation later.
 - Launch paths no longer read `[run_defaults].config_path`; server run defaults remain only compatibility configuration, not active run identity.
 - Smoke scripts and API docs were updated to send explicit launch config bodies.
 - Verified with `cargo test -p api`, `bash ./scripts/check-api-read-model-boundary`, PowerShell AST parsing for modified smoke scripts, and `git diff --check`.
+- `AppState::new(db)` now builds a server control-plane state with no default run config; tests that need legacy run defaults use `AppState::with_default_run_config(...)` explicitly.
+- API logging retention scheduling now uses server logging config directly instead of reading retention settings from a run TOML file.
 
 ---
 

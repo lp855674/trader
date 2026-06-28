@@ -864,34 +864,6 @@ pub fn router_with_state(state: AppState) -> Router {
         .with_state(state)
 }
 
-pub fn spawn_logging_retention_scheduler(
-    db: storage::Db,
-    config_path: String,
-    interval: Duration,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(interval).await;
-            let app_config = match config::AppConfig::from_toml_file(&config_path) {
-                Ok(app_config) => app_config,
-                Err(error) => {
-                    tracing::warn!(error = %error, "failed to load logging retention config");
-                    continue;
-                }
-            };
-            if let Err(error) = db
-                .purge_system_logs_by_retention(
-                    chrono::Utc::now().timestamp_millis(),
-                    system_log_retention_policy(&app_config),
-                )
-                .await
-            {
-                tracing::warn!(error = %error, "failed to run logging retention cleanup");
-            }
-        }
-    })
-}
-
 pub fn spawn_server_logging_retention_scheduler(
     db: storage::Db,
     logging: config::LoggingConfig,

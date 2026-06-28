@@ -20,7 +20,10 @@ async fn post_backtest_returns_created() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -43,7 +46,7 @@ async fn post_backtest_publishes_algorithm_events_to_event_bus() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let mut receiver = state.event_bus.subscribe();
     let app = router_with_state(state);
 
@@ -80,7 +83,10 @@ async fn post_backtest_persists_lifecycle_events() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -122,7 +128,7 @@ async fn post_backtest_runs_multi_symbol_data_inputs() {
     let config_path = write_multi_symbol_config("api-backtest-multi-symbol", "backtest");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -156,7 +162,7 @@ async fn post_backtest_applies_filtered_universe_config() {
     let config_path = write_filtered_multi_symbol_config("api-backtest-filtered-universe");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -190,7 +196,7 @@ async fn post_backtest_applies_ranked_universe_config() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ranked_universe_ma_cross.toml".to_string(),
     ));
@@ -228,7 +234,7 @@ async fn post_backtest_applies_feature_ranked_universe_config() {
     let config_path = write_feature_ranked_multi_symbol_config("api-backtest-feature-ranked");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -371,7 +377,7 @@ async fn post_backtest_rejects_alpha_gate_manifest_source_bars_mismatch() {
     .unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db,
         config_path.to_string_lossy().into_owned(),
     ));
@@ -511,7 +517,7 @@ async fn post_backtest_rejects_alpha_gate_manifest_build_contract_mismatch() {
     .unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db,
         config_path.to_string_lossy().into_owned(),
     ));
@@ -658,7 +664,7 @@ async fn post_backtest_rejects_alpha_gate_manifest_when_source_bars_content_chan
     .unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db,
         config_path.to_string_lossy().into_owned(),
     ));
@@ -692,7 +698,7 @@ async fn post_backtest_applies_weighted_alpha_components() {
     let config_path = write_weighted_alpha_config("api-backtest-weighted-alpha");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -727,7 +733,7 @@ async fn post_backtest_applies_net_signal_alpha_components() {
     let config_path = write_net_signal_alpha_config("api-backtest-net-signal-alpha");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -765,7 +771,7 @@ async fn post_backtest_applies_majority_vote_alpha_components() {
     let config_path = write_majority_vote_alpha_config("api-backtest-majority-vote-alpha");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -803,7 +809,7 @@ async fn post_backtest_applies_category_majority_alpha_components() {
     let config_path = write_category_majority_alpha_config("api-backtest-category-majority-alpha");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -840,7 +846,7 @@ async fn post_backtest_applies_ema_cross_alpha() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ema_cross.toml".to_string(),
     ));
@@ -881,7 +887,7 @@ async fn post_backtest_applies_price_momentum_alpha() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/price_momentum.toml".to_string(),
     ));
@@ -921,7 +927,7 @@ async fn post_backtest_applies_price_channel_breakout_alpha() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/price_channel_breakout.toml".to_string(),
     ));
@@ -961,7 +967,7 @@ async fn post_backtest_applies_price_channel_reversion_alpha() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/price_channel_reversion.toml".to_string(),
     ));
@@ -1001,7 +1007,7 @@ async fn post_backtest_applies_rsi_reversion_alpha() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/rsi_reversion.toml".to_string(),
     ));
@@ -1041,7 +1047,7 @@ async fn post_backtest_applies_rsi_feature_gate_config() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/rsi_feature_gate.toml".to_string(),
     ));
@@ -1074,7 +1080,7 @@ async fn post_paper_run_runs_multi_symbol_data_inputs() {
     let config_path = write_multi_symbol_config("api-paper-multi-symbol", "paper");
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
@@ -1105,7 +1111,10 @@ async fn post_replay_returns_created_and_persists_events() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -1157,7 +1166,10 @@ async fn event_routes_return_structured_payload_objects() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -1197,7 +1209,10 @@ async fn run_routes_return_structured_config_objects() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -1237,7 +1252,7 @@ async fn post_replay_publishes_market_events_to_event_bus() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let mut receiver = state.event_bus.subscribe();
     let app = router_with_state(state);
 
@@ -1272,7 +1287,7 @@ async fn replay_control_routes_update_replay_state() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let released = spawn_active_replay_runtime(&state, "sample-ma-cross").await;
     register_replay_controller(&state, "sample-ma-cross").await;
     let app = router_with_state(state.clone());
@@ -1354,7 +1369,7 @@ async fn replay_control_routes_reject_unknown_run() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     register_replay_controller(&state, "sample-ma-cross").await;
     let app = router_with_state(state);
 
@@ -1377,7 +1392,7 @@ async fn replay_control_routes_reject_stale_controller_for_inactive_run() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let released = spawn_active_replay_runtime(&state, "run-active").await;
     register_replay_controller(&state, "run-active").await;
     let stale_controller = register_replay_controller(&state, "run-stale").await;
@@ -1412,7 +1427,10 @@ async fn post_paper_run_returns_accepted_run_start() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .oneshot(
@@ -1441,7 +1459,7 @@ async fn post_paper_run_publishes_algorithm_events_to_event_bus() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let mut receiver = state.event_bus.subscribe();
     let app = router_with_state(state);
 
@@ -1483,7 +1501,7 @@ async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
     let config_path = temp_config_with_enabled_broker_submit();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db,
         config_path.to_string_lossy().into_owned(),
     ));
@@ -1513,7 +1531,10 @@ async fn post_paper_run_populates_query_routes() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -1680,7 +1701,10 @@ async fn completed_paper_run_status_is_preserved_after_late_cancel() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
 
     let response = app
         .clone()
@@ -1767,7 +1791,7 @@ async fn cancel_does_not_overwrite_terminal_run_status_while_manager_is_still_ac
         .await
         .unwrap();
 
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     state
         .runtime_manager
         .spawn("terminal-run".to_string(), |cancel| async move {
@@ -1808,7 +1832,7 @@ async fn failed_paper_run_records_failed_status_and_error() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(
+    let app = router_with_state(AppState::with_default_run_config(
         db,
         "configs/backtest/missing-bars.toml".into(),
     ));
@@ -1863,7 +1887,10 @@ async fn active_paper_run_can_be_cancelled() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = router_with_state(AppState::new(db, "configs/backtest/slow-paper.toml".into()));
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/slow-paper.toml".into(),
+    ));
 
     let response = app
         .clone()

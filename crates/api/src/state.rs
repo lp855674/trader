@@ -16,7 +16,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(db: Db, config_path: String) -> Self {
+    pub fn new(db: Db) -> Self {
+        Self::with_server_config(db, config::ServerConfig::default())
+    }
+
+    pub fn with_default_run_config(db: Db, config_path: String) -> Self {
         Self::with_server_config(
             db,
             config::ServerConfig::with_default_run_config_path(config_path),

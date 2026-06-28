@@ -30,10 +30,20 @@ async fn health_returns_ok() {
 }
 
 #[tokio::test]
+async fn app_state_new_has_no_default_run_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let state = api::AppState::new(db);
+
+    assert_eq!(state.default_run_config_path(), None);
+}
+
+#[tokio::test]
 async fn api_requests_are_captured_as_system_logs() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -75,7 +85,8 @@ async fn logging_metrics_route_reads_shared_writer_metrics() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = api::AppState::new(db.clone(), "configs/backtest/ma_cross.toml".into());
+    let state =
+        api::AppState::with_default_run_config(db.clone(), "configs/backtest/ma_cross.toml".into());
     let (layer_tx, _rx_guard) = tokio::sync::mpsc::channel(1);
     let subscriber = tracing_subscriber::registry()
         .with(SystemLogLayer::new(layer_tx, None).with_metrics(state.log_writer_metrics.clone()));
@@ -129,66 +140,12 @@ async fn logging_retention_scheduler_purges_old_system_logs() {
     .await
     .unwrap();
 
-    let config_path = std::env::temp_dir().join(format!(
-        "trader-logging-retention-{}.toml",
-        std::process::id()
-    ));
-    std::fs::write(
-        &config_path,
-        r#"
-        [runtime]
-        mode = "backtest"
-        run_id = "retention-scheduler"
-
-        [database]
-        url = "sqlite::memory:"
-
-        [data]
-        source = "csv"
-        path = "datasets/sample/aapl_1d.csv"
-
-        [strategy]
-        name = "moving_average_cross"
-        symbols = ["US:NASDAQ:AAPL:EQUITY"]
-        fast_window = 2
-        slow_window = 3
-
-        [portfolio]
-        initial_cash = "100000"
-        base_currency = "USD"
-        order_qty = "1"
-        max_abs_qty = "100"
-
-        [risk]
-        max_order_notional = "1000000"
-        min_cash_after_order = "0"
-        max_exposure = "1000000"
-        max_drawdown = "1"
-        max_leverage = "1"
-        max_margin_used = "0"
-        trading_halted = false
-
-        [broker]
-        kind = "simulated"
-        mode = "paper"
-
-        [paper]
-        account_id = "paper"
-        slippage_bps = "0"
-        fee_bps = "0"
-
-        [live]
-        enabled = false
-
-        [logging]
-        retention_days = 1
-        "#,
-    )
-    .unwrap();
-
-    let scheduler = api::spawn_logging_retention_scheduler(
+    let scheduler = api::spawn_server_logging_retention_scheduler(
         db.clone(),
-        config_path.display().to_string(),
+        config::LoggingConfig {
+            retention_days: 1,
+            ..Default::default()
+        },
         std::time::Duration::from_millis(5),
     );
 
@@ -208,7 +165,6 @@ async fn logging_retention_scheduler_purges_old_system_logs() {
     }
     scheduler.abort();
     let _ = scheduler.await;
-    std::fs::remove_file(config_path).unwrap();
 
     assert_eq!(remaining.len(), 1, "{remaining:?}");
     assert_eq!(remaining[0].message, "new log");
@@ -218,7 +174,7 @@ async fn logging_retention_scheduler_purges_old_system_logs() {
 async fn broker_status_returns_v1_fake_connectors() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -245,7 +201,7 @@ async fn broker_account_returns_configured_fake_snapshot() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -329,7 +285,7 @@ async fn paper_preflight_get_does_not_use_default_run_config() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/slow-paper.toml".into(),
     ))
@@ -417,7 +373,7 @@ async fn run_order_events_route_returns_audit_projection() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -485,7 +441,7 @@ async fn run_order_events_route_filters_structured_audit_projection() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -539,7 +495,7 @@ async fn run_risk_events_route_returns_audit_projection() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -609,7 +565,7 @@ async fn run_risk_events_route_filters_structured_audit_projection() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -660,7 +616,7 @@ async fn run_insights_route_returns_strategy_decisions() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -710,7 +666,7 @@ async fn run_portfolio_targets_route_returns_target_positions() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -776,7 +732,7 @@ async fn run_crypto_positions_route_returns_contract_position_projection() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -850,7 +806,7 @@ async fn run_cash_snapshots_route_returns_filtered_snapshot_series() {
         .unwrap();
     }
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -938,7 +894,7 @@ async fn run_position_snapshots_route_returns_filtered_snapshot_series() {
         .unwrap();
     }
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1017,7 +973,7 @@ async fn run_reconciliation_route_summarizes_snapshots_and_drift_events() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1097,7 +1053,7 @@ async fn reconciliation_drifts_routes_filter_audit_rows() {
     .await
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1194,7 +1150,7 @@ async fn config_lifecycle_routes_return_release_audit_and_run_binding_status() {
     })
     .await
     .unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1220,7 +1176,7 @@ async fn config_lifecycle_routes_return_release_audit_and_run_binding_status() {
 async fn config_crud_routes_create_transition_diff_and_rollback() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1323,7 +1279,7 @@ async fn config_crud_routes_create_transition_diff_and_rollback() {
 async fn config_governance_routes_enforce_independent_production_approval() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1417,7 +1373,7 @@ async fn config_governance_routes_enforce_independent_production_approval() {
 async fn config_governance_routes_enforce_roles_and_list_pending_approvals() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1546,7 +1502,7 @@ async fn config_governance_routes_enforce_roles_and_list_pending_approvals() {
 async fn config_governance_routes_enforce_staging_roles_and_list_pending_approvals() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1676,7 +1632,7 @@ async fn backtest_start_binds_run_to_config_snapshot_version() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -1731,7 +1687,7 @@ async fn funding_rates_route_returns_filtered_decimal_series() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1795,7 +1751,7 @@ async fn crypto_market_meta_route_returns_filtered_decimal_metadata() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1869,7 +1825,7 @@ async fn corporate_actions_route_returns_filtered_actions() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1923,7 +1879,7 @@ async fn ingestion_status_route_returns_tracker_status() {
     .await
     .unwrap();
 
-    let response = api::router_with_state(api::AppState::new(
+    let response = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ))
@@ -1989,7 +1945,7 @@ async fn system_logs_route_filters_by_run_level_target_and_time() {
         .await
         .unwrap();
     }
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2054,7 +2010,7 @@ async fn logs_route_returns_paginated_search_results_with_total() {
         .await
         .unwrap();
     }
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2119,7 +2075,7 @@ async fn reconciliation_alert_summary_routes_aggregate_runtime_alert_logs() {
         .await
         .unwrap();
     }
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2193,7 +2149,7 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
         .await
         .unwrap();
     }
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2227,7 +2183,7 @@ async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2329,7 +2285,10 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
         "#,
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        config_path.display().to_string(),
+    ));
 
     let response = app
         .clone()
@@ -2540,7 +2499,7 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
     .await
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2664,7 +2623,7 @@ async fn replay_launch_uses_request_config_toml_for_distinct_runs() {
     )
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2752,7 +2711,7 @@ async fn run_launch_requires_explicit_config_source_even_with_default_run_config
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db,
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2818,7 +2777,7 @@ async fn replay_launch_can_bind_to_referenced_config_version() {
     .await
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2867,7 +2826,7 @@ async fn replay_launch_rejects_multiple_config_sources() {
     )
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2923,7 +2882,7 @@ async fn replay_launch_can_override_run_id_from_referenced_config() {
     .await
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -2997,7 +2956,7 @@ async fn replay_launch_can_override_mode_from_referenced_config() {
     .await
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -3053,7 +3012,7 @@ async fn replay_launch_rejects_mode_mismatch_after_overrides() {
     )
     .unwrap();
 
-    let app = api::router_with_state(api::AppState::new(
+    let app = api::router_with_state(api::AppState::with_default_run_config(
         db.clone(),
         "configs/backtest/ma_cross.toml".into(),
     ));
@@ -3095,7 +3054,7 @@ async fn run_status_prefers_in_memory_runtime_state_for_active_run() {
     .await
     .unwrap();
 
-    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = api::AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let release = Arc::new(Notify::new());
     let release_for_task = release.clone();
     state
@@ -3155,7 +3114,7 @@ async fn run_detail_prefers_in_memory_runtime_state_for_active_run() {
     .await
     .unwrap();
 
-    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = api::AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let release = Arc::new(Notify::new());
     let release_for_task = release.clone();
     state
@@ -3219,7 +3178,7 @@ async fn run_detail_keeps_terminal_runtime_snapshot_out_of_active_runtime_field(
     .await
     .unwrap();
 
-    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = api::AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     state
         .runtime_manager
         .spawn_with_metadata(
@@ -3274,7 +3233,7 @@ async fn run_list_prefers_in_memory_runtime_state_for_active_run() {
         .await
         .unwrap();
 
-    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = api::AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let release = Arc::new(Notify::new());
     let release_for_task = release.clone();
     state
@@ -3340,7 +3299,10 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
         live_startup_recovery_config("api-live-startup-recovery-fail", true, None),
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        config_path.display().to_string(),
+    ));
 
     let response = app
         .clone()
@@ -3386,7 +3348,10 @@ async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_
         ),
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::new(db, config_path.display().to_string()));
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        config_path.display().to_string(),
+    ));
 
     let response = app
         .clone()

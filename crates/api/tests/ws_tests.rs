@@ -45,7 +45,7 @@ async fn websocket_subscribe_replays_persisted_run_events() {
 async fn websocket_subscribe_streams_runtime_bus_events_for_run() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let event_bus = state.event_bus.clone();
     let url = spawn_server_with_state(state).await;
     let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
@@ -90,7 +90,7 @@ async fn websocket_subscribe_streams_runtime_bus_events_for_run() {
 async fn websocket_subscribe_filters_runtime_events_by_envelope_source() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let event_bus = state.event_bus.clone();
     let url = spawn_server_with_state(state).await;
     let (mut socket, _) = connect_async(format!("{url}/ws")).await.unwrap();
@@ -149,7 +149,7 @@ async fn websocket_subscribe_filters_runtime_events_by_envelope_source() {
 async fn websocket_replay_control_message_updates_state() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let released = spawn_active_replay_runtime(&state, "run-a").await;
     register_replay_controller(&state, "run-a").await;
     let url = spawn_server_with_state(state.clone()).await;
@@ -207,7 +207,7 @@ async fn websocket_replay_control_rejects_unknown_run() {
 async fn websocket_replay_control_rejects_stale_controller_for_inactive_run() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    let state = AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    let state = AppState::with_default_run_config(db, "configs/backtest/ma_cross.toml".into());
     let released = spawn_active_replay_runtime(&state, "run-active").await;
     register_replay_controller(&state, "run-active").await;
     let stale_controller = register_replay_controller(&state, "run-stale").await;
@@ -242,7 +242,11 @@ async fn websocket_replay_control_rejects_stale_controller_for_inactive_run() {
 }
 
 async fn spawn_server(db: Db) -> String {
-    spawn_server_with_state(AppState::new(db, "configs/backtest/ma_cross.toml".into())).await
+    spawn_server_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ))
+    .await
 }
 
 async fn register_replay_controller(
