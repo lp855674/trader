@@ -302,6 +302,14 @@ Primary files:
 - `apps/trader-cli/src/main.rs`
 - `docs/strategy.md`
 
+Design direction:
+
+- Treat `StrategyDefinition` as the code-level strategy implementation identity, e.g. `moving_average_cross`.
+- Treat `StrategyTemplate` as a versioned managed config entity whose content materializes a valid `StrategyConfig`.
+- Treat `StrategyInstance` as the final per-run strategy value after resolving a template and applying launch overrides; this is what belongs in the persisted run config snapshot.
+- Add `strategy_ref` as launch-time provenance, not as a replacement for an explicit run config source. Resolution order should be: full run config source, optional `strategy_ref`, optional inline `strategy` overrides, then `RunSpec` materialization.
+- Keep `run_config_versions` as the single binding for the canonical run config version or run snapshot. Do not overload it with both full config and strategy-template provenance; store `strategy_ref` provenance in the final snapshot first, or add a separate component binding table in a dedicated storage slice.
+
 ### Workstream F: Keep mode-specific runtime behavior behind common orchestration
 
 Required changes:
@@ -466,8 +474,12 @@ These can build on the multi-run control-plane foundation later.
 - Launch paths no longer read `[run_defaults].config_path`; server run defaults remain only compatibility configuration, not active run identity.
 - Smoke scripts and API docs were updated to send explicit launch config bodies.
 - Verified with `cargo test -p api`, `bash ./scripts/check-api-read-model-boundary`, PowerShell AST parsing for modified smoke scripts, and `git diff --check`.
+- Full `scripts/verify.ps1` is currently limited by historical `check-storage-dto-boundary.ps1` violations in `crates/api/tests/api_tests.rs`, `crates/runtime/src/live.rs`, and `crates/runtime/tests/live_runtime_tests.rs`; keep that cleanup as a separate slice from Workstream E.
 - `AppState::new(db)` now builds a server control-plane state with no default run config; tests that need legacy run defaults use `AppState::with_default_run_config(...)` explicitly.
 - API logging retention scheduling now uses server logging config directly instead of reading retention settings from a run TOML file.
+- Run launch requests now support a minimal `strategy` override patch for `name`, `symbols`, `fast_window`, and `slow_window`; the final strategy config is persisted in each run snapshot and visible from `GET /api/v1/runs/{run_id}`.
+- Backtest launch requests now resolve `strategy_ref` strategy templates and persist the resolved strategy plus `strategy_ref` provenance into the per-run config snapshot.
+- `config_ref` plus `strategy_ref` launch coverage preserves the canonical config binding while materializing the referenced strategy template into the final per-run snapshot.
 
 ---
 
