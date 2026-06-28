@@ -19,6 +19,7 @@ $barsCsvPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.csv"
 $barsPath = Join-Path $env:TEMP "trader-binance-paper-auto-$id.parquet"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
+$runId = "binance-paper-auto-$id"
 
 function Invoke-CheckedCargo {
     param([string[]]$CargoArgs)
@@ -62,7 +63,7 @@ ts_ms,open,high,low,close,volume
 
     $template = Get-Content $Config -Raw
     $configText = $template `
-        -replace 'run_id = "binance-testnet-readonly"', "run_id = `"binance-paper-auto-$id`"" `
+        -replace 'run_id = "binance-testnet-readonly"', "run_id = `"$runId`"" `
         -replace 'url = "sqlite://data/binance-testnet.sqlite"', "url = `"$databaseUrl`"" `
         -replace 'source = "csv"', 'source = "parquet"' `
         -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$barsConfigPath`"" `
@@ -88,11 +89,12 @@ ts_ms,open,high,low,close,volume
     Invoke-CheckedTrader @("paper-preflight", "--config", $configPath)
     Invoke-CheckedTrader @("migrate", "--config", $configPath)
     Invoke-CheckedTrader @("paper-run", "--config", $configPath)
-    Invoke-CheckedTrader @("report", "--config", $configPath)
+    Invoke-CheckedTrader @("report", "--config", $configPath, "--run-id", $runId)
     Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $configPath, "--symbol", "BTCUSDT")
 
     [pscustomobject]@{
         config = $configPath
+        run_id = $runId
         bars = $barsPath
         database = $databaseUrl
         ticker_price = $price

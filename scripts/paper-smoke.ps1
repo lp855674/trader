@@ -110,11 +110,13 @@ try {
         throw "trader-server did not become ready"
     }
 
-    $serverPreflight = Invoke-RestMethod "$baseUrl/api/v1/preflight/paper"
+    $preflightBody = @{ config_toml = (Get-Content $configPath -Raw) } | ConvertTo-Json -Compress
+    $serverPreflight = Invoke-RestMethod -Method Post "$baseUrl/api/v1/preflight/paper" -ContentType "application/json" -Body $preflightBody
     Assert-True ($serverPreflight.status -eq "ok") "expected server paper preflight ok"
     Assert-True ($serverPreflight.real_broker_connection -eq $false) "expected local fake broker paper"
 
-    $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
+    $paperBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "paper" } | ConvertTo-Json -Compress
+    $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs" -ContentType "application/json" -Body $paperBody
     Assert-True ($paper.status -eq "running") "expected paper run to start as running"
     $status = Wait-RunStatus $baseUrl $paper.run_id "completed"
 
@@ -125,7 +127,7 @@ try {
     $snapshots = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-snapshots"
     $metrics = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/metrics"
     $events = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/events"
-    $brokerAccount = Invoke-RestMethod "$baseUrl/api/v1/brokers/account/paper"
+    $brokerAccount = Invoke-RestMethod "$baseUrl/api/v1/brokers/account/paper?broker=simulated"
 
     Assert-True ($run.status -eq "completed") "expected completed run"
     Assert-True (@($orders).Count -ge 1) "expected at least one order"

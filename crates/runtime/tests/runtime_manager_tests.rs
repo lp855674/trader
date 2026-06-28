@@ -56,9 +56,14 @@ async fn manager_tracks_active_run_and_cancels_it() {
 
     assert!(observed_cancel.load(Ordering::SeqCst));
     assert!(!manager.is_active("run-1").await);
-    assert_eq!(manager.status("run-1").await, None);
-    assert_eq!(manager.info("run-1").await, None);
-    assert_eq!(manager.metadata("run-1").await, None);
+    assert_eq!(
+        manager.status("run-1").await,
+        Some(RuntimeRunStatus::Canceled)
+    );
+    let terminal_info = manager.info("run-1").await.unwrap();
+    assert_eq!(terminal_info.status, RuntimeRunStatus::Canceled);
+    assert!(terminal_info.last_state_change_at_ms >= cancel_info.last_state_change_at_ms);
+    assert_eq!(manager.metadata("run-1").await.unwrap().mode, metadata.mode);
 }
 
 #[tokio::test]
@@ -108,4 +113,41 @@ async fn manager_tracks_runtime_metadata_for_spawned_run() {
 
     released.notify_one();
     manager.wait_for_idle("run-2").await;
+    assert!(!manager.is_active("run-2").await);
+    assert_eq!(
+        manager.status("run-2").await,
+        Some(RuntimeRunStatus::Completed)
+    );
+    assert_eq!(
+        manager.metadata("run-2").await.unwrap().mode.as_deref(),
+        Some("paper")
+    );
+}
+
+#[tokio::test]
+async fn manager_lists_only_active_runs() {
+    let manager = RuntimeManager::default();
+    let released = Arc::new(Notify::new());
+    let released_for_task = released.clone();
+
+    manager
+        .spawn("run-active".to_string(), move |_cancel| async move {
+            released_for_task.notified().await;
+        })
+        .await
+        .unwrap();
+
+    manager
+        .spawn("run-completed".to_string(), |_cancel| async {})
+        .await
+        .unwrap();
+    manager.wait_for_idle("run-completed").await;
+
+    let active = manager.list_active().await;
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].0, "run-active");
+    assert_eq!(active[0].1.info.status, RuntimeRunStatus::Running);
+
+    released.notify_one();
+    manager.wait_for_idle("run-active").await;
 }

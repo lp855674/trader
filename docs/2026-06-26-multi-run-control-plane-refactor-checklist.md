@@ -456,6 +456,19 @@ These can build on the multi-run control-plane foundation later.
 
 ---
 
+## 11. Progress Notes
+
+2026-06-28:
+
+- Run-scoped top-level API reads now require explicit `run_id` query scope instead of resolving through server run defaults.
+- `GET /api/v1/brokers/account/{account_id}` requires explicit `broker`.
+- `POST /api/v1/preflight/paper` and run launch endpoints (`backtests`, `paper-runs`, `replays`, `live-runs`) require an explicit config source: `config_toml`, `config_ref`, or `config`.
+- Launch paths no longer read `[run_defaults].config_path`; server run defaults remain only compatibility configuration, not active run identity.
+- Smoke scripts and API docs were updated to send explicit launch config bodies.
+- Verified with `cargo test -p api`, `bash ./scripts/check-api-read-model-boundary`, PowerShell AST parsing for modified smoke scripts, and `git diff --check`.
+
+---
+
 ## 11. Immediate Follow-Up
 
 The next document should be an implementation plan that:

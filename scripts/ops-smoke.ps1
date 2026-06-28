@@ -164,7 +164,8 @@ try {
         throw "trader-server did not become ready"
     }
 
-    $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs"
+    $liveBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "live" } | ConvertTo-Json -Compress
+    $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs" -ContentType "application/json" -Body $liveBody
     Assert-True ($live.run_id -eq $runId) "expected live run id $runId"
     Wait-RunStatus $baseUrl $runId "running" | Out-Null
 

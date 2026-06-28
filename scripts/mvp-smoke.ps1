@@ -47,7 +47,7 @@ try {
     Invoke-CheckedCargo @("run", "-p", "trader-cli", "--", "backtest", "--config", $configPath)
     Invoke-CheckedCargo @("run", "-p", "trader-cli", "--", "paper-run", "--config", $configPath)
     Invoke-CheckedCargo @("run", "-p", "trader-cli", "--", "replay", "--config", $configPath)
-    Invoke-CheckedCargo @("run", "-p", "trader-cli", "--", "report", "--config", $configPath)
+    Invoke-CheckedCargo @("run", "-p", "trader-cli", "--", "report", "--config", $configPath, "--run-id", "sample-ma-cross")
 
     $env:TRADER_CONFIG = $serverConfigPath
     powershell -ExecutionPolicy Bypass -File ".\scripts\server-smoke.ps1"

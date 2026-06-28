@@ -226,7 +226,7 @@ enum Command {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
         #[arg(long)]
-        run_id: Option<String>,
+        run_id: String,
         #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
         format: ReportFormat,
         #[arg(long)]
@@ -1731,9 +1731,8 @@ async fn run_command(command: Command) -> Result<()> {
             format,
             output,
         } => {
-            let (app_config, db) = load_db(&config).await?;
+            let (_, db) = load_db(&config).await?;
             db.migrate().await?;
-            let run_id = run_id.unwrap_or_else(|| app_config.runtime.run_id.clone());
             let run_status = db
                 .get_strategy_run(&run_id)
                 .await?

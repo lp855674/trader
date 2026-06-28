@@ -49,7 +49,7 @@ Source of Truth: `crates/api/src/api.rs`
 
 `GET /api/v1/runs/{run_id}/metrics`
 
-Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metrics` 目前仍保留兼容，但只用于默认模板本地链路，不作为多运行页面的数据源。
+Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metrics?run_id={run_id}` 目前仍保留兼容，但必须显式传入 run scope；它不再从默认模板推导运行。
 
 用于展示订单数、成交数、权益曲线摘要等。
 返回重点字段：`order_count`、`fill_count`、`total_return`、`sharpe`、`sortino`、`max_drawdown`、`win_rate`。
@@ -57,10 +57,10 @@ Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metri
 ### 4.3 Broker 状态
 
 `GET /api/v1/brokers/status`
-`GET /api/v1/brokers/account/{account_id}`
+`GET /api/v1/brokers/account/{account_id}?broker={broker}`
 
 用于展示当前可用 broker 和账户快照。
-`brokers/status` 返回 broker 列表，`brokers/account/{account_id}` 返回单账户资金/持仓快照。
+`brokers/status` 返回 broker 列表，`brokers/account/{account_id}` 返回单账户资金/持仓快照。账户快照必须显式传入 broker scope，例如 `broker=simulated`、`broker=binance`、`broker=ibkr`。
 
 ### 4.4 采集状态
 
@@ -80,9 +80,9 @@ Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metri
 
 ### 5.0 纸面预检
 
-`GET /api/v1/preflight/paper`
+`POST /api/v1/preflight/paper`
 
-用于在启动 Paper 前检查配置、broker、账户、风控开关和可用行情条数。
+用于在启动 Paper 前检查配置、broker、账户、风控开关和可用行情条数。请求必须显式提供运行配置（`config_toml`、`config_ref` 或 `config`）；GET 兼容入口不再读取服务器默认 run config。
 
 ### 5.1 创建运行
 
@@ -92,6 +92,7 @@ Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metri
 - `POST /api/v1/live-runs`
 
 前端建议把这四类做成统一“启动运行”表单，区别只在模式和少量参数。
+请求体必须显式提供运行配置，且只能包含一个配置来源：`config_toml`、`config_ref` 或 `config`。`mode` 和 `run_id` 只是对该显式配置的覆盖，不会触发服务器默认 run config 读取。
 `POST /api/v1/backtests` 返回回测摘要；`POST /api/v1/paper-runs` 和 `POST /api/v1/live-runs` 返回 `run_id` + `status`；`POST /api/v1/replays` 返回 replay 摘要。
 
 ### 5.2 运行列表/详情

@@ -6,7 +6,9 @@ if (-not $baseUrl) {
 }
 
 Invoke-RestMethod "$baseUrl/api/v1/health" | Out-Null
-$paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
+$configPath = "configs/backtest/ma_cross.toml"
+$paperBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "paper" } | ConvertTo-Json -Compress
+$paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs" -ContentType "application/json" -Body $paperBody
 if ($paper.status -ne "running") { throw "expected paper run to start as running" }
 
 $status = $null
@@ -21,7 +23,8 @@ $fills = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/fills"
 $balances = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/account-balances"
 $snapshots = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-snapshots"
 $metrics = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/metrics"
-$replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays"
+$replayBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "replay" } | ConvertTo-Json -Compress
+$replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays" -ContentType "application/json" -Body $replayBody
 $events = Invoke-RestMethod "$baseUrl/api/v1/events"
 $runEvents = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/events"
 

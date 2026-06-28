@@ -16,7 +16,7 @@ Target Markets: A股 / 港股 / 美股 / 数字货币
 
 ```text
 GET  /api/v1/health
-GET  /api/v1/preflight/paper
+POST /api/v1/preflight/paper
 POST /api/v1/backtests
 POST /api/v1/paper-runs
 POST /api/v1/replays
@@ -24,7 +24,7 @@ POST /api/v1/live-runs
 GET  /api/v1/live-runs/{run_id}/status
 POST /api/v1/live-runs/{run_id}/stop
 GET  /api/v1/brokers/status
-GET  /api/v1/brokers/account/{account_id}
+GET  /api/v1/brokers/account/{account_id}?broker={broker}
 GET  /api/v1/runs/{run_id}/orders
 GET  /api/v1/runs/{run_id}/fills
 GET  /api/v1/runs/{run_id}/positions
@@ -80,6 +80,8 @@ POST /api/v1/replay/{run_id}/speed/{speed}
 GET  /ws
 ```
 
+Run launch endpoints (`POST /api/v1/backtests`, `/paper-runs`, `/replays`, `/live-runs`) require an explicit run config in the JSON body. Provide exactly one of `config_toml`, `config_ref`, or `config`; optional `mode` and `run_id` only override the supplied config and are not config sources.
+
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
 
 `GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path. `order-events` supports `order_id`, `client_order_id`, `broker_order_id`, `account_id`, `symbol`, `status`, `event_type`, `from_ms`, `to_ms`, and `limit` filters for startup recovery / order lifecycle troubleshooting. `risk-events` supports `risk_type`, `decision`, `account_id`, `symbol`, `from_ms`, `to_ms`, and `limit` filters for pre-trade rejection and reconciliation drift audit.
@@ -97,7 +99,7 @@ Run-owned read models should be queried through explicit run-scoped routes:
 - `GET /api/v1/runs/{run_id}/position-snapshots`
 - `GET /api/v1/runs/{run_id}/metrics`
 
-Legacy top-level endpoints such as `GET /api/v1/orders`, `GET /api/v1/fills`, `GET /api/v1/positions`, `GET /api/v1/account-balances`, `GET /api/v1/portfolio/snapshots`, `GET /api/v1/cash/snapshots`, `GET /api/v1/positions/snapshots`, and `GET /api/v1/metrics` still exist for compatibility with default-template local workflows. They resolve run scope through `[run_defaults].config_path` and are not the multi-run control-plane contract. New integrations should use the explicit `GET /api/v1/runs/{run_id}/...` routes.
+Legacy top-level endpoints such as `GET /api/v1/orders?run_id={run_id}`, `GET /api/v1/fills?run_id={run_id}`, `GET /api/v1/positions?run_id={run_id}`, `GET /api/v1/account-balances?run_id={run_id}`, `GET /api/v1/portfolio/snapshots?run_id={run_id}`, `GET /api/v1/cash/snapshots?run_id={run_id}`, `GET /api/v1/positions/snapshots?run_id={run_id}`, and `GET /api/v1/metrics?run_id={run_id}` still exist for compatibility. They require explicit run scope and no longer resolve run ownership through `[run_defaults].config_path`. New integrations should use the explicit `GET /api/v1/runs/{run_id}/...` routes.
 
 `GET /api/v1/crypto-market-meta` and `GET /api/v1/corporate-actions` are read-only queries over reference-data storage boundaries. Reference-data ingestion can populate Binance market metadata, Binance funding rates, and Yahoo corporate actions through the CLI/scheduled ingestion layer. `GET /api/v1/ingestion/status` reports the latest ingestion tracker entries recorded in `system_logs`. `GET /api/v1/logs` exposes paginated runtime/system logs with `run_id`, `level`, `target`, `from_ms`, `to_ms`, `search`, `limit`, and `offset` filters and returns `{ logs, total, limit, offset }`. `GET /api/v1/system-logs` and `GET /api/v1/runs/{run_id}/system-logs` remain available for direct list readback. `GET /api/v1/ops/logging/metrics` exposes in-process writer dropped-log metrics plus active `[logging]` writer settings; CLI also supports retention purge, `logs count` / `logs tail` / `logs metrics`, JSONL export, and `logs ship` for HTTP NDJSON collector handoff. `trader-server` runs a background retention scheduler using `[logging].retention_days`; CLI/API run launch paths also perform startup cleanup. `logs ship` accepts optional `--max-retries`, `--retry-backoff-ms`, and `--signature-secret-env`; network errors, HTTP 429, and HTTP 5xx are retried with linearly increasing backoff, while non-retryable 4xx statuses fail immediately. When signing is enabled, requests include `X-Trader-Log-Timestamp` and `X-Trader-Log-Signature: v1=<hmac-sha256>`, signing `timestamp.body`.
 
@@ -476,6 +478,17 @@ Replay
   POST /api/v1/replay/{run_id}/resume
   POST /api/v1/replay/{run_id}/seek/{offset}
   POST /api/v1/replay/{run_id}/speed/{speed}
+
+Launch POST requests must include `Content-Type: application/json` and exactly one config source:
+
+```json
+{
+  "config_toml": "[runtime]\nmode = \"paper\"\n...",
+  "mode": "paper"
+}
+```
+
+`config_ref` can reference a stored config version, and `config` can inline a JSON config object. `mode` is only an override applied to the explicit config.
 
 Orders
   GET  /api/v1/runs/{run_id}/orders

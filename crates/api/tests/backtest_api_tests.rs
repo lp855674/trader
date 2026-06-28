@@ -28,7 +28,8 @@ async fn post_backtest_returns_created() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("backtest"))
                 .unwrap(),
         )
         .await
@@ -51,7 +52,8 @@ async fn post_backtest_publishes_algorithm_events_to_event_bus() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("backtest"))
                 .unwrap(),
         )
         .await
@@ -86,7 +88,8 @@ async fn post_backtest_persists_lifecycle_events() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("backtest"))
                 .unwrap(),
         )
         .await
@@ -129,7 +132,8 @@ async fn post_backtest_runs_multi_symbol_data_inputs() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -162,7 +166,8 @@ async fn post_backtest_applies_filtered_universe_config() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -195,7 +200,11 @@ async fn post_backtest_applies_ranked_universe_config() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/ranked_universe_ma_cross.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -229,7 +238,8 @@ async fn post_backtest_applies_feature_ranked_universe_config() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -371,7 +381,8 @@ async fn post_backtest_rejects_alpha_gate_manifest_source_bars_mismatch() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -510,7 +521,8 @@ async fn post_backtest_rejects_alpha_gate_manifest_build_contract_mismatch() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -656,7 +668,8 @@ async fn post_backtest_rejects_alpha_gate_manifest_when_source_bars_content_chan
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -689,7 +702,8 @@ async fn post_backtest_applies_weighted_alpha_components() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -723,7 +737,8 @@ async fn post_backtest_applies_net_signal_alpha_components() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -760,7 +775,8 @@ async fn post_backtest_applies_majority_vote_alpha_components() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -797,7 +813,8 @@ async fn post_backtest_applies_category_majority_alpha_components() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(&config_path, "backtest"))
                 .unwrap(),
         )
         .await
@@ -833,7 +850,11 @@ async fn post_backtest_applies_ema_cross_alpha() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/ema_cross.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -870,7 +891,11 @@ async fn post_backtest_applies_price_momentum_alpha() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/price_momentum.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -906,7 +931,11 @@ async fn post_backtest_applies_price_channel_breakout_alpha() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/price_channel_breakout.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -942,7 +971,11 @@ async fn post_backtest_applies_price_channel_reversion_alpha() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/price_channel_reversion.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -978,7 +1011,11 @@ async fn post_backtest_applies_rsi_reversion_alpha() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/rsi_reversion.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -1014,7 +1051,11 @@ async fn post_backtest_applies_rsi_feature_gate_config() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body_for_config(
+                    "configs/backtest/rsi_feature_gate.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -1045,7 +1086,7 @@ async fn post_paper_run_runs_multi_symbol_data_inputs() {
                 .method("POST")
                 .uri("/api/v1/paper-runs")
                 .header("content-type", "application/json")
-                .body(launch_request_body("paper"))
+                .body(launch_request_body_for_config(&config_path, "paper"))
                 .unwrap(),
         )
         .await
@@ -1124,7 +1165,8 @@ async fn event_routes_return_structured_payload_objects() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("backtest"))
                 .unwrap(),
         )
         .await
@@ -1163,7 +1205,8 @@ async fn run_routes_return_structured_config_objects() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_request_body("backtest"))
                 .unwrap(),
         )
         .await
@@ -1451,7 +1494,7 @@ async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
                 .method("POST")
                 .uri("/api/v1/paper-runs")
                 .header("content-type", "application/json")
-                .body(launch_request_body("paper"))
+                .body(launch_request_body_for_config(&config_path, "paper"))
                 .unwrap(),
         )
         .await
@@ -1488,11 +1531,11 @@ async fn post_paper_run_populates_query_routes() {
     wait_for_status(app.clone(), "sample-ma-cross", "completed").await;
 
     for uri in [
-        "/api/v1/fills",
-        "/api/v1/account-balances",
-        "/api/v1/portfolio/snapshots",
-        "/api/v1/cash/snapshots",
-        "/api/v1/positions/snapshots",
+        "/api/v1/fills?run_id=sample-ma-cross",
+        "/api/v1/account-balances?run_id=sample-ma-cross",
+        "/api/v1/portfolio/snapshots?run_id=sample-ma-cross",
+        "/api/v1/cash/snapshots?run_id=sample-ma-cross",
+        "/api/v1/positions/snapshots?run_id=sample-ma-cross",
     ] {
         let response = app
             .clone()
@@ -1516,7 +1559,7 @@ async fn post_paper_run_populates_query_routes() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/v1/metrics")
+                .uri("/api/v1/metrics?run_id=sample-ma-cross")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1777,12 +1820,16 @@ async fn failed_paper_run_records_failed_status_and_error() {
                 .method("POST")
                 .uri("/api/v1/paper-runs")
                 .header("content-type", "application/json")
-                .body(launch_request_body("paper"))
+                .body(launch_request_body_for_config(
+                    "configs/backtest/missing-bars.toml",
+                    "paper",
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    wait_for_status(app.clone(), "sample-missing-bars", "failed").await;
 
     let response = app
         .oneshot(
@@ -1825,7 +1872,10 @@ async fn active_paper_run_can_be_cancelled() {
                 .method("POST")
                 .uri("/api/v1/paper-runs")
                 .header("content-type", "application/json")
-                .body(launch_request_body("paper"))
+                .body(launch_request_body_for_config(
+                    "configs/backtest/slow-paper.toml",
+                    "paper",
+                ))
                 .unwrap(),
         )
         .await
@@ -1875,7 +1925,12 @@ fn temp_config_with_enabled_broker_submit() -> PathBuf {
 }
 
 fn launch_request_body(mode: &str) -> Body {
-    Body::from(serde_json::json!({ "mode": mode }).to_string())
+    launch_request_body_for_config("configs/backtest/ma_cross.toml", mode)
+}
+
+fn launch_request_body_for_config(path: impl AsRef<std::path::Path>, mode: &str) -> Body {
+    let config_toml = std::fs::read_to_string(path).unwrap();
+    Body::from(serde_json::json!({ "config_toml": config_toml, "mode": mode }).to_string())
 }
 
 async fn register_replay_controller(

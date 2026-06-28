@@ -1687,7 +1687,7 @@ fn replay_accepts_config_argument() {
 }
 
 #[test]
-fn report_accepts_config_argument() {
+fn report_requires_explicit_run_id() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1700,8 +1700,8 @@ fn report_accepts_config_argument() {
         .current_dir(workspace_root())
         .args(["report", "--config", "configs/backtest/ma_cross.toml"])
         .assert()
-        .success()
-        .stdout(contains("report: run_id=sample-ma-cross"));
+        .failure()
+        .stderr(contains("--run-id"));
 }
 
 #[test]
@@ -1738,6 +1738,8 @@ fn report_can_export_csv() {
             "report",
             "--config",
             "configs/backtest/ma_cross.toml",
+            "--run-id",
+            "sample-ma-cross",
             "--format",
             "csv",
             "--output",
@@ -1765,6 +1767,8 @@ fn report_can_export_html() {
             "report",
             "--config",
             "configs/backtest/ma_cross.toml",
+            "--run-id",
+            "sample-ma-cross",
             "--format",
             "html",
             "--output",

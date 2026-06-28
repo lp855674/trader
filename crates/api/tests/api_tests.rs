@@ -251,7 +251,7 @@ async fn broker_account_returns_configured_fake_snapshot() {
     ))
     .oneshot(
         Request::builder()
-            .uri("/api/v1/brokers/account/paper")
+            .uri("/api/v1/brokers/account/paper?broker=simulated")
             .body(Body::empty())
             .unwrap(),
     )
@@ -267,7 +267,65 @@ async fn broker_account_returns_configured_fake_snapshot() {
 }
 
 #[tokio::test]
+async fn broker_account_uses_explicit_broker_without_default_run_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let response = api::router_with_state(api::AppState::with_server_config(
+        db,
+        config::ServerConfig::default(),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/api/v1/brokers/account/paper?broker=simulated")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"account_id\":\"paper\""));
+    assert!(body.contains("\"cash\":\"100000\""));
+}
+
+#[tokio::test]
 async fn paper_preflight_returns_configured_dry_run_summary() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let payload = serde_json::json!({
+        "config_toml": std::fs::read_to_string("configs/backtest/slow-paper.toml").unwrap(),
+    });
+    let response = api::router_with_state(api::AppState::with_server_config(
+        db,
+        config::ServerConfig::default(),
+    ))
+    .oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/preflight/paper")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("\"status\":\"ok\""));
+    assert!(body.contains("\"run_id\":\"sample-slow-paper\""));
+    assert!(body.contains("\"broker\":\"simulated\""));
+    assert!(body.contains("\"broker_mode\":\"paper\""));
+    assert!(body.contains("\"bars\":3"));
+    assert!(body.contains("\"order_submit_enabled\":false"));
+}
+
+#[tokio::test]
+async fn paper_preflight_get_does_not_use_default_run_config() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -284,15 +342,54 @@ async fn paper_preflight_returns_configured_dry_run_summary() {
     .await
     .unwrap();
 
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("POST /api/v1/preflight/paper"));
+}
+
+#[tokio::test]
+async fn paper_preflight_uses_request_config_without_default_run_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-driven-paper-preflight-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::with_server_config(
+        db,
+        config::ServerConfig::default(),
+    ));
+    let payload = serde_json::json!({
+        "config_toml": replay_launch_config_toml_with_mode(
+            "request-paper-preflight-no-default",
+            "paper",
+            &bars_path,
+        ),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/preflight/paper")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(body.contains("\"status\":\"ok\""));
-    assert!(body.contains("\"run_id\":\"sample-slow-paper\""));
+    assert!(body.contains("\"run_id\":\"request-paper-preflight-no-default\""));
     assert!(body.contains("\"broker\":\"simulated\""));
-    assert!(body.contains("\"broker_mode\":\"paper\""));
-    assert!(body.contains("\"bars\":3"));
-    assert!(body.contains("\"order_submit_enabled\":false"));
+    assert!(body.contains("\"bars\":2"));
 }
 
 #[tokio::test]
@@ -1590,7 +1687,11 @@ async fn backtest_start_binds_run_to_config_snapshot_version() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/backtests")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_config_path_body(
+                    "configs/backtest/ma_cross.toml",
+                    "backtest",
+                ))
                 .unwrap(),
         )
         .await
@@ -2138,8 +2239,9 @@ async fn live_runtime_routes_start_report_status_and_stop() {
                 .method("POST")
                 .uri("/api/v1/live-runs")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({ "mode": "live" }).to_string(),
+                .body(launch_config_path_body(
+                    "configs/backtest/ma_cross.toml",
+                    "live",
                 ))
                 .unwrap(),
         )
@@ -2235,7 +2337,8 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/live-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_config_path_body(&config_path, "live"))
                 .unwrap(),
         )
         .await
@@ -2468,6 +2571,31 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
             "\"run_id\":\"run-a\"",
             "\"run_id\":\"run-b\"",
         ),
+        (
+            "/api/v1/orders?run_id=run-a",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/fills?run_id=run-a",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/positions?run_id=run-a",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/account-balances?run_id=run-a",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
+        (
+            "/api/v1/portfolio/snapshots?run_id=run-a",
+            "\"run_id\":\"run-a\"",
+            "\"run_id\":\"run-b\"",
+        ),
     ] {
         let response = app
             .clone()
@@ -2482,9 +2610,37 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
     }
 
     let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/orders")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/runs/run-a/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let metrics: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(metrics["order_count"], 1);
+    assert_eq!(metrics["fill_count"], 1);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/metrics?run_id=run-a")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2543,6 +2699,97 @@ async fn replay_launch_uses_request_config_toml_for_distinct_runs() {
         let binding = db.get_run_config_version_binding(run_id).await.unwrap();
         assert!(binding.is_some(), "{run_id}");
     }
+}
+
+#[tokio::test]
+async fn replay_launch_with_request_config_does_not_require_default_run_config() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let bars_path = temp_config_path("request-driven-no-default-bars").with_extension("csv");
+    std::fs::write(
+        &bars_path,
+        "ts_ms,open,high,low,close,volume\n1,10,10,10,10,1\n2,11,11,11,11,1\n",
+    )
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::with_server_config(
+        db.clone(),
+        config::ServerConfig::default(),
+    ));
+    let payload = serde_json::json!({
+        "config_toml": replay_launch_config_toml("request-replay-no-default", &bars_path),
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/replays")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert!(
+        db.get_strategy_run("request-replay-no-default")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db.get_run_config_version_binding("request-replay-no-default")
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn run_launch_requires_explicit_config_source_even_with_default_run_config() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::new(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("explicit run config"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/backtests")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "mode": "backtest" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("explicit run config"));
 }
 
 #[tokio::test]
@@ -2959,6 +3206,56 @@ async fn run_detail_prefers_in_memory_runtime_state_for_active_run() {
 }
 
 #[tokio::test]
+async fn run_detail_keeps_terminal_runtime_snapshot_out_of_active_runtime_field() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "terminal-detail-run".to_string(),
+        name: "sample".to_string(),
+        mode: "paper".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+
+    let state = api::AppState::new(db, "configs/backtest/ma_cross.toml".into());
+    state
+        .runtime_manager
+        .spawn_with_metadata(
+            "terminal-detail-run".to_string(),
+            RuntimeRunMetadata {
+                mode: Some("paper".to_string()),
+            },
+            |_cancel| async {},
+        )
+        .await
+        .unwrap();
+    state
+        .runtime_manager
+        .wait_for_idle("terminal-detail-run")
+        .await;
+
+    let response = api::router_with_state(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/runs/terminal-detail-run")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["id"], "terminal-detail-run");
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["status_source"], "runtime_registry");
+    assert!(body["runtime"].is_null(), "{body}");
+}
+
+#[tokio::test]
 async fn run_list_prefers_in_memory_runtime_state_for_active_run() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -3051,7 +3348,8 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/live-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_config_path_body(&config_path, "live"))
                 .unwrap(),
         )
         .await
@@ -3096,7 +3394,8 @@ async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/live-runs")
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(launch_config_path_body(&config_path, "live"))
                 .unwrap(),
         )
         .await
@@ -3143,6 +3442,11 @@ fn temp_config_path(prefix: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}.toml", std::process::id()))
+}
+
+fn launch_config_path_body(path: impl AsRef<std::path::Path>, mode: &str) -> Body {
+    let config_toml = std::fs::read_to_string(path).unwrap();
+    Body::from(serde_json::json!({ "config_toml": config_toml, "mode": mode }).to_string())
 }
 
 fn replay_launch_config_toml(run_id: &str, data_path: &std::path::Path) -> String {

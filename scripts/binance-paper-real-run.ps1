@@ -25,10 +25,11 @@ $configPath = Join-Path $env:TEMP "trader-binance-paper-real-$id.toml"
 $barsPath = Join-Path $env:TEMP "trader-binance-paper-real-$id.parquet"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $barsConfigPath = $barsPath.Replace('\', '/')
+$runId = "binance-paper-real-$id"
 
 $template = Get-Content $Config -Raw
 $configText = $template `
-    -replace 'run_id = "binance-testnet-readonly"', "run_id = `"binance-paper-real-$id`"" `
+    -replace 'run_id = "binance-testnet-readonly"', "run_id = `"$runId`"" `
     -replace 'url = "sqlite://data/binance-testnet.sqlite"', "url = `"$databaseUrl`"" `
     -replace 'source = "csv"', 'source = "parquet"' `
     -replace 'path = "datasets/sample/aapl_1d.csv"', "path = `"$barsConfigPath`"" `
@@ -96,12 +97,13 @@ try {
 
     if ($RunPaper) {
         Invoke-CheckedTrader @("paper-run", "--config", $configPath)
-        Invoke-CheckedTrader @("report", "--config", $configPath)
+        Invoke-CheckedTrader @("report", "--config", $configPath, "--run-id", $runId)
         Invoke-CheckedTrader @("binance-paper-open-orders", "--config", $configPath, "--symbol", $Symbol)
     }
 
     [pscustomobject]@{
         config = $configPath
+        run_id = $runId
         bars = $barsPath
         database = $databaseUrl
         symbol = $Symbol

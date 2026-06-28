@@ -129,8 +129,8 @@ try {
     Invoke-CheckedTrader @("backtest", "--config", $parquetConfigPath)
     Invoke-CheckedTrader @("paper-run", "--config", $configPath)
     Invoke-CheckedTrader @("replay", "--config", $configPath)
-    Invoke-CheckedTrader @("report", "--config", $configPath, "--format", "csv", "--output", $csvReportPath)
-    Invoke-CheckedTrader @("report", "--config", $configPath, "--format", "html", "--output", $htmlReportPath)
+    Invoke-CheckedTrader @("report", "--config", $configPath, "--run-id", "sample-ma-cross", "--format", "csv", "--output", $csvReportPath)
+    Invoke-CheckedTrader @("report", "--config", $configPath, "--run-id", "sample-ma-cross", "--format", "html", "--output", $htmlReportPath)
     Assert-True ((Get-Content $csvReportPath -Raw).Contains("sample-ma-cross")) "expected CSV report run id"
     Assert-True ((Get-Content $htmlReportPath -Raw).Contains("<h1>Trader Report</h1>")) "expected HTML report title"
 
@@ -173,7 +173,8 @@ try {
     $brokerStatus = Invoke-RestMethod "$baseUrl/api/v1/brokers/status"
     Assert-True (@($brokerStatus).Count -ge 4) "expected fake broker statuses"
 
-    $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
+    $paperBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "paper" } | ConvertTo-Json -Compress
+    $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs" -ContentType "application/json" -Body $paperBody
     Wait-RunStatus $baseUrl $paper.run_id "completed" | Out-Null
     $fills = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/fills"
     $snapshots = Invoke-RestMethod "$baseUrl/api/v1/runs/$($paper.run_id)/portfolio-snapshots"
@@ -196,10 +197,12 @@ try {
     Assert-True ($cryptoMarketMeta.Content.Trim() -eq "[]") "expected no seeded crypto market metadata"
     Assert-True ($corporateActions.Content.Trim() -eq "[]") "expected no seeded corporate actions"
 
-    $replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays"
+    $replayBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "replay" } | ConvertTo-Json -Compress
+    $replay = Invoke-RestMethod -Method Post "$baseUrl/api/v1/replays" -ContentType "application/json" -Body $replayBody
     Assert-True ($replay.bars -ge 1) "expected replay bars"
 
-    $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs"
+    $liveBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "live" } | ConvertTo-Json -Compress
+    $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs" -ContentType "application/json" -Body $liveBody
     Assert-True ($live.status -eq "running") "expected live running"
     Wait-RunStatus $baseUrl $live.run_id "running" | Out-Null
     $stopped = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs/$($live.run_id)/stop"

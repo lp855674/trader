@@ -11,6 +11,14 @@ pub enum RunSpawnError {
 pub enum RuntimeRunStatus {
     Running,
     CancelRequested,
+    Completed,
+    Canceled,
+}
+
+impl RuntimeRunStatus {
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Running | Self::CancelRequested)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,12 +50,16 @@ struct RunHandle {
     started_at_ms: i64,
     last_state_change_at_ms: i64,
     metadata: RuntimeRunMetadata,
-    join: JoinHandle<()>,
+    join: Option<JoinHandle<()>>,
 }
 
 impl RuntimeManager {
     pub async fn is_active(&self, run_id: &str) -> bool {
-        self.inner.lock().await.contains_key(run_id)
+        self.inner
+            .lock()
+            .await
+            .get(run_id)
+            .is_some_and(|handle| handle.status.is_active())
     }
 
     pub async fn status(&self, run_id: &str) -> Option<RuntimeRunStatus> {
@@ -93,6 +105,31 @@ impl RuntimeManager {
             })
     }
 
+    pub async fn list_active(&self) -> Vec<(String, RuntimeRunSnapshot)> {
+        let mut snapshots = self
+            .inner
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, handle)| handle.status.is_active())
+            .map(|(run_id, handle)| {
+                (
+                    run_id.clone(),
+                    RuntimeRunSnapshot {
+                        info: RuntimeRunInfo {
+                            status: handle.status,
+                            started_at_ms: handle.started_at_ms,
+                            last_state_change_at_ms: handle.last_state_change_at_ms,
+                        },
+                        metadata: handle.metadata.clone(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.0.cmp(&right.0));
+        snapshots
+    }
+
     pub async fn cancel(&self, run_id: &str) -> bool {
         let mut runs = self.inner.lock().await;
         let Some(handle) = runs.get_mut(run_id) else {
@@ -124,7 +161,10 @@ impl RuntimeManager {
         Fut: Future<Output = ()> + Send + 'static,
     {
         let mut runs = self.inner.lock().await;
-        if runs.contains_key(&run_id) {
+        if runs
+            .get(&run_id)
+            .is_some_and(|handle| handle.status.is_active())
+        {
             return Err(RunSpawnError::AlreadyRunning);
         }
 
@@ -135,7 +175,7 @@ impl RuntimeManager {
         let task_run_id = run_id.clone();
         let join = tokio::spawn(async move {
             task(task_cancel).await;
-            manager.inner.lock().await.remove(&task_run_id);
+            manager.mark_terminal(&task_run_id).await;
         });
 
         runs.insert(
@@ -146,20 +186,37 @@ impl RuntimeManager {
                 started_at_ms,
                 last_state_change_at_ms: started_at_ms,
                 metadata,
-                join,
+                join: Some(join),
             },
         );
         Ok(())
     }
 
+    async fn mark_terminal(&self, run_id: &str) {
+        let mut runs = self.inner.lock().await;
+        let Some(handle) = runs.get_mut(run_id) else {
+            return;
+        };
+        handle.status = if handle.status == RuntimeRunStatus::CancelRequested {
+            RuntimeRunStatus::Canceled
+        } else {
+            RuntimeRunStatus::Completed
+        };
+        handle.last_state_change_at_ms = chrono::Utc::now().timestamp_millis();
+    }
+
     pub async fn wait_for_idle(&self, run_id: &str) {
         loop {
-            let join = self
-                .inner
-                .lock()
-                .await
-                .remove(run_id)
-                .map(|handle| handle.join);
+            let join = {
+                let mut runs = self.inner.lock().await;
+                let Some(handle) = runs.get_mut(run_id) else {
+                    return;
+                };
+                if !handle.status.is_active() {
+                    return;
+                }
+                handle.join.take()
+            };
             if let Some(join) = join {
                 let _ = join.await;
                 return;
@@ -167,6 +224,7 @@ impl RuntimeManager {
             if !self.is_active(run_id).await {
                 return;
             }
+            tokio::task::yield_now().await;
         }
     }
 }

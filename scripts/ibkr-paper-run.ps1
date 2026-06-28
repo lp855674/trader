@@ -189,10 +189,10 @@ try {
         }
         throw
     }
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "text", "--output", $textReportPath)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "csv", "--output", $csvReportPath)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--format", "html", "--output", $htmlReportPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "text", "--output", $textReportPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
+    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
     $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecks } else { $null }
 
     $summary = [pscustomobject]@{
