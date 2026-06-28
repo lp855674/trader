@@ -11,7 +11,7 @@ use runtime::RuntimeRunMetadata;
 use rust_decimal::Decimal;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage::Db;
+use storage::{Db, NewConfigVersion};
 use tokio::sync::{Mutex, Notify};
 use tower::ServiceExt;
 
@@ -1248,6 +1248,339 @@ async fn run_routes_return_structured_config_objects() {
 }
 
 #[tokio::test]
+async fn post_backtest_strategy_override_persists_distinct_run_config_snapshots() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let config_toml = std::fs::read_to_string("configs/backtest/ma_cross.toml").unwrap();
+
+    for (run_id, strategy_name, fast_window, slow_window) in [
+        ("strategy-override-fast", "moving_average_cross", 2, 3),
+        (
+            "strategy-override-ema",
+            "exponential_moving_average_cross",
+            4,
+            5,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/backtests")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "config_toml": config_toml,
+                            "run_id": run_id,
+                            "mode": "backtest",
+                            "strategy": {
+                                "name": strategy_name,
+                                "symbols": ["US:NASDAQ:MSFT:EQUITY"],
+                                "fast_window": fast_window,
+                                "slow_window": slow_window
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        if status != StatusCode::CREATED {
+            panic!(
+                "expected CREATED, got {status}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+        }
+    }
+
+    let first = get_run_json(app.clone(), "strategy-override-fast").await;
+    let second = get_run_json(app, "strategy-override-ema").await;
+
+    assert_eq!(
+        first["config"]["runtime"]["run_id"],
+        "strategy-override-fast"
+    );
+    assert_eq!(first["config"]["strategy"]["name"], "moving_average_cross");
+    assert_eq!(
+        first["config"]["strategy"]["symbols"],
+        serde_json::json!(["US:NASDAQ:MSFT:EQUITY"])
+    );
+    assert_eq!(first["config"]["strategy"]["fast_window"], 2);
+    assert_eq!(first["config"]["strategy"]["slow_window"], 3);
+
+    assert_eq!(
+        second["config"]["runtime"]["run_id"],
+        "strategy-override-ema"
+    );
+    assert_eq!(
+        second["config"]["strategy"]["name"],
+        "exponential_moving_average_cross"
+    );
+    assert_eq!(
+        second["config"]["strategy"]["symbols"],
+        serde_json::json!(["US:NASDAQ:MSFT:EQUITY"])
+    );
+    assert_eq!(second["config"]["strategy"]["fast_window"], 4);
+    assert_eq!(second["config"]["strategy"]["slow_window"], 5);
+}
+
+#[tokio::test]
+async fn post_backtest_rejects_invalid_strategy_override_patch() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let config_toml = std::fs::read_to_string("configs/backtest/ma_cross.toml").unwrap();
+
+    for (case_name, strategy, expected_error) in [
+        (
+            "empty-name",
+            serde_json::json!({ "name": "" }),
+            "strategy.name",
+        ),
+        (
+            "empty-symbols",
+            serde_json::json!({ "symbols": [] }),
+            "strategy.symbols",
+        ),
+        (
+            "zero-fast-window",
+            serde_json::json!({ "fast_window": 0 }),
+            "strategy.fast_window",
+        ),
+        (
+            "zero-slow-window",
+            serde_json::json!({ "slow_window": 0 }),
+            "strategy.slow_window",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/backtests")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "config_toml": config_toml,
+                            "run_id": format!("invalid-strategy-override-{case_name}"),
+                            "mode": "backtest",
+                            "strategy": strategy
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{case_name} returned {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|message| message.contains(expected_error)),
+            "{case_name} error did not contain {expected_error}: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn post_backtest_strategy_ref_replaces_run_config_strategy_snapshot() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    create_strategy_template(
+        &db,
+        "ma-cross-template",
+        strategy_template_json("moving_average_cross", &["US:NASDAQ:MSFT:EQUITY"], 4, 5),
+    )
+    .await;
+    let app = router_with_state(AppState::with_default_run_config(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let config_toml = std::fs::read_to_string("configs/backtest/ma_cross.toml").unwrap();
+
+    let response = post_backtest_launch(
+        app.clone(),
+        serde_json::json!({
+            "config_toml": config_toml,
+            "run_id": "strategy-ref-template",
+            "mode": "backtest",
+            "strategy_ref": {
+                "name": "ma-cross-template",
+                "version": 1,
+                "published": false
+            }
+        }),
+    )
+    .await;
+    assert_created(response).await;
+
+    let run = get_run_json(app, "strategy-ref-template").await;
+    assert_eq!(run["config"]["strategy"]["name"], "moving_average_cross");
+    assert_eq!(
+        run["config"]["strategy"]["symbols"],
+        serde_json::json!(["US:NASDAQ:MSFT:EQUITY"])
+    );
+    assert_eq!(run["config"]["strategy"]["fast_window"], 4);
+    assert_eq!(run["config"]["strategy"]["slow_window"], 5);
+    assert_eq!(
+        run["config"]["_provenance"]["strategy_ref"]["name"],
+        "ma-cross-template"
+    );
+    assert_eq!(run["config"]["_provenance"]["strategy_ref"]["version"], 1);
+    assert_eq!(
+        run["config"]["_provenance"]["strategy_ref"]["published"],
+        false
+    );
+
+    let binding = db
+        .get_run_config_version_binding("strategy-ref-template")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.config_id, "run:strategy-ref-template");
+}
+
+#[tokio::test]
+async fn post_backtest_strategy_ref_then_inline_strategy_override_wins() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    create_strategy_template(
+        &db,
+        "ma-cross-template",
+        strategy_template_json("moving_average_cross", &["US:NASDAQ:MSFT:EQUITY"], 4, 5),
+    )
+    .await;
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let config_toml = std::fs::read_to_string("configs/backtest/ma_cross.toml").unwrap();
+
+    let response = post_backtest_launch(
+        app.clone(),
+        serde_json::json!({
+            "config_toml": config_toml,
+            "run_id": "strategy-ref-inline-override",
+            "mode": "backtest",
+            "strategy_ref": {
+                "name": "ma-cross-template",
+                "version": 1,
+                "published": false
+            },
+            "strategy": {
+                "symbols": ["US:NASDAQ:AAPL:EQUITY"],
+                "fast_window": 2
+            }
+        }),
+    )
+    .await;
+    assert_created(response).await;
+
+    let run = get_run_json(app, "strategy-ref-inline-override").await;
+    assert_eq!(run["config"]["strategy"]["name"], "moving_average_cross");
+    assert_eq!(
+        run["config"]["strategy"]["symbols"],
+        serde_json::json!(["US:NASDAQ:AAPL:EQUITY"])
+    );
+    assert_eq!(run["config"]["strategy"]["fast_window"], 2);
+    assert_eq!(run["config"]["strategy"]["slow_window"], 5);
+    assert_eq!(
+        run["config"]["_provenance"]["strategy_ref"]["config_id"],
+        "config:ma-cross-template:v1"
+    );
+}
+
+#[tokio::test]
+async fn post_backtest_rejects_missing_or_invalid_strategy_ref() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    create_strategy_template(
+        &db,
+        "invalid-strategy-template",
+        serde_json::json!({ "runtime": { "mode": "backtest" } }),
+    )
+    .await;
+    let app = router_with_state(AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let config_toml = std::fs::read_to_string("configs/backtest/ma_cross.toml").unwrap();
+
+    for (case_name, strategy_ref, expected_error) in [
+        (
+            "missing",
+            serde_json::json!({
+                "name": "missing-strategy-template",
+                "version": 1,
+                "published": false
+            }),
+            "strategy_ref missing-strategy-template was not found",
+        ),
+        (
+            "invalid",
+            serde_json::json!({
+                "name": "invalid-strategy-template",
+                "version": 1,
+                "published": false
+            }),
+            "strategy_ref invalid-strategy-template:1 is not a strategy template",
+        ),
+    ] {
+        let response = post_backtest_launch(
+            app.clone(),
+            serde_json::json!({
+                "config_toml": config_toml,
+                "run_id": format!("strategy-ref-{case_name}"),
+                "mode": "backtest",
+                "strategy_ref": strategy_ref
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{case_name} returned {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|message| message.contains(expected_error)),
+            "{case_name} error did not contain {expected_error}: {body}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn post_replay_publishes_market_events_to_event_bus() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -1958,6 +2291,80 @@ fn launch_request_body(mode: &str) -> Body {
 fn launch_request_body_for_config(path: impl AsRef<std::path::Path>, mode: &str) -> Body {
     let config_toml = std::fs::read_to_string(path).unwrap();
     Body::from(serde_json::json!({ "config_toml": config_toml, "mode": mode }).to_string())
+}
+
+async fn post_backtest_launch(
+    app: axum::Router,
+    payload: serde_json::Value,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/backtests")
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+async fn assert_created(response: axum::response::Response) {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "expected CREATED, got {status}: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+}
+
+async fn create_strategy_template(db: &Db, name: &str, content: serde_json::Value) {
+    db.create_config_version(NewConfigVersion {
+        name: name.to_string(),
+        content_json: content.to_string(),
+        created_by: "test".to_string(),
+        parent_version: None,
+        target_env: None,
+        rollout: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+}
+
+fn strategy_template_json(
+    name: &str,
+    symbols: &[&str],
+    fast_window: usize,
+    slow_window: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "universe": "static",
+        "alpha": name,
+        "alpha_conflict_resolution": "highest_confidence",
+        "symbols": symbols,
+        "fast_window": fast_window,
+        "slow_window": slow_window
+    })
+}
+
+async fn get_run_json(app: axum::Router, run_id: &str) -> serde_json::Value {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/runs/{run_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 async fn register_replay_controller(

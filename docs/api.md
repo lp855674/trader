@@ -80,7 +80,7 @@ POST /api/v1/replay/{run_id}/speed/{speed}
 GET  /ws
 ```
 
-Run launch endpoints (`POST /api/v1/backtests`, `/paper-runs`, `/replays`, `/live-runs`) require an explicit run config in the JSON body. Provide exactly one of `config_toml`, `config_ref`, or `config`; optional `mode` and `run_id` only override the supplied config and are not config sources.
+Run launch endpoints (`POST /api/v1/backtests`, `/paper-runs`, `/replays`, `/live-runs`) require an explicit run config in the JSON body. Provide exactly one of `config_toml`, `config_ref`, or `config`; optional `mode`, `run_id`, `strategy_ref`, and `strategy` only override the supplied config and are not config sources. `strategy_ref` references a stored config lifecycle version whose content is a strategy template, replaces the supplied config's `strategy`, and records `_provenance.strategy_ref` in the final snapshot. The optional inline `strategy` patch is applied after `strategy_ref` and currently supports `name`, `symbols`, `fast_window`, and `slow_window`; the persisted run config snapshot and `GET /api/v1/runs/{run_id}` response expose the final config after overrides.
 
 REST event query responses use an API-owned response model. `payload` is returned as structured JSON, not as a double-encoded JSON string:
 
@@ -484,11 +484,23 @@ Launch POST requests must include `Content-Type: application/json` and exactly o
 ```json
 {
   "config_toml": "[runtime]\nmode = \"paper\"\n...",
-  "mode": "paper"
+  "mode": "paper",
+  "run_id": "paper-run-001",
+  "strategy_ref": {
+    "name": "ma-cross-template",
+    "version": 1,
+    "published": false
+  },
+  "strategy": {
+    "name": "moving_average_cross",
+    "symbols": ["US:NASDAQ:AAPL:EQUITY"],
+    "fast_window": 2,
+    "slow_window": 3
+  }
 }
 ```
 
-`config_ref` can reference a stored config version, and `config` can inline a JSON config object. `mode` is only an override applied to the explicit config.
+`config_ref` can reference a stored full run config version, and `config` can inline a JSON config object. `strategy_ref` can reference a stored strategy template version. Strategy assembly is applied in this order: explicit run config source, `strategy_ref`, then inline `strategy`. `mode` and `run_id` are independent runtime overrides.
 
 Orders
   GET  /api/v1/runs/{run_id}/orders

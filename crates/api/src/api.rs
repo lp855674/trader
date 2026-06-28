@@ -71,6 +71,8 @@ struct RunLaunchRequest {
     config_toml: Option<String>,
     run_id: Option<String>,
     mode: Option<config::RuntimeMode>,
+    strategy_ref: Option<RunConfigReference>,
+    strategy: Option<RunStrategyOverride>,
 }
 
 struct RunLaunchSpec {
@@ -87,6 +89,16 @@ enum LaunchConfigSource {
 struct RunSpecPatch {
     run_id: Option<String>,
     mode: Option<config::RuntimeMode>,
+    strategy_ref: Option<RunConfigReference>,
+    strategy: Option<RunStrategyOverride>,
+}
+
+#[derive(Deserialize)]
+struct RunStrategyOverride {
+    name: Option<String>,
+    symbols: Option<Vec<String>>,
+    fast_window: Option<usize>,
+    slow_window: Option<usize>,
 }
 
 struct PreparedLaunch {
@@ -1056,6 +1068,8 @@ fn run_launch_spec_from_request(
         patch: RunSpecPatch {
             run_id: request.run_id,
             mode: request.mode,
+            strategy_ref: request.strategy_ref,
+            strategy: request.strategy,
         },
     })
 }
@@ -1127,6 +1141,41 @@ async fn launch_config_from_ref(
     })
 }
 
+async fn apply_strategy_ref(
+    db: &storage::Db,
+    launch_config: &mut LaunchConfig,
+    strategy_ref: Option<&RunConfigReference>,
+) -> Result<(), ApiError> {
+    let Some(strategy_ref) = strategy_ref else {
+        return Ok(());
+    };
+
+    let config = if let Some(version) = strategy_ref.version {
+        db.get_config(&strategy_ref.name, version).await?
+    } else if strategy_ref.published {
+        db.get_published_config(&strategy_ref.name).await?
+    } else {
+        db.get_latest_config(&strategy_ref.name).await?
+    }
+    .ok_or_else(|| bad_request(format!("strategy_ref {} was not found", strategy_ref.name)))?;
+
+    let strategy_json = payload_response(config.content_json.clone());
+    let strategy_config: config::StrategyConfig = serde_json::from_value(strategy_json.clone())
+        .map_err(|error| {
+            bad_request(format!(
+                "strategy_ref {}:{} is not a strategy template: {error}",
+                config.name, config.version
+            ))
+        })?;
+
+    launch_config.app_config.strategy = strategy_config;
+    set_snapshot_strategy(&mut launch_config.snapshot_json, strategy_json)?;
+    set_snapshot_strategy_ref_provenance(&mut launch_config.snapshot_json, strategy_ref, &config)?;
+    rewrite_launch_snapshot_as_json(launch_config, "failed to encode strategy_ref run config")?;
+
+    Ok(())
+}
+
 fn apply_launch_overrides(
     launch_config: &mut LaunchConfig,
     patch: &RunSpecPatch,
@@ -1152,16 +1201,153 @@ fn apply_launch_overrides(
         changed = true;
     }
 
-    if changed {
-        launch_config.snapshot_content = serde_json::to_string_pretty(&launch_config.snapshot_json)
-            .map_err(|error| {
-                ApiError(anyhow::anyhow!(
-                    "failed to encode overridden run config: {error}"
-                ))
-            })?;
-        launch_config.snapshot_format = "JSON";
+    if let Some(strategy) = patch.strategy.as_ref() {
+        changed |= apply_strategy_launch_override(
+            &mut launch_config.app_config,
+            &mut launch_config.snapshot_json,
+            strategy,
+        )?;
     }
 
+    if changed {
+        rewrite_launch_snapshot_as_json(launch_config, "failed to encode overridden run config")?;
+    }
+
+    Ok(())
+}
+
+fn rewrite_launch_snapshot_as_json(
+    launch_config: &mut LaunchConfig,
+    context: &str,
+) -> Result<(), ApiError> {
+    launch_config.snapshot_content = serde_json::to_string_pretty(&launch_config.snapshot_json)
+        .map_err(|error| ApiError(anyhow::anyhow!("{context}: {error}")))?;
+    launch_config.snapshot_format = "JSON";
+    Ok(())
+}
+
+fn apply_strategy_launch_override(
+    app_config: &mut config::AppConfig,
+    snapshot_json: &mut serde_json::Value,
+    strategy: &RunStrategyOverride,
+) -> Result<bool, ApiError> {
+    let mut changed = false;
+
+    if let Some(name) = strategy.name.as_ref() {
+        let name = non_empty_override(name, "strategy.name")?;
+        app_config.strategy.name = name.clone();
+        set_snapshot_strategy_field(snapshot_json, "name", serde_json::Value::String(name))?;
+        changed = true;
+    }
+
+    if let Some(symbols) = strategy.symbols.as_ref() {
+        if symbols.is_empty() {
+            return Err(bad_request("strategy.symbols override must not be empty"));
+        }
+        let symbols = symbols
+            .iter()
+            .map(|symbol| non_empty_override(symbol, "strategy.symbols"))
+            .collect::<Result<Vec<_>, _>>()?;
+        app_config.strategy.symbols = symbols.clone();
+        set_snapshot_strategy_field(snapshot_json, "symbols", serde_json::json!(symbols))?;
+        changed = true;
+    }
+
+    if let Some(fast_window) = strategy.fast_window {
+        if fast_window == 0 {
+            return Err(bad_request(
+                "strategy.fast_window override must be greater than 0",
+            ));
+        }
+        app_config.strategy.fast_window = fast_window;
+        set_snapshot_strategy_field(snapshot_json, "fast_window", serde_json::json!(fast_window))?;
+        changed = true;
+    }
+
+    if let Some(slow_window) = strategy.slow_window {
+        if slow_window == 0 {
+            return Err(bad_request(
+                "strategy.slow_window override must be greater than 0",
+            ));
+        }
+        app_config.strategy.slow_window = slow_window;
+        set_snapshot_strategy_field(snapshot_json, "slow_window", serde_json::json!(slow_window))?;
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+fn non_empty_override(value: &str, field: &str) -> Result<String, ApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(bad_request(format!("{field} override must not be empty")));
+    }
+    Ok(value.to_string())
+}
+
+fn set_snapshot_strategy_field(
+    snapshot_json: &mut serde_json::Value,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<(), ApiError> {
+    let Some(root) = snapshot_json.as_object_mut() else {
+        return Err(ApiError(anyhow::anyhow!(
+            "run config snapshot must be a JSON object"
+        )));
+    };
+    let strategy = root
+        .entry("strategy".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(strategy) = strategy.as_object_mut() else {
+        return Err(bad_request(
+            "run config snapshot strategy section must be an object",
+        ));
+    };
+    strategy.insert(field.to_string(), value);
+    Ok(())
+}
+
+fn set_snapshot_strategy(
+    snapshot_json: &mut serde_json::Value,
+    strategy_json: serde_json::Value,
+) -> Result<(), ApiError> {
+    let Some(root) = snapshot_json.as_object_mut() else {
+        return Err(ApiError(anyhow::anyhow!(
+            "run config snapshot must be a JSON object"
+        )));
+    };
+    root.insert("strategy".to_string(), strategy_json);
+    Ok(())
+}
+
+fn set_snapshot_strategy_ref_provenance(
+    snapshot_json: &mut serde_json::Value,
+    strategy_ref: &RunConfigReference,
+    config: &storage::ConfigVersion,
+) -> Result<(), ApiError> {
+    let Some(root) = snapshot_json.as_object_mut() else {
+        return Err(ApiError(anyhow::anyhow!(
+            "run config snapshot must be a JSON object"
+        )));
+    };
+    let provenance = root
+        .entry("_provenance".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(provenance) = provenance.as_object_mut() else {
+        return Err(bad_request(
+            "run config snapshot _provenance section must be an object",
+        ));
+    };
+    provenance.insert(
+        "strategy_ref".to_string(),
+        serde_json::json!({
+            "name": &strategy_ref.name,
+            "version": config.version,
+            "published": strategy_ref.published,
+            "config_id": &config.id,
+        }),
+    );
     Ok(())
 }
 
@@ -1188,7 +1374,13 @@ async fn prepare_launch(
     request: Option<Json<RunLaunchRequest>>,
 ) -> Result<PreparedLaunch, ApiError> {
     let spec = run_launch_spec_from_request(request)?;
-    let launch_config = resolve_launch_config_source(state, &spec.source).await?;
+    let mut launch_config = resolve_launch_config_source(state, &spec.source).await?;
+    apply_strategy_ref(
+        &state.db,
+        &mut launch_config,
+        spec.patch.strategy_ref.as_ref(),
+    )
+    .await?;
     let (app_config, run_spec, snapshot) = materialize_run_spec(launch_config, &spec.patch)?;
     ensure_launch_mode(&run_spec, expected_mode, endpoint)?;
 
