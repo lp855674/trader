@@ -1465,6 +1465,78 @@ async fn post_backtest_strategy_ref_replaces_run_config_strategy_snapshot() {
 }
 
 #[tokio::test]
+async fn post_backtest_config_ref_with_strategy_ref_preserves_binding_and_final_config() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    create_run_config_template(
+        &db,
+        "canonical-backtest-run",
+        "configs/backtest/ma_cross.toml",
+    )
+    .await;
+    create_strategy_template(
+        &db,
+        "ma-cross-template",
+        strategy_template_json("moving_average_cross", &["US:NASDAQ:MSFT:EQUITY"], 7, 11),
+    )
+    .await;
+    let app = router_with_state(AppState::with_default_run_config(
+        db.clone(),
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let response = post_backtest_launch(
+        app.clone(),
+        serde_json::json!({
+            "config_ref": {
+                "name": "canonical-backtest-run",
+                "version": 1,
+                "published": false
+            },
+            "run_id": "config-ref-strategy-ref-run",
+            "strategy_ref": {
+                "name": "ma-cross-template",
+                "version": 1,
+                "published": false
+            }
+        }),
+    )
+    .await;
+    assert_created(response).await;
+
+    let binding = db
+        .get_run_config_version_binding("config-ref-strategy-ref-run")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.config_id, "config:canonical-backtest-run:v1");
+    assert_eq!(binding.version, "1");
+
+    let run = get_run_json(app, "config-ref-strategy-ref-run").await;
+    assert_eq!(
+        run["config"]["runtime"]["run_id"],
+        "config-ref-strategy-ref-run"
+    );
+    assert_eq!(run["config"]["strategy"]["name"], "moving_average_cross");
+    assert_eq!(
+        run["config"]["strategy"]["symbols"],
+        serde_json::json!(["US:NASDAQ:MSFT:EQUITY"])
+    );
+    assert_eq!(run["config"]["strategy"]["fast_window"], 7);
+    assert_eq!(run["config"]["strategy"]["slow_window"], 11);
+    assert_eq!(
+        run["config"]["_provenance"]["strategy_ref"]["name"],
+        "ma-cross-template"
+    );
+    assert_eq!(run["config"]["_provenance"]["strategy_ref"]["version"], 1);
+    assert_eq!(
+        run["config"]["_provenance"]["strategy_ref"]["config_id"],
+        "config:ma-cross-template:v1"
+    );
+}
+
+#[tokio::test]
 async fn post_backtest_strategy_ref_then_inline_strategy_override_wins() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let db = Db::connect("sqlite::memory:").await.unwrap();
@@ -2324,6 +2396,23 @@ async fn create_strategy_template(db: &Db, name: &str, content: serde_json::Valu
     db.create_config_version(NewConfigVersion {
         name: name.to_string(),
         content_json: content.to_string(),
+        created_by: "test".to_string(),
+        parent_version: None,
+        target_env: None,
+        rollout: None,
+        ts_ms: 100,
+    })
+    .await
+    .unwrap();
+}
+
+async fn create_run_config_template(db: &Db, name: &str, path: &str) {
+    let config_toml = std::fs::read_to_string(path).unwrap();
+    let config_value: toml::Value = toml::from_str(&config_toml).unwrap();
+    let content_json = serde_json::to_string(&config_value).unwrap();
+    db.create_config_version(NewConfigVersion {
+        name: name.to_string(),
+        content_json,
         created_by: "test".to_string(),
         parent_version: None,
         target_env: None,
