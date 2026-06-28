@@ -258,22 +258,45 @@ Broker订单ID
 
 ## 10. Strategy Config
 
-```yaml
-strategies:
+策略配置分三层：
 
-  ma_cross:
-    enabled: true
+```text
+StrategyDefinition
+  策略类型、实现、输入输出契约
 
-    symbols:
-      - AAPL
-      - TSLA
+StrategyTemplate
+  可复用参数模板，例如 alpha、窗口、universe 规则
 
-    timeframe: 1m
-
-    params:
-      fast_window: 20
-      slow_window: 60
+StrategyInstance
+  绑定到一个 RunSpec，包含 run_id、symbols、account、risk、data 与 config snapshot
 ```
+
+现有 TOML 里的 `[strategy]` 是 run launch template 的一部分，用来构造 `RunSpec.strategy`。它不是 server 进程的唯一活跃策略。
+
+示例模板：
+
+```toml
+[strategy]
+name = "moving_average_cross"
+alpha = "moving_average_cross"
+symbols = ["US:NASDAQ:AAPL:EQUITY", "US:NASDAQ:MSFT:EQUITY"]
+fast_window = 20
+slow_window = 60
+```
+
+启动 run 时，模板会和 run 级字段一起绑定：
+
+```text
+RunSpec
+  run_id = "paper-ma-cross-a"
+  mode = "paper"
+  strategy = moving_average_cross template
+  broker/account = paper account
+  data = selected live or historical source
+  risk = per-run guardrails
+```
+
+一个 server 可以同时运行多个使用相同 `StrategyDefinition`、不同 `StrategyTemplate` 或不同 symbols/account 的 run。
 
 ---
 
@@ -817,7 +840,7 @@ API / WebSocket
 
 ## 28. Strategy Hot Reload
 
-支持配置级热更新。
+支持配置级热更新，但热更新作用域是 run 或下一次 run launch，不是 server 全局策略替换。
 
 允许热更新：
 
@@ -840,6 +863,8 @@ run mode
 
 account binding
 ```
+
+需要改变 `strategy type`、`run mode` 或 `account binding` 时，应启动新的 run，并为新 run 记录新的 config snapshot 或 config version binding。
 
 ---
 

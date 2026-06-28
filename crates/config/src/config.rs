@@ -45,6 +45,7 @@ pub enum BrokerMode {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
+    /// Run launch template. Server startup must not treat this as deployment identity.
     pub runtime: RuntimeConfig,
     pub database: DatabaseConfig,
     pub data: DataConfig,
@@ -62,6 +63,7 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
+    /// Deployment-level config for the control plane process.
     pub database: DatabaseConfig,
     #[serde(default)]
     pub server: ServerSettings,
@@ -112,6 +114,7 @@ pub struct DataInputConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StrategyConfig {
+    /// Strategy template selected per run and copied into RunSpec.
     pub name: String,
     #[serde(default = "default_universe_name")]
     pub universe: String,
