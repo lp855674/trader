@@ -474,13 +474,18 @@ These can build on the multi-run control-plane foundation later.
 - Launch paths no longer read `[run_defaults].config_path`; server run defaults remain only compatibility configuration, not active run identity.
 - Smoke scripts and API docs were updated to send explicit launch config bodies.
 - Verified with `cargo test -p api`, `bash ./scripts/check-api-read-model-boundary`, PowerShell AST parsing for modified smoke scripts, and `git diff --check`.
-- Full `scripts/verify.ps1` now exits 0. It still prints the historical `check-storage-dto-boundary.ps1` violations in `crates/api/tests/api_tests.rs`, `crates/runtime/src/live.rs`, and `crates/runtime/tests/live_runtime_tests.rs`; keep that cleanup as a separate slice from Workstream E.
+- Full `scripts/verify.ps1` now exits 0, and the historical `check-storage-dto-boundary.ps1` violations in `crates/api/tests/api_tests.rs`, `crates/runtime/src/live.rs`, and `crates/runtime/tests/live_runtime_tests.rs` have been cleaned up.
 - `AppState::new(db)` now builds a server control-plane state with no default run config; tests that need legacy run defaults use `AppState::with_default_run_config(...)` explicitly.
 - API logging retention scheduling now uses server logging config directly instead of reading retention settings from a run TOML file.
 - Run launch requests now support a minimal `strategy` override patch for `name`, `symbols`, `fast_window`, and `slow_window`; the final strategy config is persisted in each run snapshot and visible from `GET /api/v1/runs/{run_id}`.
 - Backtest launch requests now resolve `strategy_ref` strategy templates and persist the resolved strategy plus `strategy_ref` provenance into the per-run config snapshot.
 - `config_ref` plus `strategy_ref` launch coverage preserves the canonical config binding while materializing the referenced strategy template into the final per-run snapshot.
 - Final verification passed with `cargo test -p config`, `cargo test -p runtime`, `cargo test -p api`, `cargo test -p trader-cli`, `cargo check --workspace`, `bash ./scripts/check-api-read-model-boundary`, and `.\scripts\verify.ps1`.
+
+2026-06-29:
+
+- Closed the storage DTO boundary cleanup slice by moving Live runtime startup recovery and API/runtime test seeding onto storage-owned command APIs instead of direct storage write DTO construction.
+- Verified with `.\scripts\check-storage-dto-boundary.ps1`, `cargo test -p api`, `cargo test -p runtime`, `git diff --check`, and `.\scripts\verify.ps1`.
 
 ---
 
@@ -490,5 +495,5 @@ This milestone is complete. The implementation plan in `docs/superpowers/plans/2
 
 Recommended next slice:
 
-- clean up the historical storage DTO boundary violations reported by `scripts/verify.ps1`;
-- push the local `main` commits to `origin/main` after final review.
+- harden Live recovery with long-running broker integration verification;
+- decide whether optional process isolation for Live runs belongs in the next milestone.
