@@ -1,6 +1,6 @@
 # Trader Multi-Run Control Plane Refactor Checklist
 
-Status: Draft  
+Status: Complete
 Date: 2026-06-26  
 Audience: Maintainers working on the transition from single-config runtime orchestration to a true multi-run control plane
 
@@ -474,20 +474,21 @@ These can build on the multi-run control-plane foundation later.
 - Launch paths no longer read `[run_defaults].config_path`; server run defaults remain only compatibility configuration, not active run identity.
 - Smoke scripts and API docs were updated to send explicit launch config bodies.
 - Verified with `cargo test -p api`, `bash ./scripts/check-api-read-model-boundary`, PowerShell AST parsing for modified smoke scripts, and `git diff --check`.
-- Full `scripts/verify.ps1` is currently limited by historical `check-storage-dto-boundary.ps1` violations in `crates/api/tests/api_tests.rs`, `crates/runtime/src/live.rs`, and `crates/runtime/tests/live_runtime_tests.rs`; keep that cleanup as a separate slice from Workstream E.
+- Full `scripts/verify.ps1` now exits 0. It still prints the historical `check-storage-dto-boundary.ps1` violations in `crates/api/tests/api_tests.rs`, `crates/runtime/src/live.rs`, and `crates/runtime/tests/live_runtime_tests.rs`; keep that cleanup as a separate slice from Workstream E.
 - `AppState::new(db)` now builds a server control-plane state with no default run config; tests that need legacy run defaults use `AppState::with_default_run_config(...)` explicitly.
 - API logging retention scheduling now uses server logging config directly instead of reading retention settings from a run TOML file.
 - Run launch requests now support a minimal `strategy` override patch for `name`, `symbols`, `fast_window`, and `slow_window`; the final strategy config is persisted in each run snapshot and visible from `GET /api/v1/runs/{run_id}`.
 - Backtest launch requests now resolve `strategy_ref` strategy templates and persist the resolved strategy plus `strategy_ref` provenance into the per-run config snapshot.
 - `config_ref` plus `strategy_ref` launch coverage preserves the canonical config binding while materializing the referenced strategy template into the final per-run snapshot.
+- Final verification passed with `cargo test -p config`, `cargo test -p runtime`, `cargo test -p api`, `cargo test -p trader-cli`, `cargo check --workspace`, `bash ./scripts/check-api-read-model-boundary`, and `.\scripts\verify.ps1`.
 
 ---
 
-## 11. Immediate Follow-Up
+## 12. Completion State
 
-The next document should be an implementation plan that:
+This milestone is complete. The implementation plan in `docs/superpowers/plans/2026-06-26-multi-run-control-plane-refactor.md` has been executed and checked off.
 
-- breaks this refactor into testable tasks;
-- names the exact files to change;
-- defines new interfaces for `RunSpec`, server config, and run-scoped API handlers;
-- stages the migration to avoid breaking all current tests at once.
+Recommended next slice:
+
+- clean up the historical storage DTO boundary violations reported by `scripts/verify.ps1`;
+- push the local `main` commits to `origin/main` after final review.
