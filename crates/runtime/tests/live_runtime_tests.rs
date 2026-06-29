@@ -9,7 +9,9 @@ use runtime::{
 };
 use rust_decimal::Decimal;
 use std::sync::Arc;
-use storage::{Db, NewFill, NewOrder, RuntimePositionSnapshotCommand, SystemLogFilter};
+use storage::{
+    Db, ExternalFillCommand, ExternalOrderCommand, RuntimePositionSnapshotCommand, SystemLogFilter,
+};
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 #[tokio::test]
@@ -192,24 +194,19 @@ async fn live_runtime_records_snapshots_from_injected_broker() {
 async fn live_runtime_recovers_open_orders_and_executions_on_startup() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-recover".to_string(),
-        run_id: "live-startup-recovery".to_string(),
-        client_order_id: "client-recover".to_string(),
-        broker_order_id: Some("broker-recover".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "2".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-startup-recovery",
+        "order-recover",
+        "client-recover",
+        "broker-recover",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "2",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -277,24 +274,19 @@ async fn live_runtime_recovers_open_orders_and_executions_on_startup() {
 async fn live_runtime_records_recovered_fills_with_local_order_symbol() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-native-symbol".to_string(),
-        run_id: "live-native-symbol-recovery".to_string(),
-        client_order_id: "client-native-symbol".to_string(),
-        broker_order_id: Some("broker-native-symbol".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT".to_string(),
-        side: "SELL".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("10000".to_string()),
-        qty: "0.002".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-native-symbol-recovery",
+        "order-native-symbol",
+        "client-native-symbol",
+        "broker-native-symbol",
+        "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT",
+        "SELL",
+        "0.002",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -334,37 +326,31 @@ async fn live_runtime_records_recovered_fills_with_local_order_symbol() {
 async fn live_runtime_adds_new_recovered_executions_to_existing_fills() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-existing-fill".to_string(),
-        run_id: "live-existing-fill-recovery".to_string(),
-        client_order_id: "client-existing-fill".to_string(),
-        broker_order_id: Some("broker-existing-fill".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "2".to_string(),
-        filled_qty: "1".to_string(),
-        status: "PARTIALLY_FILLED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
-    db.insert_fill(NewFill {
-        id: "broker-exec-existing".to_string(),
-        order_id: "order-existing-fill".to_string(),
-        run_id: "live-existing-fill-recovery".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        price: "185".to_string(),
-        qty: "1".to_string(),
-        fee: "0.50".to_string(),
-        ts_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-existing-fill-recovery",
+        "order-existing-fill",
+        "client-existing-fill",
+        "broker-existing-fill",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "2",
+        "1",
+        "PARTIALLY_FILLED",
+    )
+    .await;
+    seed_external_fill(
+        &db,
+        "live-existing-fill-recovery",
+        "order-existing-fill",
+        "broker-exec-existing",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "185",
+        "1",
+        "0.50",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -411,24 +397,19 @@ async fn live_runtime_adds_new_recovered_executions_to_existing_fills() {
 async fn live_runtime_does_not_decrease_local_filled_qty_when_recovery_lacks_executions() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-local-partial".to_string(),
-        run_id: "live-local-partial-recovery".to_string(),
-        client_order_id: "client-local-partial".to_string(),
-        broker_order_id: Some("broker-local-partial".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "2".to_string(),
-        filled_qty: "1".to_string(),
-        status: "PARTIALLY_FILLED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-local-partial-recovery",
+        "order-local-partial",
+        "client-local-partial",
+        "broker-local-partial",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "2",
+        "1",
+        "PARTIALLY_FILLED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -471,24 +452,19 @@ async fn live_runtime_does_not_decrease_local_filled_qty_when_recovery_lacks_exe
 async fn live_runtime_fails_startup_when_remote_open_order_is_unmatched() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-known".to_string(),
-        run_id: "live-startup-unmatched".to_string(),
-        client_order_id: "client-known".to_string(),
-        broker_order_id: Some("broker-known".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-startup-unmatched",
+        "order-known",
+        "client-known",
+        "broker-known",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -559,24 +535,19 @@ async fn live_runtime_fails_startup_when_remote_open_order_is_unmatched() {
 async fn live_runtime_warns_but_continues_for_unmatched_remote_executions_on_startup() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-known-exec-only".to_string(),
-        run_id: "live-startup-unmatched-execution".to_string(),
-        client_order_id: "client-known-exec-only".to_string(),
-        broker_order_id: Some("broker-known-exec-only".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-startup-unmatched-execution",
+        "order-known-exec-only",
+        "client-known-exec-only",
+        "broker-known-exec-only",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -636,24 +607,19 @@ async fn live_runtime_warns_but_continues_for_unmatched_remote_executions_on_sta
 async fn live_runtime_can_warn_only_for_unmatched_remote_open_orders_when_configured() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-warn-only".to_string(),
-        run_id: "live-startup-unmatched-warn-only".to_string(),
-        client_order_id: "client-known".to_string(),
-        broker_order_id: Some("broker-known".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-startup-unmatched-warn-only",
+        "order-warn-only",
+        "client-known",
+        "broker-known",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -720,24 +686,19 @@ async fn live_runtime_can_warn_only_for_unmatched_remote_open_orders_when_config
 async fn live_runtime_marks_run_failed_when_startup_recovery_fails() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_order(NewOrder {
-        id: "order-fail".to_string(),
-        run_id: "live-startup-recovery-fail".to_string(),
-        client_order_id: "client-fail".to_string(),
-        broker_order_id: Some("broker-fail".to_string()),
-        account_id: "live-account".to_string(),
-        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-        side: "BUY".to_string(),
-        order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "0".to_string(),
-        status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
-    })
-    .await
-    .unwrap();
+    seed_external_order(
+        &db,
+        "live-startup-recovery-fail",
+        "order-fail",
+        "client-fail",
+        "broker-fail",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
 
     let live = LiveRuntime::new_with_broker(
         db.clone(),
@@ -2111,6 +2072,63 @@ async fn live_runtime_suppresses_duplicate_file_sink_alerts_within_cooldown() {
 
 fn dec(value: &str) -> Decimal {
     value.parse().unwrap()
+}
+
+async fn seed_external_order(
+    db: &Db,
+    run_id: &str,
+    order_id: &str,
+    client_order_id: &str,
+    broker_order_id: &str,
+    symbol: &str,
+    side: &str,
+    qty: &str,
+    filled_qty: &str,
+    status: &str,
+) {
+    db.record_external_order(ExternalOrderCommand {
+        run_id: run_id.to_string(),
+        order_id: order_id.to_string(),
+        client_order_id: client_order_id.to_string(),
+        broker_order_id: Some(broker_order_id.to_string()),
+        account_id: "live-account".to_string(),
+        symbol: symbol.to_string(),
+        side: side.to_string(),
+        order_type: "LIMIT".to_string(),
+        price: Some(dec("185.00")),
+        qty: dec(qty),
+        filled_qty: dec(filled_qty),
+        status: status.to_string(),
+        ts_ms: 1,
+    })
+    .await
+    .unwrap();
+}
+
+async fn seed_external_fill(
+    db: &Db,
+    run_id: &str,
+    order_id: &str,
+    fill_id: &str,
+    symbol: &str,
+    side: &str,
+    price: &str,
+    qty: &str,
+    fee: &str,
+) {
+    db.record_external_fill(ExternalFillCommand {
+        id: fill_id.to_string(),
+        order_id: order_id.to_string(),
+        run_id: run_id.to_string(),
+        symbol: symbol.to_string(),
+        side: side.to_string(),
+        price: dec(price),
+        qty: dec(qty),
+        fee: dec(fee),
+        ts_ms: 1,
+    })
+    .await
+    .unwrap();
 }
 
 async fn wait_for_status(db: &Db, run_id: &str, expected: &str) {

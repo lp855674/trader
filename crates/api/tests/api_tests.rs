@@ -6,10 +6,10 @@ use rust_decimal::Decimal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::{
-    CorporateActionMetaCommand, CryptoMarketMetaCommand, CryptoPositionCommand, Db,
-    FundingRateCommand, NewAccountBalance, NewConfigVersion, NewFill, NewOrder,
-    NewPortfolioSnapshot, PaperPortfolioSnapshotCommand, PositionCommand, RuntimeEventCommand,
-    StrategyRunStartCommand, SystemLogCommand,
+    AccountBalanceCommand, CorporateActionMetaCommand, CryptoMarketMetaCommand,
+    CryptoPositionCommand, Db, ExternalFillCommand, ExternalOrderCommand, FundingRateCommand,
+    NewConfigVersion, PaperPortfolioSnapshotCommand, PortfolioSnapshotCommand, PositionCommand,
+    RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
 };
 use tokio::sync::Notify;
 use tower::ServiceExt;
@@ -2368,8 +2368,8 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
         .await
         .unwrap();
     }
-    db.insert_order(NewOrder {
-        id: "order-a".to_string(),
+    db.record_external_order(ExternalOrderCommand {
+        order_id: "order-a".to_string(),
         run_id: "run-a".to_string(),
         client_order_id: "client-a".to_string(),
         broker_order_id: Some("broker-a".to_string()),
@@ -2377,17 +2377,16 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
         side: "BUY".to_string(),
         order_type: "MARKET".to_string(),
-        price: Some("100".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "1".to_string(),
+        price: Some(dec("100")),
+        qty: dec("1"),
+        filled_qty: dec("1"),
         status: "FILLED".to_string(),
-        created_at_ms: 10,
-        updated_at_ms: 10,
+        ts_ms: 10,
     })
     .await
     .unwrap();
-    db.insert_order(NewOrder {
-        id: "order-b".to_string(),
+    db.record_external_order(ExternalOrderCommand {
+        order_id: "order-b".to_string(),
         run_id: "run-b".to_string(),
         client_order_id: "client-b".to_string(),
         broker_order_id: Some("broker-b".to_string()),
@@ -2395,37 +2394,36 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
         symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
         side: "SELL".to_string(),
         order_type: "LIMIT".to_string(),
-        price: Some("200".to_string()),
-        qty: "2".to_string(),
-        filled_qty: "0".to_string(),
+        price: Some(dec("200")),
+        qty: dec("2"),
+        filled_qty: dec("0"),
         status: "NEW".to_string(),
-        created_at_ms: 20,
-        updated_at_ms: 20,
+        ts_ms: 20,
     })
     .await
     .unwrap();
-    db.insert_fill(NewFill {
+    db.record_external_fill(ExternalFillCommand {
         id: "fill-a".to_string(),
         order_id: "order-a".to_string(),
         run_id: "run-a".to_string(),
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
         side: "BUY".to_string(),
-        price: "100".to_string(),
-        qty: "1".to_string(),
-        fee: "0.5".to_string(),
+        price: dec("100"),
+        qty: dec("1"),
+        fee: dec("0.5"),
         ts_ms: 11,
     })
     .await
     .unwrap();
-    db.insert_fill(NewFill {
+    db.record_external_fill(ExternalFillCommand {
         id: "fill-b".to_string(),
         order_id: "order-b".to_string(),
         run_id: "run-b".to_string(),
         symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
         side: "SELL".to_string(),
-        price: "200".to_string(),
-        qty: "2".to_string(),
-        fee: "1.0".to_string(),
+        price: dec("200"),
+        qty: dec("2"),
+        fee: dec("1.0"),
         ts_ms: 21,
     })
     .await
@@ -2450,51 +2448,51 @@ async fn explicit_run_scoped_routes_only_return_requested_run_data() {
     })
     .await
     .unwrap();
-    db.upsert_account_balance(NewAccountBalance {
+    db.record_account_balance(AccountBalanceCommand {
         run_id: "run-a".to_string(),
         account_id: "paper".to_string(),
         asset: "USD".to_string(),
-        total: "1000".to_string(),
-        available: "900".to_string(),
-        frozen: "100".to_string(),
+        total: dec("1000"),
+        available: dec("900"),
+        frozen: dec("100"),
         updated_at_ms: 11,
     })
     .await
     .unwrap();
-    db.upsert_account_balance(NewAccountBalance {
+    db.record_account_balance(AccountBalanceCommand {
         run_id: "run-b".to_string(),
         account_id: "paper".to_string(),
         asset: "USD".to_string(),
-        total: "2000".to_string(),
-        available: "1800".to_string(),
-        frozen: "200".to_string(),
+        total: dec("2000"),
+        available: dec("1800"),
+        frozen: dec("200"),
         updated_at_ms: 21,
     })
     .await
     .unwrap();
-    db.insert_portfolio_snapshot(NewPortfolioSnapshot {
+    db.record_portfolio_snapshot(PortfolioSnapshotCommand {
         id: "snapshot-a".to_string(),
         run_id: "run-a".to_string(),
         account_id: "paper".to_string(),
         ts_ms: 11,
-        cash: "900".to_string(),
-        market_value: "100".to_string(),
-        equity: "1000".to_string(),
-        realized_pnl: "0".to_string(),
-        unrealized_pnl: "0".to_string(),
+        cash: dec("900"),
+        market_value: dec("100"),
+        equity: dec("1000"),
+        realized_pnl: dec("0"),
+        unrealized_pnl: dec("0"),
     })
     .await
     .unwrap();
-    db.insert_portfolio_snapshot(NewPortfolioSnapshot {
+    db.record_portfolio_snapshot(PortfolioSnapshotCommand {
         id: "snapshot-b".to_string(),
         run_id: "run-b".to_string(),
         account_id: "paper".to_string(),
         ts_ms: 21,
-        cash: "1800".to_string(),
-        market_value: "200".to_string(),
-        equity: "2000".to_string(),
-        realized_pnl: "0".to_string(),
-        unrealized_pnl: "0".to_string(),
+        cash: dec("1800"),
+        market_value: dec("200"),
+        equity: dec("2000"),
+        realized_pnl: dec("0"),
+        unrealized_pnl: dec("0"),
     })
     .await
     .unwrap();
@@ -3541,8 +3539,8 @@ fn live_startup_recovery_config(
 }
 
 async fn insert_recoverable_order(db: &Db, run_id: &str) {
-    db.insert_order(NewOrder {
-        id: format!("{run_id}-order"),
+    db.record_external_order(ExternalOrderCommand {
+        order_id: format!("{run_id}-order"),
         run_id: run_id.to_string(),
         client_order_id: format!("{run_id}-client-order"),
         broker_order_id: Some(format!("{run_id}-broker-order")),
@@ -3550,12 +3548,11 @@ async fn insert_recoverable_order(db: &Db, run_id: &str) {
         symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
         side: "BUY".to_string(),
         order_type: "LIMIT".to_string(),
-        price: Some("185.00".to_string()),
-        qty: "1".to_string(),
-        filled_qty: "0".to_string(),
+        price: Some(dec("185.00")),
+        qty: dec("1"),
+        filled_qty: dec("0"),
         status: "SUBMITTED".to_string(),
-        created_at_ms: 1,
-        updated_at_ms: 1,
+        ts_ms: 1,
     })
     .await
     .unwrap();

@@ -8,7 +8,7 @@ use rust_decimal::Decimal;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
-    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, LiveRunCommand, NewFill,
+    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, ExternalFillCommand, LiveRunCommand,
     PaperPortfolioSnapshotCommand, RuntimeEventCommand, StoredOrder, SystemLogCommand,
 };
 use tokio::fs::OpenOptions;
@@ -303,15 +303,15 @@ impl LiveRuntime {
                     && recovered_execution_ids.insert(execution.trade_id.clone())
                 {
                     self.db
-                        .insert_fill(NewFill {
+                        .record_external_fill(ExternalFillCommand {
                             id: execution.trade_id.clone(),
                             order_id: order.id.clone(),
                             run_id: self.settings.run_id.clone(),
                             symbol: order.symbol.clone(),
                             side: order_side_slug(execution.side).to_string(),
-                            price: execution.price.to_string(),
-                            qty: execution.qty.to_string(),
-                            fee: execution.fee.to_string(),
+                            price: execution.price,
+                            qty: execution.qty,
+                            fee: execution.fee,
                             ts_ms: execution.ts_ms,
                         })
                         .await?;
