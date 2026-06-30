@@ -1,6 +1,7 @@
 use config::AppConfig;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSpec {
     pub run_id: String,
     pub mode: config::RuntimeMode,
@@ -13,7 +14,7 @@ pub struct RunSpec {
     pub live_enabled: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrategySpec {
     pub name: String,
     pub universe: String,
@@ -24,21 +25,21 @@ pub struct StrategySpec {
     pub slow_window: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataSpec {
     pub source: String,
     pub path: String,
     pub inputs: Vec<DataInputSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataInputSpec {
     pub symbol: String,
     pub source: String,
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortfolioSpec {
     pub initial_cash: String,
     pub base_currency: String,
@@ -46,7 +47,7 @@ pub struct PortfolioSpec {
     pub max_abs_qty: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RiskSpec {
     pub max_order_notional: String,
     pub min_cash_after_order: String,
@@ -58,7 +59,7 @@ pub struct RiskSpec {
     pub allow_short: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrokerSpec {
     pub kind: config::BrokerKind,
     pub mode: config::BrokerMode,
@@ -73,7 +74,7 @@ pub struct BrokerSpec {
     pub fake_startup_unmatched_open_order: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaperSpec {
     pub account_id: String,
     pub slippage_bps: String,

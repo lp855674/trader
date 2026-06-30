@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -16,7 +16,7 @@ pub enum ConfigError {
     Parse(#[from] toml::de::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
     Backtest,
@@ -25,7 +25,7 @@ pub enum RuntimeMode {
     Live,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerKind {
     Simulated,
@@ -36,7 +36,7 @@ pub enum BrokerKind {
     InteractiveBrokers,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerMode {
     Paper,

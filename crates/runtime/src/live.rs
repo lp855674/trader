@@ -5,6 +5,7 @@ use broker::{
 };
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
@@ -53,7 +54,7 @@ pub struct LiveRuntime {
     startup_recovery_unmatched_open_orders_policy: StartupRecoveryUnmatchedOpenOrdersPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StartupRecoveryUnmatchedOpenOrdersPolicy {
     #[default]
     Fail,
