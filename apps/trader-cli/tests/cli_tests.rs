@@ -22,6 +22,88 @@ fn check_config_prints_ok() {
 }
 
 #[test]
+fn live_worker_starts_and_stops_over_jsonl() {
+    let temp = std::env::temp_dir().join(format!("trader-live-worker-{}", std::process::id()));
+    std::fs::create_dir_all(&temp).unwrap();
+    let db_path = temp.join("worker.sqlite");
+    let launch_path = temp.join("launch.json");
+    let db_url = format!("sqlite:{}", toml_path(&db_path));
+    let config_content = format!(
+        r#"
+        [runtime]
+        mode = "live"
+        run_id = "cli-live-worker"
+
+        [database]
+        url = "{}"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "25000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+        "#,
+        db_url
+    );
+    let launch = serde_json::json!({
+        "run_id": "cli-live-worker",
+        "db_url": db_url,
+        "config_path": null,
+        "config_content": config_content,
+        "config_format": "TOML",
+        "run_spec": null,
+        "broker_snapshot_interval_ms": null,
+        "startup_recovery_unmatched_open_orders_policy": "Fail"
+    });
+    std::fs::write(&launch_path, serde_json::to_vec(&launch).unwrap()).unwrap();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    let assert = command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .write_stdin("{\"type\":\"shutdown\",\"request_id\":\"stop-1\",\"reason\":\"test\"}\n")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("\"type\":\"worker_started\""));
+    assert!(stdout.contains("\"type\":\"runtime_started\""));
+    assert!(stdout.contains("\"type\":\"runtime_stopped\""));
+}
+
+#[test]
 fn backtest_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

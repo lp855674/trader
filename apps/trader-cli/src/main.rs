@@ -2,8 +2,9 @@ use anyhow::{Context, Result, bail};
 use backtest::{BacktestRuntime, BacktestSettings};
 use broker::{
     BinanceAssetBalance, BinanceLimitOrderRequest, BinanceOpenOrder, BinanceOrderSide,
-    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, IbkrLimitOrderRequest,
-    IbkrOpenOrder, IbkrOrderSide, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
+    BinanceSpotTestnetAdapter, BinanceSpotTestnetSettings, Broker, FakeBrokerAdapter,
+    IbkrLimitOrderRequest, IbkrOpenOrder, IbkrOrderSide, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use events::LogWriterSettings;
@@ -21,6 +22,7 @@ use std::{
     io::Write,
     path::Path,
     str::FromStr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -419,6 +421,10 @@ enum Command {
     CheckConfig {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
+    },
+    LiveWorker {
+        #[arg(long)]
+        launch_file: String,
     },
 }
 
@@ -950,6 +956,7 @@ fn run_cli() -> Result<()> {
 async fn run_command(command: Command) -> Result<()> {
     match command {
         Command::Init => println!("initialized"),
+        Command::LiveWorker { launch_file } => run_live_worker(&launch_file).await?,
         Command::Migrate { config } => {
             let (_, db) = load_db(&config).await?;
             db.migrate().await?;
@@ -4153,6 +4160,239 @@ async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> 
     ensure_database_parent(&app_config.database.url)?;
     let db = storage::Db::connect(&app_config.database.url).await?;
     Ok((app_config, db))
+}
+
+async fn run_live_worker(launch_file: &str) -> Result<()> {
+    let launch_bytes = tokio::fs::read(launch_file)
+        .await
+        .with_context(|| format!("failed to read live worker launch file {launch_file}"))?;
+    let launch: runtime::LiveWorkerLaunchSpec = serde_json::from_slice(&launch_bytes)
+        .with_context(|| format!("failed to parse live worker launch file {launch_file}"))?;
+    launch.validate_no_embedded_secrets()?;
+    ensure_database_parent(&launch.db_url)?;
+
+    let app_config = app_config_from_launch(&launch)?;
+    let db = storage::Db::connect(&launch.db_url).await?;
+    db.migrate().await?;
+    let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
+    let settings = runtime::LiveRuntimeSettings {
+        run_id: launch.run_id.clone(),
+        broker_kind: live_worker_broker_kind(app_config.broker.kind),
+        account_id: app_config.paper.account_id.clone(),
+        base_currency: app_config.portfolio.base_currency.clone(),
+        initial_cash,
+        broker_snapshot_interval_ms: launch.broker_snapshot_interval_ms,
+        alert_sink: live_worker_alert_sink_settings(&app_config.live.alerts),
+        logging: log_writer_settings(&app_config),
+    };
+    let broker = live_worker_broker_for_config(&app_config)?;
+    let cancel = runtime::CancellationFlag::default();
+
+    write_worker_event(runtime::LiveWorkerEvent::WorkerStarted {
+        run_id: launch.run_id.clone(),
+        pid: std::process::id(),
+    })?;
+
+    let live_runtime = runtime::LiveRuntime::new_with_broker(db, settings, broker)
+        .with_startup_recovery_unmatched_open_orders_policy(
+            launch.startup_recovery_unmatched_open_orders_policy,
+        );
+    let runtime_cancel = cancel.clone();
+    let mut runtime_join = tokio::spawn(async move { live_runtime.run(runtime_cancel).await });
+
+    write_worker_event(runtime::LiveWorkerEvent::RuntimeStarted {
+        run_id: launch.run_id.clone(),
+    })?;
+
+    let mut stdin_lines =
+        tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(tokio::io::stdin()));
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
+    let mut stdin_closed = false;
+    let mut shutdown_requested = false;
+
+    loop {
+        tokio::select! {
+            maybe_line = stdin_lines.next_line(), if !stdin_closed => {
+                match maybe_line? {
+                    Some(line) => {
+                        let command = runtime::parse_worker_command_line(&line)?;
+                        match command {
+                            runtime::LiveWorkerCommand::HealthCheck { request_id } => {
+                                write_worker_event(runtime::LiveWorkerEvent::Health {
+                                    run_id: launch.run_id.clone(),
+                                    request_id,
+                                    status: if shutdown_requested {
+                                        "stopping".to_string()
+                                    } else {
+                                        "running".to_string()
+                                    },
+                                })?;
+                            }
+                            runtime::LiveWorkerCommand::Shutdown { reason, .. } => {
+                                if !shutdown_requested {
+                                    shutdown_requested = true;
+                                    write_worker_event(runtime::LiveWorkerEvent::RuntimeStopping {
+                                        run_id: launch.run_id.clone(),
+                                        reason,
+                                    })?;
+                                    cancel.cancel();
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        stdin_closed = true;
+                    }
+                }
+            }
+            _ = heartbeat.tick() => {
+                write_worker_event(runtime::LiveWorkerEvent::Heartbeat {
+                    run_id: launch.run_id.clone(),
+                    status: if shutdown_requested {
+                        "stopping".to_string()
+                    } else {
+                        "running".to_string()
+                    },
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                })?;
+            }
+            runtime_result = &mut runtime_join => {
+                match runtime_result? {
+                    Ok(()) => {
+                        write_worker_event(runtime::LiveWorkerEvent::RuntimeStopped {
+                            run_id: launch.run_id.clone(),
+                            status: "stopped".to_string(),
+                        })?;
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        write_worker_event(runtime::LiveWorkerEvent::RuntimeFailed {
+                            run_id: launch.run_id.clone(),
+                            error: error.to_string(),
+                        })?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn app_config_from_launch(launch: &runtime::LiveWorkerLaunchSpec) -> Result<config::AppConfig> {
+    match launch.config_format.as_str() {
+        "TOML" => Ok(config::AppConfig::from_toml_str(&launch.config_content)?),
+        "JSON" => Ok(serde_json::from_str(&launch.config_content)?),
+        other => bail!("unsupported launch config_format {other}"),
+    }
+}
+
+fn write_worker_event(event: runtime::LiveWorkerEvent) -> Result<()> {
+    println!("{}", runtime::worker_event_line(&event)?);
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
+fn live_worker_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<dyn Broker>> {
+    match app_config.broker.kind {
+        config::BrokerKind::InteractiveBrokers => {
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                bail!(
+                    "live runtime IBKR Gateway adapter requires broker.mode = paper in this phase"
+                );
+            }
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)?;
+            Ok(Arc::new(adapter))
+        }
+        kind => Ok(Arc::new(
+            FakeBrokerAdapter::new(live_worker_broker_kind(kind))
+                .with_startup_unmatched_open_order(
+                    app_config.broker.fake_startup_unmatched_open_order,
+                ),
+        )),
+    }
+}
+
+fn live_worker_broker_kind(kind: config::BrokerKind) -> broker::BrokerKind {
+    match kind {
+        config::BrokerKind::Simulated => broker::BrokerKind::Simulated,
+        config::BrokerKind::Futu => broker::BrokerKind::Futu,
+        config::BrokerKind::Binance => broker::BrokerKind::Binance,
+        config::BrokerKind::Okx => broker::BrokerKind::Okx,
+        config::BrokerKind::InteractiveBrokers => broker::BrokerKind::InteractiveBrokers,
+    }
+}
+
+fn live_worker_alert_sink_settings(
+    alerts: &config::LiveAlertsConfig,
+) -> runtime::AlertSinkSettings {
+    if !alerts.enabled {
+        return runtime::AlertSinkSettings::Noop;
+    }
+    if !alerts.sinks.is_empty() {
+        let sinks = alerts
+            .sinks
+            .iter()
+            .filter_map(|sink| live_worker_alert_sink_from_config(sink, alerts))
+            .collect::<Vec<_>>();
+        return match sinks.len() {
+            0 => runtime::AlertSinkSettings::Noop,
+            1 => sinks
+                .into_iter()
+                .next()
+                .unwrap_or(runtime::AlertSinkSettings::Noop),
+            _ => runtime::AlertSinkSettings::Multi(sinks),
+        };
+    }
+    live_worker_alert_sink_from_legacy_config(alerts)
+}
+
+fn live_worker_alert_sink_from_legacy_config(
+    alerts: &config::LiveAlertsConfig,
+) -> runtime::AlertSinkSettings {
+    let sink = config::LiveAlertSinkConfig {
+        sink: alerts.sink.clone().unwrap_or_default(),
+        file_path: alerts.file_path.clone(),
+        webhook_url: alerts.webhook_url.clone(),
+        cooldown_ms: alerts.cooldown_ms,
+        webhook_timeout_ms: alerts.webhook_timeout_ms,
+        webhook_max_retries: alerts.webhook_max_retries,
+        webhook_auth_token: alerts.webhook_auth_token.clone(),
+    };
+    live_worker_alert_sink_from_config(&sink, alerts).unwrap_or(runtime::AlertSinkSettings::Noop)
+}
+
+fn live_worker_alert_sink_from_config(
+    sink: &config::LiveAlertSinkConfig,
+    defaults: &config::LiveAlertsConfig,
+) -> Option<runtime::AlertSinkSettings> {
+    match (
+        sink.sink.as_str(),
+        sink.file_path.as_ref().filter(|path| !path.is_empty()),
+        sink.webhook_url.as_ref().filter(|url| !url.is_empty()),
+    ) {
+        ("file", Some(path), _) => Some(runtime::AlertSinkSettings::File {
+            path: path.clone(),
+            cooldown_ms: sink.cooldown_ms.or(defaults.cooldown_ms).unwrap_or(300_000),
+        }),
+        ("webhook", _, Some(url)) => Some(runtime::AlertSinkSettings::Webhook {
+            url: url.clone(),
+            cooldown_ms: sink.cooldown_ms.or(defaults.cooldown_ms).unwrap_or(300_000),
+            timeout_ms: sink
+                .webhook_timeout_ms
+                .or(defaults.webhook_timeout_ms)
+                .unwrap_or(3_000),
+            max_retries: sink
+                .webhook_max_retries
+                .or(defaults.webhook_max_retries)
+                .unwrap_or(2),
+            auth_token: sink
+                .webhook_auth_token
+                .clone()
+                .or_else(|| defaults.webhook_auth_token.clone()),
+        }),
+        _ => None,
+    }
 }
 
 fn alert_dedup_key_for_cli(message: &str, run_id: &str, fields: &serde_json::Value) -> String {
