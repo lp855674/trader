@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     let address: SocketAddr = std::env::var("TRADER_SERVER_BIND")
         .unwrap_or_else(|_| server_config.server.bind.clone())
         .parse()?;
-    let state = api::AppState::with_server_config(db, server_config);
+    let state = api::AppState::with_server_config_and_db_url(db, server_config, Some(database_url));
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(%address, "trader-server listening");
     axum::serve(listener, api::router_with_state(state)).await?;

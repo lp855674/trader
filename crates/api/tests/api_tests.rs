@@ -2181,11 +2181,14 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
 #[tokio::test]
 async fn live_runtime_routes_start_report_status_and_stop() {
     std::env::set_current_dir(workspace_root()).unwrap();
-    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let (db, db_url) = live_process_test_db("start-stop").await;
     db.migrate().await.unwrap();
-    let app = api::router_with_state(api::AppState::with_default_run_config(
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
         db,
-        "configs/backtest/ma_cross.toml".into(),
+        config::ServerConfig::with_default_run_config_path(
+            "configs/backtest/ma_cross.toml".to_string(),
+        ),
+        Some(db_url),
     ));
 
     let response = app
@@ -2203,7 +2206,7 @@ async fn live_runtime_routes_start_report_status_and_stop() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_status(response, StatusCode::ACCEPTED).await;
 
     wait_for_body_fragment(
         app.clone(),
@@ -2231,7 +2234,7 @@ async fn live_runtime_routes_start_report_status_and_stop() {
 #[tokio::test]
 async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
     std::env::set_current_dir(workspace_root()).unwrap();
-    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let (db, db_url) = live_process_test_db("snapshot").await;
     db.migrate().await.unwrap();
     let config_path =
         std::env::temp_dir().join(format!("trader-live-snapshot-{}.toml", std::process::id()));
@@ -2243,7 +2246,7 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
         run_id = "api-live-snapshot"
 
         [database]
-        url = "sqlite::memory:"
+        url = "{db_url}"
 
         [data]
         source = "csv"
@@ -2285,9 +2288,10 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
         "#,
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::with_default_run_config(
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
         db,
-        config_path.display().to_string(),
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
     ));
 
     let response = app
@@ -2302,7 +2306,7 @@ async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_status(response, StatusCode::ACCEPTED).await;
 
     wait_for_body_fragment(
         app.clone(),
@@ -3288,7 +3292,7 @@ async fn run_list_prefers_in_memory_runtime_state_for_active_run() {
 #[tokio::test]
 async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_orders() {
     std::env::set_current_dir(workspace_root()).unwrap();
-    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let (db, db_url) = live_process_test_db("startup-recovery-fail").await;
     db.migrate().await.unwrap();
     insert_recoverable_order(&db, "api-live-startup-recovery-fail").await;
     let config_path = temp_config_path("trader-live-startup-recovery-fail");
@@ -3297,9 +3301,10 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
         live_startup_recovery_config("api-live-startup-recovery-fail", true, None),
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::with_default_run_config(
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
         db,
-        config_path.display().to_string(),
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
     ));
 
     let response = app
@@ -3314,7 +3319,7 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_status(response, StatusCode::ACCEPTED).await;
 
     wait_for_body_fragment(
         app.clone(),
@@ -3333,7 +3338,7 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
 #[tokio::test]
 async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_orders() {
     std::env::set_current_dir(workspace_root()).unwrap();
-    let db = Db::connect("sqlite::memory:").await.unwrap();
+    let (db, db_url) = live_process_test_db("startup-recovery-warn-only").await;
     db.migrate().await.unwrap();
     insert_recoverable_order(&db, "api-live-startup-recovery-warn-only").await;
     let config_path = temp_config_path("trader-live-startup-recovery-warn-only");
@@ -3346,9 +3351,10 @@ async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_
         ),
     )
     .unwrap();
-    let app = api::router_with_state(api::AppState::with_default_run_config(
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
         db,
-        config_path.display().to_string(),
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
     ));
 
     let response = app
@@ -3363,7 +3369,7 @@ async fn live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_status(response, StatusCode::ACCEPTED).await;
 
     wait_for_body_fragment(
         app.clone(),
@@ -3405,6 +3411,34 @@ fn temp_config_path(prefix: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}.toml", std::process::id()))
+}
+
+async fn live_process_test_db(name: &str) -> (Db, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "trader-api-live-process-{}-{}",
+        std::process::id(),
+        name
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = dir.join(format!("{nanos}.sqlite"));
+    let db_url = format!("sqlite:{}", path.to_string_lossy().replace('\\', "/"));
+    let db = Db::connect(&db_url).await.unwrap();
+    (db, db_url)
+}
+
+async fn assert_status(response: axum::response::Response, expected: StatusCode) {
+    let status = response.status();
+    if status != expected {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        panic!(
+            "expected status {expected}, got {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
 }
 
 fn launch_config_path_body(path: impl AsRef<std::path::Path>, mode: &str) -> Body {

@@ -24,9 +24,11 @@ use paper::{
     PaperSettings,
 };
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
+#[cfg(test)]
+use runtime::AlertSinkSettings;
 use runtime::{
-    AlertSinkSettings, LiveRuntime, LiveRuntimeSettings, RunSpec, RuntimeRunMetadata,
-    RuntimeRunSnapshot, RuntimeRunStatus, StartupRecoveryUnmatchedOpenOrdersPolicy,
+    LiveProcessStatus, RunSpec, RuntimeRunMetadata, RuntimeRunSnapshot, RuntimeRunStatus,
+    StartupRecoveryUnmatchedOpenOrdersPolicy,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -1804,38 +1806,29 @@ async fn start_live_run(
     } = prepare_launch(&state, config::RuntimeMode::Live, "live launch", request).await?;
     run_configured_log_retention(&state.db, &app_config).await?;
     let run_id = run_spec.run_id.clone();
-    let initial_cash = Decimal::from_str(&run_spec.portfolio.initial_cash)?;
     let started_at_ms = chrono::Utc::now().timestamp_millis();
     persist_run_config_snapshot(&state, &run_spec, &snapshot, started_at_ms).await?;
-    let broker = live_broker_for_config(&app_config)?;
-    let settings = LiveRuntimeSettings {
+    let db_url = state
+        .db_url
+        .clone()
+        .unwrap_or_else(|| app_config.database.url.clone());
+    let launch = runtime::LiveWorkerLaunchSpec {
         run_id: run_id.clone(),
-        broker_kind: broker_kind(app_config.broker.kind),
-        account_id: run_spec.paper.account_id.clone(),
-        base_currency: run_spec.portfolio.base_currency.clone(),
-        initial_cash,
+        db_url,
+        config_path: None,
+        config_content: snapshot.content.clone(),
+        config_format: snapshot.format.to_string(),
+        run_spec: Some(run_spec.clone()),
         broker_snapshot_interval_ms: app_config.live.broker_snapshot_interval_ms,
-        alert_sink: alert_sink_settings(&app_config.live.alerts),
-        logging: log_writer_settings_with_metrics(&app_config, state.log_writer_metrics.clone()),
+        startup_recovery_unmatched_open_orders_policy:
+            startup_recovery_unmatched_open_orders_policy(&app_config),
     };
-    let db = state.db.clone();
+    launch.validate_no_embedded_secrets()?;
     state
-        .runtime_manager
-        .spawn_with_metadata(
-            run_id.clone(),
-            RuntimeRunMetadata {
-                mode: Some("live".to_string()),
-            },
-            move |cancel| async move {
-                let runtime = LiveRuntime::new_with_broker(db, settings, broker)
-                    .with_startup_recovery_unmatched_open_orders_policy(
-                        startup_recovery_unmatched_open_orders_policy(&app_config),
-                    );
-                let _ = runtime.run(cancel).await;
-            },
-        )
+        .live_process_supervisor
+        .start(run_id.clone(), launch)
         .await
-        .map_err(|error| ApiError(anyhow::anyhow!("{error:?}")))?;
+        .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -1859,33 +1852,11 @@ fn startup_recovery_unmatched_open_orders_policy(
     }
 }
 
-fn live_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<dyn Broker>, ApiError> {
-    match app_config.broker.kind {
-        config::BrokerKind::InteractiveBrokers => {
-            if app_config.broker.mode != config::BrokerMode::Paper {
-                return Err(ApiError(anyhow::anyhow!(
-                    "live runtime IBKR Gateway adapter requires broker.mode = paper in this phase"
-                )));
-            }
-            let adapter =
-                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)
-                    .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
-            Ok(Arc::new(adapter))
-        }
-        kind => Ok(Arc::new(
-            FakeBrokerAdapter::new(broker_kind(kind)).with_startup_unmatched_open_order(
-                app_config.broker.fake_startup_unmatched_open_order,
-            ),
-        )),
-    }
-}
-
 async fn stop_live_run(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
-    state.runtime_manager.cancel(&run_id).await;
-    state.runtime_manager.wait_for_idle(&run_id).await;
+    state.live_process_supervisor.stop(&run_id).await;
     get_run_status(State(state), Path(run_id)).await
 }
 
@@ -3064,6 +3035,7 @@ fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
     value.get(key)?.as_str().map(str::to_string)
 }
 
+#[cfg(test)]
 fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     if !alerts.enabled {
         return AlertSinkSettings::Noop;
@@ -3083,6 +3055,7 @@ fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     alert_sink_from_legacy_config(alerts)
 }
 
+#[cfg(test)]
 fn alert_sink_from_legacy_config(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     let sink = config::LiveAlertSinkConfig {
         sink: alerts.sink.clone().unwrap_or_default(),
@@ -3096,6 +3069,7 @@ fn alert_sink_from_legacy_config(alerts: &config::LiveAlertsConfig) -> AlertSink
     alert_sink_from_config(&sink, alerts).unwrap_or(AlertSinkSettings::Noop)
 }
 
+#[cfg(test)]
 fn alert_sink_from_config(
     sink: &config::LiveAlertSinkConfig,
     defaults: &config::LiveAlertsConfig,
@@ -3483,6 +3457,28 @@ async fn get_run_status(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
+    if let Some(snapshot) = state.live_process_supervisor.snapshot(&run_id).await
+        && matches!(
+            snapshot.status,
+            LiveProcessStatus::Starting
+                | LiveProcessStatus::Running
+                | LiveProcessStatus::StopRequested
+        )
+    {
+        return Ok(Json(RunStatusResponse {
+            run_id,
+            status: live_process_status_label(snapshot.status).to_string(),
+            error: None,
+            mode: Some("live".to_string()),
+            started_at_ms: Some(snapshot.started_at_ms),
+            last_state_change_at_ms: Some(snapshot.last_state_change_at_ms),
+            status_source: "process",
+            mode_source: Some("process"),
+            timestamp_source: Some("process"),
+        })
+        .into_response());
+    }
+
     let runtime_snapshot = state.runtime_manager.snapshot(&run_id).await;
     let stored_run = state.db.get_strategy_run(&run_id).await?;
     if let Some(snapshot) = runtime_snapshot.as_ref()
@@ -3519,6 +3515,15 @@ async fn get_run_status(
         timestamp_source: Some("storage"),
     })
     .into_response())
+}
+
+fn live_process_status_label(status: LiveProcessStatus) -> &'static str {
+    match status {
+        LiveProcessStatus::Starting | LiveProcessStatus::Running => "running",
+        LiveProcessStatus::StopRequested => "stopping",
+        LiveProcessStatus::Exited => "stopped",
+        LiveProcessStatus::Failed => "failed",
+    }
 }
 
 async fn cancel_run(

@@ -48,12 +48,18 @@ impl Default for LiveProcessSupervisorOptions {
 }
 
 fn default_trader_exe() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("trader"));
-    path.set_file_name(if cfg!(windows) {
+    let file_name = if cfg!(windows) {
         "trader.exe"
     } else {
         "trader"
-    });
+    };
+    let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("trader"));
+    if path.parent().and_then(|parent| parent.file_name()) == Some(std::ffi::OsStr::new("deps"))
+        && let Some(target_profile_dir) = path.parent().and_then(|parent| parent.parent())
+    {
+        return target_profile_dir.join(file_name);
+    }
+    path.set_file_name(file_name);
     path
 }
 
