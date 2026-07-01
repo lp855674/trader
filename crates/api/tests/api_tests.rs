@@ -2184,7 +2184,7 @@ async fn live_runtime_routes_start_report_status_and_stop() {
     let (db, db_url) = live_process_test_db("start-stop").await;
     db.migrate().await.unwrap();
     let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
-        db,
+        db.clone(),
         config::ServerConfig::with_default_run_config_path(
             "configs/backtest/ma_cross.toml".to_string(),
         ),
@@ -2229,6 +2229,13 @@ async fn live_runtime_routes_start_report_status_and_stop() {
     assert_eq!(response.status(), StatusCode::OK);
 
     wait_for_body_fragment(app, "/api/v1/live-runs/sample-ma-cross/status", "stopped").await;
+    let run = db
+        .get_strategy_run("sample-ma-cross")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "stopped");
+    assert!(run.error.is_none());
 }
 
 #[tokio::test]
@@ -3302,7 +3309,7 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
     )
     .unwrap();
     let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
-        db,
+        db.clone(),
         config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
         Some(db_url),
     ));
@@ -3327,6 +3334,24 @@ async fn live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_ord
         "\"status\":\"failed\"",
     )
     .await;
+    wait_for_body_fragment(
+        app.clone(),
+        "/api/v1/live-runs/api-live-startup-recovery-fail/status",
+        "unmatched remote open orders during startup recovery",
+    )
+    .await;
+    let run = db
+        .get_strategy_run("api-live-startup-recovery-fail")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "failed");
+    assert!(
+        run.error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unmatched remote open orders during startup recovery")
+    );
     wait_for_body_fragment(
         app,
         "/api/v1/runs/api-live-startup-recovery-fail/system-logs?target=runtime.startup_recovery",

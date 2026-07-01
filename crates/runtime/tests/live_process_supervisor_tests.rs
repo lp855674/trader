@@ -93,12 +93,45 @@ async fn supervisor_kills_stale_heartbeat_worker() {
     assert_eq!(run.status, "failed");
 }
 
+#[tokio::test]
+async fn supervisor_fails_run_on_handshake_timeout() {
+    let (db, db_url) = temp_db("handshake-timeout").await;
+    seed_running_live_run(&db, "run-1").await;
+    let mut options = fake_options("silent_before_handshake", "run-1");
+    options.handshake_timeout_ms = 20;
+    let supervisor = LiveProcessSupervisor::with_options(db.clone(), options);
+
+    let result = supervisor
+        .start("run-1".to_string(), launch_spec("run-1", &db_url))
+        .await;
+
+    assert_eq!(result.unwrap_err(), LiveProcessError::HandshakeTimeout);
+    let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    assert_eq!(run.status, "failed");
+    assert_eq!(run.error.as_deref(), Some("handshake timeout"));
+    let logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("run-1".to_string()),
+            target: Some("runtime.live_process".to_string()),
+            level: Some("ERROR".to_string()),
+            search: Some("handshake timeout".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    assert!(!logs.is_empty());
+}
+
 #[test]
 fn fake_live_worker_process() {
     let Ok(mode) = std::env::var("TRADER_FAKE_LIVE_WORKER") else {
         return;
     };
     let run_id = std::env::var("TRADER_FAKE_RUN_ID").unwrap_or_else(|_| "run-1".to_string());
+    if mode == "silent_before_handshake" {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        return;
+    }
     println!(
         r#"{{"type":"worker_started","run_id":"{run_id}","pid":{}}}"#,
         std::process::id()
