@@ -170,6 +170,8 @@ Control Plane 负责接收启动、停止、查询和控制请求，校验并持
 
 Runtime Manager 负责监督已启动的运行实例，按 `run_id` 管理 Backtest / Replay / Paper / Live 的生命周期、状态和取消信号。运行模式来自每个 run 的 `RunSpec.mode`，不是 server 进程的全局状态。
 
+API 启动的 Live run 通过本地子进程隔离执行。`trader-server` 生成不含明文密钥的 launch file，启动 `trader live-worker --launch-file <path>`，通过 JSONL IPC 发送 health / shutdown 控制命令并接收 heartbeat / lifecycle 事件。子进程运行 `LiveRuntime`，业务状态仍写入同一个 SQLite 审计面，包括 run 状态、订单、成交、事件、系统日志、reconciliation snapshots、alert logs 和 alert delivery logs。
+
 ### 5.3 BacktestRuntime
 
 BacktestRuntime 使用历史数据和模拟时钟驱动事件流，主要用于策略验证和结果分析。
