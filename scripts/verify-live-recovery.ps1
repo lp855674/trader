@@ -83,6 +83,41 @@ $localGroups = @(
             "live_runtime_does_not_retry_webhook_alert_on_client_error_and_logs_failure",
             "live_runtime_suppresses_duplicate_file_sink_alerts_within_cooldown"
         )
+    },
+    @{
+        name = "process_supervisor"
+        package = "runtime"
+        tests = @(
+            "supervisor_records_heartbeat_and_health",
+            "supervisor_marks_non_terminal_run_failed_on_crash",
+            "supervisor_automatically_kills_stale_heartbeat_worker",
+            "supervisor_fails_run_on_handshake_timeout"
+        )
+    },
+    @{
+        name = "launch_file_secret_guard"
+        package = "runtime"
+        tests = @(
+            "launch_spec_redaction_rejects_secret_fields",
+            "launch_spec_redaction_rejects_webhook_auth_token",
+            "launch_spec_redaction_rejects_credentialed_database_url"
+        )
+    },
+    @{
+        name = "live_worker_ipc"
+        package = "trader-cli"
+        tests = @(
+            "live_worker_starts_and_stops_over_jsonl"
+        )
+    },
+    @{
+        name = "api_live_process_routes"
+        package = "api"
+        tests = @(
+            "live_runtime_routes_start_report_status_and_stop",
+            "live_runtime_route_fails_by_default_for_fake_unmatched_startup_open_orders",
+            "live_runtime_route_warn_only_continues_for_fake_unmatched_startup_open_orders"
+        )
     }
 )
 
@@ -124,6 +159,7 @@ try {
         $groupSummaries = @()
 
         foreach ($group in $localGroups) {
+            $package = if ($group.ContainsKey("package")) { $group.package } else { "runtime" }
             $testSummaries = @()
             foreach ($testName in $group.tests) {
                 $logPath = Join-Path $verificationDir "iteration-$iteration-$($group.name)-$testName.log"
@@ -131,7 +167,7 @@ try {
                     "cargo",
                     "test",
                     "-p",
-                    "runtime",
+                    $package,
                     $testName
                 )
                 $result = Invoke-CapturedCommand -Name "$($group.name) $testName iteration $iteration" -CommandArgs $commandArgs -LogPath $logPath
