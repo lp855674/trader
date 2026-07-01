@@ -1186,9 +1186,7 @@ fn apply_launch_overrides(
 
     if let Some(run_id) = patch.run_id.as_ref() {
         let run_id = run_id.trim();
-        if run_id.is_empty() {
-            return Err(bad_request("run_id override must not be empty"));
-        }
+        validate_launch_run_id(run_id)?;
 
         launch_config.app_config.runtime.run_id = run_id.to_string();
         launch_config.snapshot_json["runtime"]["run_id"] =
@@ -1384,6 +1382,7 @@ async fn prepare_launch(
     )
     .await?;
     let (app_config, run_spec, snapshot) = materialize_run_spec(launch_config, &spec.patch)?;
+    validate_launch_run_id(&run_spec.run_id)?;
     ensure_launch_mode(&run_spec, expected_mode, endpoint)?;
 
     Ok(PreparedLaunch {
@@ -1406,6 +1405,21 @@ fn ensure_launch_mode(
         )));
     }
 
+    Ok(())
+}
+
+fn validate_launch_run_id(run_id: &str) -> Result<(), ApiError> {
+    if run_id.is_empty() {
+        return Err(bad_request("run_id must not be empty"));
+    }
+    if !run_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(bad_request(
+            "run_id may only contain ASCII letters, digits, '-' and '_'",
+        ));
+    }
     Ok(())
 }
 
@@ -4477,6 +4491,39 @@ mod tests {
             startup_recovery_unmatched_open_orders_policy(&app_config),
             StartupRecoveryUnmatchedOpenOrdersPolicy::WarnOnly
         );
+    }
+
+    #[test]
+    fn run_id_override_rejects_path_components() {
+        let mut launch_config = LaunchConfig {
+            app_config: live_config_with_broker(
+                r#"
+                kind = "simulated"
+                mode = "paper"
+                "#,
+            ),
+            config_binding: None,
+            snapshot_content: "{}".to_string(),
+            snapshot_format: "JSON",
+            snapshot_json: serde_json::json!({
+                "runtime": {
+                    "mode": "live",
+                    "run_id": "api-live-broker-test"
+                },
+                "strategy": {
+                    "name": "moving_average_cross"
+                }
+            }),
+        };
+        let patch = RunSpecPatch {
+            run_id: Some("../outside-launch-root".to_string()),
+            mode: None,
+            strategy_ref: None,
+            strategy: None,
+        };
+
+        let error = apply_launch_overrides(&mut launch_config, &patch).unwrap_err();
+        assert!(error.0.to_string().contains("run_id"));
     }
 
     #[test]

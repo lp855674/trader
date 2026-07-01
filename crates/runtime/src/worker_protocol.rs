@@ -16,6 +16,7 @@ pub struct LiveWorkerLaunchSpec {
 
 impl LiveWorkerLaunchSpec {
     pub fn validate_no_embedded_secrets(&self) -> anyhow::Result<()> {
+        reject_credentialed_db_url(&self.db_url)?;
         match self.config_format.as_str() {
             "TOML" => {
                 let parsed: toml::Value = toml::from_str(&self.config_content)
@@ -82,10 +83,24 @@ fn reject_secret_like_json_values(
 }
 
 fn is_secret_like_key(key: &str) -> bool {
-    matches!(
-        key,
-        "api_key" | "secret_key" | "auth_token" | "bearer_token" | "password"
-    )
+    if key.ends_with("_env") {
+        return false;
+    }
+    key.contains("secret")
+        || key.contains("token")
+        || key.contains("password")
+        || matches!(key, "api_key" | "bearer_token" | "auth_token")
+}
+
+fn reject_credentialed_db_url(db_url: &str) -> anyhow::Result<()> {
+    let Some((_, rest)) = db_url.split_once("://") else {
+        return Ok(());
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        bail!("launch file contains credentialed db_url");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

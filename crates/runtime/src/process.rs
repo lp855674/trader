@@ -76,6 +76,10 @@ impl LiveProcessStatus {
     fn is_active(self) -> bool {
         matches!(self, Self::Starting | Self::Running | Self::StopRequested)
     }
+
+    fn needs_heartbeat(self) -> bool {
+        matches!(self, Self::Starting | Self::Running)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +97,7 @@ pub struct LiveProcessSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveProcessError {
     AlreadyRunning,
+    InvalidRunId(String),
     LaunchFailed(String),
     HandshakeTimeout,
 }
@@ -101,6 +106,7 @@ impl std::fmt::Display for LiveProcessError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AlreadyRunning => write!(formatter, "live process already running"),
+            Self::InvalidRunId(error) => write!(formatter, "invalid live process run_id: {error}"),
             Self::LaunchFailed(error) => write!(formatter, "live process launch failed: {error}"),
             Self::HandshakeTimeout => write!(formatter, "live process handshake timeout"),
         }
@@ -142,6 +148,7 @@ impl LiveProcessSupervisor {
         run_id: String,
         launch: LiveWorkerLaunchSpec,
     ) -> Result<(), LiveProcessError> {
+        validate_run_id_path_component(&run_id).map_err(LiveProcessError::InvalidRunId)?;
         {
             let runs = self.inner.lock().await;
             if runs
@@ -233,6 +240,7 @@ impl LiveProcessSupervisor {
         loop {
             if let Some(snapshot) = self.snapshot(&run_id).await {
                 if snapshot.status == LiveProcessStatus::Running {
+                    self.spawn_heartbeat_monitor(run_id.clone());
                     return Ok(());
                 }
                 if snapshot.status == LiveProcessStatus::Failed {
@@ -304,7 +312,7 @@ impl LiveProcessSupervisor {
             let runs = self.inner.lock().await;
             runs.iter()
                 .filter(|(_, handle)| {
-                    handle.snapshot.status.is_active()
+                    handle.snapshot.status.needs_heartbeat()
                         && handle
                             .snapshot
                             .last_heartbeat_at_ms
@@ -407,6 +415,28 @@ impl LiveProcessSupervisor {
                         return;
                     }
                 }
+            }
+        });
+    }
+
+    fn spawn_heartbeat_monitor(&self, run_id: String) {
+        let supervisor = self.clone();
+        let interval_ms = self
+            .options
+            .heartbeat_stale_after_ms
+            .saturating_div(2)
+            .max(10);
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_millis(interval_ms)).await;
+                if !supervisor
+                    .snapshot(&run_id)
+                    .await
+                    .is_some_and(|snapshot| snapshot.status.needs_heartbeat())
+                {
+                    return;
+                }
+                supervisor.check_heartbeats().await;
             }
         });
     }
@@ -572,4 +602,17 @@ impl LiveProcessSupervisor {
 
 fn is_terminal_run_status(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled" | "stopped")
+}
+
+fn validate_run_id_path_component(run_id: &str) -> Result<(), String> {
+    if run_id.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if !run_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err("may only contain ASCII letters, digits, '-' and '_'".to_string());
+    }
+    Ok(())
 }

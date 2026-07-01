@@ -85,6 +85,29 @@ async fn supervisor_kills_stale_heartbeat_worker() {
 }
 
 #[tokio::test]
+async fn supervisor_automatically_kills_stale_heartbeat_worker() {
+    let (db, db_url) = temp_db("auto-stale").await;
+    seed_running_live_run(&db, "run-1").await;
+    let mut options = fake_options("silent", "run-1");
+    options.heartbeat_stale_after_ms = 20;
+    options.health_response_timeout_ms = 20;
+    let supervisor = LiveProcessSupervisor::with_options(db.clone(), options);
+
+    supervisor
+        .start("run-1".to_string(), launch_spec("run-1", &db_url))
+        .await
+        .unwrap();
+    wait_for_snapshot(&supervisor, "run-1", |snapshot| {
+        snapshot.status == LiveProcessStatus::Failed
+    })
+    .await;
+
+    let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    assert_eq!(run.status, "failed");
+    assert_eq!(run.error.as_deref(), Some("heartbeat stale"));
+}
+
+#[tokio::test]
 async fn supervisor_fails_run_on_handshake_timeout() {
     let (db, db_url) = temp_db("handshake-timeout").await;
     seed_running_live_run(&db, "run-1").await;

@@ -70,3 +70,47 @@ fn launch_spec_redaction_rejects_secret_fields() {
             .contains("launch file contains secret-like key")
     );
 }
+
+#[test]
+fn launch_spec_redaction_rejects_webhook_auth_token() {
+    let spec = LiveWorkerLaunchSpec {
+        run_id: "live-1".to_string(),
+        db_url: "sqlite:data/trader.db".to_string(),
+        config_path: None,
+        config_content: "[runtime]\nmode = \"live\"\nrun_id = \"live-1\"\n[live]\nenabled = true\n[live.alerts]\nwebhook_auth_token = \"literal-token\"\n".to_string(),
+        config_format: "TOML".to_string(),
+        run_spec: None,
+        broker_snapshot_interval_ms: None,
+        startup_recovery_unmatched_open_orders_policy:
+            StartupRecoveryUnmatchedOpenOrdersPolicy::Fail,
+    };
+
+    let error = spec.validate_no_embedded_secrets().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("launch file contains secret-like key live.alerts.webhook_auth_token")
+    );
+}
+
+#[test]
+fn launch_spec_redaction_rejects_credentialed_database_url() {
+    let spec = LiveWorkerLaunchSpec {
+        run_id: "live-1".to_string(),
+        db_url: "postgres://trader:secret@example.test/trader".to_string(),
+        config_path: None,
+        config_content: "[runtime]\nmode = \"live\"\nrun_id = \"live-1\"\n".to_string(),
+        config_format: "TOML".to_string(),
+        run_spec: None,
+        broker_snapshot_interval_ms: None,
+        startup_recovery_unmatched_open_orders_policy:
+            StartupRecoveryUnmatchedOpenOrdersPolicy::Fail,
+    };
+
+    let error = spec.validate_no_embedded_secrets().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("launch file contains credentialed db_url")
+    );
+}
