@@ -61,16 +61,7 @@ async fn supervisor_marks_non_terminal_run_failed_on_crash() {
 
     let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
     assert_eq!(run.status, "failed");
-    let logs = db
-        .list_system_logs_filtered(SystemLogFilter {
-            run_id: Some("run-1".to_string()),
-            target: Some("runtime.live_process".to_string()),
-            level: Some("ERROR".to_string()),
-            ..SystemLogFilter::default()
-        })
-        .await
-        .unwrap();
-    assert!(!logs.is_empty());
+    wait_for_process_logs(&db, "run-1", "ERROR", None).await;
 }
 
 #[tokio::test]
@@ -109,17 +100,7 @@ async fn supervisor_fails_run_on_handshake_timeout() {
     let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
     assert_eq!(run.status, "failed");
     assert_eq!(run.error.as_deref(), Some("handshake timeout"));
-    let logs = db
-        .list_system_logs_filtered(SystemLogFilter {
-            run_id: Some("run-1".to_string()),
-            target: Some("runtime.live_process".to_string()),
-            level: Some("ERROR".to_string()),
-            search: Some("handshake timeout".to_string()),
-            ..SystemLogFilter::default()
-        })
-        .await
-        .unwrap();
-    assert!(!logs.is_empty());
+    wait_for_process_logs(&db, "run-1", "ERROR", Some("handshake timeout")).await;
 }
 
 #[test]
@@ -243,6 +224,30 @@ async fn wait_for_snapshot(
         assert!(
             tokio::time::Instant::now() < deadline,
             "timed out waiting for live process snapshot"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_process_logs(db: &Db, run_id: &str, level: &str, search: Option<&str>) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let logs = db
+            .list_system_logs_filtered(SystemLogFilter {
+                run_id: Some(run_id.to_string()),
+                target: Some("runtime.live_process".to_string()),
+                level: Some(level.to_string()),
+                search: search.map(str::to_string),
+                ..SystemLogFilter::default()
+            })
+            .await
+            .unwrap();
+        if !logs.is_empty() {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for live process logs"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }

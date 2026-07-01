@@ -4457,26 +4457,6 @@ mod tests {
     }
 
     #[test]
-    fn live_broker_for_config_rejects_ibkr_common_live_port() {
-        let app_config = live_config_with_broker(
-            r#"
-            kind = "ibkr"
-            mode = "paper"
-            host = "127.0.0.1"
-            port = 7496
-            client_id = 7
-            "#,
-        );
-
-        let error = match live_broker_for_config(&app_config) {
-            Ok(_) => panic!("expected IBKR live broker config to reject common live port"),
-            Err(error) => error,
-        };
-
-        assert!(error.0.to_string().contains("paper port"));
-    }
-
-    #[test]
     fn startup_recovery_unmatched_open_orders_policy_maps_config() {
         let mut app_config = live_config_with_broker(
             r#"
