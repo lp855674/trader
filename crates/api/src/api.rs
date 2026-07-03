@@ -713,6 +713,9 @@ struct IngestionSourceStatusResponse {
     name: String,
     table: String,
     ts_ms: i64,
+    age_ms: i64,
+    stale_after_ms: i64,
+    is_stale: bool,
     rows_fetched: usize,
     rows_upserted: usize,
     duration_ms: i64,
@@ -940,7 +943,11 @@ async fn api_request_log_middleware(
 async fn ingestion_status(
     State(state): State<AppState>,
 ) -> Result<Json<IngestionStatusResponse>, ApiError> {
-    let statuses = data::ingestion::tracker::last_ingestions(&state.db).await?;
+    let statuses = data::ingestion::tracker::last_ingestions_with_staleness(
+        &state.db,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await?;
     Ok(Json(IngestionStatusResponse {
         sources: statuses
             .into_iter()
@@ -948,6 +955,9 @@ async fn ingestion_status(
                 name: status.source,
                 table: status.table,
                 ts_ms: status.ts_ms,
+                age_ms: status.age_ms,
+                stale_after_ms: status.stale_after_ms,
+                is_stale: status.is_stale,
                 rows_fetched: status.rows_fetched,
                 rows_upserted: status.rows_upserted,
                 duration_ms: status.duration_ms,

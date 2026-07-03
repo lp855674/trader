@@ -1,6 +1,7 @@
 pub mod binance_funding;
 pub mod binance_meta;
 pub mod corporate_actions;
+pub mod http_retry;
 pub mod tracker;
 
 use std::time::Instant;

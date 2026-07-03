@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Get-Location
-$traderExe = Join-Path $repoRoot "target/debug/trader.exe"
+$traderExe = if ($env:TRADER_TEST_EXE) { $env:TRADER_TEST_EXE } else { Join-Path $repoRoot "target/debug/trader.exe" }
 $id = [guid]::NewGuid().ToString("N")
 $runId = "ibkr-aapl-1d-$($id.Substring(0, 12))"
 $runDir = Join-Path $repoRoot "data/ibkr-paper-runs/$runId"
@@ -38,9 +38,11 @@ function Invoke-CheckedCargo {
 function Invoke-CheckedTrader {
     param([string[]]$TraderArgs)
 
+    $global:LASTEXITCODE = 0
     if (Test-Path $traderExe) {
         & $traderExe @TraderArgs
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "trader $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     } else {
@@ -51,20 +53,80 @@ function Invoke-CheckedTrader {
 function Invoke-CapturedTrader {
     param([string[]]$TraderArgs)
 
+    $global:LASTEXITCODE = 0
     if (Test-Path $traderExe) {
         $output = & $traderExe @TraderArgs 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "trader $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     } else {
         $output = cargo @(@("run", "-p", "trader-cli", "--") + $TraderArgs) 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "cargo run -p trader-cli -- $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     }
 
     $output | ForEach-Object { Write-Host $_ }
     return ($output -join [Environment]::NewLine)
+}
+
+function Invoke-CapturedTraderCheck {
+    param([string[]]$TraderArgs)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $global:LASTEXITCODE = 0
+    try {
+        if (Test-Path $traderExe) {
+            $output = & $traderExe @TraderArgs 2>&1
+            $exitCode = $LASTEXITCODE
+        } else {
+            $output = cargo @(@("run", "-p", "trader-cli", "--") + $TraderArgs) 2>&1
+            $exitCode = $LASTEXITCODE
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($null -eq $exitCode) {
+        $exitCode = 0
+    }
+
+    $output | ForEach-Object { Write-Host $_ }
+    return [pscustomobject]@{
+        exit_code = $exitCode
+        output = ($output -join [Environment]::NewLine)
+    }
+}
+
+function Get-IbkrFailureClass {
+    param(
+        [string]$Text,
+        [int]$ExitCode,
+        [bool]$OpenOrdersFailure = $false
+    )
+
+    if ($OpenOrdersFailure) {
+        return "open_orders_remaining"
+    }
+    if ($ExitCode -eq 0) {
+        return "ok"
+    }
+    if ($Text -match "unable to connect to IBKR paper gateway" -or $Text -match "broker connection error" -or $Text -match "connection.*timeout") {
+        return "gateway_unreachable"
+    }
+    if ($Text -match "account.*mismatch" -or $Text -match "account.*not.*returned" -or $Text -match "account.*not.*found") {
+        return "account_mismatch"
+    }
+    return "command_failed"
+}
+
+function Test-OpenOrdersRemaining {
+    param([string]$Text)
+
+    $match = [regex]::Match($Text, 'open_orders=(\d+)')
+    return ($match.Success -and [int]$match.Groups[1].Value -gt 0)
 }
 
 function Get-IbkrAccountId {
@@ -78,59 +140,53 @@ function Get-IbkrAccountId {
 
 function Invoke-IbkrPaperGatewayChecks {
     Write-Host "Running IBKR paper Gateway checks"
-    $readonlyOutput = ""
-    $openOrdersOutput = ""
-    $executionsOutput = ""
-    $reconcileOutput = ""
-    $recoverOutput = ""
+    $checkSpecs = @(
+        [pscustomobject]@{ name = "readonly"; args = @("ibkr-paper-readonly", "--config", $runConfigPath) },
+        [pscustomobject]@{ name = "open_orders"; args = @("ibkr-paper-open-orders", "--config", $runConfigPath) },
+        [pscustomobject]@{ name = "executions"; args = @("ibkr-paper-executions", "--config", $runConfigPath, "--request-id", "1") },
+        [pscustomobject]@{ name = "reconcile"; args = @("ibkr-paper-reconcile", "--config", $runConfigPath, "--request-id", "1") },
+        [pscustomobject]@{ name = "recover"; args = @("ibkr-paper-recover", "--config", $runConfigPath, "--request-id", "1") }
+    )
 
-    try {
-        $readonlyOutput = Invoke-CapturedTrader @("ibkr-paper-readonly", "--config", $runConfigPath)
-    } catch {
-        Write-Warning "ibkr-paper-readonly failed during checks: $_"
-        $readonlyOutput = "failed: $_"
+    $results = @()
+    foreach ($spec in $checkSpecs) {
+        $captured = Invoke-CapturedTraderCheck $spec.args
+        $openOrdersFailure = ($spec.name -eq "open_orders" -and (Test-OpenOrdersRemaining $captured.output))
+        $failureClass = Get-IbkrFailureClass -Text $captured.output -ExitCode $captured.exit_code -OpenOrdersFailure $openOrdersFailure
+        $results += [pscustomobject]@{
+            name = $spec.name
+            command = "trader $($spec.args -join ' ')"
+            exit_code = $captured.exit_code
+            status = if ($failureClass -eq "ok") { "completed" } else { "failed" }
+            failure_class = $failureClass
+            output = $captured.output
+        }
+        if ($failureClass -ne "ok") {
+            Write-Warning "ibkr-paper $($spec.name) check classified as $failureClass"
+            break
+        }
     }
 
-    try {
-        $openOrdersOutput = Invoke-CapturedTrader @("ibkr-paper-open-orders", "--config", $runConfigPath)
-    } catch {
-        Write-Warning "ibkr-paper-open-orders failed during checks: $_"
-        $openOrdersOutput = "failed: $_"
-    }
-
-    try {
-        $executionsOutput = Invoke-CapturedTrader @("ibkr-paper-executions", "--config", $runConfigPath, "--request-id", "1")
-    } catch {
-        Write-Warning "ibkr-paper-executions failed during checks: $_"
-        $executionsOutput = "failed: $_"
-    }
-
-    try {
-        $reconcileOutput = Invoke-CapturedTrader @("ibkr-paper-reconcile", "--config", $runConfigPath, "--request-id", "1")
-    } catch {
-        Write-Warning "ibkr-paper-reconcile failed during checks: $_"
-        $reconcileOutput = "failed: $_"
-    }
-
-    try {
-        $recoverOutput = Invoke-CapturedTrader @("ibkr-paper-recover", "--config", $runConfigPath, "--request-id", "1")
-    } catch {
-        Write-Warning "ibkr-paper-recover failed during checks: $_"
-        $recoverOutput = "failed: $_"
-    }
+    $failedCheck = $results | Where-Object { $_.failure_class -ne "ok" } | Select-Object -First 1
 
     [pscustomobject]@{
-        readonly = $readonlyOutput
-        open_orders = $openOrdersOutput
-        executions = $executionsOutput
-        reconciliation = $reconcileOutput
-        recover = $recoverOutput
+        status = if ($null -eq $failedCheck) { "completed" } else { "failed" }
+        failure_class = if ($null -eq $failedCheck) { "ok" } else { $failedCheck.failure_class }
+        failed_check = if ($null -eq $failedCheck) { "" } else { $failedCheck.name }
+        checks = $results
+        readonly = (($results | Where-Object { $_.name -eq "readonly" } | Select-Object -First 1).output)
+        open_orders = (($results | Where-Object { $_.name -eq "open_orders" } | Select-Object -First 1).output)
+        executions = (($results | Where-Object { $_.name -eq "executions" } | Select-Object -First 1).output)
+        reconciliation = (($results | Where-Object { $_.name -eq "reconcile" } | Select-Object -First 1).output)
+        recover = (($results | Where-Object { $_.name -eq "recover" } | Select-Object -First 1).output)
     }
 }
 
 try {
     $env:CARGO_BUILD_JOBS = "1"
-    Invoke-CheckedCargo @("build", "-p", "trader-cli")
+    if (-not $env:TRADER_TEST_EXE) {
+        Invoke-CheckedCargo @("build", "-p", "trader-cli")
+    }
 
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     New-Item -ItemType Directory -Force -Path (Split-Path $OutputParquet -Parent) | Out-Null
@@ -194,9 +250,13 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
     $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecks } else { $null }
+    $runStatus = if ($null -ne $gatewayChecks -and $gatewayChecks.status -ne "completed") { "failed" } else { "completed" }
+    $runFailureClass = if ($null -ne $gatewayChecks -and $gatewayChecks.failure_class -ne "ok") { $gatewayChecks.failure_class } else { "ok" }
 
     $summary = [pscustomobject]@{
         run_id = $runId
+        status = $runStatus
+        failure_class = $runFailureClass
         config = $runConfigPath
         database = $databaseUrl
         parquet = $OutputParquet
@@ -211,6 +271,10 @@ try {
         gateway_checks = $gatewayChecks
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
+
+    if ($runStatus -ne "completed") {
+        throw "IBKR paper run failed post-run checks: $runFailureClass; see $summaryPath"
+    }
 
     [pscustomobject]@{
         run_id = $runId

@@ -14,6 +14,7 @@
 | `events.md` | Event envelope、事件分类、事件流、事件持久化。 |
 | `strategy.md` | Strategy trait、StrategyContext、信号模型、策略边界。 |
 | `broker.md` | Broker trait、路由、订单/成交/持仓映射、回报、重连、限流。 |
+| `paper-readiness-runbook.md` | 本地 paper-readiness 门禁、IBKR Gateway 验证步骤和 failure_class 排查。 |
 | `roadmap.md` | 阶段目标、MVP 范围、发布计划。 |
 
 ## 维护规则

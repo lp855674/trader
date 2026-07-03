@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::str::FromStr;
 
-use crate::ingestion::{FundingRate, IngestionError, IngestionResult};
+use crate::ingestion::{FundingRate, IngestionError, IngestionResult, http_retry};
 
 const BINANCE_FUNDING_RATE_URL: &str = "https://fapi.binance.com/fapi/v1/fundingRate";
 
@@ -34,14 +34,7 @@ pub async fn fetch_binance_funding_history(
         query.push(("limit", limit.to_string()));
     }
 
-    let payload = client
-        .get(BINANCE_FUNDING_RATE_URL)
-        .query(&query)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+    let payload = http_retry::get_text_with_retry(client, BINANCE_FUNDING_RATE_URL, &query).await?;
     parse_binance_funding_history(&payload)
 }
 

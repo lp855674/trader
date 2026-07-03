@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-use crate::ingestion::{CorporateAction, IngestionError};
+use crate::ingestion::{CorporateAction, IngestionError, http_retry};
 
 const YAHOO_CHART_URL_PREFIX: &str = "https://query1.finance.yahoo.com/v8/finance/chart";
 
@@ -48,18 +48,17 @@ pub async fn fetch_yahoo_corporate_actions(
     symbol: &str,
 ) -> Result<Vec<CorporateAction>, IngestionError> {
     let period2 = chrono::Utc::now().timestamp();
-    let payload = client
-        .get(format!("{YAHOO_CHART_URL_PREFIX}/{symbol}"))
-        .query(&[
+    let url = format!("{YAHOO_CHART_URL_PREFIX}/{symbol}");
+    let payload = http_retry::get_text_with_retry(
+        client,
+        &url,
+        &[
             ("period1", "0".to_string()),
             ("period2", period2.to_string()),
             ("events", "div,splits".to_string()),
-        ])
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+        ],
+    )
+    .await?;
     parse_yahoo_corporate_actions(symbol, &payload, chrono::Utc::now().timestamp_millis())
 }
 

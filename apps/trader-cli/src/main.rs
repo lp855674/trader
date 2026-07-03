@@ -3016,13 +3016,20 @@ async fn run_command(command: Command) -> Result<()> {
             IngestCommand::Status { config } => {
                 let (_, db) = load_db(&config).await?;
                 db.migrate().await?;
-                let statuses = data::ingestion::tracker::last_ingestions(&db).await?;
+                let statuses = data::ingestion::tracker::last_ingestions_with_staleness(
+                    &db,
+                    chrono::Utc::now().timestamp_millis(),
+                )
+                .await?;
                 for status in statuses {
                     println!(
-                        "ingestion_status: source={} table={} ts_ms={} rows_fetched={} rows_upserted={} duration_ms={}",
+                        "ingestion_status: source={} table={} ts_ms={} age_ms={} stale_after_ms={} is_stale={} rows_fetched={} rows_upserted={} duration_ms={}",
                         status.source,
                         status.table,
                         status.ts_ms,
+                        status.age_ms,
+                        status.stale_after_ms,
+                        status.is_stale,
                         status.rows_fetched,
                         status.rows_upserted,
                         status.duration_ms

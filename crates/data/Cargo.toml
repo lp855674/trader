@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 storage.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true
-tokio.workspace = true

@@ -26,6 +26,9 @@ $soakDir = Join-Path $repoRoot "data/ibkr-paper-soak/$soakId"
 $soakSummaryPath = Join-Path $soakDir "summary.json"
 $iterationSummaries = @()
 $failed = $false
+$failureClass = "ok"
+$failedIteration = 0
+$firstFailedLog = ""
 
 function Get-MatchValue {
     param(
@@ -38,6 +41,28 @@ function Get-MatchValue {
         return $match.Groups[1].Value.Trim()
     }
     return ""
+}
+
+function Get-IbkrFailureClass {
+    param(
+        [string]$Text,
+        [int]$ExitCode,
+        [bool]$OpenOrdersFailure = $false
+    )
+
+    if ($OpenOrdersFailure) {
+        return "open_orders_remaining"
+    }
+    if ($ExitCode -eq 0) {
+        return "ok"
+    }
+    if ($Text -match "unable to connect to IBKR paper gateway" -or $Text -match "broker connection error" -or $Text -match "connection.*timeout") {
+        return "gateway_unreachable"
+    }
+    if ($Text -match "account.*mismatch" -or $Text -match "account.*not.*returned" -or $Text -match "account.*not.*found") {
+        return "account_mismatch"
+    }
+    return "iteration_failed"
 }
 
 try {
@@ -83,10 +108,17 @@ try {
         $openOrders = Get-MatchValue $text 'ibkr paper open orders ok: open_orders=(\d+)'
         $reconciliation = Get-MatchValue $text '(ibkr paper reconcile ok:.+)'
         $recover = Get-MatchValue $text '(ibkr paper recover ok:.+)'
+        $openOrdersFailure = $false
+        if ($ConfirmIbkrPaperOrder -and $openOrders -ne "0") {
+            $openOrdersFailure = $true
+        }
+        $iterationFailureClass = Get-IbkrFailureClass -Text $text -ExitCode $exitCode -OpenOrdersFailure $openOrdersFailure
 
         $iterationSummary = [pscustomobject]@{
             iteration = $iteration
             exit_code = $exitCode
+            status = if ($iterationFailureClass -eq "ok") { "completed" } else { "failed" }
+            failure_class = $iterationFailureClass
             run_id = $runId
             log = $logPath
             summary = $summaryPath
@@ -98,10 +130,16 @@ try {
 
         if ($exitCode -ne 0) {
             $failed = $true
+            $failureClass = $iterationFailureClass
+            $failedIteration = $iteration
+            $firstFailedLog = $logPath
             break
         }
-        if ($ConfirmIbkrPaperOrder -and $openOrders -ne "0") {
+        if ($openOrdersFailure) {
             $failed = $true
+            $failureClass = $iterationFailureClass
+            $failedIteration = $iteration
+            $firstFailedLog = $logPath
             break
         }
 
@@ -118,6 +156,9 @@ try {
         account_id = if ($ConfirmIbkrPaperOrder) { $AccountId } else { "not_used" }
         order_submit = if ($ConfirmIbkrPaperOrder) { "enabled" } else { "disabled" }
         status = if ($failed) { "failed" } else { "completed" }
+        failure_class = $failureClass
+        failed_iteration = $failedIteration
+        first_failed_log = $firstFailedLog
         iterations = $iterationSummaries
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $soakSummaryPath -Encoding UTF8

@@ -693,6 +693,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 
 固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
 
+`ibkr-paper-run.ps1` 的 `summary.json` 包含顶层 `status` 和 `failure_class`。默认本地 dry-run 不连接 Gateway，`order_submit = disabled` 且 `failure_class = ok`；开闸后脚本会把 post-run Gateway checks 写入 `gateway_checks.status`、`gateway_checks.failure_class`、`gateway_checks.failed_check` 和逐项 `checks`。如果 post-run 只读巡检失败，脚本会先写 summary，再以非零退出，避免真实 Gateway 长跑失败只留控制台 warning。
+
 真实 IBKR paper 自动下单必须显式开闸：
 
 ```powershell
@@ -707,7 +709,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1
 ```
 
-该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。
+该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。`-Stage ReadOnly` 会为每次验证生成 `data/ibkr-paper-test/read-only-{id}/`，其中包含临时 `config.toml`、每个只读命令的 `.log` 和 `summary.json`。summary 记录 `status`、`failure_class`、`failed_check`、Gateway 连接参数和 6 个 read-only check 的退出码，方便没有 Gateway 时也能留下可排查证据。
+
+常见 `failure_class`：
+
+```text
+ok
+gateway_unreachable
+account_mismatch
+command_failed
+open_orders_remaining
+iteration_failed
+```
 
 多轮 soak 验证用于连续跑多次 runner，检查稳定性和每轮 `summary.json`。默认不连接 Gateway、不下单：
 
@@ -716,6 +729,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iteratio
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU12345 -ConfirmIbkrPaperOrder
 ```
 
+soak 输出位于 `data/ibkr-paper-soak/{soak_id}/summary.json`。顶层字段包含 `status`、`failure_class`、`failed_iteration` 和 `first_failed_log`；每轮也记录 `status`、`failure_class`、runner summary、open order 巡检、reconcile 与 recover 摘要。真实 Gateway 长跑时，如果某轮命令失败会归类为 `gateway_unreachable`、`account_mismatch` 或 `iteration_failed`；如果开闸下单后仍有远端 open orders，会归类为 `open_orders_remaining`。
+
 本地 paper readiness 门禁用于账号未就绪时的无网络回归检查：
 
 ```powershell
@@ -723,6 +738,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\paper-readiness.ps1
 ```
 
 默认会跑 cargo 格式/检查/测试、Binance 无网络 smoke，以及 IBKR 本地 test plan + dry-run soak；不会连接真实 Gateway，也不会下单。可用 `-SkipCargo`、`-SkipBinance`、`-SkipIbkr` 缩小范围。
+完整门禁项、真实 Gateway 验证步骤和 `failure_class` 排查见 `paper-readiness-runbook.md`。
 
 IBKR read-only preflight：
 

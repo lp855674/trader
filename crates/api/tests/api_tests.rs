@@ -1902,6 +1902,9 @@ async fn ingestion_status_route_returns_tracker_status() {
     assert_eq!(sources[0]["rows_fetched"], 3);
     assert_eq!(sources[0]["rows_upserted"], 2);
     assert_eq!(sources[0]["duration_ms"], 25);
+    assert_eq!(sources[0]["is_stale"], true);
+    assert!(sources[0]["age_ms"].as_i64().unwrap() > 0);
+    assert_eq!(sources[0]["stale_after_ms"], 12 * 60 * 60 * 1000);
 }
 
 #[tokio::test]

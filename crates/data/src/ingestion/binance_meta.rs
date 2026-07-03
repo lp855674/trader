@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::str::FromStr;
 
-use crate::ingestion::{CryptoMarketMeta, IngestionError, IngestionResult};
+use crate::ingestion::{CryptoMarketMeta, IngestionError, IngestionResult, http_retry};
 
 const BINANCE_SPOT_EXCHANGE_INFO_URL: &str = "https://api.binance.com/api/v3/exchangeInfo";
 
@@ -56,13 +56,8 @@ struct BinanceFilter {
 pub async fn fetch_binance_market_meta(
     client: &reqwest::Client,
 ) -> Result<Vec<CryptoMarketMeta>, IngestionError> {
-    let payload = client
-        .get(BINANCE_SPOT_EXCHANGE_INFO_URL)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+    let payload =
+        http_retry::get_text_with_retry(client, BINANCE_SPOT_EXCHANGE_INFO_URL, &[]).await?;
     parse_binance_market_meta(&payload, chrono::Utc::now().timestamp_millis())
 }
 
