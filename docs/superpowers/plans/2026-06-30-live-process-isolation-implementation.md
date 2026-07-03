@@ -4,6 +4,8 @@
 
 **Goal:** Run API-started Live runtimes in supervised child processes while preserving the current Live HTTP API, SQLite audit trail, startup recovery semantics, reconciliation snapshots, and alert delivery behavior.
 
+**Status:** Completed. The implementation includes the JSONL worker protocol, `trader live-worker`, `LiveProcessSupervisor`, Live API routing through the supervisor, crash/startup-recovery failure coverage, documentation, and live recovery verification coverage.
+
 **Architecture:** Keep the API server as the public control plane and add a focused `LiveProcessSupervisor` for Live runs only. The supervisor writes a non-secret launch file, starts `trader live-worker --launch-file ...`, exchanges JSONL commands/events over stdin/stdout, captures stderr into bounded diagnostics, and uses SQLite as the source of truth for business state.
 
 **Tech Stack:** Rust 2024, Tokio process/io/time, Axum, SQLx SQLite through `storage::Db`, serde/serde_json JSONL, clap.
@@ -60,7 +62,7 @@ Modify:
 - Consumes: `runtime::RunSpec`, `runtime::LiveRuntimeSettings`, `runtime::StartupRecoveryUnmatchedOpenOrdersPolicy`
 - Produces: `runtime::LiveWorkerCommand`, `runtime::LiveWorkerEvent`, `runtime::LiveWorkerLaunchSpec`, `runtime::parse_worker_command_line(line: &str) -> anyhow::Result<LiveWorkerCommand>`, `runtime::worker_event_line(event: &LiveWorkerEvent) -> anyhow::Result<String>`
 
-- [ ] **Step 1: Write failing protocol serde tests**
+- [x] **Step 1: Write failing protocol serde tests**
 
 Create `crates/runtime/tests/worker_protocol_tests.rs`:
 
@@ -131,13 +133,13 @@ fn launch_spec_redaction_rejects_secret_fields() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p runtime worker_protocol --test worker_protocol_tests`
 
 Expected: FAIL because `worker_protocol` types and helpers do not exist.
 
-- [ ] **Step 3: Implement `worker_protocol.rs`**
+- [x] **Step 3: Implement `worker_protocol.rs`**
 
 Create `crates/runtime/src/worker_protocol.rs` with these public shapes:
 
@@ -270,7 +272,7 @@ pub fn worker_event_line(event: &LiveWorkerEvent) -> anyhow::Result<String> {
 
 Also derive `Serialize` and `Deserialize` for `RunSpec` and nested spec structs in `crates/runtime/src/run_spec.rs`, and for `StartupRecoveryUnmatchedOpenOrdersPolicy` in `crates/runtime/src/live.rs`.
 
-- [ ] **Step 4: Export the module and add dependencies**
+- [x] **Step 4: Export the module and add dependencies**
 
 In `crates/runtime/src/runtime.rs`, add:
 
@@ -290,7 +292,7 @@ serde.workspace = true
 toml.workspace = true
 ```
 
-- [ ] **Step 5: Run protocol tests**
+- [x] **Step 5: Run protocol tests**
 
 Run:
 
@@ -301,7 +303,7 @@ cargo check -p runtime
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/runtime/src/worker_protocol.rs crates/runtime/src/runtime.rs crates/runtime/src/run_spec.rs crates/runtime/src/live.rs crates/runtime/Cargo.toml crates/runtime/tests/worker_protocol_tests.rs
@@ -319,7 +321,7 @@ git commit -m "feat: add live worker protocol"
 - Consumes: `runtime::LiveWorkerLaunchSpec`, `runtime::LiveWorkerCommand`, `runtime::LiveWorkerEvent`, `runtime::LiveRuntime::run`
 - Produces: CLI command `trader live-worker --launch-file <path>` that emits JSONL events on stdout, reads JSONL commands on stdin, and returns exit code `0` for graceful stop or startup failure already persisted by `LiveRuntime`
 
-- [ ] **Step 1: Add failing CLI smoke test for worker startup and shutdown**
+- [x] **Step 1: Add failing CLI smoke test for worker startup and shutdown**
 
 Add this test to `apps/trader-cli/tests/cli_tests.rs`. Use a file-backed SQLite URL, not `sqlite::memory:`, because the worker is a separate process.
 
@@ -408,13 +410,13 @@ fn live_worker_starts_and_stops_over_jsonl() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p trader-cli live_worker_starts_and_stops_over_jsonl --test cli_tests`
 
 Expected: FAIL because `live-worker` is not a known subcommand.
 
-- [ ] **Step 3: Add the hidden worker subcommand**
+- [x] **Step 3: Add the hidden worker subcommand**
 
 In `apps/trader-cli/src/main.rs`, add this `Command` variant:
 
@@ -431,7 +433,7 @@ In `main`, dispatch it before operator-facing commands:
 Command::LiveWorker { launch_file } => run_live_worker(&launch_file).await?,
 ```
 
-- [ ] **Step 4: Implement `run_live_worker`**
+- [x] **Step 4: Implement `run_live_worker`**
 
 Add a helper that:
 
@@ -501,7 +503,7 @@ async fn run_live_worker(launch_file: &str) -> Result<()> {
 
 Keep `live_worker_broker_for_config` credential-free by default: `Simulated`, `Futu`, `Okx`, and `Binance` use `FakeBrokerAdapter`; `InteractiveBrokers` may construct `IbkrPaperGatewayAdapter` only when the existing config validation allows paper mode.
 
-- [ ] **Step 5: Run CLI worker tests**
+- [x] **Step 5: Run CLI worker tests**
 
 Run:
 
@@ -512,7 +514,7 @@ cargo check -p trader-cli
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add apps/trader-cli/src/main.rs apps/trader-cli/Cargo.toml apps/trader-cli/tests/cli_tests.rs
@@ -530,7 +532,7 @@ git commit -m "feat: add live worker command"
 - Consumes: `LiveWorkerLaunchSpec`, `LiveWorkerCommand`, `LiveWorkerEvent`, `storage::Db`
 - Produces: `LiveProcessSupervisor::new(db: Db) -> Self`, `LiveProcessSupervisor::with_options(db: Db, options: LiveProcessSupervisorOptions) -> Self`, `start(run_id: String, launch: LiveWorkerLaunchSpec) -> Result<(), LiveProcessError>`, `stop(run_id: &str) -> bool`, `snapshot(run_id: &str) -> Option<LiveProcessSnapshot>`, `is_active(run_id: &str) -> bool`, `check_heartbeats() -> usize`
 
-- [ ] **Step 1: Add failing supervisor tests with fake worker process**
+- [x] **Step 1: Add failing supervisor tests with fake worker process**
 
 Create `crates/runtime/tests/live_process_supervisor_tests.rs`. Re-execute the test binary as a fake worker by running `std::env::current_exe()` with `--exact fake_live_worker_process --nocapture` and setting `TRADER_FAKE_LIVE_WORKER=healthy|crash_after_started|silent`.
 
@@ -603,13 +605,13 @@ fn fake_live_worker_process() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p runtime live_process_supervisor --test live_process_supervisor_tests`
 
 Expected: FAIL because `LiveProcessSupervisor` does not exist.
 
-- [ ] **Step 3: Implement supervisor data types**
+- [x] **Step 3: Implement supervisor data types**
 
 In `crates/runtime/src/process.rs`, define:
 
@@ -658,7 +660,7 @@ pub enum LiveProcessError {
 
 Default `trader_exe` should be `std::env::current_exe()` with the executable filename changed to `trader.exe` on Windows or `trader` elsewhere when possible. Tests override it with the test binary path.
 
-- [ ] **Step 4: Implement `start` and event readers**
+- [x] **Step 4: Implement `start` and event readers**
 
 `start` must:
 
@@ -674,7 +676,7 @@ Default `trader_exe` should be `std::env::current_exe()` with the executable fil
 
 Use `tokio::process::Command`, `tokio::io::AsyncBufReadExt`, and an `Arc<Mutex<HashMap<String, LiveChildHandle>>>`.
 
-- [ ] **Step 5: Implement stop, heartbeat, and exit handling**
+- [x] **Step 5: Implement stop, heartbeat, and exit handling**
 
 `stop` must write:
 
@@ -696,7 +698,7 @@ Unexpected exit handling must:
 2. If DB state is terminal (`completed`, `failed`, `cancelled`, `stopped`), leave it untouched.
 3. If DB state is missing or non-terminal, write `failed` and a `runtime.live_process` system log with exit code and bounded stderr.
 
-- [ ] **Step 6: Export supervisor API**
+- [x] **Step 6: Export supervisor API**
 
 In `crates/runtime/src/runtime.rs`, add:
 
@@ -709,7 +711,7 @@ pub use process::{
 };
 ```
 
-- [ ] **Step 7: Run supervisor tests**
+- [x] **Step 7: Run supervisor tests**
 
 Run:
 
@@ -721,7 +723,7 @@ cargo check -p runtime
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add crates/runtime/src/process.rs crates/runtime/src/runtime.rs crates/runtime/tests/live_process_supervisor_tests.rs
@@ -739,7 +741,7 @@ git commit -m "feat: supervise live worker processes"
 - Consumes: `LiveProcessSupervisor::start`, `LiveProcessSupervisor::stop`, `LiveProcessSupervisor::snapshot`
 - Produces: API-started Live runs execute in child processes; `/api/v1/live-runs`, `/status`, and `/stop` response shapes remain compatible.
 
-- [ ] **Step 1: Add failing API assertion for process-backed Live status**
+- [x] **Step 1: Add failing API assertion for process-backed Live status**
 
 Extend `live_runtime_routes_start_report_status_and_stop` in `crates/api/tests/api_tests.rs` so it still asserts:
 
@@ -769,13 +771,13 @@ assert!(logs.is_empty());
 
 If the test currently moves `db` into `AppState`, clone it before constructing state.
 
-- [ ] **Step 2: Run API test to verify it still exercises old path**
+- [x] **Step 2: Run API test to verify it still exercises old path**
 
 Run: `cargo test -p api live_runtime_routes_start_report_status_and_stop --test api_tests`
 
 Expected before implementation: FAIL or hang once the test expects process-specific behavior not yet wired.
 
-- [ ] **Step 3: Add supervisor to `AppState`**
+- [x] **Step 3: Add supervisor to `AppState`**
 
 In `crates/api/src/state.rs`, add:
 
@@ -791,7 +793,7 @@ let live_process_supervisor = runtime::LiveProcessSupervisor::new(db.clone());
 
 Keep `runtime_manager` for Backtest/Paper/Replay and any existing in-process routes.
 
-- [ ] **Step 4: Build launch files from `start_live_run`**
+- [x] **Step 4: Build launch files from `start_live_run`**
 
 Replace the direct `RuntimeManager::spawn_with_metadata` Live path in `crates/api/src/api.rs` with:
 
@@ -813,7 +815,7 @@ state.live_process_supervisor.start(run_id.clone(), launch).await?;
 
 Remove API-side Live broker construction from the start path. Keep `live_broker_for_config` only if other API code still uses it; otherwise delete it in a separate cleanup step inside this task.
 
-- [ ] **Step 5: Route Live stop to supervisor**
+- [x] **Step 5: Route Live stop to supervisor**
 
 Replace `stop_live_run` body with:
 
@@ -824,7 +826,7 @@ get_run_status(State(state), Path(run_id)).await
 
 Do not update DB status in the API stop handler; let the worker persist `stopped`, and let supervisor failure handling write `failed` only when graceful stop does not complete.
 
-- [ ] **Step 6: Merge process state into status response**
+- [x] **Step 6: Merge process state into status response**
 
 In `get_run_status`, before returning a storage-only response for Live runs, check:
 
@@ -858,7 +860,7 @@ if let Some(process) = state.live_process_supervisor.snapshot(&run_id).await
 
 Then fall back to the existing storage response.
 
-- [ ] **Step 7: Run Live API compatibility tests**
+- [x] **Step 7: Run Live API compatibility tests**
 
 Run:
 
@@ -870,7 +872,7 @@ cargo check -p api
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add crates/api/src/state.rs crates/api/src/api.rs crates/api/tests/api_tests.rs
@@ -888,7 +890,7 @@ git commit -m "feat: route live api through process supervisor"
 - Consumes: process exit handling from Task 3 and API wiring from Task 4.
 - Produces: deterministic regression coverage for unexpected worker exit, handshake timeout, stale heartbeat, and startup recovery failure reason preservation.
 
-- [ ] **Step 1: Add API startup recovery failure preservation test**
+- [x] **Step 1: Add API startup recovery failure preservation test**
 
 In `crates/api/tests/api_tests.rs`, extend the existing startup recovery failure test around `api-live-startup-recovery-fail` to assert the stored error contains the specific recovery reason:
 
@@ -914,7 +916,7 @@ assert!(
 );
 ```
 
-- [ ] **Step 2: Add API normal stop preservation test**
+- [x] **Step 2: Add API normal stop preservation test**
 
 Add an assertion to the normal stop test:
 
@@ -924,7 +926,7 @@ assert_eq!(run.status, "stopped");
 assert!(run.error.is_none());
 ```
 
-- [ ] **Step 3: Add handshake timeout supervisor test**
+- [x] **Step 3: Add handshake timeout supervisor test**
 
 In `crates/runtime/tests/live_process_supervisor_tests.rs`, add:
 
@@ -940,7 +942,7 @@ async fn supervisor_fails_run_on_handshake_timeout() {
 
 Extend `fake_live_worker_process` with `silent_before_handshake`.
 
-- [ ] **Step 4: Fix failure handling until tests pass**
+- [x] **Step 4: Fix failure handling until tests pass**
 
 If the API startup recovery test shows a generic process-exit error replacing the existing DB error, update supervisor exit handling:
 
@@ -955,7 +957,7 @@ if let Some(run) = self.db.get_strategy_run(run_id).await?
 
 Use the same terminal set as the API: `completed`, `failed`, `cancelled`, `stopped`.
 
-- [ ] **Step 5: Run targeted failure tests**
+- [x] **Step 5: Run targeted failure tests**
 
 Run:
 
@@ -967,7 +969,7 @@ cargo test -p api live_runtime_routes_start_report_status_and_stop --test api_te
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/api/tests/api_tests.rs crates/runtime/tests/live_process_supervisor_tests.rs crates/runtime/src/process.rs
@@ -985,7 +987,7 @@ git commit -m "test: cover live process failure handling"
 - Consumes: completed process-isolated Live implementation.
 - Produces: documented behavior and a verified implementation ready for review.
 
-- [ ] **Step 1: Document architecture**
+- [x] **Step 1: Document architecture**
 
 Add a short Live section to `docs/architecture.md`:
 
@@ -1000,7 +1002,7 @@ existing SQLite run state, runtime events, system logs, reconciliation
 snapshots, alert logs, and alert delivery logs.
 ```
 
-- [ ] **Step 2: Document unchanged API surface**
+- [x] **Step 2: Document unchanged API surface**
 
 Add to `docs/api.md` near the Live endpoints:
 
@@ -1011,7 +1013,7 @@ fresh supervisor process state while the child is active and falls back to
 SQLite terminal state after exit.
 ```
 
-- [ ] **Step 3: Run crate-level tests**
+- [x] **Step 3: Run crate-level tests**
 
 Run:
 
@@ -1024,7 +1026,7 @@ cargo check -p runtime -p api -p trader-cli
 
 Expected: PASS.
 
-- [ ] **Step 4: Run recovery verification scripts**
+- [x] **Step 4: Run recovery verification scripts**
 
 Run:
 
@@ -1035,7 +1037,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Ite
 
 Expected: both scripts finish with zero non-zero runtime exits and no credential prompts.
 
-- [ ] **Step 5: Run workspace verification**
+- [x] **Step 5: Run workspace verification**
 
 Run:
 
@@ -1045,7 +1047,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add docs/architecture.md docs/api.md docs/web-admin-api.md

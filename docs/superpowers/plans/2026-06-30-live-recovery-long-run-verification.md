@@ -4,6 +4,8 @@
 
 **Goal:** Build a repeatable long-run verification loop for Live startup recovery, broker snapshots, reconciliation drift detection, and alert delivery before starting Live process isolation design.
 
+**Status:** Completed for the default local verification path. Optional adapter read-only passes remain explicitly deferred until an operator provides Binance testnet credentials or an IBKR paper account with Gateway.
+
 **Architecture:** Keep verification local-first and credential-free by default. Use existing `crates/runtime/tests/live_runtime_tests.rs` fake/injected broker coverage as the deterministic core, wrap it in a PowerShell runner that records per-iteration logs and JSON summaries, and make real adapter read-only recovery checks opt-in.
 
 **Tech Stack:** Rust workspace, Tokio runtime tests, fake/injected broker tests, PowerShell verification script, existing Binance/IBKR paper recovery scripts, JSON summary artifacts.
@@ -171,7 +173,7 @@ None observed.
 Live recovery is stable enough to start a focused Live process isolation design plan.
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add scripts/verify-live-recovery.ps1 docs/superpowers/plans/2026-06-30-live-recovery-long-run-verification.md docs/live-recovery-long-run-results-<verification_id>.md
@@ -181,6 +183,8 @@ git commit -m "test: add live recovery long-run verification"
 ---
 
 ### Task 3: Optional Adapter Read-Only Recovery Pass
+
+Status: deferred by design for this pass. The result document records Binance and IBKR adapter coverage as skipped because no operator-provided testnet credentials, paper account, or running Gateway were supplied.
 
 **Files:**
 - Read: `data/live-recovery-verification/<verification_id>/summary.json`
@@ -214,7 +218,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Ite
 
 Expected: IBKR read-only, open orders, executions, reconcile, recover, and next-order-id commands complete without order submission.
 
-- [ ] **Step 4: Update result document**
+- [x] **Step 4: Update result document**
 
 Record each adapter as `pass`, `fail`, or `skipped`, with the summary path and any failing log path.
 
