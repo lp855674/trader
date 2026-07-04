@@ -693,7 +693,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 
 固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
 
-`ibkr-paper-run.ps1` 的 `summary.json` 包含顶层 `status` 和 `failure_class`。默认本地 dry-run 不连接 Gateway，`order_submit = disabled` 且 `failure_class = ok`；开闸后脚本会把 post-run Gateway checks 写入 `gateway_checks.status`、`gateway_checks.failure_class`、`gateway_checks.failed_check` 和逐项 `checks`。如果 post-run 只读巡检失败，脚本会先写 summary，再以非零退出，避免真实 Gateway 长跑失败只留控制台 warning。
+`ibkr-paper-run.ps1` 的 `summary.json` 包含顶层 `status` 和 `failure_class`。默认本地 dry-run 不连接 Gateway，`order_submit = disabled` 且 `failure_class = ok`；开闸后脚本会先做 Gateway TCP preflight，再把 post-run Gateway checks 写入 `gateway_checks.status`、`gateway_checks.failure_class`、`gateway_checks.failed_check` 和逐项 `checks`。如果 preflight 或 post-run 只读巡检失败，脚本会先写 summary，再以非零退出，避免真实 Gateway 长跑失败只留控制台 warning。
 
 真实 IBKR paper 自动下单必须显式开闸：
 
@@ -701,7 +701,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId DU12345 -ConfirmIbkrPaperOrder
 ```
 
-`-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，执行 `paper-preflight` 时连接 TWS / IB Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
+`-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，先确认 TWS / IB Gateway socket 可达，再执行 `paper-preflight` 连接 Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
 
 完整测试步骤脚本：
 

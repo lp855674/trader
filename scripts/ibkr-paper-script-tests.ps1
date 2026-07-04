@@ -56,6 +56,7 @@ switch ($command) {
 '@ | Set-Content -Path $fakeTrader -Encoding UTF8
 
 $env:TRADER_TEST_EXE = $fakeTrader
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "ok"
 $successOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU12345 2>&1
 $successOutput | ForEach-Object { Write-Host $_ }
@@ -69,6 +70,7 @@ Assert-True ($summary.status -eq "completed") "expected completed summary"
 Assert-True ($summary.failure_class -eq "ok") "expected ok failure class"
 Assert-True ($summary.checks.Count -eq 6) "expected six read-only checks"
 
+$env:TRADER_TEST_GATEWAY_PORT = "unreachable"
 $env:TRADER_FAKE_MODE = "gateway_down"
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
@@ -84,8 +86,9 @@ $latest = Get-ChildItem -Path (Join-Path $repoRoot "data/ibkr-paper-test") -Dire
 $summary = Read-Json (Join-Path $latest.FullName "summary.json")
 Assert-True ($summary.status -eq "failed") "expected failed summary"
 Assert-True ($summary.failure_class -eq "gateway_unreachable") "expected gateway_unreachable classification"
-Assert-True ($summary.failed_check -eq "readonly") "expected failed readonly check"
+Assert-True ($summary.failed_check -eq "gateway_preflight") "expected failed gateway preflight check"
 
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "ok"
 $runOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
 $runOutput | ForEach-Object { Write-Host $_ }
@@ -98,6 +101,26 @@ Assert-True ($runSummary.failure_class -eq "ok") "expected ibkr paper run ok fai
 Assert-True ($runSummary.gateway_checks.status -eq "completed") "expected gateway checks completed status"
 Assert-True ($runSummary.gateway_checks.failure_class -eq "ok") "expected gateway checks ok failure class"
 
+$env:TRADER_TEST_GATEWAY_PORT = "unreachable"
+$env:TRADER_FAKE_MODE = "ok"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $preflightFailedRunOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected ibkr paper run failure when gateway preflight fails"
+$preflightFailedRunDir = Get-ChildItem -Path (Join-Path $repoRoot "data/ibkr-paper-runs") -Directory -Filter "ibkr-aapl-1d-*" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$preflightFailedRunSummaryPath = Join-Path $preflightFailedRunDir.FullName "summary.json"
+$preflightFailedRunSummary = Read-Json $preflightFailedRunSummaryPath
+Assert-True ($preflightFailedRunSummary.status -eq "failed") "expected preflight failed ibkr paper run status"
+Assert-True ($preflightFailedRunSummary.failure_class -eq "gateway_unreachable") "expected preflight failed ibkr paper run gateway class"
+Assert-True ($preflightFailedRunSummary.gateway_checks.failed_check -eq "gateway_preflight") "expected failed gateway preflight check name"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "gateway_checks_down"
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
@@ -118,5 +141,6 @@ Assert-True ($failedRunSummary.failure_class -eq "gateway_unreachable") "expecte
 Assert-True ($failedRunSummary.gateway_checks.failed_check -eq "readonly") "expected failed gateway check name"
 
 Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue
+Remove-Item Env:\TRADER_TEST_GATEWAY_PORT -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_FAKE_MODE -ErrorAction SilentlyContinue
 Write-Host "IBKR paper script tests passed"

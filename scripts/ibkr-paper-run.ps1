@@ -138,6 +138,98 @@ function Get-IbkrAccountId {
     return ""
 }
 
+function Get-IbkrGatewayValue {
+    param(
+        [string]$ConfigText,
+        [string]$Name,
+        [string]$DefaultValue
+    )
+
+    if ($ConfigText -match "$Name\s*=\s*`"([^`"]+)`"") {
+        return $Matches[1]
+    }
+    if ($ConfigText -match "$Name\s*=\s*(\d+)") {
+        return $Matches[1]
+    }
+    return $DefaultValue
+}
+
+function Test-GatewayPort {
+    param(
+        [string]$HostName,
+        [int]$PortNumber,
+        [int]$TimeoutMilliseconds = 1000
+    )
+
+    if ($env:TRADER_TEST_GATEWAY_PORT -eq "reachable") {
+        return $true
+    }
+    if ($env:TRADER_TEST_GATEWAY_PORT -eq "unreachable") {
+        return $false
+    }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $task = $client.ConnectAsync($HostName, $PortNumber)
+        if (-not $task.Wait($TimeoutMilliseconds)) {
+            return $false
+        }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Write-GatewayPreflightFailureSummary {
+    param(
+        [string]$HostName,
+        [int]$PortNumber
+    )
+
+    $logPath = Join-Path $runDir "gateway-preflight.log"
+    $message = "unable to connect to IBKR paper gateway at $($HostName):$PortNumber"
+    $message | Set-Content -Path $logPath -Encoding UTF8
+
+    $gatewayChecks = [pscustomobject]@{
+        status = "failed"
+        failure_class = "gateway_unreachable"
+        failed_check = "gateway_preflight"
+        checks = @(
+            [pscustomobject]@{
+                name = "gateway_preflight"
+                command = "tcp $($HostName):$PortNumber"
+                exit_code = 1
+                status = "failed"
+                failure_class = "gateway_unreachable"
+                output = $message
+                log = $logPath
+            }
+        )
+    }
+
+    $summary = [pscustomobject]@{
+        run_id = $runId
+        status = "failed"
+        failure_class = "gateway_unreachable"
+        config = $runConfigPath
+        database = $databaseUrl
+        parquet = $OutputParquet
+        account_id = $effectiveAccountId
+        reports = [pscustomobject]@{
+            text = $textReportPath
+            csv = $csvReportPath
+            html = $htmlReportPath
+        }
+        refreshed = "not_started"
+        order_submit = "enabled"
+        gateway_checks = $gatewayChecks
+    }
+    $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
+    Write-Host "summary : $summaryPath"
+}
+
 function Invoke-IbkrPaperGatewayChecks {
     Write-Host "Running IBKR paper Gateway checks"
     $checkSpecs = @(
@@ -217,6 +309,15 @@ try {
         $runConfigText = $runConfigText -replace 'order_submit_enabled = false', 'order_submit_enabled = true'
     }
     Set-Content -Path $runConfigPath -Value $runConfigText -Encoding UTF8
+
+    if ($ConfirmIbkrPaperOrder) {
+        $effectiveGatewayHost = Get-IbkrGatewayValue -ConfigText $runConfigText -Name "host" -DefaultValue "127.0.0.1"
+        $effectiveGatewayPort = [int](Get-IbkrGatewayValue -ConfigText $runConfigText -Name "port" -DefaultValue "7497")
+        if (-not (Test-GatewayPort -HostName $effectiveGatewayHost -PortNumber $effectiveGatewayPort)) {
+            Write-GatewayPreflightFailureSummary -HostName $effectiveGatewayHost -PortNumber $effectiveGatewayPort
+            throw "IBKR paper run failed: gateway_preflight classified as gateway_unreachable; see $summaryPath"
+        }
+    }
 
     if (-not $SkipRefresh) {
         $refreshConfigText = $runConfigText `

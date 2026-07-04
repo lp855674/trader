@@ -112,6 +112,8 @@ gateway_checks.status = completed
 gateway_checks.failure_class = ok
 ```
 
+If the Gateway socket is not reachable before order submission, the runner exits non-zero and writes the same summary path with `failure_class = gateway_unreachable` and `gateway_checks.failed_check = gateway_preflight`.
+
 Soak validation:
 
 ```powershell

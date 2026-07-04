@@ -118,6 +118,34 @@ function Assert-AccountReady {
     }
 }
 
+function Test-GatewayPort {
+    param(
+        [string]$HostName,
+        [int]$PortNumber,
+        [int]$TimeoutMilliseconds = 1000
+    )
+
+    if ($env:TRADER_TEST_GATEWAY_PORT -eq "reachable") {
+        return $true
+    }
+    if ($env:TRADER_TEST_GATEWAY_PORT -eq "unreachable") {
+        return $false
+    }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $task = $client.ConnectAsync($HostName, $PortNumber)
+        if (-not $task.Wait($TimeoutMilliseconds)) {
+            return $false
+        }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
 function New-TestConfig {
     param([string]$ConfigDir = $testDir)
 
@@ -200,6 +228,40 @@ function Invoke-ReadOnly {
     $summaryPath = Join-Path $runDir "summary.json"
     $startedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $config = New-TestConfig -ConfigDir $runDir
+    if (-not (Test-GatewayPort -HostName $GatewayHost -PortNumber $Port)) {
+        $logPath = Join-Path $runDir "gateway-preflight.log"
+        $message = "unable to connect to IBKR paper gateway at $($GatewayHost):$Port"
+        $message | Set-Content -Path $logPath -Encoding UTF8
+        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $summary = [pscustomobject]@{
+            stage = "ReadOnly"
+            status = "failed"
+            failure_class = "gateway_unreachable"
+            failed_check = "gateway_preflight"
+            account_id = $AccountId
+            gateway_host = $GatewayHost
+            port = $Port
+            client_id = $ClientId
+            config = $config
+            run_dir = $runDir
+            started_at_ms = $startedAt
+            completed_at_ms = $completedAt
+            checks = @(
+                [pscustomobject]@{
+                    name = "gateway_preflight"
+                    command = "tcp $($GatewayHost):$Port"
+                    exit_code = 1
+                    status = "failed"
+                    failure_class = "gateway_unreachable"
+                    log = $logPath
+                    output_excerpt = $message
+                }
+            )
+        }
+        $summary | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UTF8
+        Write-Host "IBKR paper read-only summary: $summaryPath"
+        throw "IBKR paper read-only failed: gateway_preflight classified as gateway_unreachable; see $summaryPath"
+    }
     if (-not $env:TRADER_TEST_EXE) {
         Invoke-CheckedCargo @("build", "-p", "trader-cli")
     }
