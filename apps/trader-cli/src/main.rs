@@ -1702,6 +1702,7 @@ async fn run_command(command: Command) -> Result<()> {
             })
             .await?;
             let mut cancelled = Vec::new();
+            let mut local_synced = 0u64;
             if cancel_open_orders {
                 let broker = operational_broker(&app_config)?;
                 cancelled = broker::cancel_open_orders_for_account_symbol(
@@ -1710,12 +1711,14 @@ async fn run_command(command: Command) -> Result<()> {
                     symbol.as_deref(),
                 )
                 .await?;
+                local_synced = sync_cancelled_open_orders(&db, &run_id, &cancelled).await?;
             }
             println!(
-                "risk kill switch ok: account_id={} cancel_open_orders={} cancelled={} symbol={}",
+                "risk kill switch ok: account_id={} cancel_open_orders={} cancelled={} local_synced={} symbol={}",
                 account_id,
                 cancel_open_orders,
                 cancelled.len(),
+                local_synced,
                 symbol.as_deref().unwrap_or("*")
             );
         }
@@ -3344,6 +3347,46 @@ fn settings_with_broker_initial_cash(
 ) -> PaperSettings {
     settings.initial_cash = broker_cash;
     settings
+}
+
+async fn sync_cancelled_open_orders(
+    db: &storage::Db,
+    run_id: &str,
+    cancelled: &[broker::CancelledOpenOrder],
+) -> Result<u64> {
+    let mut local_synced = 0u64;
+    let updated_at_ms = chrono::Utc::now().timestamp_millis();
+    for cancellation in cancelled {
+        let status = broker_order_status_label(cancellation.cancelled_order.status);
+        let broker_order_id = &cancellation.cancelled_order.broker_order_id;
+        let client_order_id = cancellation.open_order.client_order_id.trim();
+        let updated = if client_order_id.is_empty() {
+            0
+        } else {
+            db.update_order_status_by_client_order_id(
+                run_id,
+                client_order_id,
+                broker_order_id,
+                status,
+                updated_at_ms,
+            )
+            .await?
+        };
+        local_synced += if updated > 0 {
+            updated
+        } else {
+            db.update_order_status_by_broker_id(run_id, broker_order_id, status, updated_at_ms)
+                .await?
+        };
+    }
+    Ok(local_synced)
+}
+
+fn broker_order_status_label(status: broker::BrokerOrderStatus) -> &'static str {
+    match status {
+        broker::BrokerOrderStatus::Accepted => "ACCEPTED",
+        broker::BrokerOrderStatus::Cancelled => "CANCELLED",
+    }
 }
 
 fn operational_broker(app_config: &config::AppConfig) -> Result<Box<dyn Broker>> {
@@ -5193,11 +5236,15 @@ mod tests {
         binance_local_order_matches_remote_open, binance_testnet_settings,
         ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
         ibkr_recovered_order_status, paper_settings, settings_with_broker_initial_cash,
-        system_log_retention_policy,
+        sync_cancelled_open_orders, system_log_retention_policy,
     };
-    use broker::{BinanceAssetBalance, BinanceOpenOrder, IbkrExecution, IbkrOpenOrder};
+    use broker::{
+        BinanceAssetBalance, BinanceOpenOrder, BrokerOpenOrder, BrokerOrder, BrokerOrderStatus,
+        CancelledOpenOrder, IbkrExecution, IbkrOpenOrder,
+    };
     use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
+    use trader_core::{OrderSide, OrderType};
 
     #[test]
     fn binance_cancel_error_preserves_refreshed_order_status() {
@@ -5487,6 +5534,75 @@ mod tests {
         assert_eq!(retention.retention_days, 7);
     }
 
+    #[tokio::test]
+    async fn kill_switch_cancel_sync_updates_local_orders_by_client_or_broker_id() {
+        let db = storage::Db::connect("sqlite::memory:").await.unwrap();
+        db.migrate().await.unwrap();
+        db.insert_order(storage::NewOrder {
+            id: "order-client".to_string(),
+            run_id: "run-1".to_string(),
+            client_order_id: "client-42".to_string(),
+            broker_order_id: None,
+            account_id: "paper".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "BUY".to_string(),
+            order_type: "LIMIT".to_string(),
+            price: Some("185".to_string()),
+            qty: "1".to_string(),
+            filled_qty: "0".to_string(),
+            status: "SUBMITTED".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+        db.insert_order(storage::NewOrder {
+            id: "order-broker".to_string(),
+            run_id: "run-1".to_string(),
+            client_order_id: "client-local-only".to_string(),
+            broker_order_id: Some("broker-77".to_string()),
+            account_id: "paper".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "SELL".to_string(),
+            order_type: "LIMIT".to_string(),
+            price: Some("186".to_string()),
+            qty: "1".to_string(),
+            filled_qty: "0".to_string(),
+            status: "SUBMITTED".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+
+        let synced = sync_cancelled_open_orders(
+            &db,
+            "run-1",
+            &[
+                cancelled_open_order("client-42", "broker-42"),
+                cancelled_open_order("", "broker-77"),
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(synced, 2);
+        let client_order = db
+            .get_order_by_client_order_id("client-42")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(client_order.broker_order_id.as_deref(), Some("broker-42"));
+        assert_eq!(client_order.status, "CANCELLED");
+        let broker_order = db
+            .get_order_by_client_order_id("client-local-only")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(broker_order.broker_order_id.as_deref(), Some("broker-77"));
+        assert_eq!(broker_order.status, "CANCELLED");
+    }
+
     fn sample_app_config() -> config::AppConfig {
         config::AppConfig::from_toml_str(
             r#"
@@ -5546,6 +5662,33 @@ mod tests {
             broker_order_id: broker_order_id.map(str::to_string),
             qty: "1".to_string(),
             status: "SUBMITTED".to_string(),
+        }
+    }
+
+    fn cancelled_open_order(client_order_id: &str, broker_order_id: &str) -> CancelledOpenOrder {
+        CancelledOpenOrder {
+            open_order: BrokerOpenOrder {
+                broker_order_id: broker_order_id.to_string(),
+                client_order_id: client_order_id.to_string(),
+                account_id: "paper".to_string(),
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Limit,
+                price: Some(dec!(185)),
+                qty: dec!(1),
+                filled_qty: dec!(0),
+                status: "Submitted".to_string(),
+            },
+            cancelled_order: BrokerOrder {
+                broker_order_id: broker_order_id.to_string(),
+                account_id: "paper".to_string(),
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Limit,
+                qty: dec!(1),
+                price: Some(dec!(185)),
+                status: BrokerOrderStatus::Cancelled,
+            },
         }
     }
 }

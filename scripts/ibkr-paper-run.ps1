@@ -323,6 +323,23 @@ function Invoke-IbkrPaperGatewayChecks {
     }
 }
 
+function Get-IbkrReconciliationStatus {
+    param([object]$GatewayChecks)
+
+    if ($null -eq $GatewayChecks) {
+        if ($ConfirmIbkrPaperOrder) {
+            return "unknown"
+        }
+        return "not_run"
+    }
+
+    $reconcileCheck = @($GatewayChecks.checks | Where-Object { $_.name -eq "reconcile" } | Select-Object -First 1)
+    if ($reconcileCheck.Count -gt 0 -and [string]$reconcileCheck[0].output -match "ibkr paper reconcile ok:") {
+        return "ok"
+    }
+    return "unknown"
+}
+
 try {
     $env:CARGO_BUILD_JOBS = "1"
     if (-not $env:TRADER_TEST_EXE) {
@@ -460,7 +477,7 @@ try {
         cancel_all_attempted = $cancelAllAttempted
         cancel_all_succeeded = $cancelAllSucceeded
         cancel_all = $cancelAllOutput
-        reconciliation_status = if ($null -ne $gatewayChecks -and $gatewayChecks.reconciliation -match "ibkr paper reconcile ok:") { "ok" } elseif ($ConfirmIbkrPaperOrder) { "unknown" } else { "not_run" }
+        reconciliation_status = Get-IbkrReconciliationStatus $gatewayChecks
         gateway_checks = $gatewayChecks
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8

@@ -4937,6 +4937,7 @@ dependencies = [
  "storage",
  "strategies",
  "tokio",
+ "trader-core",
  "uuid",
 ]
 

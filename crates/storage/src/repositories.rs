@@ -3912,8 +3912,8 @@ impl Db {
         broker_order_id: &str,
         status: &str,
         updated_at_ms: i64,
-    ) -> StorageResult<()> {
-        sqlx::query(
+    ) -> StorageResult<u64> {
+        let result = sqlx::query(
             r#"
             UPDATE orders
             SET status = ?, updated_at_ms = ?
@@ -3926,7 +3926,7 @@ impl Db {
         .bind(broker_order_id)
         .execute(self.pool())
         .await?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     pub async fn update_order_status_by_client_order_id(

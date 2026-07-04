@@ -538,8 +538,12 @@ async fn cancel_open_orders_helper_filters_by_symbol() {
             .unwrap();
 
     assert_eq!(cancelled.len(), 1);
-    assert_eq!(cancelled[0].broker_order_id, "open-1");
-    assert_eq!(cancelled[0].status, BrokerOrderStatus::Cancelled);
+    assert_eq!(cancelled[0].open_order.client_order_id, "client-1");
+    assert_eq!(cancelled[0].cancelled_order.broker_order_id, "open-1");
+    assert_eq!(
+        cancelled[0].cancelled_order.status,
+        BrokerOrderStatus::Cancelled
+    );
 }
 
 #[test]

@@ -37,19 +37,19 @@ if ($env:TRADER_FAKE_MODE -eq "gateway_checks_down" -and $command -like "ibkr-pa
 }
 
 switch ($command) {
-    "check-config" { Write-Host "config ok" }
-    "paper-preflight" { Write-Host "paper preflight ok: real_broker_connection=true order_submit_enabled=true" }
-    "migrate" { Write-Host "migrated" }
-    "paper-run" { Write-Host "paper completed: signals=1 orders=1" }
-    "report" { Write-Host "report ok" }
+    "check-config" { Write-Output "config ok" }
+    "paper-preflight" { Write-Output "paper preflight ok: real_broker_connection=true order_submit_enabled=true" }
+    "migrate" { Write-Output "migrated" }
+    "paper-run" { Write-Output "paper completed: signals=1 orders=1" }
+    "report" { Write-Output "report ok" }
     "risk-events" { }
-    "risk-kill-switch" { Write-Host "risk kill switch ok: account_id=DU12345 cancel_open_orders=true cancelled=0 symbol=*" }
-    "ibkr-paper-readonly" { Write-Host "ibkr paper readonly ok: connected=true account=DU12345" }
-    "ibkr-paper-open-orders" { Write-Host "ibkr paper open orders ok: open_orders=0" }
-    "ibkr-paper-executions" { Write-Host "ibkr paper executions ok: executions=0" }
-    "ibkr-paper-reconcile" { Write-Host "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0" }
-    "ibkr-paper-recover" { Write-Host "ibkr paper recover ok: scanned=0 recovered=0 missing=0 remaining=0" }
-    "ibkr-paper-next-order-id" { Write-Host "ibkr paper next order id ok: next_order_id=1" }
+    "risk-kill-switch" { Write-Output "risk kill switch ok: account_id=DU12345 cancel_open_orders=true cancelled=0 symbol=*" }
+    "ibkr-paper-readonly" { Write-Output "ibkr paper readonly ok: connected=true account=DU12345" }
+    "ibkr-paper-open-orders" { Write-Output "ibkr paper open orders ok: open_orders=0" }
+    "ibkr-paper-executions" { Write-Output "ibkr paper executions ok: executions=0" }
+    "ibkr-paper-reconcile" { Write-Output "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0" }
+    "ibkr-paper-recover" { Write-Output "ibkr paper recover ok: scanned=0 recovered=0 missing=0 remaining=0" }
+    "ibkr-paper-next-order-id" { Write-Output "ibkr paper next order id ok: next_order_id=1" }
     default {
         Write-Error "unexpected command: $command"
         exit 2
@@ -146,6 +146,47 @@ Assert-True ($failedRunSummary.status -eq "failed") "expected failed ibkr paper 
 Assert-True ($failedRunSummary.failure_class -eq "gateway_unreachable") "expected failed ibkr paper run gateway class"
 Assert-True ($failedRunSummary.open_orders_remaining -eq 0) "expected zero open orders on gateway check failure"
 Assert-True ($failedRunSummary.gateway_checks.failed_check -eq "readonly") "expected failed gateway check name"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "ok"
+$soakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 2 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+$soakOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected ibkr paper soak success with fake trader"
+$soakSummaryPath = ($soakOutput | Select-String -Pattern 'IBKR paper soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($soakSummaryPath)) "expected ibkr soak summary path"
+$soakSummary = Read-Json $soakSummaryPath
+Assert-True ($soakSummary.status -eq "completed") "expected completed ibkr soak status"
+Assert-True ($soakSummary.failure_class -eq "ok") "expected ok ibkr soak failure class"
+Assert-True ($soakSummary.iterations_requested -eq 2) "expected two requested ibkr soak iterations"
+Assert-True ($soakSummary.iterations_completed -eq 2) "expected two completed ibkr soak iterations"
+Assert-True ($soakSummary.iterations.Count -eq 2) "expected two ibkr soak iteration summaries"
+foreach ($iteration in $soakSummary.iterations) {
+    Assert-True ($iteration.failure_class -eq "ok") "expected ok ibkr soak iteration failure class"
+    Assert-True ($iteration.open_orders_remaining -eq 0) "expected zero ibkr soak open orders"
+    Assert-True (-not [bool]$iteration.cancel_all_attempted) "expected no ibkr soak cancel-all attempt"
+    Assert-True ($iteration.reconciliation_status -eq "ok") "expected ibkr soak reconciliation status"
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$iteration.summary)) "expected ibkr soak iteration summary path"
+}
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "gateway_checks_down"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $failedSoakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 2 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected ibkr paper soak failure when gateway checks fail"
+$failedSoakSummaryPath = ($failedSoakOutput | Select-String -Pattern 'IBKR paper soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($failedSoakSummaryPath)) "expected failed ibkr soak summary path"
+$failedSoakSummary = Read-Json $failedSoakSummaryPath
+Assert-True ($failedSoakSummary.status -eq "failed") "expected failed ibkr soak status"
+Assert-True ($failedSoakSummary.failure_class -eq "gateway_unreachable") "expected gateway_unreachable ibkr soak failure class"
+Assert-True ($failedSoakSummary.failed_iteration -eq 1) "expected first ibkr soak iteration to fail"
+Assert-True ($failedSoakSummary.iterations_completed -eq 1) "expected ibkr soak to stop after first failure"
+Assert-True ($failedSoakSummary.iterations[0].failure_class -eq "gateway_unreachable") "expected failed ibkr soak iteration class"
+Assert-True ($failedSoakSummary.iterations[0].open_orders_remaining -eq 0) "expected failed ibkr soak zero open orders"
 
 Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_TEST_GATEWAY_PORT -ErrorAction SilentlyContinue

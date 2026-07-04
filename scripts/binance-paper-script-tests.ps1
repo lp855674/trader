@@ -108,5 +108,45 @@ Assert-True ($openOrdersSummary.open_orders_remaining -eq 2) "expected residual 
 Assert-True ([bool]$openOrdersSummary.cancel_all_attempted) "expected cancel-all attempt when open orders remain"
 Assert-True (-not [bool]$openOrdersSummary.cancel_all_succeeded) "expected failed cancel-all outcome when residual orders remain"
 
+Write-FakeTrader "ok"
+$soakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 2 -SkipRefresh 2>&1
+$soakOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected binance paper soak success with fake trader"
+$soakSummaryPath = ($soakOutput | Select-String -Pattern 'Binance paper soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($soakSummaryPath)) "expected binance soak summary path"
+$soakSummary = Read-Json $soakSummaryPath
+Assert-True ($soakSummary.status -eq "completed") "expected completed binance soak status"
+Assert-True ($soakSummary.failure_class -eq "ok") "expected ok binance soak failure class"
+Assert-True ($soakSummary.iterations_requested -eq 2) "expected two requested binance soak iterations"
+Assert-True ($soakSummary.iterations_completed -eq 2) "expected two completed binance soak iterations"
+Assert-True ($soakSummary.iterations.Count -eq 2) "expected two binance soak iteration summaries"
+foreach ($iteration in $soakSummary.iterations) {
+    Assert-True ($iteration.failure_class -eq "ok") "expected ok binance soak iteration failure class"
+    Assert-True ($iteration.open_orders_remaining -eq 0) "expected zero binance soak open orders"
+    Assert-True (-not [bool]$iteration.cancel_all_attempted) "expected no binance soak cancel-all attempt"
+    Assert-True ($iteration.reconciliation_status -eq "ok") "expected binance soak reconciliation status"
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$iteration.summary)) "expected binance soak iteration summary path"
+}
+
+Write-FakeTrader "open_orders_remaining"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $failedSoakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 2 -SkipRefresh 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected binance paper soak failure when open orders remain"
+$failedSoakSummaryPath = ($failedSoakOutput | Select-String -Pattern 'Binance paper soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($failedSoakSummaryPath)) "expected failed binance soak summary path"
+$failedSoakSummary = Read-Json $failedSoakSummaryPath
+Assert-True ($failedSoakSummary.status -eq "failed") "expected failed binance soak status"
+Assert-True ($failedSoakSummary.failure_class -eq "open_orders_remaining") "expected open_orders_remaining binance soak failure class"
+Assert-True ($failedSoakSummary.failed_iteration -eq 1) "expected first binance soak iteration to fail"
+Assert-True ($failedSoakSummary.iterations_completed -eq 1) "expected binance soak to stop after first failure"
+Assert-True ($failedSoakSummary.iterations[0].open_orders_remaining -eq 2) "expected failed binance soak residual open orders"
+Assert-True ([bool]$failedSoakSummary.iterations[0].cancel_all_attempted) "expected failed binance soak cancel-all attempt"
+Assert-True (-not [bool]$failedSoakSummary.iterations[0].cancel_all_succeeded) "expected failed binance soak cancel-all outcome"
+
 Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue
 Write-Host "Binance paper script tests passed"
