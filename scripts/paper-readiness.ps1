@@ -158,6 +158,12 @@ try {
             powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-recover-smoke.ps1 -SkipNetwork
             if ($LASTEXITCODE -ne 0) { throw "binance-paper-recover-smoke failed with exit code $LASTEXITCODE" }
         }
+        Invoke-Step "binance paper run summary behavior" {
+            powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-script-tests.ps1
+            if ($LASTEXITCODE -ne 0) { throw "binance-paper-script-tests failed with exit code $LASTEXITCODE" }
+        } -Gate "binance_paper_summary_behavior"
+    } else {
+        Set-SkippedGate "binance_paper_summary_behavior" "Skipped by SkipBinance"
     }
 
     if (-not $SkipIbkr) {

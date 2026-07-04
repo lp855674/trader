@@ -18,6 +18,7 @@ The default gate does not connect to a real IBKR Gateway and does not submit ord
 ```text
 reference_data_observable
 reference_data_retry_tests
+binance_paper_summary_behavior
 ibkr_paper_local_dry_run
 ibkr_read_only_summary_behavior
 ibkr_soak_summary_behavior
@@ -34,13 +35,14 @@ Expected local result:
 ```json
 {
   "status": "completed",
-  "gates": {
-    "reference_data_observable": { "status": "ok" },
-    "reference_data_retry_tests": { "status": "ok" },
-    "ibkr_paper_local_dry_run": { "status": "ok" },
-    "ibkr_read_only_summary_behavior": { "status": "ok" },
-    "ibkr_soak_summary_behavior": { "status": "ok" }
-  }
+    "gates": {
+        "reference_data_observable": { "status": "ok" },
+        "reference_data_retry_tests": { "status": "ok" },
+        "binance_paper_summary_behavior": { "status": "ok" },
+        "ibkr_paper_local_dry_run": { "status": "ok" },
+        "ibkr_read_only_summary_behavior": { "status": "ok" },
+        "ibkr_soak_summary_behavior": { "status": "ok" }
+    }
 }
 ```
 
@@ -53,6 +55,78 @@ powershell -ExecutionPolicy Bypass -File .\scripts\paper-readiness.ps1 -SkipCarg
 ```
 
 Use `-SkipBinance -SkipIbkr` when checking only Rust and reference-data readiness. Use `-SkipCargo -SkipBinance` when checking only local IBKR script behavior.
+
+## Promotion Order
+
+按下面顺序推进，任何一步证据不完整都不要进入下一步：
+
+1. readonly
+2. tiny order
+3. autorun with submit enabled
+4. soak
+5. emergency kill-switch
+
+每一步都要保留 `summary.json`、命令 transcript 和失败分类。
+
+## Binance
+
+Read-only / no-network gate:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1 -SkipNetwork
+```
+
+Tiny order:
+
+```powershell
+trader binance-paper-tiny-order --config configs/paper/binance_testnet.toml --symbol BTCUSDT --side buy --qty 0.001 --price <LIMIT> --confirm-testnet-order
+```
+
+AutoRun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1 -Limit 100 -ConfirmTestnetOrder
+```
+
+Required run evidence from `data/binance-paper-runs/{run_id}/summary.json`:
+
+```text
+status = completed
+failure_class = ok
+halt_reason = null
+open_orders_remaining = 0
+cancel_all_attempted = false
+reconciliation_status = ok
+```
+
+Soak:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -ConfirmTestnetOrder
+```
+
+Required soak evidence:
+
+```text
+summary.status = completed
+summary.failure_class = ok
+every iteration failure_class = ok
+```
+
+Emergency stop:
+
+```powershell
+trader risk-kill-switch --config <run-config> --run-id <run_id> --cancel-open-orders --symbol BTCUSDT --confirm-kill-switch
+```
+
+Stop conditions:
+
+```text
+halt_reason != null
+failure_class != ok
+open_orders_remaining != 0
+cancel_all_succeeded = false
+```
 
 ## With IBKR Gateway
 
@@ -84,6 +158,26 @@ failure_class = ok
 failed_check = ""
 ```
 
+Stop condition:
+
+```text
+gateway_unreachable
+account_mismatch
+command_failed
+```
+
+Tiny order validation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
+  -Stage TinyOrder `
+  -AccountId DU12345 `
+  -GatewayHost 127.0.0.1 `
+  -Port 7497 `
+  -ClientId 1 `
+  -ConfirmTinyOrder
+```
+
 Automatic paper runner with order submission enabled:
 
 ```powershell
@@ -110,6 +204,8 @@ failure_class = ok
 order_submit = enabled
 gateway_checks.status = completed
 gateway_checks.failure_class = ok
+halt_reason = null
+open_orders_remaining = 0
 ```
 
 If the Gateway socket is not reachable before order submission, the runner exits non-zero and writes the same summary path with `failure_class = gateway_unreachable` and `gateway_checks.failed_check = gateway_preflight`.
@@ -133,6 +229,21 @@ data/ibkr-paper-soak/{soak_id}/summary.json
 status = completed
 failure_class = ok
 iterations_completed = iterations_requested
+```
+
+Emergency stop:
+
+```powershell
+trader risk-kill-switch --config <run-config> --run-id <run_id> --cancel-open-orders --confirm-kill-switch
+```
+
+Additional stop conditions:
+
+```text
+halt_reason != null
+failure_class != ok
+open_orders_remaining != 0
+cancel_all_succeeded = false
 ```
 
 ## Failure Classes
@@ -162,10 +273,11 @@ An IBKR soak iteration failed outside the more specific connection/account/open-
 The Gateway run completed but left remote open orders. Inspect the soak iteration summary, then use the read-only open-orders command to confirm the remote state. Cancel only with an explicit confirmation command:
 
 ```powershell
-trader ibkr-paper-cancel-order `
-  --config configs/paper/ibkr_aapl_1d_parquet.toml `
-  --order-id <ORDER_ID> `
-  --confirm-ibkr-paper-cancel
+trader risk-kill-switch `
+  --config <run-config> `
+  --run-id <run_id> `
+  --cancel-open-orders `
+  --confirm-kill-switch
 ```
 
 ## Generated Evidence
@@ -174,6 +286,8 @@ The readiness and IBKR scripts intentionally generate evidence under `data/`:
 
 ```text
 data/paper-readiness/{readiness_id}/summary.json
+data/binance-paper-runs/{run_id}/summary.json
+data/binance-paper-soak/{soak_id}/summary.json
 data/ibkr-paper-test/read-only-{id}/summary.json
 data/ibkr-paper-runs/{run_id}/summary.json
 data/ibkr-paper-soak/{soak_id}/summary.json

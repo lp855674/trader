@@ -1710,6 +1710,63 @@ fn binance_paper_cancel_open_orders_requires_explicit_confirmation() {
 }
 
 #[test]
+fn risk_kill_switch_requires_explicit_confirmation() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "risk-kill-switch",
+            "--config",
+            "configs/backtest/ma_cross.toml",
+            "--run-id",
+            "kill-switch-test",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--confirm-kill-switch"));
+}
+
+#[test]
+fn risk_kill_switch_records_auditable_event() {
+    let db_path = temp_output("trader-cli-risk-kill-switch", "sqlite");
+    let config = write_report_cli_config(&db_path);
+
+    let mut kill_switch = Command::cargo_bin("trader").unwrap();
+    kill_switch
+        .current_dir(workspace_root())
+        .args([
+            "risk-kill-switch",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-risk-kill-switch",
+            "--confirm-kill-switch",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("risk kill switch ok:"));
+
+    let mut risk_events = Command::cargo_bin("trader").unwrap();
+    risk_events
+        .current_dir(workspace_root())
+        .args([
+            "risk-events",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-risk-kill-switch",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("risk_event: run_id=cli-risk-kill-switch"))
+        .stdout(contains("risk_type=operator_kill_switch"))
+        .stdout(contains("reason=operator activated kill switch"));
+
+    std::fs::remove_file(config).unwrap();
+    std::fs::remove_file(db_path).unwrap();
+}
+
+#[test]
 fn binance_paper_klines_rejects_zero_limit() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

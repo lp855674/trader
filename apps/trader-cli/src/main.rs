@@ -206,6 +206,18 @@ enum Command {
         #[arg(long)]
         confirm_testnet_cancel: bool,
     },
+    RiskKillSwitch {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        cancel_open_orders: bool,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        confirm_kill_switch: bool,
+    },
     BinancePaperKlines {
         #[arg(long, default_value = "configs/paper/binance_testnet.toml")]
         config: String,
@@ -1660,6 +1672,51 @@ async fn run_command(command: Command) -> Result<()> {
                 orders.len(),
                 cancelled,
                 local_synced
+            );
+        }
+        Command::RiskKillSwitch {
+            config,
+            run_id,
+            cancel_open_orders,
+            symbol,
+            confirm_kill_switch,
+        } => {
+            if !confirm_kill_switch {
+                bail!("refusing to activate kill switch without --confirm-kill-switch");
+            }
+            let (app_config, db) = load_db(&config).await?;
+            db.migrate().await?;
+            let account_id = app_config.paper.account_id.clone();
+            db.record_runtime_event(storage::RuntimeEventCommand {
+                ts_ms: chrono::Utc::now().timestamp_millis(),
+                source: run_id.clone(),
+                category: "algorithm.risk.rejected".to_string(),
+                payload: serde_json::json!({
+                    "run_id": run_id,
+                    "account_id": account_id,
+                    "symbol": symbol,
+                    "risk_type": "operator_kill_switch",
+                    "decision": "rejected",
+                    "reason": "operator activated kill switch",
+                }),
+            })
+            .await?;
+            let mut cancelled = Vec::new();
+            if cancel_open_orders {
+                let broker = operational_broker(&app_config)?;
+                cancelled = broker::cancel_open_orders_for_account_symbol(
+                    broker.as_ref(),
+                    &account_id,
+                    symbol.as_deref(),
+                )
+                .await?;
+            }
+            println!(
+                "risk kill switch ok: account_id={} cancel_open_orders={} cancelled={} symbol={}",
+                account_id,
+                cancel_open_orders,
+                cancelled.len(),
+                symbol.as_deref().unwrap_or("*")
             );
         }
         Command::BinancePaperKlines {
@@ -3289,6 +3346,22 @@ fn settings_with_broker_initial_cash(
     settings
 }
 
+fn operational_broker(app_config: &config::AppConfig) -> Result<Box<dyn Broker>> {
+    match app_config.broker.kind {
+        config::BrokerKind::Simulated => Ok(Box::new(FakeBrokerAdapter::new(
+            broker::BrokerKind::Simulated,
+        ))),
+        config::BrokerKind::Futu => Ok(Box::new(FakeBrokerAdapter::futu())),
+        config::BrokerKind::Okx => Ok(Box::new(FakeBrokerAdapter::okx())),
+        config::BrokerKind::Binance => Ok(Box::new(BinanceSpotTestnetAdapter::try_new(
+            binance_testnet_settings(app_config)?,
+        )?)),
+        config::BrokerKind::InteractiveBrokers => Ok(Box::new(IbkrPaperGatewayAdapter::try_new(
+            ibkr_paper_gateway_settings(app_config)?,
+        )?)),
+    }
+}
+
 fn binance_order_side(input: &str) -> Result<BinanceOrderSide> {
     match input.to_ascii_lowercase().as_str() {
         "buy" => Ok(BinanceOrderSide::Buy),
@@ -4484,6 +4557,21 @@ fn run_spec_snapshot_json(run_spec: &runtime::RunSpec) -> serde_json::Value {
             "max_margin_used": run_spec.risk.max_margin_used,
             "trading_halted": run_spec.risk.trading_halted,
             "allow_short": run_spec.risk.allow_short,
+            "daily_loss_limit": run_spec.risk.daily_loss_limit,
+            "max_order_attempts_per_day": run_spec.risk.max_order_attempts_per_day,
+            "max_order_failures_per_day": run_spec.risk.max_order_failures_per_day,
+            "max_price_deviation_bps": run_spec.risk.max_price_deviation_bps,
+            "max_market_data_age_ms": run_spec.risk.max_market_data_age_ms,
+            "max_consecutive_strategy_losses": run_spec.risk.max_consecutive_strategy_losses,
+            "max_consecutive_strategy_errors": run_spec.risk.max_consecutive_strategy_errors,
+            "trading_session": run_spec.risk.trading_session.as_ref().map(|session| {
+                serde_json::json!({
+                    "mode": session.mode,
+                    "timezone": session.timezone,
+                    "start": session.start,
+                    "end": session.end,
+                })
+            }),
         },
         "broker": {
             "kind": broker_kind_slug(run_spec.broker.kind),
@@ -4789,6 +4877,23 @@ fn sqlite_file_path(database_url: &str) -> Option<&str> {
         .or_else(|| database_url.strip_prefix("sqlite:"))
 }
 
+fn optional_decimal(value: Option<&str>) -> Result<Option<Decimal>> {
+    value.map(Decimal::from_str).transpose().map_err(Into::into)
+}
+
+fn trading_session_window(
+    session: Option<&config::TradingSessionConfig>,
+) -> Result<Option<algorithm::TradingSessionWindow>> {
+    Ok(session.map(|session| {
+        algorithm::TradingSessionWindow::new(
+            session.mode.clone(),
+            session.timezone.clone(),
+            session.start.clone(),
+            session.end.clone(),
+        )
+    }))
+}
+
 fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings> {
     Ok(BacktestSettings {
         run_id: app_config.runtime.run_id.clone(),
@@ -4818,6 +4923,16 @@ fn backtest_settings(app_config: &config::AppConfig) -> Result<BacktestSettings>
         allow_short: app_config.effective_allow_short(),
         shortable_symbols: app_config.shortable_symbols(),
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        daily_loss_limit: optional_decimal(app_config.risk.daily_loss_limit.as_deref())?,
+        max_order_attempts_per_day: app_config.risk.max_order_attempts_per_day,
+        max_order_failures_per_day: app_config.risk.max_order_failures_per_day,
+        max_price_deviation_bps: optional_decimal(
+            app_config.risk.max_price_deviation_bps.as_deref(),
+        )?,
+        max_market_data_age_ms: app_config.risk.max_market_data_age_ms,
+        max_consecutive_strategy_losses: app_config.risk.max_consecutive_strategy_losses,
+        max_consecutive_strategy_errors: app_config.risk.max_consecutive_strategy_errors,
+        trading_session: trading_session_window(app_config.risk.trading_session.as_ref())?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
         logging: log_writer_settings(app_config),
@@ -4856,6 +4971,16 @@ fn paper_settings(app_config: &config::AppConfig) -> Result<PaperSettings> {
         allow_short: app_config.effective_allow_short(),
         shortable_symbols: app_config.shortable_symbols(),
         initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        daily_loss_limit: optional_decimal(app_config.risk.daily_loss_limit.as_deref())?,
+        max_order_attempts_per_day: app_config.risk.max_order_attempts_per_day,
+        max_order_failures_per_day: app_config.risk.max_order_failures_per_day,
+        max_price_deviation_bps: optional_decimal(
+            app_config.risk.max_price_deviation_bps.as_deref(),
+        )?,
+        max_market_data_age_ms: app_config.risk.max_market_data_age_ms,
+        max_consecutive_strategy_losses: app_config.risk.max_consecutive_strategy_losses,
+        max_consecutive_strategy_errors: app_config.risk.max_consecutive_strategy_errors,
+        trading_session: trading_session_window(app_config.risk.trading_session.as_ref())?,
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
         fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,

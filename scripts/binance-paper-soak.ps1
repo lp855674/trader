@@ -27,6 +27,9 @@ $soakDir = Join-Path $repoRoot "data/binance-paper-soak/$soakId"
 $soakSummaryPath = Join-Path $soakDir "summary.json"
 $iterationSummaries = @()
 $failed = $false
+$failureClass = "ok"
+$failedIteration = 0
+$firstFailedLog = ""
 
 function Get-MatchValue {
     param(
@@ -39,6 +42,15 @@ function Get-MatchValue {
         return $match.Groups[1].Value.Trim()
     }
     return ""
+}
+
+function Read-Json {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        return $null
+    }
+    return Get-Content -Path $Path -Raw | ConvertFrom-Json
 }
 
 try {
@@ -72,30 +84,44 @@ try {
         $output | ForEach-Object { Write-Host $_ }
 
         $summaryPath = Get-MatchValue $text 'summary\s+:\s+(.+summary\.json)'
-        $openOrders = Get-MatchValue $text 'binance paper open orders ok: symbol=\S+ open_orders=(\d+)'
-        $reconciliation = Get-MatchValue $text '(binance paper reconcile ok:.+)'
         $runId = Get-MatchValue $text 'run_id\s+:\s+(\S+)'
         if ([string]::IsNullOrWhiteSpace($runId)) {
             $runId = Get-MatchValue $text 'Binance paper run id:\s+(\S+)'
+        }
+        $runSummary = Read-Json $summaryPath
+        $openOrdersRemaining = if ($null -ne $runSummary) { [int]$runSummary.open_orders_remaining } else { 0 }
+        $iterationFailureClass = if ($null -ne $runSummary -and -not [string]::IsNullOrWhiteSpace([string]$runSummary.failure_class)) {
+            [string]$runSummary.failure_class
+        } elseif ($exitCode -ne 0) {
+            "iteration_failed"
+        } elseif ($openOrdersRemaining -gt 0) {
+            "open_orders_remaining"
+        } else {
+            "ok"
         }
 
         $iterationSummary = [pscustomobject]@{
             iteration = $iteration
             exit_code = $exitCode
+            status = if ($iterationFailureClass -eq "ok") { "completed" } else { "failed" }
+            failure_class = $iterationFailureClass
             run_id = $runId
             log = $logPath
             summary = $summaryPath
-            open_orders = $openOrders
-            reconciliation = $reconciliation
+            halt_reason = if ($null -ne $runSummary) { $runSummary.halt_reason } else { $null }
+            risk_rejections = if ($null -ne $runSummary) { @($runSummary.risk_rejections) } else { @() }
+            open_orders_remaining = $openOrdersRemaining
+            cancel_all_attempted = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_attempted } else { $false }
+            cancel_all_succeeded = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_succeeded } else { $false }
+            reconciliation_status = if ($null -ne $runSummary) { [string]$runSummary.reconciliation_status } else { "" }
         }
         $iterationSummaries += $iterationSummary
 
-        if ($exitCode -ne 0) {
+        if ($iterationFailureClass -ne "ok") {
             $failed = $true
-            break
-        }
-        if ($openOrders -ne "0") {
-            $failed = $true
+            $failureClass = $iterationFailureClass
+            $failedIteration = $iteration
+            $firstFailedLog = $logPath
             break
         }
 
@@ -112,6 +138,9 @@ try {
         skipped_refresh = [bool]$SkipRefresh
         order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }
         status = if ($failed) { "failed" } else { "completed" }
+        failure_class = $failureClass
+        failed_iteration = $failedIteration
+        first_failed_log = $firstFailedLog
         iterations = $iterationSummaries
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $soakSummaryPath -Encoding UTF8

@@ -129,6 +129,49 @@ function Test-OpenOrdersRemaining {
     return ($match.Success -and [int]$match.Groups[1].Value -gt 0)
 }
 
+function Get-OpenOrdersCount {
+    param([string]$Text)
+
+    $match = [regex]::Match($Text, 'open_orders=(\d+)')
+    if ($match.Success) {
+        return [int]$match.Groups[1].Value
+    }
+    return 0
+}
+
+function Get-RiskRejections {
+    param([string]$Text)
+
+    $events = @()
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match '^risk_event:\s+run_id=(\S+)\s+ts_ms=(\S+)\s+account=(.*?)\s+symbol=(.*?)\s+risk_type=(\S+)\s+decision=(\S+)\s+reason=(.*?)\s+threshold=(.*?)\s+observed_value=(.*)$') {
+            $events += [pscustomobject]@{
+                run_id = $Matches[1]
+                ts_ms = $Matches[2]
+                account = $Matches[3].Trim()
+                symbol = $Matches[4].Trim()
+                risk_type = $Matches[5]
+                decision = $Matches[6]
+                reason = $Matches[7].Trim()
+                threshold = $Matches[8].Trim()
+                observed_value = $Matches[9].Trim()
+            }
+        }
+    }
+    return $events
+}
+
+function Get-FirstHaltReason {
+    param([object[]]$RiskRejections)
+
+    foreach ($event in $RiskRejections) {
+        if ($event.decision -eq "rejected") {
+            return [string]$event.risk_type
+        }
+    }
+    return $null
+}
+
 function Get-IbkrAccountId {
     param([string]$ConfigText)
 
@@ -224,6 +267,12 @@ function Write-GatewayPreflightFailureSummary {
         }
         refreshed = "not_started"
         order_submit = "enabled"
+        halt_reason = $null
+        risk_rejections = @()
+        open_orders_remaining = 0
+        cancel_all_attempted = $false
+        cancel_all_succeeded = $true
+        reconciliation_status = "not_started"
         gateway_checks = $gatewayChecks
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
@@ -351,8 +400,44 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
     $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecks } else { $null }
-    $runStatus = if ($null -ne $gatewayChecks -and $gatewayChecks.status -ne "completed") { "failed" } else { "completed" }
-    $runFailureClass = if ($null -ne $gatewayChecks -and $gatewayChecks.failure_class -ne "ok") { $gatewayChecks.failure_class } else { "ok" }
+    $riskEventsOutput = Invoke-CapturedTrader @("risk-events", "--config", $runConfigPath, "--run-id", $runId)
+    $riskRejections = @(Get-RiskRejections $riskEventsOutput)
+    $haltReason = Get-FirstHaltReason $riskRejections
+    $openOrdersOutput = if ($null -ne $gatewayChecks) { [string]$gatewayChecks.open_orders } else { "" }
+    $openOrdersRemaining = Get-OpenOrdersCount $openOrdersOutput
+    $cancelAllAttempted = $false
+    $cancelAllSucceeded = $true
+    $cancelAllOutput = ""
+    if ($ConfirmIbkrPaperOrder -and $openOrdersRemaining -gt 0) {
+        $cancelAllAttempted = $true
+        $cancelAllSucceeded = $false
+        try {
+            $cancelAllOutput = Invoke-CapturedTrader @(
+                "risk-kill-switch",
+                "--config", $runConfigPath,
+                "--run-id", $runId,
+                "--cancel-open-orders",
+                "--confirm-kill-switch"
+            )
+        } catch {
+            Write-Warning "risk-kill-switch cleanup failed: $_"
+            $cancelAllOutput = "failed: $_"
+        }
+        $gatewayChecks = Invoke-IbkrPaperGatewayChecks
+        $openOrdersOutput = [string]$gatewayChecks.open_orders
+        $openOrdersRemaining = Get-OpenOrdersCount $openOrdersOutput
+        $cancelAllSucceeded = ($openOrdersRemaining -eq 0)
+    }
+    $runFailureClass = if ($openOrdersRemaining -gt 0) {
+        "open_orders_remaining"
+    } elseif ($null -ne $haltReason) {
+        $haltReason
+    } elseif ($null -ne $gatewayChecks -and $gatewayChecks.failure_class -ne "ok") {
+        $gatewayChecks.failure_class
+    } else {
+        "ok"
+    }
+    $runStatus = if ($runFailureClass -eq "ok") { "completed" } else { "failed" }
 
     $summary = [pscustomobject]@{
         run_id = $runId
@@ -369,6 +454,13 @@ try {
         }
         refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
         order_submit = if ($ConfirmIbkrPaperOrder) { "enabled" } else { "disabled" }
+        halt_reason = $haltReason
+        risk_rejections = $riskRejections
+        open_orders_remaining = $openOrdersRemaining
+        cancel_all_attempted = $cancelAllAttempted
+        cancel_all_succeeded = $cancelAllSucceeded
+        cancel_all = $cancelAllOutput
+        reconciliation_status = if ($null -ne $gatewayChecks -and $gatewayChecks.reconciliation -match "ibkr paper reconcile ok:") { "ok" } elseif ($ConfirmIbkrPaperOrder) { "unknown" } else { "not_run" }
         gateway_checks = $gatewayChecks
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8

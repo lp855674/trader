@@ -184,6 +184,34 @@ async fn paper_runtime_rejects_drawdown_above_limit() {
 }
 
 #[tokio::test]
+async fn paper_runtime_persists_stale_market_data_rejection_without_order() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.run_id = "paper-stale-risk".to_string();
+    settings.max_market_data_age_ms = Some(1_000);
+    let slices = vec![
+        stale_market_slice(1, 1, dec!(10)),
+        stale_market_slice(2, 2, dec!(11)),
+        stale_market_slice(4_000, 3, dec!(20)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_market_slices(slices)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&settings.run_id).await.unwrap().is_empty());
+    let risk_events = db.list_risk_events(&settings.run_id).await.unwrap();
+    assert!(
+        risk_events.iter().any(|event| {
+            event.risk_type == "stale_market_data" && event.decision == "rejected"
+        })
+    );
+}
+
+#[tokio::test]
 async fn paper_runtime_uses_configured_universe_and_alpha_names() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -802,6 +830,20 @@ fn market_slice(
                 ),
             ),
         ],
+    )
+}
+
+fn stale_market_slice(
+    slice_ts_ms: i64,
+    bar_ts_ms: i64,
+    close: rust_decimal::Decimal,
+) -> MarketSlice {
+    MarketSlice::new(
+        slice_ts_ms,
+        vec![SymbolBar::new(
+            "US:NASDAQ:AAPL:EQUITY",
+            Bar::new(bar_ts_ms, close, close, close, close, dec!(1)),
+        )],
     )
 }
 

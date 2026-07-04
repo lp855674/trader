@@ -10,6 +10,10 @@ use data::{Bar, MarketSlice, SymbolBar};
 use events::{EventBus, SignalEvent, SignalSide};
 use rust_decimal_macros::dec;
 use std::collections::BTreeSet;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use strategies::{MovingAverageCrossStrategy, StrategyRuntimeMode};
 use trader_core::OrderSide;
 use universe::StaticUniverseSelector;
@@ -197,6 +201,14 @@ fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
             allow_short: false,
             shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(strategy),
     );
@@ -255,6 +267,14 @@ fn algorithm_engine_uses_highest_confidence_composite_alpha_signal() {
             allow_short: false,
             shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(strategy),
     );
@@ -294,6 +314,14 @@ fn algorithm_engine_applies_sell_signal_as_short_position() {
             allow_short: true,
             shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(strategy),
     );
@@ -351,6 +379,14 @@ fn algorithm_engine_allows_short_only_for_configured_symbols_in_mixed_universe()
             allow_short: false,
             shortable_symbols,
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(StaticUniverseSelector::new(vec![
             "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string(),
@@ -392,6 +428,14 @@ fn algorithm_engine_allows_short_only_for_configured_symbols_in_mixed_universe()
                 "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP".to_string()
             ]),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(StaticUniverseSelector::new(vec![
             "US:NASDAQ:AAPL:EQUITY".to_string(),
@@ -430,6 +474,14 @@ fn algorithm_engine_rejects_derivative_target_above_margin_limit() {
             allow_short: false,
             shortable_symbols: BTreeSet::from([symbol.to_string()]),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
         Box::new(SymbolSellAlphaModel),
@@ -471,6 +523,14 @@ fn algorithm_engine_rejects_contract_order_exceeding_max_leverage() {
             allow_short: true,
             shortable_symbols: BTreeSet::from([symbol.to_string()]),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
         Box::new(SymbolEchoAlphaModel),
@@ -507,6 +567,14 @@ fn algorithm_engine_generates_orders_for_each_selected_symbol_in_market_slice() 
             allow_short: false,
             shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(StaticUniverseSelector::new(vec![
             "US:NASDAQ:AAPL:EQUITY".to_string(),
@@ -564,6 +632,14 @@ fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
             allow_short: false,
             shortable_symbols: BTreeSet::new(),
             initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
         },
         Box::new(strategy),
     );
@@ -573,6 +649,114 @@ fn algorithm_engine_publishes_runtime_events_with_run_id_source() {
 
     let event = receiver.try_recv().unwrap();
     assert_eq!(event.source, "run-source");
+}
+
+#[test]
+fn algorithm_engine_rejects_order_when_bar_timestamp_is_stale() {
+    let mut engine = AlgorithmEngine::new(
+        AlgorithmEngineSettings {
+            run_id: "run-stale".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: Some(1_000),
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
+        },
+        Box::new(SymbolEchoAlphaModel),
+    );
+
+    let step = engine
+        .on_market_slice(MarketSlice::new(
+            4_000,
+            vec![SymbolBar::new("US:NASDAQ:AAPL:EQUITY", bar(1, dec!(100)))],
+        ))
+        .unwrap();
+
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("stale_market_data")
+    }));
+}
+
+#[test]
+fn algorithm_engine_rejects_order_after_daily_loss_breach() {
+    let mut engine = AlgorithmEngine::new(
+        AlgorithmEngineSettings {
+            run_id: "run-daily-loss".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: true,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+            daily_loss_limit: Some(dec!(10)),
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
+        },
+        Box::new(SequenceAlphaModel::new(vec![
+            SignalSide::Buy,
+            SignalSide::Sell,
+        ])),
+    );
+
+    let first = engine.on_bar(bar(1, dec!(100))).unwrap();
+    let open_order = first.decision.unwrap().order.unwrap();
+    engine
+        .apply_execution(
+            &open_order,
+            &algorithm::ExecutionReport {
+                broker_order_id: "open-1".to_string(),
+                status: "FILLED".to_string(),
+                price: dec!(100),
+                qty: dec!(1),
+                fee: dec!(0),
+            },
+            1,
+        )
+        .unwrap();
+
+    let second = engine.on_bar(bar(2, dec!(80))).unwrap();
+
+    assert!(second.decisions[0].order.is_none());
+    assert!(second.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("daily_loss_limit")
+    }));
 }
 
 #[test]
@@ -628,6 +812,10 @@ struct FixedAlphaModel {
 
 struct SymbolEchoAlphaModel;
 struct SymbolSellAlphaModel;
+struct SequenceAlphaModel {
+    sides: Vec<SignalSide>,
+    index: Arc<AtomicUsize>,
+}
 
 impl AlphaModel for SymbolEchoAlphaModel {
     fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
@@ -655,6 +843,33 @@ impl AlphaModel for SymbolSellAlphaModel {
             strategy_id: "sell".to_string(),
             symbol: symbol.to_string(),
             side: SignalSide::Sell,
+            confidence: 0.9,
+            ts: chrono::Utc::now(),
+        })
+    }
+}
+
+impl SequenceAlphaModel {
+    fn new(sides: Vec<SignalSide>) -> Self {
+        Self {
+            sides,
+            index: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl AlphaModel for SequenceAlphaModel {
+    fn on_bar(&mut self, _bar: &Bar) -> Option<SignalEvent> {
+        None
+    }
+
+    fn on_bar_for_symbol(&mut self, symbol: &str, _bar: &Bar) -> Option<SignalEvent> {
+        let index = self.index.fetch_add(1, Ordering::SeqCst);
+        let side = self.sides.get(index)?.clone();
+        Some(SignalEvent {
+            strategy_id: "sequence".to_string(),
+            symbol: symbol.to_string(),
+            side,
             confidence: 0.9,
             ts: chrono::Utc::now(),
         })

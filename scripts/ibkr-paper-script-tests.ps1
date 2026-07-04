@@ -42,6 +42,8 @@ switch ($command) {
     "migrate" { Write-Host "migrated" }
     "paper-run" { Write-Host "paper completed: signals=1 orders=1" }
     "report" { Write-Host "report ok" }
+    "risk-events" { }
+    "risk-kill-switch" { Write-Host "risk kill switch ok: account_id=DU12345 cancel_open_orders=true cancelled=0 symbol=*" }
     "ibkr-paper-readonly" { Write-Host "ibkr paper readonly ok: connected=true account=DU12345" }
     "ibkr-paper-open-orders" { Write-Host "ibkr paper open orders ok: open_orders=0" }
     "ibkr-paper-executions" { Write-Host "ibkr paper executions ok: executions=0" }
@@ -98,6 +100,9 @@ Assert-True (-not [string]::IsNullOrWhiteSpace($runSummaryPath)) "expected ibkr 
 $runSummary = Read-Json $runSummaryPath
 Assert-True ($runSummary.status -eq "completed") "expected ibkr paper run completed status"
 Assert-True ($runSummary.failure_class -eq "ok") "expected ibkr paper run ok failure class"
+Assert-True ($null -eq $runSummary.halt_reason) "expected null halt reason on success"
+Assert-True ($runSummary.open_orders_remaining -eq 0) "expected zero open orders remaining on success"
+Assert-True (-not [bool]$runSummary.cancel_all_attempted) "expected no cancel-all attempt on success"
 Assert-True ($runSummary.gateway_checks.status -eq "completed") "expected gateway checks completed status"
 Assert-True ($runSummary.gateway_checks.failure_class -eq "ok") "expected gateway checks ok failure class"
 
@@ -118,6 +123,7 @@ $preflightFailedRunSummaryPath = Join-Path $preflightFailedRunDir.FullName "summ
 $preflightFailedRunSummary = Read-Json $preflightFailedRunSummaryPath
 Assert-True ($preflightFailedRunSummary.status -eq "failed") "expected preflight failed ibkr paper run status"
 Assert-True ($preflightFailedRunSummary.failure_class -eq "gateway_unreachable") "expected preflight failed ibkr paper run gateway class"
+Assert-True ($preflightFailedRunSummary.open_orders_remaining -eq 0) "expected zero open orders on gateway preflight failure"
 Assert-True ($preflightFailedRunSummary.gateway_checks.failed_check -eq "gateway_preflight") "expected failed gateway preflight check name"
 
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
@@ -138,6 +144,7 @@ Assert-True (-not [string]::IsNullOrWhiteSpace($failedRunSummaryPath)) "expected
 $failedRunSummary = Read-Json $failedRunSummaryPath
 Assert-True ($failedRunSummary.status -eq "failed") "expected failed ibkr paper run status"
 Assert-True ($failedRunSummary.failure_class -eq "gateway_unreachable") "expected failed ibkr paper run gateway class"
+Assert-True ($failedRunSummary.open_orders_remaining -eq 0) "expected zero open orders on gateway check failure"
 Assert-True ($failedRunSummary.gateway_checks.failed_check -eq "readonly") "expected failed gateway check name"
 
 Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue

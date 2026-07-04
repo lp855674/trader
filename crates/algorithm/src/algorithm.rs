@@ -2,13 +2,18 @@
 
 use accounting::AccountBook;
 use alpha::AlphaModel;
+use chrono::{Datelike, FixedOffset, Offset, TimeZone, Timelike, Utc, Weekday};
 use data::{Bar, MarketSlice};
 use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
 use market_rules::{ContractRiskLimits, MarketRuleSet};
 use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
-use risk::{PortfolioRiskPolicy, PortfolioRiskState, RiskPolicy, check_max_position};
+use risk::{
+    DailyLossGuard, MarketDataFreshnessGuard, OrderThrottleGuard, PortfolioRiskPolicy,
+    PortfolioRiskState, PriceDeviationGuard, RiskPolicy, StrategyCircuitBreaker,
+    TradingSessionGuard, check_max_position,
+};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +40,62 @@ pub struct AlgorithmEngineSettings {
     pub allow_short: bool,
     pub shortable_symbols: BTreeSet<String>,
     pub initial_cash: Decimal,
+    pub daily_loss_limit: Option<Decimal>,
+    pub max_order_attempts_per_day: Option<u32>,
+    pub max_order_failures_per_day: Option<u32>,
+    pub max_price_deviation_bps: Option<Decimal>,
+    pub max_market_data_age_ms: Option<u64>,
+    pub max_consecutive_strategy_losses: Option<u32>,
+    pub max_consecutive_strategy_errors: Option<u32>,
+    pub trading_session: Option<TradingSessionWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TradingSessionWindow {
+    pub mode: String,
+    pub timezone: String,
+    pub start: String,
+    pub end: String,
+}
+
+impl TradingSessionWindow {
+    pub fn new(
+        mode: impl Into<String>,
+        timezone: impl Into<String>,
+        start: impl Into<String>,
+        end: impl Into<String>,
+    ) -> Self {
+        Self {
+            mode: mode.into(),
+            timezone: timezone.into(),
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+
+    fn guard(&self) -> anyhow::Result<TradingSessionGuard> {
+        Ok(TradingSessionGuard::new(
+            parse_hhmm_to_minutes(&self.start)?,
+            parse_hhmm_to_minutes(&self.end)?,
+        ))
+    }
+
+    fn check(&self, ts_ms: i64) -> anyhow::Result<()> {
+        if self.mode != "regular_only" {
+            return Ok(());
+        }
+        let offset = timezone_offset_for_timestamp(&self.timezone, ts_ms)?;
+        let local = offset
+            .timestamp_millis_opt(ts_ms)
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("invalid timestamp {ts_ms} for trading session"))?;
+        self.guard()?
+            .check(
+                !matches!(local.weekday(), Weekday::Sat | Weekday::Sun),
+                local.hour() * 60 + local.minute(),
+            )
+            .map_err(anyhow::Error::from)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +106,7 @@ pub enum EngineEventKind {
     PortfolioTargetGenerated,
     MarketRuleValidated,
     RiskApproved,
+    RiskRejected,
     ExecutionOrderGenerated,
     OmsSubmitted,
     OmsAccepted,
@@ -64,6 +126,7 @@ impl EngineEventKind {
             Self::PortfolioTargetGenerated => "algorithm.portfolio.target",
             Self::MarketRuleValidated => "algorithm.market_rule.validated",
             Self::RiskApproved => "algorithm.risk.approved",
+            Self::RiskRejected => "algorithm.risk.rejected",
             Self::ExecutionOrderGenerated => "algorithm.execution.order",
             Self::OmsSubmitted => "algorithm.oms.submitted",
             Self::OmsAccepted => "algorithm.oms.accepted",
@@ -105,6 +168,16 @@ pub struct PortfolioTargetGeneratedPayload {
     pub run_id: String,
     pub symbol: String,
     pub target_qty: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RiskRejectedPayload {
+    pub run_id: String,
+    pub account_id: String,
+    pub symbol: String,
+    pub risk_type: String,
+    pub decision: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -713,6 +786,11 @@ pub struct AlgorithmEngine {
     last_prices: BTreeMap<String, Decimal>,
     peak_equity: Decimal,
     orders: usize,
+    day_start_equity: Decimal,
+    order_attempts_today: u32,
+    order_failures_today: u32,
+    consecutive_strategy_losses: u32,
+    consecutive_strategy_errors: u32,
 }
 
 impl AlgorithmEngine {
@@ -739,6 +817,7 @@ impl AlgorithmEngine {
         .with_shorting(settings.allow_short);
         Self {
             peak_equity: settings.initial_cash,
+            day_start_equity: settings.initial_cash,
             settings,
             universe,
             alpha,
@@ -747,11 +826,19 @@ impl AlgorithmEngine {
             event_bus: None,
             last_prices: BTreeMap::new(),
             orders: 0,
+            order_attempts_today: 0,
+            order_failures_today: 0,
+            consecutive_strategy_losses: 0,
+            consecutive_strategy_errors: 0,
         }
     }
 
     pub fn set_event_bus(&mut self, event_bus: EventBus) {
         self.event_bus = Some(event_bus);
+    }
+
+    pub fn record_order_failure(&mut self) {
+        self.order_failures_today = self.order_failures_today.saturating_add(1);
     }
 
     pub fn on_bar(&mut self, bar: Bar) -> anyhow::Result<AlgorithmStep> {
@@ -792,9 +879,13 @@ impl AlgorithmEngine {
                 continue;
             };
             let include_universe_event = decisions.is_empty();
-            if let Some(decision) =
-                self.decision_for_symbol(&symbol, bar, include_universe_event, &universe_event)?
-            {
+            if let Some(decision) = self.decision_for_symbol(
+                &symbol,
+                bar,
+                market_slice.ts_ms,
+                include_universe_event,
+                &universe_event,
+            )? {
                 decisions.push(decision);
             }
         }
@@ -822,6 +913,7 @@ impl AlgorithmEngine {
         &mut self,
         symbol: &str,
         bar: &Bar,
+        evaluation_ts_ms: i64,
         include_universe_event: bool,
         universe_event: &EngineEvent,
     ) -> anyhow::Result<Option<AlgorithmDecision>> {
@@ -882,12 +974,90 @@ impl AlgorithmEngine {
         let Some(order) = order else {
             return Ok(None);
         };
+        if let Some(window) = &self.settings.trading_session
+            && let Err(error) = window.check(evaluation_ts_ms)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                "trading_session_closed",
+                error.to_string(),
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        if let Some(max_market_data_age_ms) = self.settings.max_market_data_age_ms
+            && let Err(rejection) = MarketDataFreshnessGuard::new(max_market_data_age_ms)
+                .check(bar.ts_ms, evaluation_ts_ms)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                rejection.risk_type,
+                rejection.reason,
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        let equity = self.account_book.equity_with_prices(&self.last_prices);
+        if let Some(daily_loss_limit) = self.settings.daily_loss_limit
+            && let Err(rejection) =
+                DailyLossGuard::new(daily_loss_limit).check(self.day_start_equity, equity)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                rejection.risk_type,
+                rejection.reason,
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        if let Err(rejection) = StrategyCircuitBreaker::new(
+            self.settings.max_consecutive_strategy_losses,
+            self.settings.max_consecutive_strategy_errors,
+        )
+        .check(
+            self.consecutive_strategy_losses,
+            self.consecutive_strategy_errors,
+        ) {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                rejection.risk_type,
+                rejection.reason,
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        if let Err(rejection) = OrderThrottleGuard::new(
+            self.settings.max_order_attempts_per_day,
+            self.settings.max_order_failures_per_day,
+        )
+        .check_attempts(self.order_attempts_today)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                rejection.risk_type,
+                rejection.reason,
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        if let Some(max_price_deviation_bps) = self.settings.max_price_deviation_bps
+            && let Some(order_price) = order.price
+            && let Err(rejection) =
+                PriceDeviationGuard::new(max_price_deviation_bps).check(order_price, bar.close)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                rejection.risk_type,
+                rejection.reason,
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
         let market_rules = MarketRuleSet::for_symbol(&order.symbol)?;
         market_rules.validate_order(&order, bar.close)?;
         if let Some(contract_limits) = ContractRiskLimits::for_symbol(&order.symbol) {
             let target_notional = target.target_qty.abs() * bar.close;
             let projected_margin = position_margin(&market_rules, target.target_qty, bar.close);
-            let equity = self.account_book.equity_with_prices(&self.last_prices);
             let margin_ratio = if projected_margin == Decimal::ZERO {
                 Decimal::MAX
             } else {
@@ -921,7 +1091,6 @@ impl AlgorithmEngine {
         let target_symbol_margin = position_margin(&market_rules, target.target_qty, bar.close);
         let projected_margin_used =
             (current_margin_used - current_symbol_margin).max(Decimal::ZERO) + target_symbol_margin;
-        let equity = self.account_book.equity_with_prices(&self.last_prices);
         let portfolio_state = PortfolioRiskState::new(
             equity,
             self.peak_equity,
@@ -1014,6 +1183,7 @@ impl AlgorithmEngine {
             ),
         ));
 
+        self.order_attempts_today += 1;
         self.orders += 1;
         let order_number = self.orders;
         let decision = AlgorithmDecision {
@@ -1032,6 +1202,7 @@ impl AlgorithmEngine {
         report: &ExecutionReport,
         ts_ms: i64,
     ) -> anyhow::Result<AppliedExecution> {
+        let realized_pnl_before = self.account_book.realized_pnl();
         if report.qty > Decimal::ZERO {
             match order.side {
                 OrderSide::Buy => {
@@ -1043,6 +1214,13 @@ impl AlgorithmEngine {
                         .sell(&order.symbol, report.qty, report.price, report.fee)?
                 }
             }
+        }
+        let realized_pnl_after = self.account_book.realized_pnl();
+        let realized_delta = realized_pnl_after - realized_pnl_before;
+        if realized_delta < Decimal::ZERO {
+            self.consecutive_strategy_losses = self.consecutive_strategy_losses.saturating_add(1);
+        } else if realized_delta > Decimal::ZERO {
+            self.consecutive_strategy_losses = 0;
         }
         self.last_prices.insert(order.symbol.clone(), report.price);
         let fill_kind = if report.qty > Decimal::ZERO && report.qty < order.qty {
@@ -1154,6 +1332,41 @@ impl AlgorithmEngine {
         }
     }
 
+    fn risk_rejected_event(
+        &self,
+        ts_ms: i64,
+        order: &OrderRequest,
+        risk_type: &str,
+        reason: String,
+    ) -> EngineEvent {
+        self.event(
+            EngineEventKind::RiskRejected,
+            ts_ms,
+            payload_value(RiskRejectedPayload {
+                run_id: self.settings.run_id.clone(),
+                account_id: order.account_id.clone(),
+                symbol: order.symbol.clone(),
+                risk_type: risk_type.to_string(),
+                decision: "rejected".to_string(),
+                reason,
+            }),
+        )
+    }
+
+    fn rejected_decision(&self, events: Vec<EngineEvent>) -> AlgorithmDecision {
+        AlgorithmDecision {
+            order_number: self.orders + 1,
+            order_id: format!(
+                "{}-order-rejected-{}",
+                self.settings.run_id,
+                self.orders + 1
+            ),
+            fill_id: format!("{}-fill-rejected-{}", self.settings.run_id, self.orders + 1),
+            order: None,
+            events,
+        }
+    }
+
     fn publish_events(&self, events: &[EngineEvent]) {
         let Some(event_bus) = &self.event_bus else {
             return;
@@ -1216,5 +1429,78 @@ fn payload_value(payload: impl Serialize) -> serde_json::Value {
     match serde_json::to_value(payload) {
         Ok(value) => value,
         Err(_) => serde_json::Value::Object(Default::default()),
+    }
+}
+
+fn parse_hhmm_to_minutes(value: &str) -> anyhow::Result<u32> {
+    let (hour, minute) = value
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("invalid HH:MM time {value}"))?;
+    let hour = hour.parse::<u32>()?;
+    let minute = minute.parse::<u32>()?;
+    if hour > 23 || minute > 59 {
+        anyhow::bail!("invalid HH:MM time {value}");
+    }
+    Ok(hour * 60 + minute)
+}
+
+fn timezone_offset_for_timestamp(timezone: &str, ts_ms: i64) -> anyhow::Result<FixedOffset> {
+    match timezone {
+        "UTC" => Ok(Utc.fix()),
+        "America/New_York" => eastern_offset_for_timestamp(ts_ms),
+        other => parse_fixed_offset(other),
+    }
+}
+
+fn parse_fixed_offset(value: &str) -> anyhow::Result<FixedOffset> {
+    if value.len() != 6 || (value.as_bytes()[0] != b'+' && value.as_bytes()[0] != b'-') {
+        anyhow::bail!("unsupported timezone {value}");
+    }
+    let sign = if value.starts_with('-') { -1 } else { 1 };
+    let hour = value[1..3].parse::<i32>()?;
+    let minute = value[4..6].parse::<i32>()?;
+    let seconds = sign * (hour * 3600 + minute * 60);
+    FixedOffset::east_opt(seconds)
+        .ok_or_else(|| anyhow::anyhow!("invalid fixed offset timezone {value}"))
+}
+
+fn eastern_offset_for_timestamp(ts_ms: i64) -> anyhow::Result<FixedOffset> {
+    let utc = Utc
+        .timestamp_millis_opt(ts_ms)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid timestamp {ts_ms}"))?;
+    let year = utc.year();
+    let dst_start_day = nth_weekday_of_month(year, 3, Weekday::Sun, 2);
+    let dst_end_day = nth_weekday_of_month(year, 11, Weekday::Sun, 1);
+    let dst_start_utc = Utc
+        .with_ymd_and_hms(year, 3, dst_start_day, 7, 0, 0)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid DST start for {year}"))?;
+    let dst_end_utc = Utc
+        .with_ymd_and_hms(year, 11, dst_end_day, 6, 0, 0)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid DST end for {year}"))?;
+    let offset_seconds = if utc >= dst_start_utc && utc < dst_end_utc {
+        -4 * 3600
+    } else {
+        -5 * 3600
+    };
+    FixedOffset::east_opt(offset_seconds)
+        .ok_or_else(|| anyhow::anyhow!("invalid eastern offset for {ts_ms}"))
+}
+
+fn nth_weekday_of_month(year: i32, month: u32, weekday: Weekday, nth: u32) -> u32 {
+    let mut day = 1_u32;
+    let mut seen = 0_u32;
+    loop {
+        let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+            .expect("valid calendar day while computing nth weekday");
+        if date.weekday() == weekday {
+            seen += 1;
+            if seen == nth {
+                return day;
+            }
+        }
+        day += 1;
     }
 }

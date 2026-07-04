@@ -9,6 +9,7 @@ rust-version.workspace = true
 path = "src/api.rs"
 
 [dependencies]
+algorithm.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 backtest.workspace = true

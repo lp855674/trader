@@ -329,4 +329,89 @@ fn loads_ibkr_stock_parquet_paper_config_from_file() {
     assert_eq!(config.broker.port, Some(7497));
     assert_eq!(config.broker.client_id, Some(1));
     assert!(!config.broker.order_submit_enabled);
+    assert_eq!(config.risk.daily_loss_limit, None);
+    assert_eq!(config.risk.max_order_attempts_per_day, None);
+    assert_eq!(config.risk.max_order_failures_per_day, None);
+    assert_eq!(config.risk.max_price_deviation_bps, None);
+    assert_eq!(config.risk.max_market_data_age_ms, None);
+    assert_eq!(config.risk.max_consecutive_strategy_losses, None);
+    assert_eq!(config.risk.max_consecutive_strategy_errors, None);
+    assert!(config.risk.trading_session.is_none());
+}
+
+#[test]
+fn loads_paper_config_with_live_risk_hardening_fields() {
+    let config = AppConfig::from_toml_str(
+        r#"
+        [runtime]
+        mode = "paper"
+        run_id = "risk-hardening"
+
+        [database]
+        url = "sqlite::memory:"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "10000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "10"
+
+        [risk]
+        max_order_notional = "1000"
+        min_cash_after_order = "100"
+        max_exposure = "5000"
+        max_drawdown = "0.2"
+        max_leverage = "2"
+        max_margin_used = "0"
+        trading_halted = false
+        daily_loss_limit = "50"
+        max_order_attempts_per_day = 20
+        max_order_failures_per_day = 5
+        max_price_deviation_bps = "50"
+        max_market_data_age_ms = 5000
+        max_consecutive_strategy_losses = 3
+        max_consecutive_strategy_errors = 2
+
+        [risk.trading_session]
+        mode = "regular_only"
+        timezone = "America/New_York"
+        start = "09:30"
+        end = "16:00"
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "0"
+        fee_bps = "0"
+
+        [live]
+        enabled = false
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.risk.daily_loss_limit.as_deref(), Some("50"));
+    assert_eq!(config.risk.max_order_attempts_per_day, Some(20));
+    assert_eq!(config.risk.max_order_failures_per_day, Some(5));
+    assert_eq!(config.risk.max_price_deviation_bps.as_deref(), Some("50"));
+    assert_eq!(config.risk.max_market_data_age_ms, Some(5000));
+    assert_eq!(config.risk.max_consecutive_strategy_losses, Some(3));
+    assert_eq!(config.risk.max_consecutive_strategy_errors, Some(2));
+    assert_eq!(
+        config.risk.trading_session.as_ref().unwrap().timezone,
+        "America/New_York"
+    );
 }

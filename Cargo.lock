@@ -179,6 +179,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api"
 version = "0.1.0"
 dependencies = [
+ "algorithm",
  "anyhow",
  "axum",
  "backtest",
@@ -4909,6 +4910,7 @@ dependencies = [
 name = "trader-cli"
 version = "0.1.0"
 dependencies = [
+ "algorithm",
  "anyhow",
  "assert_cmd",
  "backtest",

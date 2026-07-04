@@ -5,7 +5,8 @@ use broker::{
     BrokerPositionSide, FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest,
     IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
     IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, RuntimePositionSnapshot,
-    SimulatedBrokerSettings, reconcile_positions, simulate_market_fill,
+    SimulatedBrokerSettings, cancel_open_orders_for_account_symbol, reconcile_positions,
+    simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::collections::VecDeque;
@@ -14,6 +15,91 @@ use std::{
     time::Duration,
 };
 use trader_core::{OrderRequest, OrderSide, OrderType};
+
+struct CancelAllTestBroker;
+
+#[async_trait]
+impl Broker for CancelAllTestBroker {
+    async fn place_order(
+        &self,
+        _request: OrderRequest,
+    ) -> Result<broker::PlaceOrderResponse, BrokerError> {
+        unreachable!()
+    }
+
+    async fn cancel_order(
+        &self,
+        broker_order_id: &str,
+    ) -> Result<broker::BrokerOrder, BrokerError> {
+        Ok(broker::BrokerOrder {
+            broker_order_id: broker_order_id.to_string(),
+            account_id: "paper".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            qty: dec!(1),
+            price: Some(dec!(100)),
+            status: BrokerOrderStatus::Cancelled,
+        })
+    }
+
+    async fn query_order(
+        &self,
+        _broker_order_id: &str,
+    ) -> Result<broker::BrokerOrder, BrokerError> {
+        unreachable!()
+    }
+
+    async fn account_snapshot(
+        &self,
+        _account_id: &str,
+    ) -> Result<broker::BrokerAccountSnapshot, BrokerError> {
+        unreachable!()
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<broker::BrokerPositionSnapshot>, BrokerError> {
+        unreachable!()
+    }
+
+    async fn open_orders(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<broker::BrokerOpenOrder>, BrokerError> {
+        Ok(vec![
+            broker::BrokerOpenOrder {
+                broker_order_id: "open-1".to_string(),
+                client_order_id: "client-1".to_string(),
+                account_id: "paper".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Limit,
+                price: Some(dec!(100)),
+                qty: dec!(1),
+                filled_qty: dec!(0),
+                status: "SUBMITTED".to_string(),
+            },
+            broker::BrokerOpenOrder {
+                broker_order_id: "open-2".to_string(),
+                client_order_id: "client-2".to_string(),
+                account_id: "paper".to_string(),
+                symbol: "ETHUSDT".to_string(),
+                side: OrderSide::Sell,
+                order_type: OrderType::Limit,
+                price: Some(dec!(200)),
+                qty: dec!(1),
+                filled_qty: dec!(0),
+                status: "SUBMITTED".to_string(),
+            },
+        ])
+    }
+
+    async fn status(&self) -> Result<broker::BrokerStatus, BrokerError> {
+        unreachable!()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FakeBinanceHttpCall {
@@ -442,6 +528,18 @@ async fn fake_broker_open_orders_injects_startup_order_when_enabled() {
     assert_eq!(order.qty, dec!(1));
     assert_eq!(order.filled_qty, dec!(0));
     assert_eq!(order.status, "SUBMITTED");
+}
+
+#[tokio::test]
+async fn cancel_open_orders_helper_filters_by_symbol() {
+    let cancelled =
+        cancel_open_orders_for_account_symbol(&CancelAllTestBroker, "paper", Some("BTCUSDT"))
+            .await
+            .unwrap();
+
+    assert_eq!(cancelled.len(), 1);
+    assert_eq!(cancelled[0].broker_order_id, "open-1");
+    assert_eq!(cancelled[0].status, BrokerOrderStatus::Cancelled);
 }
 
 #[test]

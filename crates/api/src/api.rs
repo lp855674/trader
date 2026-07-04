@@ -3844,6 +3844,26 @@ fn primary_strategy_symbol(app_config: &config::AppConfig) -> String {
         .unwrap_or_else(|| "US:NASDAQ:AAPL:EQUITY".to_string())
 }
 
+fn optional_decimal(value: Option<&str>) -> Result<Option<Decimal>, ApiError> {
+    value
+        .map(Decimal::from_str)
+        .transpose()
+        .map_err(ApiError::from)
+}
+
+fn trading_session_window(
+    session: Option<&config::TradingSessionConfig>,
+) -> Result<Option<algorithm::TradingSessionWindow>, ApiError> {
+    Ok(session.map(|session| {
+        algorithm::TradingSessionWindow::new(
+            session.mode.clone(),
+            session.timezone.clone(),
+            session.start.clone(),
+            session.end.clone(),
+        )
+    }))
+}
+
 fn backtest_settings_with_config_json(
     app_config: &config::AppConfig,
     config_json: String,
@@ -3876,6 +3896,16 @@ fn backtest_settings_with_config_json(
         allow_short: app_config.effective_allow_short(),
         shortable_symbols: app_config.shortable_symbols(),
         initial_equity: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        daily_loss_limit: optional_decimal(app_config.risk.daily_loss_limit.as_deref())?,
+        max_order_attempts_per_day: app_config.risk.max_order_attempts_per_day,
+        max_order_failures_per_day: app_config.risk.max_order_failures_per_day,
+        max_price_deviation_bps: optional_decimal(
+            app_config.risk.max_price_deviation_bps.as_deref(),
+        )?,
+        max_market_data_age_ms: app_config.risk.max_market_data_age_ms,
+        max_consecutive_strategy_losses: app_config.risk.max_consecutive_strategy_losses,
+        max_consecutive_strategy_errors: app_config.risk.max_consecutive_strategy_errors,
+        trading_session: trading_session_window(app_config.risk.trading_session.as_ref())?,
         fast_window: app_config.strategy.fast_window,
         slow_window: app_config.strategy.slow_window,
         logging: log_writer_settings(app_config),
@@ -3921,6 +3951,16 @@ fn paper_settings_with_config_json(
         allow_short: app_config.effective_allow_short(),
         shortable_symbols: app_config.shortable_symbols(),
         initial_cash: Decimal::from_str(&app_config.portfolio.initial_cash)?,
+        daily_loss_limit: optional_decimal(app_config.risk.daily_loss_limit.as_deref())?,
+        max_order_attempts_per_day: app_config.risk.max_order_attempts_per_day,
+        max_order_failures_per_day: app_config.risk.max_order_failures_per_day,
+        max_price_deviation_bps: optional_decimal(
+            app_config.risk.max_price_deviation_bps.as_deref(),
+        )?,
+        max_market_data_age_ms: app_config.risk.max_market_data_age_ms,
+        max_consecutive_strategy_losses: app_config.risk.max_consecutive_strategy_losses,
+        max_consecutive_strategy_errors: app_config.risk.max_consecutive_strategy_errors,
+        trading_session: trading_session_window(app_config.risk.trading_session.as_ref())?,
         base_currency: app_config.portfolio.base_currency.clone(),
         slippage_bps: Decimal::from_str(&app_config.paper.slippage_bps)?,
         fee_bps: Decimal::from_str(&app_config.paper.fee_bps)?,

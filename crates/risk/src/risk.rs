@@ -1,9 +1,16 @@
 #![forbid(unsafe_code)]
 
+mod live_guards;
+
 use portfolio::TargetPosition;
 use rust_decimal::Decimal;
 use thiserror::Error;
 use trader_core::{OrderRequest, OrderSide};
+
+pub use live_guards::{
+    DailyLossGuard, LiveRiskRejection, MarketDataFreshnessGuard, OrderThrottleGuard,
+    PriceDeviationGuard, StrategyCircuitBreaker, TradingSessionGuard,
+};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RiskError {

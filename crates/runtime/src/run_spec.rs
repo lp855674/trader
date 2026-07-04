@@ -57,6 +57,22 @@ pub struct RiskSpec {
     pub max_margin_used: String,
     pub trading_halted: bool,
     pub allow_short: Option<bool>,
+    pub daily_loss_limit: Option<String>,
+    pub max_order_attempts_per_day: Option<u32>,
+    pub max_order_failures_per_day: Option<u32>,
+    pub max_price_deviation_bps: Option<String>,
+    pub max_market_data_age_ms: Option<u64>,
+    pub max_consecutive_strategy_losses: Option<u32>,
+    pub max_consecutive_strategy_errors: Option<u32>,
+    pub trading_session: Option<TradingSessionSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TradingSessionSpec {
+    pub mode: String,
+    pub timezone: String,
+    pub start: String,
+    pub end: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +141,21 @@ impl From<&AppConfig> for RunSpec {
                 max_margin_used: value.risk.max_margin_used.clone(),
                 trading_halted: value.risk.trading_halted,
                 allow_short: value.risk.allow_short,
+                daily_loss_limit: value.risk.daily_loss_limit.clone(),
+                max_order_attempts_per_day: value.risk.max_order_attempts_per_day,
+                max_order_failures_per_day: value.risk.max_order_failures_per_day,
+                max_price_deviation_bps: value.risk.max_price_deviation_bps.clone(),
+                max_market_data_age_ms: value.risk.max_market_data_age_ms,
+                max_consecutive_strategy_losses: value.risk.max_consecutive_strategy_losses,
+                max_consecutive_strategy_errors: value.risk.max_consecutive_strategy_errors,
+                trading_session: value.risk.trading_session.as_ref().map(|session| {
+                    TradingSessionSpec {
+                        mode: session.mode.clone(),
+                        timezone: session.timezone.clone(),
+                        start: session.start.clone(),
+                        end: session.end.clone(),
+                    }
+                }),
             },
             broker: BrokerSpec {
                 kind: value.broker.kind,

@@ -10,6 +10,7 @@ name = "trader"
 path = "src/main.rs"
 
 [dependencies]
+algorithm.workspace = true
 anyhow.workspace = true
 backtest.workspace = true
 broker.workspace = true

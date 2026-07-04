@@ -18,7 +18,7 @@ if ($ConfirmTestnetOrder -and $SkipRefresh) {
 }
 
 $repoRoot = Get-Location
-$traderExe = Join-Path $repoRoot "target/debug/trader.exe"
+$traderExe = if ($env:TRADER_TEST_EXE) { $env:TRADER_TEST_EXE } else { Join-Path $repoRoot "target/debug/trader.exe" }
 $id = [guid]::NewGuid().ToString("N")
 $runId = "binance-btcusdt-1m-$($id.Substring(0, 12))"
 $runDir = Join-Path $repoRoot "data/binance-paper-runs/$runId"
@@ -40,12 +40,70 @@ function Invoke-CheckedCargo {
     }
 }
 
+function Get-MatchValue {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+
+    $match = [regex]::Match($Text, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    if ($match.Success) {
+        return $match.Groups[1].Value.Trim()
+    }
+    return ""
+}
+
+function Get-OpenOrdersCount {
+    param([string]$Text)
+
+    $value = Get-MatchValue $Text 'open_orders=(\d+)'
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return 0
+    }
+    return [int]$value
+}
+
+function Get-RiskRejections {
+    param([string]$Text)
+
+    $events = @()
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match '^risk_event:\s+run_id=(\S+)\s+ts_ms=(\S+)\s+account=(.*?)\s+symbol=(.*?)\s+risk_type=(\S+)\s+decision=(\S+)\s+reason=(.*?)\s+threshold=(.*?)\s+observed_value=(.*)$') {
+            $events += [pscustomobject]@{
+                run_id = $Matches[1]
+                ts_ms = $Matches[2]
+                account = $Matches[3].Trim()
+                symbol = $Matches[4].Trim()
+                risk_type = $Matches[5]
+                decision = $Matches[6]
+                reason = $Matches[7].Trim()
+                threshold = $Matches[8].Trim()
+                observed_value = $Matches[9].Trim()
+            }
+        }
+    }
+    return $events
+}
+
+function Get-FirstHaltReason {
+    param([object[]]$RiskRejections)
+
+    foreach ($event in $RiskRejections) {
+        if ($event.decision -eq "rejected") {
+            return [string]$event.risk_type
+        }
+    }
+    return $null
+}
+
 function Invoke-CheckedTrader {
     param([string[]]$TraderArgs)
 
+    $global:LASTEXITCODE = 0
     if (Test-Path $traderExe) {
         & $traderExe @TraderArgs
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "trader $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     } else {
@@ -56,14 +114,17 @@ function Invoke-CheckedTrader {
 function Invoke-CapturedTrader {
     param([string[]]$TraderArgs)
 
+    $global:LASTEXITCODE = 0
     if (Test-Path $traderExe) {
         $output = & $traderExe @TraderArgs 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "trader $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     } else {
         $output = cargo @(@("run", "-p", "trader-cli", "--") + $TraderArgs) 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        if ($exitCode -ne 0) {
             throw "cargo run -p trader-cli -- $($TraderArgs -join ' ') failed with exit code $LASTEXITCODE"
         }
     }
@@ -94,12 +155,15 @@ function Invoke-BinancePaperCleanup {
     [pscustomobject]@{
         recover = $recoverOutput
         open_orders = $openOrdersOutput
+        open_orders_remaining = Get-OpenOrdersCount $openOrdersOutput
     }
 }
 
 try {
     $env:CARGO_BUILD_JOBS = "1"
-    Invoke-CheckedCargo @("build", "-p", "trader-cli")
+    if (-not $env:TRADER_TEST_EXE) {
+        Invoke-CheckedCargo @("build", "-p", "trader-cli")
+    }
 
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
@@ -153,10 +217,47 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
     $cleanup = Invoke-BinancePaperCleanup
+    $riskEventsOutput = Invoke-CapturedTrader @("risk-events", "--config", $runConfigPath, "--run-id", $runId)
+    $riskRejections = @(Get-RiskRejections $riskEventsOutput)
+    $haltReason = Get-FirstHaltReason $riskRejections
+    $openOrdersRemaining = $cleanup.open_orders_remaining
+    $cancelAllAttempted = $false
+    $cancelAllSucceeded = $true
+    $cancelAllOutput = ""
+    if ($openOrdersRemaining -gt 0) {
+        $cancelAllAttempted = $true
+        $cancelAllSucceeded = $false
+        try {
+            $cancelAllOutput = Invoke-CapturedTrader @(
+                "risk-kill-switch",
+                "--config", $runConfigPath,
+                "--run-id", $runId,
+                "--cancel-open-orders",
+                "--symbol", $Symbol,
+                "--confirm-kill-switch"
+            )
+        } catch {
+            Write-Warning "risk-kill-switch cleanup failed: $_"
+            $cancelAllOutput = "failed: $_"
+        }
+        $cleanup = Invoke-BinancePaperCleanup
+        $openOrdersRemaining = $cleanup.open_orders_remaining
+        $cancelAllSucceeded = ($openOrdersRemaining -eq 0)
+    }
     $reconcileOutput = Invoke-CapturedTrader @("binance-paper-reconcile", "--config", $runConfigPath, "--symbol", $Symbol)
+    $failureClass = if ($openOrdersRemaining -gt 0) {
+        "open_orders_remaining"
+    } elseif ($null -ne $haltReason) {
+        $haltReason
+    } else {
+        "ok"
+    }
+    $status = if ($failureClass -eq "ok") { "completed" } else { "failed" }
 
     $summary = [pscustomobject]@{
         run_id = $runId
+        status = $status
+        failure_class = $failureClass
         config = $runConfigPath
         database = $databaseUrl
         symbol = $Symbol
@@ -171,10 +272,23 @@ try {
         ticker_price = if ($null -ne $tickerPrice) { $tickerPrice.ToString() } else { "not_checked" }
         refreshed = if ($SkipRefresh) { "skipped" } else { "ok" }
         order_submit = if ($ConfirmTestnetOrder) { "enabled" } else { "disabled" }
+        halt_reason = $haltReason
+        risk_rejections = $riskRejections
+        open_orders_remaining = $openOrdersRemaining
+        cancel_all_attempted = $cancelAllAttempted
+        cancel_all_succeeded = $cancelAllSucceeded
         cleanup = $cleanup
+        cancel_all = $cancelAllOutput
         reconciliation = $reconcileOutput
+        reconciliation_status = if ($reconcileOutput -match "binance paper reconcile ok:") { "ok" } else { "unknown" }
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
+
+    Write-Host "summary : $summaryPath"
+
+    if ($status -ne "completed") {
+        throw "Binance paper run failed post-run checks: $failureClass; see $summaryPath"
+    }
 
     [pscustomobject]@{
         run_id = $runId

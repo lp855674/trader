@@ -325,6 +325,22 @@ pub trait Broker: Send + Sync {
     async fn status(&self) -> Result<BrokerStatus, BrokerError>;
 }
 
+pub async fn cancel_open_orders_for_account_symbol(
+    broker: &dyn Broker,
+    account_id: &str,
+    symbol: Option<&str>,
+) -> Result<Vec<BrokerOrder>, BrokerError> {
+    let open_orders = broker.open_orders(account_id).await?;
+    let mut cancelled = Vec::new();
+    for open_order in open_orders {
+        if symbol.is_some_and(|symbol| symbol != open_order.symbol) {
+            continue;
+        }
+        cancelled.push(broker.cancel_order(&open_order.broker_order_id).await?);
+    }
+    Ok(cancelled)
+}
+
 #[derive(Default)]
 pub struct MockBroker;
 

@@ -628,6 +628,27 @@ trader binance-paper-reconcile --config configs/paper/binance_btcusdt_1m_parquet
 
 该命令读取 Binance Spot Testnet account balances 与 open orders，并和当前 run 的本地 SQLite orders、fills、account_balances、positions 对比；不会下单、撤单或修改本地状态。
 
+`binance-paper-run.ps1` 现在把实盘前需要的硬证据直接写进 `summary.json`：
+
+```text
+status
+failure_class
+halt_reason
+risk_rejections
+open_orders_remaining
+cancel_all_attempted
+cancel_all_succeeded
+reconciliation_status
+```
+
+如果 run 内出现 `daily_loss_limit`、`max_order_attempts`、`max_order_failures`、`stale_market_data`、`price_deviation`、`trading_session_closed`、`strategy_loss_circuit_breaker`、`strategy_error_circuit_breaker` 或 `operator_kill_switch` 这类 hard-stop risk rejection，脚本会把首个 `risk_type` 写入 `halt_reason`，并以非零退出。若 run 结束时仍有远端 open orders，脚本会先调用：
+
+```powershell
+trader risk-kill-switch --config <run-config> --run-id <run_id> --cancel-open-orders --symbol BTCUSDT --confirm-kill-switch
+```
+
+然后再次巡检；只要 `open_orders_remaining != 0`，summary 会以 `failure_class = open_orders_remaining` 失败。
+
 Paper runtime 会为自动订单写入订单生命周期事件：`paper.order.submitted`、`paper.order.filled`、`paper.order.unfilled`。事件 source 为 run id，payload 包含本地 order id、client order id、broker order id、symbol、side、qty、filled_qty 和最终 status，用于后续 WebSocket replay 与审计排查。
 
 Binance soak 验证脚本用于多轮执行固定 runner，并汇总每轮 transcript、summary.json、open order 巡检和 reconciliation：
@@ -638,6 +659,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Itera
 ```
 
 该脚本默认不下单；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。任一轮失败或 `open_orders != 0` 都会让 soak 失败，并在 `data/binance-paper-soak/{soak_id}/summary.json` 保留证据。
+
+Binance soak 的 iteration summary 现在直接继承每轮 runner summary 的 `failure_class`、`halt_reason`、`risk_rejections`、`open_orders_remaining` 和 cancel-all 结果，因此 `daily_loss_limit`、`max_order_attempts`、`max_order_failures`、`stale_market_data`、`price_deviation`、`trading_session_closed`、`operator_kill_switch`、`open_orders_remaining` 都会被明确分类，而不是只看控制台退出码。
 
 自动策略送单 smoke 可用：
 
@@ -695,6 +718,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 
 `ibkr-paper-run.ps1` 的 `summary.json` 包含顶层 `status` 和 `failure_class`。默认本地 dry-run 不连接 Gateway，`order_submit = disabled` 且 `failure_class = ok`；开闸后脚本会先做 Gateway TCP preflight，再把 post-run Gateway checks 写入 `gateway_checks.status`、`gateway_checks.failure_class`、`gateway_checks.failed_check` 和逐项 `checks`。如果 preflight 或 post-run 只读巡检失败，脚本会先写 summary，再以非零退出，避免真实 Gateway 长跑失败只留控制台 warning。
 
+IBKR runner summary 也统一包含：
+
+```text
+halt_reason
+risk_rejections
+open_orders_remaining
+cancel_all_attempted
+cancel_all_succeeded
+reconciliation_status
+```
+
+如果自动下单后仍有远端 open orders，脚本会先执行：
+
+```powershell
+trader risk-kill-switch --config <run-config> --run-id <run_id> --cancel-open-orders --confirm-kill-switch
+```
+
+然后重新跑 Gateway checks。只要 residual open orders 仍存在，summary 会以 `failure_class = open_orders_remaining` 失败。
+
 真实 IBKR paper 自动下单必须显式开闸：
 
 ```powershell
@@ -730,6 +772,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iteratio
 ```
 
 soak 输出位于 `data/ibkr-paper-soak/{soak_id}/summary.json`。顶层字段包含 `status`、`failure_class`、`failed_iteration` 和 `first_failed_log`；每轮也记录 `status`、`failure_class`、runner summary、open order 巡检、reconcile 与 recover 摘要。真实 Gateway 长跑时，如果某轮命令失败会归类为 `gateway_unreachable`、`account_mismatch` 或 `iteration_failed`；如果开闸下单后仍有远端 open orders，会归类为 `open_orders_remaining`。
+
+IBKR soak 每轮现在同样会保存 `halt_reason`、`risk_rejections`、`open_orders_remaining`、`cancel_all_attempted`、`cancel_all_succeeded` 和 `reconciliation_status`。因此 hard-stop 风控失败和 Gateway 失败会在同一个证据链里落盘。
 
 本地 paper readiness 门禁用于账号未就绪时的无网络回归检查：
 

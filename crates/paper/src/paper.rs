@@ -11,7 +11,7 @@ pub use ibkr::{
 use algorithm::{
     AccountSnapshot, AlgorithmDecision, AlgorithmEngine, AlgorithmEngineSettings,
     ContractAccountingBook, ContractFill, ContractPosition, EngineEvent, ExecutionReport,
-    FundingRateEvent, SimulatedContractAccounting,
+    FundingRateEvent, SimulatedContractAccounting, TradingSessionWindow,
 };
 use async_trait::async_trait;
 use backtest::BacktestSummary;
@@ -68,6 +68,14 @@ pub struct PaperSettings {
     pub allow_short: bool,
     pub shortable_symbols: BTreeSet<String>,
     pub initial_cash: Decimal,
+    pub daily_loss_limit: Option<Decimal>,
+    pub max_order_attempts_per_day: Option<u32>,
+    pub max_order_failures_per_day: Option<u32>,
+    pub max_price_deviation_bps: Option<Decimal>,
+    pub max_market_data_age_ms: Option<u64>,
+    pub max_consecutive_strategy_losses: Option<u32>,
+    pub max_consecutive_strategy_errors: Option<u32>,
+    pub trading_session: Option<TradingSessionWindow>,
     pub base_currency: String,
     pub slippage_bps: Decimal,
     pub fee_bps: Decimal,
@@ -126,6 +134,14 @@ impl PaperSettings {
             allow_short: false,
             shortable_symbols: BTreeSet::new(),
             initial_cash: Decimal::from(100_000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
             base_currency: "USD".to_string(),
             slippage_bps: Decimal::ZERO,
             fee_bps: Decimal::ZERO,
@@ -478,6 +494,14 @@ impl<'a> PaperRunSession<'a> {
                 allow_short: runtime.settings.allow_short,
                 shortable_symbols: runtime.settings.shortable_symbols.clone(),
                 initial_cash: runtime.settings.initial_cash,
+                daily_loss_limit: runtime.settings.daily_loss_limit,
+                max_order_attempts_per_day: runtime.settings.max_order_attempts_per_day,
+                max_order_failures_per_day: runtime.settings.max_order_failures_per_day,
+                max_price_deviation_bps: runtime.settings.max_price_deviation_bps,
+                max_market_data_age_ms: runtime.settings.max_market_data_age_ms,
+                max_consecutive_strategy_losses: runtime.settings.max_consecutive_strategy_losses,
+                max_consecutive_strategy_errors: runtime.settings.max_consecutive_strategy_errors,
+                trading_session: runtime.settings.trading_session.clone(),
             },
             assembly.universe,
             assembly.alpha,
@@ -522,6 +546,7 @@ impl<'a> PaperRunSession<'a> {
         self.last_snapshot = step.snapshot.clone();
         for decision in step.decisions {
             self.signals += 1;
+            self.persist_engine_events(&decision.events).await?;
             let settings = &self.runtime.settings;
             let Some(order) = decision.order.clone() else {
                 continue;
@@ -529,7 +554,6 @@ impl<'a> PaperRunSession<'a> {
             let bar = market_slice.bar(&order.symbol).ok_or_else(|| {
                 anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
             })?;
-            self.persist_engine_events(&decision.events).await?;
             let client_order_id = self
                 .runtime
                 .executor
@@ -544,6 +568,7 @@ impl<'a> PaperRunSession<'a> {
             {
                 Ok(fill) => fill,
                 Err(error) => {
+                    self.engine.record_order_failure();
                     let message = error.to_string();
                     self.persist_failed_order(&decision, &order, &client_order_id, bar, &message)
                         .await?;

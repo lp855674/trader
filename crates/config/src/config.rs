@@ -226,6 +226,30 @@ pub struct RiskConfig {
     pub trading_halted: bool,
     #[serde(default)]
     pub allow_short: Option<bool>,
+    #[serde(default)]
+    pub daily_loss_limit: Option<String>,
+    #[serde(default)]
+    pub max_order_attempts_per_day: Option<u32>,
+    #[serde(default)]
+    pub max_order_failures_per_day: Option<u32>,
+    #[serde(default)]
+    pub max_price_deviation_bps: Option<String>,
+    #[serde(default)]
+    pub max_market_data_age_ms: Option<u64>,
+    #[serde(default)]
+    pub max_consecutive_strategy_losses: Option<u32>,
+    #[serde(default)]
+    pub max_consecutive_strategy_errors: Option<u32>,
+    #[serde(default)]
+    pub trading_session: Option<TradingSessionConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TradingSessionConfig {
+    pub mode: String,
+    pub timezone: String,
+    pub start: String,
+    pub end: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

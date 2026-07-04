@@ -10,6 +10,39 @@ Trader 采用渐进式开发路线。
 
 这不等于生产实盘完成。真实 Futu/Binance/OKX/IB 网络连接、凭证管理、真实资金下单、生产级权限、监控告警和分布式部署仍属于后续 production/live-real-money 阶段。
 
+## Live Trading Readiness Matrix
+
+### Paper Ready
+
+```text
+1. order_submit_enabled 默认仍为 false
+2. max_order_qty / max_order_notional / min_cash_after_order / max_abs_qty / max_exposure / max_drawdown / max_leverage / max_margin_used 生效
+3. daily_loss_limit / max_order_attempts_per_day / max_order_failures_per_day / max_price_deviation_bps / max_market_data_age_ms / trading_session / strategy circuit breaker 已接入算法边界
+4. 风控拒单会落 algorithm.risk.rejected 审计事件
+5. paper runner / soak summary 会记录 halt_reason、risk_rejections、open_orders_remaining、cancel_all_*、reconciliation_status
+```
+
+### Tiny-Size Real-Money Candidate
+
+```text
+1. hard risk gates implemented and verified
+2. trader risk-kill-switch 可用，并已验证 audit event + cancel-open-orders
+3. Binance / IBKR runner 结束后 open_orders_remaining = 0
+4. soak summary failure_class = ok，且每轮 iteration failure_class = ok
+5. Binance tiny-order / autorun / soak evidence collected
+6. IBKR readonly / tiny-order / autorun / soak evidence collected
+```
+
+### Not Yet Production Complete
+
+```text
+1. 还没有多 broker 的长期 reconciliation evidence
+2. 还没有生产级监控告警值班链路
+3. 还没有完整真实资金长跑恢复证据
+4. 还没有多人审批 / 更细粒度权限治理
+5. 还没有证明策略本身具备稳定真钱 edge
+```
+
 ## Schema Gap Closure
 
 - Keep `event_store` as immutable audit truth.

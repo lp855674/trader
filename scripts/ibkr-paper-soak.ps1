@@ -65,6 +65,15 @@ function Get-IbkrFailureClass {
     return "iteration_failed"
 }
 
+function Read-Json {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        return $null
+    }
+    return Get-Content -Path $Path -Raw | ConvertFrom-Json
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $soakDir | Out-Null
 
@@ -105,14 +114,14 @@ try {
         if ([string]::IsNullOrWhiteSpace($runId)) {
             $runId = Get-MatchValue $text 'IBKR stock paper run id:\s+(\S+)'
         }
-        $openOrders = Get-MatchValue $text 'ibkr paper open orders ok: open_orders=(\d+)'
-        $reconciliation = Get-MatchValue $text '(ibkr paper reconcile ok:.+)'
-        $recover = Get-MatchValue $text '(ibkr paper recover ok:.+)'
-        $openOrdersFailure = $false
-        if ($ConfirmIbkrPaperOrder -and $openOrders -ne "0") {
-            $openOrdersFailure = $true
+        $runSummary = Read-Json $summaryPath
+        $openOrdersRemaining = if ($null -ne $runSummary) { [int]$runSummary.open_orders_remaining } else { 0 }
+        $openOrdersFailure = ($ConfirmIbkrPaperOrder -and $openOrdersRemaining -gt 0)
+        $iterationFailureClass = if ($null -ne $runSummary -and -not [string]::IsNullOrWhiteSpace([string]$runSummary.failure_class)) {
+            [string]$runSummary.failure_class
+        } else {
+            Get-IbkrFailureClass -Text $text -ExitCode $exitCode -OpenOrdersFailure $openOrdersFailure
         }
-        $iterationFailureClass = Get-IbkrFailureClass -Text $text -ExitCode $exitCode -OpenOrdersFailure $openOrdersFailure
 
         $iterationSummary = [pscustomobject]@{
             iteration = $iteration
@@ -122,20 +131,16 @@ try {
             run_id = $runId
             log = $logPath
             summary = $summaryPath
-            open_orders = $openOrders
-            reconciliation = $reconciliation
-            recover = $recover
+            halt_reason = if ($null -ne $runSummary) { $runSummary.halt_reason } else { $null }
+            risk_rejections = if ($null -ne $runSummary) { @($runSummary.risk_rejections) } else { @() }
+            open_orders_remaining = $openOrdersRemaining
+            cancel_all_attempted = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_attempted } else { $false }
+            cancel_all_succeeded = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_succeeded } else { $false }
+            reconciliation_status = if ($null -ne $runSummary) { [string]$runSummary.reconciliation_status } else { "" }
         }
         $iterationSummaries += $iterationSummary
 
-        if ($exitCode -ne 0) {
-            $failed = $true
-            $failureClass = $iterationFailureClass
-            $failedIteration = $iteration
-            $firstFailedLog = $logPath
-            break
-        }
-        if ($openOrdersFailure) {
+        if ($iterationFailureClass -ne "ok") {
             $failed = $true
             $failureClass = $iterationFailureClass
             $failedIteration = $iteration
