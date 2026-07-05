@@ -2,7 +2,7 @@ use backtest::{BacktestRuntime, BacktestSettings, BacktestSummary};
 use data::{Bar, MarketSlice, SymbolBar};
 use feature_store::FeatureRecord;
 use rust_decimal_macros::dec;
-use storage::Db;
+use storage::{Db, NewFeeRule};
 use strategies::{StrategyAlphaGateConfig, StrategyUniverseFilterConfig};
 
 #[tokio::test]
@@ -91,6 +91,47 @@ async fn backtest_runtime_runs_market_slices_for_multiple_symbols() {
     assert_eq!(orders[1].symbol, "US:NASDAQ:MSFT:EQUITY");
     let positions = db.list_positions("sample-ma-cross").await.unwrap();
     assert_eq!(positions.len(), 2);
+}
+
+#[tokio::test]
+async fn backtest_runtime_uses_configured_fee_rules_for_fills() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-backtest".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "1".to_string(),
+        taker_bps: "25".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    let settings = BacktestSettings::sample();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = BacktestRuntime::new(db.clone(), settings)
+        .run(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].qty, "1");
+    assert_eq!(fills[0].fee, "0.05");
 }
 
 #[tokio::test]

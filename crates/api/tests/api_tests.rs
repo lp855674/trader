@@ -1719,6 +1719,142 @@ async fn funding_rates_route_returns_filtered_decimal_series() {
 }
 
 #[tokio::test]
+async fn fee_rules_route_creates_and_queries_rule_with_tiers_in_volume_order() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let request = serde_json::json!({
+        "id": "fee-us-equity",
+        "market": "US",
+        "exchange": "NASDAQ",
+        "asset_class": "EQUITY",
+        "symbol": null,
+        "maker_bps": "2",
+        "taker_bps": "4",
+        "minimum_fee": "0.01",
+        "tax_bps": "1",
+        "exchange_fee_bps": "0.5",
+        "effective_from_ms": 10,
+        "effective_to_ms": null,
+        "tiers": [
+            {
+                "id": "tier-2",
+                "volume_from": "1000",
+                "volume_to": null,
+                "maker_bps": "1",
+                "taker_bps": "2"
+            },
+            {
+                "id": "tier-1",
+                "volume_from": "0",
+                "volume_to": "1000",
+                "maker_bps": "2",
+                "taker_bps": "4"
+            }
+        ]
+    });
+    let (status, created) = request_json(app.clone(), "POST", "/api/v1/fee-rules", request).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["rule"]["id"], "fee-us-equity");
+    assert_eq!(created["rule"]["asset_class"], "EQUITY");
+    assert_eq!(created["rule"]["symbol"], serde_json::Value::Null);
+    assert_eq!(created["rule"]["minimum_fee"], "0.01");
+    assert_eq!(created["rule"]["tax_bps"], "1");
+    assert_eq!(created["rule"]["exchange_fee_bps"], "0.5");
+    assert_eq!(created["tiers"][0]["id"], "tier-1");
+    assert_eq!(created["tiers"][0]["volume_from"], "0");
+    assert_eq!(created["tiers"][1]["id"], "tier-2");
+    assert_eq!(created["tiers"][1]["volume_from"], "1000");
+
+    let found = get_json(
+        app,
+        "/api/v1/fee-rules?market=US&exchange=NASDAQ&asset_class=EQUITY&at_ms=10",
+    )
+    .await;
+    assert_eq!(found["rule"]["id"], "fee-us-equity");
+    assert_eq!(found["tiers"][0]["id"], "tier-1");
+    assert_eq!(found["tiers"][1]["id"], "tier-2");
+}
+
+#[tokio::test]
+async fn fee_rules_route_prefers_symbol_specific_then_exchange_default() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let (status, _) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/fee-rules",
+        serde_json::json!({
+            "id": "fee-default",
+            "market": "US",
+            "exchange": "NASDAQ",
+            "asset_class": "*",
+            "symbol": null,
+            "maker_bps": "9",
+            "taker_bps": "10",
+            "minimum_fee": null,
+            "tax_bps": null,
+            "exchange_fee_bps": null,
+            "effective_from_ms": 0,
+            "effective_to_ms": null,
+            "tiers": []
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, _) = request_json(
+        app.clone(),
+        "POST",
+        "/api/v1/fee-rules",
+        serde_json::json!({
+            "id": "fee-aapl",
+            "market": "US",
+            "exchange": "NASDAQ",
+            "asset_class": "EQUITY",
+            "symbol": "US:NASDAQ:AAPL:EQUITY",
+            "maker_bps": "1",
+            "taker_bps": "2",
+            "minimum_fee": null,
+            "tax_bps": null,
+            "exchange_fee_bps": null,
+            "effective_from_ms": 0,
+            "effective_to_ms": null,
+            "tiers": []
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let symbol_rule = get_json(
+        app.clone(),
+        "/api/v1/fee-rules?market=US&exchange=NASDAQ&asset_class=EQUITY&symbol=US:NASDAQ:AAPL:EQUITY&at_ms=0",
+    )
+    .await;
+    assert_eq!(symbol_rule["rule"]["id"], "fee-aapl");
+    assert_eq!(symbol_rule["rule"]["maker_bps"], "1");
+
+    let default_rule = get_json(
+        app,
+        "/api/v1/fee-rules?market=US&exchange=NASDAQ&asset_class=ETF&symbol=US:NASDAQ:QQQ:ETF&at_ms=0",
+    )
+    .await;
+    assert_eq!(default_rule["rule"]["id"], "fee-default");
+    assert_eq!(default_rule["rule"]["asset_class"], "*");
+    assert_eq!(default_rule["rule"]["maker_bps"], "9");
+}
+
+#[tokio::test]
 async fn crypto_market_meta_route_returns_filtered_decimal_metadata() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

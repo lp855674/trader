@@ -1,4 +1,4 @@
-use storage::{Db, NewEventRecord, NewInstrument};
+use storage::{Db, NewEventRecord, NewFeeRule, NewFeeRuleTier, NewFeeRuleWithTiers, NewInstrument};
 
 #[tokio::test]
 async fn migration_creates_audit_projection_tables() {
@@ -31,8 +31,130 @@ async fn migration_creates_market_rule_reference_tables() {
     assert!(tables.contains(&"market_calendars".to_string()));
     assert!(tables.contains(&"trading_sessions".to_string()));
     assert!(tables.contains(&"fee_rules".to_string()));
+    assert!(tables.contains(&"fee_rule_tiers".to_string()));
     assert!(tables.contains(&"lot_size_rules".to_string()));
     assert!(tables.contains(&"price_limit_rules".to_string()));
+}
+
+#[tokio::test]
+async fn fee_rule_tier_round_trip_lists_tiers_in_volume_order() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "2".to_string(),
+        taker_bps: "4".to_string(),
+        minimum_fee: Some("0.01".to_string()),
+        tax_bps: Some("1".to_string()),
+        exchange_fee_bps: Some("0.5".to_string()),
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "tier-2".to_string(),
+        fee_rule_id: "fee-us-equity".to_string(),
+        volume_from: "1000".to_string(),
+        volume_to: None,
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "tier-1".to_string(),
+        fee_rule_id: "fee-us-equity".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("1000".to_string()),
+        maker_bps: "2".to_string(),
+        taker_bps: "4".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let tiers = db.list_fee_rule_tiers("fee-us-equity").await.unwrap();
+
+    assert_eq!(tiers.len(), 2);
+    assert_eq!(tiers[0].id, "tier-1");
+    assert_eq!(tiers[0].volume_to.as_deref(), Some("1000"));
+    assert_eq!(tiers[1].id, "tier-2");
+    assert_eq!(tiers[1].volume_to, None);
+}
+
+#[tokio::test]
+async fn fee_rule_with_tiers_create_and_find_round_trips_symbol_rule() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let created = db
+        .create_fee_rule_with_tiers(NewFeeRuleWithTiers {
+            rule: NewFeeRule {
+                id: "fee-aapl".to_string(),
+                market: "US".to_string(),
+                exchange: "NASDAQ".to_string(),
+                asset_class: "EQUITY".to_string(),
+                symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+                maker_bps: "2".to_string(),
+                taker_bps: "4".to_string(),
+                minimum_fee: Some("0.01".to_string()),
+                tax_bps: Some("1".to_string()),
+                exchange_fee_bps: Some("0.5".to_string()),
+                effective_from_ms: 10,
+                effective_to_ms: None,
+            },
+            tiers: vec![
+                NewFeeRuleTier {
+                    id: "tier-2".to_string(),
+                    fee_rule_id: "fee-aapl".to_string(),
+                    volume_from: "1000".to_string(),
+                    volume_to: None,
+                    maker_bps: "1".to_string(),
+                    taker_bps: "2".to_string(),
+                },
+                NewFeeRuleTier {
+                    id: "tier-1".to_string(),
+                    fee_rule_id: "fee-aapl".to_string(),
+                    volume_from: "0".to_string(),
+                    volume_to: Some("1000".to_string()),
+                    maker_bps: "2".to_string(),
+                    taker_bps: "4".to_string(),
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(created.rule.id, "fee-aapl");
+    assert_eq!(
+        created.rule.symbol.as_deref(),
+        Some("US:NASDAQ:AAPL:EQUITY")
+    );
+    assert_eq!(created.tiers[0].id, "tier-1");
+    assert_eq!(created.tiers[1].id, "tier-2");
+
+    let found = db
+        .find_fee_rule_with_tiers("US", "NASDAQ", "EQUITY", Some("US:NASDAQ:AAPL:EQUITY"), 10)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.rule.id, "fee-aapl");
+    assert_eq!(found.rule.minimum_fee.as_deref(), Some("0.01"));
+    assert_eq!(found.rule.tax_bps.as_deref(), Some("1"));
+    assert_eq!(found.rule.exchange_fee_bps.as_deref(), Some("0.5"));
+    assert_eq!(
+        found
+            .tiers
+            .iter()
+            .map(|tier| tier.volume_from.as_str())
+            .collect::<Vec<_>>(),
+        vec!["0", "1000"]
+    );
 }
 
 #[tokio::test]

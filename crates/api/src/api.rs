@@ -267,6 +267,74 @@ struct FundingRatesQuery {
 }
 
 #[derive(Deserialize)]
+struct FeeRulesQuery {
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: Option<String>,
+    at_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct CreateFeeRuleRequest {
+    id: String,
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: Option<String>,
+    maker_bps: String,
+    taker_bps: String,
+    minimum_fee: Option<String>,
+    tax_bps: Option<String>,
+    exchange_fee_bps: Option<String>,
+    effective_from_ms: i64,
+    effective_to_ms: Option<i64>,
+    #[serde(default)]
+    tiers: Vec<CreateFeeRuleTierRequest>,
+}
+
+#[derive(Deserialize)]
+struct CreateFeeRuleTierRequest {
+    id: String,
+    volume_from: String,
+    volume_to: Option<String>,
+    maker_bps: String,
+    taker_bps: String,
+}
+
+#[derive(Serialize)]
+struct FeeRuleResponse {
+    id: String,
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: Option<String>,
+    maker_bps: String,
+    taker_bps: String,
+    minimum_fee: Option<String>,
+    tax_bps: Option<String>,
+    exchange_fee_bps: Option<String>,
+    effective_from_ms: i64,
+    effective_to_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct FeeRuleTierResponse {
+    id: String,
+    fee_rule_id: String,
+    volume_from: String,
+    volume_to: Option<String>,
+    maker_bps: String,
+    taker_bps: String,
+}
+
+#[derive(Serialize)]
+struct FeeRuleWithTiersResponse {
+    rule: FeeRuleResponse,
+    tiers: Vec<FeeRuleTierResponse>,
+}
+
+#[derive(Deserialize)]
 struct RunIdQuery {
     run_id: Option<String>,
 }
@@ -745,6 +813,7 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/positions", get(list_positions))
         .route("/api/v1/runs/{run_id}/positions", get(list_run_positions))
         .route("/api/v1/funding-rates", get(list_funding_rates))
+        .route("/api/v1/fee-rules", get(get_fee_rule).post(create_fee_rule))
         .route("/api/v1/crypto-market-meta", get(list_crypto_market_meta))
         .route("/api/v1/corporate-actions", get(list_corporate_actions))
         .route("/api/v1/ingestion/status", get(ingestion_status))
@@ -2031,6 +2100,66 @@ async fn list_funding_rates(
         .map(funding_rate_response)
         .collect();
     Ok(Json(rates))
+}
+
+async fn create_fee_rule(
+    State(state): State<AppState>,
+    Json(request): Json<CreateFeeRuleRequest>,
+) -> Result<(StatusCode, Json<FeeRuleWithTiersResponse>), ApiError> {
+    let rule_id = request.id.clone();
+    let created = state
+        .db
+        .create_fee_rule_with_tiers(storage::NewFeeRuleWithTiers {
+            rule: storage::NewFeeRule {
+                id: request.id,
+                market: request.market,
+                exchange: request.exchange,
+                asset_class: request.asset_class,
+                symbol: request.symbol,
+                maker_bps: request.maker_bps,
+                taker_bps: request.taker_bps,
+                minimum_fee: request.minimum_fee,
+                tax_bps: request.tax_bps,
+                exchange_fee_bps: request.exchange_fee_bps,
+                effective_from_ms: request.effective_from_ms,
+                effective_to_ms: request.effective_to_ms,
+            },
+            tiers: request
+                .tiers
+                .into_iter()
+                .map(|tier| storage::NewFeeRuleTier {
+                    id: tier.id,
+                    fee_rule_id: rule_id.clone(),
+                    volume_from: tier.volume_from,
+                    volume_to: tier.volume_to,
+                    maker_bps: tier.maker_bps,
+                    taker_bps: tier.taker_bps,
+                })
+                .collect(),
+        })
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(fee_rule_with_tiers_response(created)),
+    ))
+}
+
+async fn get_fee_rule(
+    State(state): State<AppState>,
+    Query(query): Query<FeeRulesQuery>,
+) -> Result<Json<FeeRuleWithTiersResponse>, ApiError> {
+    let rule = state
+        .db
+        .find_fee_rule_with_tiers(
+            &query.market,
+            &query.exchange,
+            &query.asset_class,
+            query.symbol.as_deref(),
+            query.at_ms.unwrap_or_else(now_ms),
+        )
+        .await?
+        .ok_or_else(|| not_found("fee rule not found"))?;
+    Ok(Json(fee_rule_with_tiers_response(rule)))
 }
 
 async fn list_crypto_market_meta(
@@ -3332,6 +3461,37 @@ fn funding_rate_response(rate: storage::StoredFundingRate) -> FundingRateRespons
         funding_rate: rate.funding_rate,
         mark_price: rate.mark_price,
         source: rate.source,
+    }
+}
+
+fn fee_rule_with_tiers_response(rule: storage::StoredFeeRuleWithTiers) -> FeeRuleWithTiersResponse {
+    FeeRuleWithTiersResponse {
+        rule: FeeRuleResponse {
+            id: rule.rule.id,
+            market: rule.rule.market,
+            exchange: rule.rule.exchange,
+            asset_class: rule.rule.asset_class,
+            symbol: rule.rule.symbol,
+            maker_bps: rule.rule.maker_bps,
+            taker_bps: rule.rule.taker_bps,
+            minimum_fee: rule.rule.minimum_fee,
+            tax_bps: rule.rule.tax_bps,
+            exchange_fee_bps: rule.rule.exchange_fee_bps,
+            effective_from_ms: rule.rule.effective_from_ms,
+            effective_to_ms: rule.rule.effective_to_ms,
+        },
+        tiers: rule
+            .tiers
+            .into_iter()
+            .map(|tier| FeeRuleTierResponse {
+                id: tier.id,
+                fee_rule_id: tier.fee_rule_id,
+                volume_from: tier.volume_from,
+                volume_to: tier.volume_to,
+                maker_bps: tier.maker_bps,
+                taker_bps: tier.taker_bps,
+            })
+            .collect(),
     }
 }
 

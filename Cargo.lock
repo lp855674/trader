@@ -414,6 +414,7 @@ dependencies = [
  "events",
  "execution",
  "feature_store",
+ "market_rules",
  "portfolio",
  "risk",
  "rust_decimal",
@@ -425,6 +426,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "trader-core",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use rust_decimal::Decimal;
+use std::collections::BTreeMap;
 use thiserror::Error;
 use trader_core::{OrderRequest, OrderType};
 
@@ -123,6 +124,120 @@ pub struct StaticMarketRuleProvider;
 impl MarketRuleProvider for StaticMarketRuleProvider {
     fn rules_for_symbol(&self, symbol: &str) -> Result<MarketRuleSet, MarketRuleError> {
         MarketRuleSet::for_symbol(symbol)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConfiguredMarketRuleProvider {
+    rules_by_symbol: BTreeMap<String, MarketRuleSet>,
+    fallback: StaticMarketRuleProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiquidityRole {
+    Maker,
+    Taker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeRule {
+    pub id: String,
+    pub maker_bps: Decimal,
+    pub taker_bps: Decimal,
+    pub minimum_fee: Option<Decimal>,
+    pub tax_bps: Option<Decimal>,
+    pub exchange_fee_bps: Option<Decimal>,
+    pub tiers: Vec<FeeTier>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeeTier {
+    pub volume_from: Decimal,
+    pub volume_to: Option<Decimal>,
+    pub maker_bps: Decimal,
+    pub taker_bps: Decimal,
+}
+
+impl FeeTier {
+    pub fn contains(self, volume: Decimal) -> bool {
+        volume >= self.volume_from && self.volume_to.is_none_or(|volume_to| volume < volume_to)
+    }
+}
+
+impl FeeRule {
+    pub fn flat(id: impl Into<String>, maker_bps: Decimal, taker_bps: Decimal) -> Self {
+        Self {
+            id: id.into(),
+            maker_bps,
+            taker_bps,
+            minimum_fee: None,
+            tax_bps: None,
+            exchange_fee_bps: None,
+            tiers: Vec::new(),
+        }
+    }
+
+    pub fn maker_taker_fee_bps(&self, order_type: OrderType, volume: Decimal) -> Decimal {
+        let (maker_bps, taker_bps) = self
+            .tiers
+            .iter()
+            .copied()
+            .find(|tier| tier.contains(volume))
+            .map(|tier| (tier.maker_bps, tier.taker_bps))
+            .unwrap_or((self.maker_bps, self.taker_bps));
+        match liquidity_role_for_order_type(order_type) {
+            LiquidityRole::Maker => maker_bps,
+            LiquidityRole::Taker => taker_bps,
+        }
+    }
+
+    pub fn total_fee_bps(&self, order_type: OrderType, volume: Decimal) -> Decimal {
+        self.maker_taker_fee_bps(order_type, volume)
+            + self.tax_bps.unwrap_or(Decimal::ZERO)
+            + self.exchange_fee_bps.unwrap_or(Decimal::ZERO)
+    }
+
+    pub fn fee(
+        &self,
+        order_type: OrderType,
+        price: Decimal,
+        qty: Decimal,
+        volume: Decimal,
+    ) -> Decimal {
+        let fee = price * qty * self.total_fee_bps(order_type, volume) / Decimal::from(10_000);
+        self.minimum_fee
+            .filter(|minimum_fee| fee < *minimum_fee)
+            .unwrap_or(fee)
+    }
+}
+
+pub fn liquidity_role_for_order_type(order_type: OrderType) -> LiquidityRole {
+    match order_type {
+        OrderType::Market | OrderType::Stop => LiquidityRole::Taker,
+        OrderType::Limit | OrderType::StopLimit | OrderType::PostOnly => LiquidityRole::Maker,
+    }
+}
+
+impl ConfiguredMarketRuleProvider {
+    pub fn new(rules_by_symbol: BTreeMap<String, MarketRuleSet>) -> Self {
+        Self {
+            rules_by_symbol,
+            fallback: StaticMarketRuleProvider,
+        }
+    }
+
+    pub fn insert(&mut self, symbol: impl Into<String>, rules: MarketRuleSet) {
+        self.rules_by_symbol.insert(symbol.into(), rules);
+    }
+}
+
+impl MarketRuleProvider for ConfiguredMarketRuleProvider {
+    fn rules_for_symbol(&self, symbol: &str) -> Result<MarketRuleSet, MarketRuleError> {
+        self.rules_by_symbol
+            .get(symbol)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| self.fallback.rules_for_symbol(symbol))
     }
 }
 

@@ -684,71 +684,53 @@ ON trading_sessions(market, exchange);
 
 # 8.5 fee_rules
 
-记录手续费、税费、交易费规则。
+记录 maker/taker 手续费、税费、交易所附加费和最低费用 floor。`symbol` 为空时表示
+asset class 规则；`asset_class='*'` 且 `symbol` 为空时表示 exchange default。
 
 ```sql
 CREATE TABLE IF NOT EXISTS fee_rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
+    id TEXT PRIMARY KEY,
     market TEXT NOT NULL,
-    exchange TEXT,
-
+    exchange TEXT NOT NULL,
+    asset_class TEXT NOT NULL,
     symbol TEXT,
-
-    asset_class TEXT,
-
-    side TEXT NOT NULL,
-
-    fee_type TEXT NOT NULL,
-
-    rate TEXT,
-    fixed_amount TEXT,
-    min_amount TEXT,
-    max_amount TEXT,
-
-    currency TEXT,
-
-    effective_from INTEGER NOT NULL,
-    effective_to INTEGER,
-
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    maker_bps TEXT NOT NULL,
+    taker_bps TEXT NOT NULL,
+    minimum_fee TEXT,
+    tax_bps TEXT,
+    exchange_fee_bps TEXT,
+    effective_from_ms INTEGER NOT NULL,
+    effective_to_ms INTEGER
 );
 ```
 
-fee_type 示例：
-
-```text
-COMMISSION
-STAMP_DUTY
-TRANSFER_FEE
-SEC_FEE
-TAF_FEE
-TRADING_FEE
-LEVY
-MAKER_FEE
-TAKER_FEE
-FUNDING_FEE
-BORROW_FEE
+```sql
+CREATE INDEX IF NOT EXISTS idx_fee_rules_lookup
+ON fee_rules(market, exchange, asset_class, symbol, effective_from_ms);
 ```
 
-side 示例：
+运行时查询顺序：
 
-```text
-BUY
-SELL
-BOTH
-```
+1. `symbol` 精确匹配。
+2. `symbol IS NULL AND asset_class = <requested>`。
+3. `symbol IS NULL AND asset_class = '*'`。
+
+阶梯费率归属到父 `fee_rules`。tier 只覆盖 maker/taker bps；`minimum_fee`、
+`tax_bps`、`exchange_fee_bps` 仍来自父规则。
 
 ```sql
-CREATE INDEX IF NOT EXISTS idx_fee_rules_market_symbol
-ON fee_rules(market, symbol);
+CREATE TABLE IF NOT EXISTS fee_rule_tiers (
+    id TEXT PRIMARY KEY,
+    fee_rule_id TEXT NOT NULL,
+    volume_from TEXT NOT NULL,
+    volume_to TEXT,
+    maker_bps TEXT NOT NULL,
+    taker_bps TEXT NOT NULL,
+    FOREIGN KEY(fee_rule_id) REFERENCES fee_rules(id)
+);
 
-CREATE INDEX IF NOT EXISTS idx_fee_rules_asset_class
-ON fee_rules(asset_class);
-
-CREATE INDEX IF NOT EXISTS idx_fee_rules_effective
-ON fee_rules(effective_from, effective_to);
+CREATE INDEX IF NOT EXISTS idx_fee_rule_tiers_lookup
+ON fee_rule_tiers(fee_rule_id, volume_from);
 ```
 
 ---

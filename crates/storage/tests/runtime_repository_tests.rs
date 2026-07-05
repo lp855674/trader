@@ -2,9 +2,10 @@ use rust_decimal::Decimal;
 use storage::{
     BrokerPositionSnapshotCommand, ConfigState, Db, NewAccountBalance, NewCashSnapshot,
     NewConfigRecord, NewConfigVersion, NewCorporateActionMeta, NewCryptoMarketMeta,
-    NewCryptoPosition, NewEventRecord, NewFill, NewFundingRate, NewLotSizeRule, NewOrder,
-    NewOrderEvent, NewPortfolioSnapshot, NewPosition, NewPositionSnapshot, NewPriceLimitRule,
-    NewRiskEvent, NewStrategyRun, NewSystemLog, RuntimeEventCommand, StrategyRunStartCommand,
+    NewCryptoPosition, NewEventRecord, NewFeeRule, NewFill, NewFundingRate, NewLotSizeRule,
+    NewMarketCalendar, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
+    NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
+    NewTradingSessionRule, RuntimeEventCommand, StrategyRunStartCommand,
 };
 
 #[tokio::test]
@@ -1102,6 +1103,322 @@ async fn market_rule_reference_records_prefer_symbol_specific_rules() {
     assert_eq!(price_rule.id, "price-aapl");
     assert_eq!(price_rule.tick_size, "0.0001");
     assert_eq!(price_rule.limit_up_bps.as_deref(), Some("1000"));
+}
+
+#[tokio::test]
+async fn fee_rule_reference_records_select_current_effective_rule() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-old".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 1,
+        effective_to_ms: Some(5),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-current".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "3".to_string(),
+        taker_bps: "4".to_string(),
+        minimum_fee: Some("0.01".to_string()),
+        tax_bps: Some("5".to_string()),
+        exchange_fee_bps: Some("6".to_string()),
+        effective_from_ms: 5,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+
+    let old_rule = db
+        .find_fee_rule("US", "NASDAQ", "EQUITY", None, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_rule.id, "fee-old");
+    assert_eq!(old_rule.taker_bps, "2");
+
+    let current_rule = db
+        .find_fee_rule("US", "NASDAQ", "EQUITY", None, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current_rule.id, "fee-current");
+    assert_eq!(current_rule.maker_bps, "3");
+    assert_eq!(current_rule.taker_bps, "4");
+    assert_eq!(current_rule.minimum_fee.as_deref(), Some("0.01"));
+    assert_eq!(current_rule.tax_bps.as_deref(), Some("5"));
+    assert_eq!(current_rule.exchange_fee_bps.as_deref(), Some("6"));
+
+    let missing = db
+        .find_fee_rule("HK", "HKEX", "EQUITY", None, 5)
+        .await
+        .unwrap();
+    assert!(missing.is_none());
+}
+
+#[tokio::test]
+async fn fee_rule_reference_prefers_symbol_then_asset_class_then_exchange_default() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-default".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "*".to_string(),
+        symbol: None,
+        maker_bps: "9".to_string(),
+        taker_bps: "10".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-equity".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "5".to_string(),
+        taker_bps: "6".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-aapl".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+
+    let symbol_rule = db
+        .find_fee_rule("US", "NASDAQ", "EQUITY", Some("US:NASDAQ:AAPL:EQUITY"), 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(symbol_rule.id, "fee-aapl");
+
+    let asset_class_rule = db
+        .find_fee_rule("US", "NASDAQ", "EQUITY", Some("US:NASDAQ:MSFT:EQUITY"), 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(asset_class_rule.id, "fee-equity");
+
+    let default_rule = db
+        .find_fee_rule("US", "NASDAQ", "ETF", Some("US:NASDAQ:QQQ:ETF"), 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(default_rule.id, "fee-default");
+}
+
+#[tokio::test]
+async fn market_rule_reference_writes_change_audit_events() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_lot_size_rule(NewLotSizeRule {
+        id: "lot-v1".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        lot_size: "1".to_string(),
+        min_qty: "1".to_string(),
+        min_notional: "0".to_string(),
+        effective_from_ms: 10,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.update_lot_size_rule_effective_to("lot-v1", Some(20), 20)
+        .await
+        .unwrap();
+
+    let lot_events = db.list_events_by_source("lot-v1").await.unwrap();
+    assert_eq!(lot_events.len(), 2);
+    assert_eq!(lot_events[0].category, "market_rule.lot_size.changed");
+    let inserted_lot: serde_json::Value =
+        serde_json::from_str(&lot_events[0].payload_json).unwrap();
+    assert_eq!(inserted_lot["action"], "inserted");
+    assert_eq!(inserted_lot["rule_type"], "lot_size");
+    assert_eq!(inserted_lot["rule_id"], "lot-v1");
+    assert_eq!(inserted_lot["rule"]["lot_size"], "1");
+    let updated_lot: serde_json::Value = serde_json::from_str(&lot_events[1].payload_json).unwrap();
+    assert_eq!(updated_lot["action"], "updated");
+    assert_eq!(updated_lot["rule"]["effective_to_ms"], 20);
+    assert!(
+        db.find_lot_size_rule("US", "NASDAQ", "EQUITY", "US:NASDAQ:AAPL:EQUITY", 20)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    db.insert_price_limit_rule(NewPriceLimitRule {
+        id: "price-v1".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        tick_size: "0.01".to_string(),
+        limit_up_bps: Some("1000".to_string()),
+        limit_down_bps: Some("1000".to_string()),
+        effective_from_ms: 30,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.update_price_limit_rule_effective_to("price-v1", Some(40), 40)
+        .await
+        .unwrap();
+    let price_events = db.list_events_by_source("price-v1").await.unwrap();
+    assert_eq!(price_events.len(), 2);
+    assert_eq!(price_events[0].category, "market_rule.price_limit.changed");
+    let inserted_price: serde_json::Value =
+        serde_json::from_str(&price_events[0].payload_json).unwrap();
+    assert_eq!(inserted_price["action"], "inserted");
+    assert_eq!(inserted_price["rule_type"], "price_limit");
+    assert_eq!(inserted_price["rule"]["tick_size"], "0.01");
+    let updated_price: serde_json::Value =
+        serde_json::from_str(&price_events[1].payload_json).unwrap();
+    assert_eq!(updated_price["action"], "updated");
+    assert_eq!(updated_price["rule"]["effective_to_ms"], 40);
+
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-v1".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: None,
+        tax_bps: Some("3".to_string()),
+        exchange_fee_bps: Some("4".to_string()),
+        effective_from_ms: 50,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.update_fee_rule_effective_to("fee-v1", Some(60), 60)
+        .await
+        .unwrap();
+    let fee_events = db.list_events_by_source("fee-v1").await.unwrap();
+    assert_eq!(fee_events.len(), 2);
+    assert_eq!(fee_events[0].category, "market_rule.fee.changed");
+    let inserted_fee: serde_json::Value =
+        serde_json::from_str(&fee_events[0].payload_json).unwrap();
+    assert_eq!(inserted_fee["action"], "inserted");
+    assert_eq!(inserted_fee["rule_type"], "fee");
+    assert_eq!(inserted_fee["rule"]["taker_bps"], "2");
+    assert_eq!(inserted_fee["rule"]["tax_bps"], "3");
+    assert_eq!(inserted_fee["rule"]["exchange_fee_bps"], "4");
+    let updated_fee: serde_json::Value = serde_json::from_str(&fee_events[1].payload_json).unwrap();
+    assert_eq!(updated_fee["action"], "updated");
+    assert_eq!(updated_fee["rule"]["effective_to_ms"], 60);
+}
+
+#[tokio::test]
+async fn market_calendar_and_trading_sessions_round_trip_runtime_rules() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.upsert_market_calendar(NewMarketCalendar {
+        id: "us-closed".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: false,
+        session_template: Some("holiday".to_string()),
+    })
+    .await
+    .unwrap();
+    db.upsert_market_calendar(NewMarketCalendar {
+        id: "us-open".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: true,
+        session_template: Some("regular".to_string()),
+    })
+    .await
+    .unwrap();
+    db.insert_trading_session_rule(NewTradingSessionRule {
+        id: "us-afternoon".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        session_name: "afternoon".to_string(),
+        open_time: "13:00".to_string(),
+        close_time: "16:00".to_string(),
+        timezone: "America/New_York".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_trading_session_rule(NewTradingSessionRule {
+        id: "us-morning".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        session_name: "morning".to_string(),
+        open_time: "09:30".to_string(),
+        close_time: "12:00".to_string(),
+        timezone: "America/New_York".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let calendar = db
+        .find_market_calendar("US", "2026-07-03")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(calendar.id, "us-open");
+    assert!(calendar.is_open);
+    assert_eq!(calendar.session_template.as_deref(), Some("regular"));
+
+    let sessions = db
+        .list_trading_session_rules("US", "2026-07-03")
+        .await
+        .unwrap();
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["us-morning", "us-afternoon"]
+    );
+    assert_eq!(sessions[0].timezone, "America/New_York");
 }
 
 #[tokio::test]
@@ -2330,6 +2647,55 @@ async fn migrate_adds_error_column_to_existing_strategy_runs_table() {
         .unwrap()
         .unwrap();
     assert_eq!(run.error, Some("boom".to_string()));
+}
+
+#[tokio::test]
+async fn migrate_adds_minimum_fee_column_to_existing_fee_rules_table() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    sqlx::query(
+        r#"
+        CREATE TABLE fee_rules (
+            id TEXT PRIMARY KEY,
+            market TEXT NOT NULL,
+            exchange TEXT NOT NULL,
+            asset_class TEXT NOT NULL,
+            maker_bps TEXT NOT NULL,
+            taker_bps TEXT NOT NULL,
+            effective_from_ms INTEGER NOT NULL,
+            effective_to_ms INTEGER
+        )
+        "#,
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-old-schema".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: Some("0.01".to_string()),
+        tax_bps: Some("3".to_string()),
+        exchange_fee_bps: Some("4".to_string()),
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+
+    let rule = db
+        .find_fee_rule("US", "NASDAQ", "EQUITY", None, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rule.minimum_fee.as_deref(), Some("0.01"));
+    assert_eq!(rule.tax_bps.as_deref(), Some("3"));
+    assert_eq!(rule.exchange_fee_bps.as_deref(), Some("4"));
 }
 
 fn dec(value: &str) -> Decimal {

@@ -3,9 +3,13 @@
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, ExecutionReport};
 use data::{Bar, MarketSlice};
 use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
+use market_rules::{FeeRule, FeeTier};
 use rust_decimal::Decimal;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 use storage::{
     BacktestCompletedRun, BacktestFilledExecutionCommand, BacktestPositionCommand, Db,
     DbSystemLogSink, RuntimeEventCommand,
@@ -15,6 +19,7 @@ use strategies::{
     StrategyAssemblyConfig, StrategyRegistry, StrategyRuntimeMode, StrategyUniverseFilterConfig,
 };
 use tracing_subscriber::prelude::*;
+use trader_core::OrderRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BacktestSummary {
@@ -211,6 +216,12 @@ impl BacktestRuntime {
         let mut orders = 0;
         let started_at_ms = market_slices.first().map_or(0, |slice| slice.ts_ms);
         let mut ended_at_ms = started_at_ms;
+        let fee_rules_by_symbol = if let Some(db) = &self.db {
+            load_configured_fee_rules(db, &self.settings.assembly_symbols(), started_at_ms).await?
+        } else {
+            BTreeMap::new()
+        };
+        let mut fee_volume_by_rule = BTreeMap::new();
 
         let result = async {
             for market_slice in market_slices {
@@ -225,6 +236,8 @@ impl BacktestRuntime {
                         anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
                     })?;
                     let broker_order_id = format!("backtest-{}", decision.order_number);
+                    let fee =
+                        backtest_fee(&fee_rules_by_symbol, &mut fee_volume_by_rule, &order, bar);
                     let execution = engine.apply_execution(
                         &order,
                         &ExecutionReport {
@@ -232,7 +245,7 @@ impl BacktestRuntime {
                             status: "FILLED".to_string(),
                             price: bar.close,
                             qty: order.qty,
-                            fee: Decimal::ZERO,
+                            fee,
                         },
                         bar.ts_ms,
                     )?;
@@ -262,7 +275,7 @@ impl BacktestRuntime {
                             broker_order_id,
                             order,
                             fill_price: bar.close,
-                            fee: Decimal::ZERO,
+                            fee,
                             ts_ms: bar.ts_ms,
                         })
                         .await?;
@@ -325,6 +338,109 @@ impl BacktestRuntime {
             .next()
             .unwrap_or_else(|| self.settings.symbol.clone())
     }
+}
+
+fn backtest_fee(
+    fee_rules_by_symbol: &BTreeMap<String, FeeRule>,
+    fee_volume_by_rule: &mut BTreeMap<String, Decimal>,
+    order: &OrderRequest,
+    bar: &Bar,
+) -> Decimal {
+    let Some(rule) = fee_rules_by_symbol.get(&order.symbol) else {
+        return Decimal::ZERO;
+    };
+    let volume = fee_volume_by_rule
+        .get(&rule.id)
+        .copied()
+        .unwrap_or(Decimal::ZERO);
+    let fee = rule.fee(order.order_type, bar.close, order.qty, volume);
+    let fill_notional = bar.close * order.qty;
+    fee_volume_by_rule
+        .entry(rule.id.clone())
+        .and_modify(|current| *current += fill_notional)
+        .or_insert(fill_notional);
+    fee
+}
+
+async fn load_configured_fee_rules(
+    db: &Db,
+    symbols: &[String],
+    as_of_ms: i64,
+) -> anyhow::Result<BTreeMap<String, FeeRule>> {
+    let mut fee_rules_by_symbol = BTreeMap::new();
+    for symbol in symbols {
+        let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
+            continue;
+        };
+        let Some(rule_with_tiers) = db
+            .find_fee_rule_with_tiers(&market, &exchange, &asset_class, Some(symbol), as_of_ms)
+            .await?
+        else {
+            continue;
+        };
+        let rule = rule_with_tiers.rule;
+        let tiers = rule_with_tiers
+            .tiers
+            .into_iter()
+            .map(|tier| {
+                Ok(FeeTier {
+                    volume_from: parse_rule_decimal("volume_from", &tier.volume_from)?,
+                    volume_to: tier
+                        .volume_to
+                        .as_deref()
+                        .map(|value| parse_rule_decimal("volume_to", value))
+                        .transpose()?,
+                    maker_bps: parse_rule_decimal("tier_maker_bps", &tier.maker_bps)?,
+                    taker_bps: parse_rule_decimal("tier_taker_bps", &tier.taker_bps)?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        fee_rules_by_symbol.insert(
+            symbol.clone(),
+            FeeRule {
+                id: rule.id.clone(),
+                maker_bps: parse_rule_decimal("maker_bps", &rule.maker_bps)?,
+                taker_bps: parse_rule_decimal("taker_bps", &rule.taker_bps)?,
+                minimum_fee: rule
+                    .minimum_fee
+                    .as_deref()
+                    .map(|value| parse_rule_decimal("minimum_fee", value))
+                    .transpose()?,
+                tax_bps: rule
+                    .tax_bps
+                    .as_deref()
+                    .map(|value| parse_rule_decimal("tax_bps", value))
+                    .transpose()?,
+                exchange_fee_bps: rule
+                    .exchange_fee_bps
+                    .as_deref()
+                    .map(|value| parse_rule_decimal("exchange_fee_bps", value))
+                    .transpose()?,
+                tiers,
+            },
+        );
+    }
+    Ok(fee_rules_by_symbol)
+}
+
+fn parse_rule_decimal(field: &str, value: &str) -> anyhow::Result<Decimal> {
+    Decimal::from_str(value).map_err(|error| anyhow::anyhow!("invalid {field} {value}: {error}"))
+}
+
+fn market_rule_symbol_parts(symbol: &str) -> Option<(String, String, String)> {
+    let mut parts = symbol.split(':');
+    let market = parts.next()?;
+    let exchange = parts.next()?;
+    let _code = parts.next()?;
+    let asset_class = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((
+        market.to_string(),
+        exchange.to_string(),
+        asset_class.to_string(),
+    ))
 }
 
 async fn record_runtime_events(
