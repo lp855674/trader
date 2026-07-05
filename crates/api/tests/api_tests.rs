@@ -1763,6 +1763,7 @@ async fn fee_rules_route_creates_and_queries_rule_with_tiers_in_volume_order() {
     assert_eq!(created["rule"]["id"], "fee-us-equity");
     assert_eq!(created["rule"]["asset_class"], "EQUITY");
     assert_eq!(created["rule"]["symbol"], serde_json::Value::Null);
+    assert_eq!(created["rule"]["volume_window"], "run");
     assert_eq!(created["rule"]["minimum_fee"], "0.01");
     assert_eq!(created["rule"]["tax_bps"], "1");
     assert_eq!(created["rule"]["exchange_fee_bps"], "0.5");
@@ -1777,8 +1778,59 @@ async fn fee_rules_route_creates_and_queries_rule_with_tiers_in_volume_order() {
     )
     .await;
     assert_eq!(found["rule"]["id"], "fee-us-equity");
+    assert_eq!(found["rule"]["volume_window"], "run");
     assert_eq!(found["tiers"][0]["id"], "tier-1");
     assert_eq!(found["tiers"][1]["id"], "tier-2");
+}
+
+#[tokio::test]
+async fn fee_rules_route_creates_and_queries_explicit_volume_window() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let request = serde_json::json!({
+        "id": "fee-us-equity-rolling",
+        "market": "US",
+        "exchange": "NASDAQ",
+        "asset_class": "EQUITY",
+        "symbol": null,
+        "volume_window": "rolling_30d",
+        "maker_bps": "2",
+        "taker_bps": "4",
+        "minimum_fee": null,
+        "tax_bps": null,
+        "exchange_fee_bps": null,
+        "effective_from_ms": 10,
+        "effective_to_ms": null,
+        "tiers": [
+            {
+                "id": "tier-rolling-1",
+                "volume_from": "0",
+                "volume_to": null,
+                "maker_bps": "2",
+                "taker_bps": "4"
+            }
+        ]
+    });
+    let (status, created) = request_json(app.clone(), "POST", "/api/v1/fee-rules", request).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["rule"]["id"], "fee-us-equity-rolling");
+    assert_eq!(created["rule"]["volume_window"], "rolling_30d");
+    assert_eq!(created["tiers"][0]["id"], "tier-rolling-1");
+
+    let found = get_json(
+        app,
+        "/api/v1/fee-rules?market=US&exchange=NASDAQ&asset_class=EQUITY&at_ms=10",
+    )
+    .await;
+    assert_eq!(found["rule"]["id"], "fee-us-equity-rolling");
+    assert_eq!(found["rule"]["volume_window"], "rolling_30d");
+    assert_eq!(found["tiers"][0]["id"], "tier-rolling-1");
 }
 
 #[tokio::test]

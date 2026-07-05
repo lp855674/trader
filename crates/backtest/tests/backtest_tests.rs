@@ -2,8 +2,49 @@ use backtest::{BacktestRuntime, BacktestSettings, BacktestSummary};
 use data::{Bar, MarketSlice, SymbolBar};
 use feature_store::FeatureRecord;
 use rust_decimal_macros::dec;
-use storage::{Db, NewFeeRule};
+use storage::{Db, NewFeeRule, NewFeeRuleTier, NewFill, NewOrder};
 use strategies::{StrategyAlphaGateConfig, StrategyUniverseFilterConfig};
+
+async fn insert_historical_fee_fill(
+    db: &Db,
+    account_id: &str,
+    symbol: &str,
+    price: &str,
+    qty: &str,
+    ts_ms: i64,
+) {
+    db.insert_order(NewOrder {
+        id: "historical-backtest-order".to_string(),
+        run_id: "historical-backtest-run".to_string(),
+        client_order_id: "historical-backtest-client-order".to_string(),
+        broker_order_id: None,
+        account_id: account_id.to_string(),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: qty.to_string(),
+        filled_qty: qty.to_string(),
+        status: "FILLED".to_string(),
+        created_at_ms: ts_ms,
+        updated_at_ms: ts_ms,
+    })
+    .await
+    .unwrap();
+    db.insert_fill(NewFill {
+        id: "historical-backtest-fill".to_string(),
+        order_id: "historical-backtest-order".to_string(),
+        run_id: "historical-backtest-run".to_string(),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        price: price.to_string(),
+        qty: qty.to_string(),
+        fee: "0".to_string(),
+        ts_ms,
+    })
+    .await
+    .unwrap();
+}
 
 #[tokio::test]
 async fn backtest_counts_signals() {
@@ -103,6 +144,7 @@ async fn backtest_runtime_uses_configured_fee_rules_for_fills() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "25".to_string(),
         minimum_fee: None,
@@ -132,6 +174,213 @@ async fn backtest_runtime_uses_configured_fee_rules_for_fills() {
     assert_eq!(fills[0].price, "20");
     assert_eq!(fills[0].qty, "1");
     assert_eq!(fills[0].fee, "0.05");
+}
+
+#[tokio::test]
+async fn backtest_runtime_advances_fee_tiers_from_run_fill_notional() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-backtest-tiered".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "run".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: Some("0.01".to_string()),
+        tax_bps: Some("1".to_string()),
+        exchange_fee_bps: Some("1".to_string()),
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-tiered".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-tiered".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "8".to_string(),
+    })
+    .await
+    .unwrap();
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(4, dec!(1), dec!(1), dec!(1), dec!(1), dec!(1)),
+        Bar::new(5, dec!(1), dec!(1), dec!(1), dec!(1), dec!(1)),
+        Bar::new(6, dec!(1), dec!(1), dec!(1), dec!(30), dec!(1)),
+    ];
+
+    let mut settings = BacktestSettings::sample();
+    settings.allow_short = true;
+    let summary = BacktestRuntime::new(db.clone(), settings)
+        .run(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 3);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 3);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.02");
+    assert_eq!(fills[1].price, "1");
+    assert_eq!(fills[1].fee, "0.01");
+    assert_eq!(fills[2].price, "30");
+    assert_eq!(fills[2].qty, "2");
+    assert_eq!(fills[2].fee, "0.024");
+}
+
+#[tokio::test]
+async fn backtest_runtime_does_not_seed_run_fee_tier_from_account_volume() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-backtest-run-tiered".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "run".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-run-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-run-tiered".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "10".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-run-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-run-tiered".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    let start_ms = 1_700_000_000_000;
+    insert_historical_fee_fill(
+        &db,
+        "backtest",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "1",
+        start_ms - 24 * 60 * 60 * 1_000,
+    )
+    .await;
+    let bars = vec![
+        Bar::new(start_ms, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(start_ms + 1, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(start_ms + 2, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = BacktestRuntime::new(db.clone(), BacktestSettings::sample())
+        .run(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.02");
+}
+
+#[tokio::test]
+async fn backtest_runtime_seeds_fee_tier_from_rolling_account_volume() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-backtest-rolling-tiered".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "rolling_30d".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-rolling-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-rolling-tiered".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "10".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-backtest-rolling-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-backtest-rolling-tiered".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    let start_ms = 1_700_000_000_000;
+    insert_historical_fee_fill(
+        &db,
+        "backtest",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "1",
+        start_ms - 24 * 60 * 60 * 1_000,
+    )
+    .await;
+    let bars = vec![
+        Bar::new(start_ms, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(start_ms + 1, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(start_ms + 2, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = BacktestRuntime::new(db.clone(), BacktestSettings::sample())
+        .run(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.004");
 }
 
 #[tokio::test]

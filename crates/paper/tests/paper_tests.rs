@@ -10,15 +10,60 @@ use paper::{
     ibkr_stock_symbol,
 };
 use rust_decimal_macros::dec;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use storage::{
-    Db, NewFeeRule, NewFeeRuleTier, NewLotSizeRule, NewMarketCalendar, NewTradingSessionRule,
+    Db, LotSizeRuleCommand, NewFeeRule, NewFeeRuleTier, NewFill, NewMarketCalendar, NewOrder,
+    NewTradingSessionRule,
 };
 use strategies::StrategyUniverseFilterConfig;
 use trader_core::{OrderRequest, OrderSide, OrderType};
+
+async fn insert_historical_fee_fill(
+    db: &Db,
+    account_id: &str,
+    symbol: &str,
+    price: &str,
+    qty: &str,
+    ts_ms: i64,
+) {
+    db.insert_order(NewOrder {
+        id: "historical-order".to_string(),
+        run_id: "historical-run".to_string(),
+        client_order_id: "historical-client-order".to_string(),
+        broker_order_id: None,
+        account_id: account_id.to_string(),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: qty.to_string(),
+        filled_qty: qty.to_string(),
+        status: "FILLED".to_string(),
+        created_at_ms: ts_ms,
+        updated_at_ms: ts_ms,
+    })
+    .await
+    .unwrap();
+    db.insert_fill(NewFill {
+        id: "historical-fill".to_string(),
+        order_id: "historical-order".to_string(),
+        run_id: "historical-run".to_string(),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        price: price.to_string(),
+        qty: qty.to_string(),
+        fee: "0".to_string(),
+        ts_ms,
+    })
+    .await
+    .unwrap();
+}
 
 #[tokio::test]
 async fn paper_runtime_counts_orders() {
@@ -88,7 +133,7 @@ async fn paper_runtime_uses_market_rules_for_crypto_spot_symbols() {
 async fn paper_runtime_uses_storage_backed_market_rules() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
-    db.insert_lot_size_rule(NewLotSizeRule {
+    db.configure_lot_size_rule(LotSizeRuleCommand {
         id: "lot-aapl-runtime".to_string(),
         market: "US".to_string(),
         exchange: "NASDAQ".to_string(),
@@ -130,6 +175,7 @@ async fn paper_runtime_uses_storage_backed_fee_rules_for_simulated_fills() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "25".to_string(),
         minimum_fee: None,
@@ -169,6 +215,7 @@ async fn paper_runtime_prefers_symbol_specific_fee_rule_for_simulated_fills() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "25".to_string(),
         minimum_fee: None,
@@ -185,6 +232,7 @@ async fn paper_runtime_prefers_symbol_specific_fee_rule_for_simulated_fills() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        volume_window: "run".to_string(),
         maker_bps: "0.5".to_string(),
         taker_bps: "5".to_string(),
         minimum_fee: None,
@@ -223,6 +271,7 @@ async fn paper_runtime_applies_storage_backed_minimum_fee_for_simulated_fills() 
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "1".to_string(),
         minimum_fee: Some("0.01".to_string()),
@@ -260,6 +309,7 @@ async fn paper_runtime_adds_storage_backed_tax_and_exchange_fees_for_simulated_f
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "25".to_string(),
         minimum_fee: None,
@@ -297,6 +347,7 @@ async fn paper_runtime_advances_fee_tiers_from_run_fill_notional() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "99".to_string(),
         taker_bps: "99".to_string(),
         minimum_fee: Some("0.01".to_string()),
@@ -353,6 +404,150 @@ async fn paper_runtime_advances_fee_tiers_from_run_fill_notional() {
     assert_eq!(fills[2].price, "30");
     assert_eq!(fills[2].qty, "2");
     assert_eq!(fills[2].fee, "0.024");
+}
+
+#[tokio::test]
+async fn paper_runtime_does_not_seed_run_fee_tier_from_account_volume() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-runtime-run-tiered".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "run".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-run-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-run-tiered".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "10".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-run-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-run-tiered".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    insert_historical_fee_fill(
+        &db,
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "1",
+        now_ms - 24 * 60 * 60 * 1_000,
+    )
+    .await;
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.02");
+}
+
+#[tokio::test]
+async fn paper_runtime_seeds_fee_tier_from_rolling_account_volume() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-runtime-rolling-tiered".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "rolling_30d".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-rolling-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-rolling-tiered".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "10".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-rolling-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-rolling-tiered".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    insert_historical_fee_fill(
+        &db,
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "1",
+        now_ms - 24 * 60 * 60 * 1_000,
+    )
+    .await;
+    let bars = vec![
+        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.004");
 }
 
 #[tokio::test]

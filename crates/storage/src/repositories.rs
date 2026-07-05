@@ -1,11 +1,15 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 
 use crate::{Db, StorageError, StorageResult};
-use chrono::{TimeZone, Utc};
+use chrono::{Datelike, TimeZone, Utc};
 use events::{
     AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, LogSink, LogSinkError, RuntimeEvent,
     StructuredLogEntry, TraderEvent,
 };
+use market_rules::{FeeRule, FeeTier, FeeVolumeWindow};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -38,6 +42,20 @@ pub struct InstrumentRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewLotSizeRule {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub lot_size: String,
+    pub min_qty: String,
+    pub min_notional: String,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LotSizeRuleCommand {
     pub id: String,
     pub market: String,
     pub exchange: String,
@@ -99,6 +117,7 @@ pub struct NewFeeRule {
     pub exchange: String,
     pub asset_class: String,
     pub symbol: Option<String>,
+    pub volume_window: String,
     pub maker_bps: String,
     pub taker_bps: String,
     pub minimum_fee: Option<String>,
@@ -115,6 +134,7 @@ pub struct StoredFeeRule {
     pub exchange: String,
     pub asset_class: String,
     pub symbol: Option<String>,
+    pub volume_window: String,
     pub maker_bps: String,
     pub taker_bps: String,
     pub minimum_fee: Option<String>,
@@ -154,6 +174,119 @@ pub struct StoredFeeRuleTier {
     pub volume_to: Option<String>,
     pub maker_bps: String,
     pub taker_bps: String,
+}
+
+fn fee_rule_with_tiers(rule_with_tiers: StoredFeeRuleWithTiers) -> StorageResult<FeeRule> {
+    let rule = rule_with_tiers.rule;
+    let tiers = rule_with_tiers
+        .tiers
+        .into_iter()
+        .map(|tier| {
+            Ok(FeeTier {
+                volume_from: parse_rule_decimal("volume_from", &tier.volume_from)?,
+                volume_to: tier
+                    .volume_to
+                    .as_deref()
+                    .map(|value| parse_rule_decimal("volume_to", value))
+                    .transpose()?,
+                maker_bps: parse_rule_decimal("tier_maker_bps", &tier.maker_bps)?,
+                taker_bps: parse_rule_decimal("tier_taker_bps", &tier.taker_bps)?,
+            })
+        })
+        .collect::<StorageResult<Vec<_>>>()?;
+
+    Ok(FeeRule {
+        id: rule.id,
+        volume_window: parse_volume_window(&rule.volume_window)?,
+        maker_bps: parse_rule_decimal("maker_bps", &rule.maker_bps)?,
+        taker_bps: parse_rule_decimal("taker_bps", &rule.taker_bps)?,
+        minimum_fee: rule
+            .minimum_fee
+            .as_deref()
+            .map(|value| parse_rule_decimal("minimum_fee", value))
+            .transpose()?,
+        tax_bps: rule
+            .tax_bps
+            .as_deref()
+            .map(|value| parse_rule_decimal("tax_bps", value))
+            .transpose()?,
+        exchange_fee_bps: rule
+            .exchange_fee_bps
+            .as_deref()
+            .map(|value| parse_rule_decimal("exchange_fee_bps", value))
+            .transpose()?,
+        tiers,
+    })
+}
+
+fn parse_rule_decimal(field: &str, value: &str) -> StorageResult<Decimal> {
+    Decimal::from_str(value)
+        .map_err(|error| StorageError::Protocol(format!("invalid {field} {value}: {error}")))
+}
+
+fn parse_volume_window(value: &str) -> StorageResult<FeeVolumeWindow> {
+    value
+        .parse()
+        .map_err(|error: String| StorageError::Protocol(error))
+}
+
+fn market_rule_symbol_parts(symbol: &str) -> Option<(String, String, String)> {
+    let mut parts = symbol.split(':');
+    let market = parts.next()?;
+    let exchange = parts.next()?;
+    let _code = parts.next()?;
+    let asset_class = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((
+        market.to_string(),
+        exchange.to_string(),
+        asset_class.to_string(),
+    ))
+}
+
+fn fee_volume_symbol_matches_scope(
+    symbol: &str,
+    market: &str,
+    exchange: &str,
+    asset_class: &str,
+) -> bool {
+    let Some((symbol_market, symbol_exchange, symbol_asset_class)) =
+        market_rule_symbol_parts(symbol)
+    else {
+        return false;
+    };
+    symbol_market == market
+        && symbol_exchange == exchange
+        && (asset_class == "*" || symbol_asset_class == asset_class)
+}
+
+fn fee_volume_seed_window(
+    volume_window: FeeVolumeWindow,
+    as_of_ms: i64,
+) -> StorageResult<Option<(i64, i64)>> {
+    match volume_window {
+        FeeVolumeWindow::Run => Ok(None),
+        FeeVolumeWindow::Rolling30d => {
+            const ROLLING_30D_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+            Ok(Some((as_of_ms.saturating_sub(ROLLING_30D_MS), as_of_ms)))
+        }
+        FeeVolumeWindow::CalendarMonth => {
+            let as_of = Utc
+                .timestamp_millis_opt(as_of_ms)
+                .single()
+                .ok_or_else(|| StorageError::Protocol(format!("invalid as_of_ms {as_of_ms}")))?;
+            let month_start = Utc
+                .with_ymd_and_hms(as_of.year(), as_of.month(), 1, 0, 0, 0)
+                .single()
+                .ok_or_else(|| {
+                    StorageError::Protocol(format!("invalid calendar month for {as_of_ms}"))
+                })?
+                .timestamp_millis();
+            Ok(Some((month_start, as_of_ms)))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -839,6 +972,23 @@ pub struct StoredFill {
     pub qty: String,
     pub fee: String,
     pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeVolumeQuery {
+    pub account_id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub from_ms: i64,
+    pub to_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeRuleEngineSeed {
+    pub rules_by_symbol: BTreeMap<String, FeeRule>,
+    pub volume_by_rule: BTreeMap<String, Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1787,6 +1937,22 @@ impl Db {
         Ok(())
     }
 
+    pub async fn configure_lot_size_rule(&self, command: LotSizeRuleCommand) -> StorageResult<()> {
+        self.insert_lot_size_rule(NewLotSizeRule {
+            id: command.id,
+            market: command.market,
+            exchange: command.exchange,
+            asset_class: command.asset_class,
+            symbol: command.symbol,
+            lot_size: command.lot_size,
+            min_qty: command.min_qty,
+            min_notional: command.min_notional,
+            effective_from_ms: command.effective_from_ms,
+            effective_to_ms: command.effective_to_ms,
+        })
+        .await
+    }
+
     pub async fn update_lot_size_rule_effective_to(
         &self,
         id: &str,
@@ -2041,15 +2207,16 @@ impl Db {
     }
 
     pub async fn insert_fee_rule(&self, rule: NewFeeRule) -> StorageResult<()> {
+        parse_volume_window(&rule.volume_window)?;
         let audit_rule = rule.clone();
         sqlx::query(
             r#"
             INSERT INTO fee_rules (
-                id, market, exchange, asset_class, symbol, maker_bps, taker_bps, minimum_fee,
+                id, market, exchange, asset_class, symbol, volume_window, maker_bps, taker_bps, minimum_fee,
                 tax_bps, exchange_fee_bps,
                 effective_from_ms, effective_to_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(rule.id)
@@ -2057,6 +2224,7 @@ impl Db {
         .bind(rule.exchange)
         .bind(rule.asset_class)
         .bind(rule.symbol)
+        .bind(rule.volume_window)
         .bind(rule.maker_bps)
         .bind(rule.taker_bps)
         .bind(rule.minimum_fee)
@@ -2138,6 +2306,7 @@ impl Db {
     ) -> StorageResult<StoredFeeRuleWithTiers> {
         let rule = command.rule;
         let tiers = command.tiers;
+        parse_volume_window(&rule.volume_window)?;
         for tier in &tiers {
             if tier.fee_rule_id != rule.id {
                 return Err(StorageError::Protocol(format!(
@@ -2153,6 +2322,7 @@ impl Db {
             exchange: rule.exchange.clone(),
             asset_class: rule.asset_class.clone(),
             symbol: rule.symbol.clone(),
+            volume_window: rule.volume_window.clone(),
             maker_bps: rule.maker_bps.clone(),
             taker_bps: rule.taker_bps.clone(),
             minimum_fee: rule.minimum_fee.clone(),
@@ -2166,11 +2336,11 @@ impl Db {
         sqlx::query(
             r#"
             INSERT INTO fee_rules (
-                id, market, exchange, asset_class, symbol, maker_bps, taker_bps, minimum_fee,
+                id, market, exchange, asset_class, symbol, volume_window, maker_bps, taker_bps, minimum_fee,
                 tax_bps, exchange_fee_bps,
                 effective_from_ms, effective_to_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&rule.id)
@@ -2178,6 +2348,7 @@ impl Db {
         .bind(&rule.exchange)
         .bind(&rule.asset_class)
         .bind(&rule.symbol)
+        .bind(&rule.volume_window)
         .bind(&rule.maker_bps)
         .bind(&rule.taker_bps)
         .bind(&rule.minimum_fee)
@@ -2287,6 +2458,7 @@ impl Db {
             Option<String>,
             String,
             String,
+            String,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -2296,7 +2468,7 @@ impl Db {
 
         let row = sqlx::query_as::<_, FeeRuleRow>(
             r#"
-            SELECT id, market, exchange, asset_class, symbol, maker_bps, taker_bps, minimum_fee,
+            SELECT id, market, exchange, asset_class, symbol, volume_window, maker_bps, taker_bps, minimum_fee,
                    tax_bps, exchange_fee_bps,
                    effective_from_ms, effective_to_ms
             FROM fee_rules
@@ -2338,6 +2510,7 @@ impl Db {
                 exchange,
                 asset_class,
                 symbol,
+                volume_window,
                 maker_bps,
                 taker_bps,
                 minimum_fee,
@@ -2351,6 +2524,7 @@ impl Db {
                 exchange,
                 asset_class,
                 symbol,
+                volume_window,
                 maker_bps,
                 taker_bps,
                 minimum_fee,
@@ -2378,6 +2552,93 @@ impl Db {
         };
         let tiers = self.list_fee_rule_tiers(&rule.id).await?;
         Ok(Some(StoredFeeRuleWithTiers { rule, tiers }))
+    }
+
+    pub async fn load_market_fee_rules(
+        &self,
+        symbols: &[String],
+        as_of_ms: i64,
+    ) -> StorageResult<BTreeMap<String, FeeRule>> {
+        let mut fee_rules_by_symbol = BTreeMap::new();
+        for symbol in symbols {
+            let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
+                continue;
+            };
+            let Some(rule_with_tiers) = self
+                .find_fee_rule_with_tiers(&market, &exchange, &asset_class, Some(symbol), as_of_ms)
+                .await?
+            else {
+                continue;
+            };
+            fee_rules_by_symbol.insert(symbol.clone(), fee_rule_with_tiers(rule_with_tiers)?);
+        }
+        Ok(fee_rules_by_symbol)
+    }
+
+    pub async fn load_market_fee_rules_with_account_volume(
+        &self,
+        symbols: &[String],
+        account_id: &str,
+        as_of_ms: i64,
+    ) -> StorageResult<FeeRuleEngineSeed> {
+        let mut rules_by_symbol = BTreeMap::new();
+        let mut volume_by_rule = BTreeMap::new();
+        let mut logged_run_rules = BTreeSet::new();
+        for symbol in symbols {
+            let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
+                continue;
+            };
+            let Some(rule_with_tiers) = self
+                .find_fee_rule_with_tiers(&market, &exchange, &asset_class, Some(symbol), as_of_ms)
+                .await?
+            else {
+                continue;
+            };
+            let rule_scope = rule_with_tiers.rule.clone();
+            let fee_rule = fee_rule_with_tiers(rule_with_tiers)?;
+            let rule_id = fee_rule.id.clone();
+            let window = fee_rule.volume_window;
+            match fee_volume_seed_window(window, as_of_ms)? {
+                Some((from_ms, to_ms)) if !volume_by_rule.contains_key(&rule_id) => {
+                    let volume = self
+                        .sum_fee_volume_notional(FeeVolumeQuery {
+                            account_id: account_id.to_string(),
+                            market: rule_scope.market,
+                            exchange: rule_scope.exchange,
+                            asset_class: rule_scope.asset_class,
+                            symbol: rule_scope.symbol,
+                            from_ms,
+                            to_ms,
+                        })
+                        .await?;
+                    tracing::debug!(
+                        rule_id = %rule_id,
+                        window = %window.as_str(),
+                        from_ms,
+                        to_ms,
+                        seed_volume = %volume,
+                        "fee rule volume seed loaded"
+                    );
+                    volume_by_rule.insert(rule_id.clone(), volume);
+                }
+                None if logged_run_rules.insert(rule_id.clone()) => {
+                    tracing::debug!(
+                        rule_id = %rule_id,
+                        window = %window.as_str(),
+                        from_ms = ?Option::<i64>::None,
+                        to_ms = ?Option::<i64>::None,
+                        seed_volume = %Decimal::ZERO,
+                        "fee rule volume seed loaded"
+                    );
+                }
+                _ => {}
+            }
+            rules_by_symbol.insert(symbol.clone(), fee_rule);
+        }
+        Ok(FeeRuleEngineSeed {
+            rules_by_symbol,
+            volume_by_rule,
+        })
     }
 
     pub async fn upsert_market_calendar(&self, calendar: NewMarketCalendar) -> StorageResult<()> {
@@ -5792,6 +6053,52 @@ impl Db {
                 },
             )
             .collect())
+    }
+
+    pub async fn sum_fee_volume_notional(&self, query: FeeVolumeQuery) -> StorageResult<Decimal> {
+        if query.to_ms <= query.from_ms {
+            return Ok(Decimal::ZERO);
+        }
+
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT f.symbol, f.price, f.qty
+            FROM fills f
+            INNER JOIN orders o ON o.id = f.order_id
+            WHERE o.account_id =
+            "#,
+        );
+        query_builder.push_bind(query.account_id);
+        query_builder
+            .push(" AND f.ts_ms >= ")
+            .push_bind(query.from_ms)
+            .push(" AND f.ts_ms < ")
+            .push_bind(query.to_ms);
+
+        if let Some(symbol) = query.symbol.as_deref() {
+            query_builder.push(" AND f.symbol = ").push_bind(symbol);
+        }
+
+        let rows = query_builder
+            .build_query_as::<(String, String, String)>()
+            .fetch_all(self.pool())
+            .await?;
+
+        rows.into_iter()
+            .filter(|(symbol, _, _)| {
+                query.symbol.is_some()
+                    || fee_volume_symbol_matches_scope(
+                        symbol,
+                        &query.market,
+                        &query.exchange,
+                        &query.asset_class,
+                    )
+            })
+            .try_fold(Decimal::ZERO, |total, (_, price, qty)| {
+                let price = parse_rule_decimal("fill price", &price)?;
+                let qty = parse_rule_decimal("fill qty", &qty)?;
+                Ok(total + price * qty)
+            })
     }
 
     pub async fn list_positions(&self, run_id: &str) -> StorageResult<Vec<StoredPosition>> {

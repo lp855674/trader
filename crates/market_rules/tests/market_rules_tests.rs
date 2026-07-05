@@ -1,11 +1,33 @@
 use market_rules::{
-    ConfiguredMarketRuleProvider, ContractRiskError, ContractRiskLimits, FeeRule, FeeTier,
-    MarketRuleError, MarketRuleProvider, MarketRuleSet, StaticMarketRuleProvider,
+    ConfiguredMarketRuleProvider, ContractRiskError, ContractRiskLimits, FeeRule, FeeRuleEngine,
+    FeeTier, FeeVolumeWindow, MarketRuleError, MarketRuleProvider, MarketRuleSet,
+    StaticMarketRuleProvider,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::collections::BTreeMap;
 use trader_core::{OrderRequest, OrderSide, OrderType};
+
+#[test]
+fn fee_volume_window_parses_supported_values_and_defaults_to_run() {
+    assert_eq!(
+        "run".parse::<FeeVolumeWindow>().unwrap(),
+        FeeVolumeWindow::Run
+    );
+    assert_eq!(
+        "rolling_30d".parse::<FeeVolumeWindow>().unwrap(),
+        FeeVolumeWindow::Rolling30d
+    );
+    assert_eq!(
+        "calendar_month".parse::<FeeVolumeWindow>().unwrap(),
+        FeeVolumeWindow::CalendarMonth
+    );
+    assert!("daily".parse::<FeeVolumeWindow>().is_err());
+    assert_eq!(
+        FeeRule::flat("fee-test", Decimal::ONE, Decimal::ONE).volume_window,
+        FeeVolumeWindow::Run
+    );
+}
 
 #[test]
 fn rejects_quantity_below_lot_size() {
@@ -168,6 +190,65 @@ fn fee_rule_applies_minimum_fee_floor() {
         ),
         Decimal::new(1, 2)
     );
+}
+
+#[test]
+fn fee_rule_returns_structured_breakdown_with_minimum_adjustment() {
+    let mut rule = FeeRule::flat("fee-test", Decimal::ONE, Decimal::from(25));
+    rule.minimum_fee = Some(dec!(0.05));
+    rule.tax_bps = Some(dec!(2));
+    rule.exchange_fee_bps = Some(dec!(3));
+
+    let breakdown = rule.fee_breakdown(OrderType::Limit, dec!(20), Decimal::ONE, Decimal::ZERO);
+
+    assert_eq!(breakdown.commission, dec!(0.002));
+    assert_eq!(breakdown.tax, dec!(0.004));
+    assert_eq!(breakdown.exchange_fee, dec!(0.006));
+    assert_eq!(breakdown.minimum_fee_adjustment, dec!(0.038));
+    assert_eq!(breakdown.total, dec!(0.05));
+}
+
+#[test]
+fn fee_rule_engine_advances_tiers_from_accumulated_fill_notional() {
+    let mut rule = FeeRule::flat("fee-tiered", Decimal::from(99), Decimal::from(99));
+    rule.tiers = vec![
+        FeeTier {
+            volume_from: Decimal::ZERO,
+            volume_to: Some(dec!(10)),
+            maker_bps: Decimal::ONE,
+            taker_bps: dec!(10),
+        },
+        FeeTier {
+            volume_from: dec!(10),
+            volume_to: None,
+            maker_bps: dec!(0.5),
+            taker_bps: dec!(2),
+        },
+    ];
+    let mut rules_by_symbol = BTreeMap::new();
+    rules_by_symbol.insert("US:NASDAQ:AAPL:EQUITY".to_string(), rule);
+    let mut engine = FeeRuleEngine::new(rules_by_symbol);
+
+    let first = engine
+        .apply_fill(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            dec!(10),
+            Decimal::ONE,
+        )
+        .unwrap();
+    let second = engine
+        .apply_fill(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            dec!(10),
+            Decimal::ONE,
+        )
+        .unwrap();
+
+    assert_eq!(first.total, dec!(0.01));
+    assert_eq!(second.total, dec!(0.002));
+    assert_eq!(engine.volume_for_rule("fee-tiered"), dec!(20));
 }
 
 #[test]

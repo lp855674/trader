@@ -1,12 +1,314 @@
 use rust_decimal::Decimal;
 use storage::{
-    BrokerPositionSnapshotCommand, ConfigState, Db, NewAccountBalance, NewCashSnapshot,
-    NewConfigRecord, NewConfigVersion, NewCorporateActionMeta, NewCryptoMarketMeta,
-    NewCryptoPosition, NewEventRecord, NewFeeRule, NewFill, NewFundingRate, NewLotSizeRule,
-    NewMarketCalendar, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
+    BrokerPositionSnapshotCommand, ConfigState, Db, FeeVolumeQuery, NewAccountBalance,
+    NewCashSnapshot, NewConfigRecord, NewConfigVersion, NewCorporateActionMeta,
+    NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFeeRule, NewFill, NewFundingRate,
+    NewLotSizeRule, NewMarketCalendar, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
     NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
     NewTradingSessionRule, RuntimeEventCommand, StrategyRunStartCommand,
 };
+
+async fn insert_test_order_fill(
+    db: &Db,
+    id: &str,
+    account_id: &str,
+    symbol: &str,
+    price: &str,
+    qty: &str,
+    ts_ms: i64,
+) {
+    db.insert_order(NewOrder {
+        id: format!("order-{id}"),
+        run_id: format!("run-{id}"),
+        client_order_id: format!("client-{id}"),
+        broker_order_id: None,
+        account_id: account_id.to_string(),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        order_type: "MARKET".to_string(),
+        price: None,
+        qty: qty.to_string(),
+        filled_qty: qty.to_string(),
+        status: "FILLED".to_string(),
+        created_at_ms: ts_ms,
+        updated_at_ms: ts_ms,
+    })
+    .await
+    .unwrap();
+
+    db.insert_fill(NewFill {
+        id: format!("fill-{id}"),
+        order_id: format!("order-{id}"),
+        run_id: format!("run-{id}"),
+        symbol: symbol.to_string(),
+        side: "BUY".to_string(),
+        price: price.to_string(),
+        qty: qty.to_string(),
+        fee: "0".to_string(),
+        ts_ms,
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn fee_volume_notional_sums_only_account_scope_and_time_window() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    insert_test_order_fill(
+        &db,
+        "old",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "10",
+        "100",
+        999,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "inside",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "10",
+        1_000,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "end",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "30",
+        "10",
+        2_000,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "other-account",
+        "other",
+        "US:NASDAQ:AAPL:EQUITY",
+        "40",
+        "10",
+        1_500,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "other-symbol",
+        "paper",
+        "US:NASDAQ:MSFT:EQUITY",
+        "50",
+        "10",
+        1_500,
+    )
+    .await;
+
+    let volume = db
+        .sum_fee_volume_notional(FeeVolumeQuery {
+            account_id: "paper".to_string(),
+            market: "US".to_string(),
+            exchange: "NASDAQ".to_string(),
+            asset_class: "EQUITY".to_string(),
+            symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+            from_ms: 1_000,
+            to_ms: 2_000,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(volume, Decimal::from(200));
+}
+
+#[tokio::test]
+async fn fee_rule_seed_volume_counts_only_rolling_window() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let day_ms = 24 * 60 * 60 * 1_000;
+    let as_of_ms = 1_700_000_000_000;
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-rolling".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "rolling_30d".to_string(),
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    insert_test_order_fill(
+        &db,
+        "outside-rolling",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "10",
+        "10",
+        as_of_ms - 31 * day_ms,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "inside-rolling",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "10",
+        as_of_ms - day_ms,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "other-account-rolling",
+        "other",
+        "US:NASDAQ:AAPL:EQUITY",
+        "30",
+        "10",
+        as_of_ms - day_ms,
+    )
+    .await;
+
+    let seed = db
+        .load_market_fee_rules_with_account_volume(
+            &["US:NASDAQ:AAPL:EQUITY".to_string()],
+            "paper",
+            as_of_ms,
+        )
+        .await
+        .unwrap();
+
+    assert!(seed.rules_by_symbol.contains_key("US:NASDAQ:AAPL:EQUITY"));
+    assert_eq!(
+        seed.volume_by_rule.get("fee-us-equity-rolling").copied(),
+        Some(Decimal::from(200))
+    );
+}
+
+#[tokio::test]
+async fn fee_rule_seed_volume_resets_at_calendar_month_start() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let january_31 = 1_706_659_200_000;
+    let february_1 = 1_706_745_600_000;
+    let february_15 = 1_707_955_200_000;
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-calendar".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: None,
+        volume_window: "calendar_month".to_string(),
+        maker_bps: "1".to_string(),
+        taker_bps: "2".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    insert_test_order_fill(
+        &db,
+        "calendar-previous-month",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "10",
+        "10",
+        january_31,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "calendar-current-month",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "10",
+        february_1,
+    )
+    .await;
+
+    let seed = db
+        .load_market_fee_rules_with_account_volume(
+            &["US:NASDAQ:AAPL:EQUITY".to_string()],
+            "paper",
+            february_15,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        seed.volume_by_rule.get("fee-us-equity-calendar").copied(),
+        Some(Decimal::from(200))
+    );
+}
+
+#[tokio::test]
+async fn fee_volume_notional_calendar_month_window_resets_across_months() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let january_31 = 1_706_659_200_000;
+    let february_1 = 1_706_745_600_000;
+    let march_1 = 1_709_251_200_000;
+    insert_test_order_fill(
+        &db,
+        "jan",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "10",
+        "10",
+        january_31,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "feb-aapl",
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "10",
+        february_1,
+    )
+    .await;
+    insert_test_order_fill(
+        &db,
+        "feb-msft",
+        "paper",
+        "US:NASDAQ:MSFT:EQUITY",
+        "30",
+        "10",
+        february_1 + 1,
+    )
+    .await;
+
+    let volume = db
+        .sum_fee_volume_notional(FeeVolumeQuery {
+            account_id: "paper".to_string(),
+            market: "US".to_string(),
+            exchange: "NASDAQ".to_string(),
+            asset_class: "EQUITY".to_string(),
+            symbol: None,
+            from_ms: february_1,
+            to_ms: march_1,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(volume, Decimal::from(500));
+}
 
 #[tokio::test]
 async fn config_versioning_creates_versions_and_selects_published() {
@@ -1116,6 +1418,7 @@ async fn fee_rule_reference_records_select_current_effective_rule() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "2".to_string(),
         minimum_fee: None,
@@ -1132,6 +1435,7 @@ async fn fee_rule_reference_records_select_current_effective_rule() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "calendar_month".to_string(),
         maker_bps: "3".to_string(),
         taker_bps: "4".to_string(),
         minimum_fee: Some("0.01".to_string()),
@@ -1159,6 +1463,7 @@ async fn fee_rule_reference_records_select_current_effective_rule() {
     assert_eq!(current_rule.id, "fee-current");
     assert_eq!(current_rule.maker_bps, "3");
     assert_eq!(current_rule.taker_bps, "4");
+    assert_eq!(current_rule.volume_window, "calendar_month");
     assert_eq!(current_rule.minimum_fee.as_deref(), Some("0.01"));
     assert_eq!(current_rule.tax_bps.as_deref(), Some("5"));
     assert_eq!(current_rule.exchange_fee_bps.as_deref(), Some("6"));
@@ -1181,6 +1486,7 @@ async fn fee_rule_reference_prefers_symbol_then_asset_class_then_exchange_defaul
         exchange: "NASDAQ".to_string(),
         asset_class: "*".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "9".to_string(),
         taker_bps: "10".to_string(),
         minimum_fee: None,
@@ -1197,6 +1503,7 @@ async fn fee_rule_reference_prefers_symbol_then_asset_class_then_exchange_defaul
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "5".to_string(),
         taker_bps: "6".to_string(),
         minimum_fee: None,
@@ -1213,6 +1520,7 @@ async fn fee_rule_reference_prefers_symbol_then_asset_class_then_exchange_defaul
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "2".to_string(),
         minimum_fee: None,
@@ -1324,6 +1632,7 @@ async fn market_rule_reference_writes_change_audit_events() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "2".to_string(),
         minimum_fee: None,
@@ -2677,6 +2986,7 @@ async fn migrate_adds_minimum_fee_column_to_existing_fee_rules_table() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "1".to_string(),
         taker_bps: "2".to_string(),
         minimum_fee: Some("0.01".to_string()),
@@ -2696,6 +3006,7 @@ async fn migrate_adds_minimum_fee_column_to_existing_fee_rules_table() {
     assert_eq!(rule.minimum_fee.as_deref(), Some("0.01"));
     assert_eq!(rule.tax_bps.as_deref(), Some("3"));
     assert_eq!(rule.exchange_fee_bps.as_deref(), Some("4"));
+    assert_eq!(rule.volume_window, "run");
 }
 
 fn dec(value: &str) -> Decimal {

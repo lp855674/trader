@@ -139,15 +139,67 @@ pub enum LiquidityRole {
     Taker,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeeVolumeWindow {
+    Run,
+    Rolling30d,
+    CalendarMonth,
+}
+
+impl FeeVolumeWindow {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Rolling30d => "rolling_30d",
+            Self::CalendarMonth => "calendar_month",
+        }
+    }
+}
+
+impl Default for FeeVolumeWindow {
+    fn default() -> Self {
+        Self::Run
+    }
+}
+
+impl std::str::FromStr for FeeVolumeWindow {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "run" => Ok(Self::Run),
+            "rolling_30d" => Ok(Self::Rolling30d),
+            "calendar_month" => Ok(Self::CalendarMonth),
+            other => Err(format!("invalid fee volume_window: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeeRule {
     pub id: String,
+    pub volume_window: FeeVolumeWindow,
     pub maker_bps: Decimal,
     pub taker_bps: Decimal,
     pub minimum_fee: Option<Decimal>,
     pub tax_bps: Option<Decimal>,
     pub exchange_fee_bps: Option<Decimal>,
     pub tiers: Vec<FeeTier>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeeBreakdown {
+    pub commission: Decimal,
+    pub tax: Decimal,
+    pub exchange_fee: Decimal,
+    pub minimum_fee_adjustment: Decimal,
+    pub total: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeeRuleEngine {
+    rules_by_symbol: BTreeMap<String, FeeRule>,
+    volume_by_rule: BTreeMap<String, Decimal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +220,7 @@ impl FeeRule {
     pub fn flat(id: impl Into<String>, maker_bps: Decimal, taker_bps: Decimal) -> Self {
         Self {
             id: id.into(),
+            volume_window: FeeVolumeWindow::Run,
             maker_bps,
             taker_bps,
             minimum_fee: None,
@@ -204,10 +257,81 @@ impl FeeRule {
         qty: Decimal,
         volume: Decimal,
     ) -> Decimal {
-        let fee = price * qty * self.total_fee_bps(order_type, volume) / Decimal::from(10_000);
-        self.minimum_fee
-            .filter(|minimum_fee| fee < *minimum_fee)
-            .unwrap_or(fee)
+        self.fee_breakdown(order_type, price, qty, volume).total
+    }
+
+    pub fn fee_breakdown(
+        &self,
+        order_type: OrderType,
+        price: Decimal,
+        qty: Decimal,
+        volume: Decimal,
+    ) -> FeeBreakdown {
+        let notional = price * qty;
+        let commission = bps_amount(notional, self.maker_taker_fee_bps(order_type, volume));
+        let tax = bps_amount(notional, self.tax_bps.unwrap_or(Decimal::ZERO));
+        let exchange_fee = bps_amount(notional, self.exchange_fee_bps.unwrap_or(Decimal::ZERO));
+        let subtotal = commission + tax + exchange_fee;
+        let total = self
+            .minimum_fee
+            .filter(|minimum_fee| subtotal < *minimum_fee)
+            .unwrap_or(subtotal);
+        FeeBreakdown {
+            commission,
+            tax,
+            exchange_fee,
+            minimum_fee_adjustment: total - subtotal,
+            total: total.normalize(),
+        }
+    }
+}
+
+impl FeeRuleEngine {
+    pub fn new(rules_by_symbol: BTreeMap<String, FeeRule>) -> Self {
+        Self {
+            rules_by_symbol,
+            volume_by_rule: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_volume_by_rule(
+        rules_by_symbol: BTreeMap<String, FeeRule>,
+        volume_by_rule: BTreeMap<String, Decimal>,
+    ) -> Self {
+        Self {
+            rules_by_symbol,
+            volume_by_rule,
+        }
+    }
+
+    pub fn apply_fill(
+        &mut self,
+        symbol: &str,
+        order_type: OrderType,
+        price: Decimal,
+        qty: Decimal,
+    ) -> Option<FeeBreakdown> {
+        let rule = self.rules_by_symbol.get(symbol)?;
+        let rule_id = rule.id.clone();
+        let volume = self
+            .volume_by_rule
+            .get(&rule_id)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        let breakdown = rule.fee_breakdown(order_type, price, qty, volume);
+        let fill_notional = price * qty;
+        self.volume_by_rule
+            .entry(rule_id)
+            .and_modify(|current| *current += fill_notional)
+            .or_insert(fill_notional);
+        Some(breakdown)
+    }
+
+    pub fn volume_for_rule(&self, rule_id: &str) -> Decimal {
+        self.volume_by_rule
+            .get(rule_id)
+            .copied()
+            .unwrap_or(Decimal::ZERO)
     }
 }
 
@@ -358,4 +482,8 @@ fn is_multiple(value: Decimal, step: Decimal) -> bool {
         return false;
     }
     value % step == Decimal::ZERO
+}
+
+fn bps_amount(notional: Decimal, bps: Decimal) -> Decimal {
+    notional * bps / Decimal::from(10_000)
 }

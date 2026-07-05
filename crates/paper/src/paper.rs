@@ -20,7 +20,7 @@ use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::{Bar, MarketSlice};
 use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
-use market_rules::{ConfiguredMarketRuleProvider, FeeRule, FeeTier, MarketRuleSet};
+use market_rules::{ConfiguredMarketRuleProvider, FeeRuleEngine, MarketRuleSet};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
 use std::{
@@ -474,8 +474,7 @@ struct PaperRunSession<'a> {
     ended_at_ms: i64,
     last_snapshot: AccountSnapshot,
     contract_accounting: SimulatedContractAccounting,
-    fee_rules_by_symbol: BTreeMap<String, FeeRule>,
-    fee_volume_by_rule: BTreeMap<String, Decimal>,
+    fee_rule_engine: FeeRuleEngine,
 }
 
 impl<'a> PaperRunSession<'a> {
@@ -537,9 +536,18 @@ impl<'a> PaperRunSession<'a> {
             as_of_ms,
         )
         .await?;
-        let fee_rules_by_symbol =
-            load_configured_fee_rules(&runtime.db, &runtime.settings.assembly_symbols(), as_of_ms)
-                .await?;
+        let fee_rule_seed = runtime
+            .db
+            .load_market_fee_rules_with_account_volume(
+                &runtime.settings.assembly_symbols(),
+                &runtime.settings.account_id,
+                as_of_ms,
+            )
+            .await?;
+        let fee_rule_engine = FeeRuleEngine::with_volume_by_rule(
+            fee_rule_seed.rules_by_symbol,
+            fee_rule_seed.volume_by_rule,
+        );
         let engine_settings = AlgorithmEngineSettings {
             run_id: runtime.settings.run_id.clone(),
             mode: StrategyRuntimeMode::Paper,
@@ -601,8 +609,7 @@ impl<'a> PaperRunSession<'a> {
                 runtime.settings.account_id.clone(),
                 runtime.settings.max_leverage,
             ),
-            fee_rules_by_symbol,
-            fee_volume_by_rule: BTreeMap::new(),
+            fee_rule_engine,
         })
     }
 
@@ -715,21 +722,12 @@ impl<'a> PaperRunSession<'a> {
         if !self.runtime.executor.uses_runtime_fee_rules() {
             return;
         }
-        let Some(rule) = self.fee_rules_by_symbol.get(&order.symbol) else {
-            return;
-        };
-        let rule_id = rule.id.clone();
-        let volume = self
-            .fee_volume_by_rule
-            .get(&rule_id)
-            .copied()
-            .unwrap_or(Decimal::ZERO);
-        fill.fee = rule.fee(order.order_type, fill.price, fill.qty, volume);
-        let fill_notional = fill.price * fill.qty;
-        self.fee_volume_by_rule
-            .entry(rule_id)
-            .and_modify(|current| *current += fill_notional)
-            .or_insert(fill_notional);
+        if let Some(breakdown) =
+            self.fee_rule_engine
+                .apply_fill(&order.symbol, order.order_type, fill.price, fill.qty)
+        {
+            fill.fee = breakdown.total;
+        }
     }
 
     async fn persist_submitted_order(
@@ -1066,67 +1064,6 @@ async fn load_configured_market_rules(
     }
 
     Ok(ConfiguredMarketRuleProvider::new(rules_by_symbol))
-}
-
-async fn load_configured_fee_rules(
-    db: &Db,
-    symbols: &[String],
-    as_of_ms: i64,
-) -> anyhow::Result<BTreeMap<String, FeeRule>> {
-    let mut fee_rules_by_symbol = BTreeMap::new();
-    for symbol in symbols {
-        let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
-            continue;
-        };
-        let Some(rule_with_tiers) = db
-            .find_fee_rule_with_tiers(&market, &exchange, &asset_class, Some(symbol), as_of_ms)
-            .await?
-        else {
-            continue;
-        };
-        let rule = rule_with_tiers.rule;
-        let tiers = rule_with_tiers
-            .tiers
-            .into_iter()
-            .map(|tier| {
-                Ok(FeeTier {
-                    volume_from: parse_rule_decimal("volume_from", &tier.volume_from)?,
-                    volume_to: tier
-                        .volume_to
-                        .as_deref()
-                        .map(|value| parse_rule_decimal("volume_to", value))
-                        .transpose()?,
-                    maker_bps: parse_rule_decimal("tier_maker_bps", &tier.maker_bps)?,
-                    taker_bps: parse_rule_decimal("tier_taker_bps", &tier.taker_bps)?,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        fee_rules_by_symbol.insert(
-            symbol.clone(),
-            FeeRule {
-                id: rule.id.clone(),
-                maker_bps: parse_rule_decimal("maker_bps", &rule.maker_bps)?,
-                taker_bps: parse_rule_decimal("taker_bps", &rule.taker_bps)?,
-                minimum_fee: rule
-                    .minimum_fee
-                    .as_deref()
-                    .map(|value| parse_rule_decimal("minimum_fee", value))
-                    .transpose()?,
-                tax_bps: rule
-                    .tax_bps
-                    .as_deref()
-                    .map(|value| parse_rule_decimal("tax_bps", value))
-                    .transpose()?,
-                exchange_fee_bps: rule
-                    .exchange_fee_bps
-                    .as_deref()
-                    .map(|value| parse_rule_decimal("exchange_fee_bps", value))
-                    .transpose()?,
-                tiers,
-            },
-        );
-    }
-    Ok(fee_rules_by_symbol)
 }
 
 async fn load_configured_trading_schedule(

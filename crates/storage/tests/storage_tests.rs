@@ -47,6 +47,7 @@ async fn fee_rule_tier_round_trip_lists_tiers_in_volume_order() {
         exchange: "NASDAQ".to_string(),
         asset_class: "EQUITY".to_string(),
         symbol: None,
+        volume_window: "run".to_string(),
         maker_bps: "2".to_string(),
         taker_bps: "4".to_string(),
         minimum_fee: Some("0.01".to_string()),
@@ -100,6 +101,7 @@ async fn fee_rule_with_tiers_create_and_find_round_trips_symbol_rule() {
                 exchange: "NASDAQ".to_string(),
                 asset_class: "EQUITY".to_string(),
                 symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+                volume_window: "rolling_30d".to_string(),
                 maker_bps: "2".to_string(),
                 taker_bps: "4".to_string(),
                 minimum_fee: Some("0.01".to_string()),
@@ -144,6 +146,7 @@ async fn fee_rule_with_tiers_create_and_find_round_trips_symbol_rule() {
         .unwrap()
         .unwrap();
     assert_eq!(found.rule.id, "fee-aapl");
+    assert_eq!(found.rule.volume_window, "rolling_30d");
     assert_eq!(found.rule.minimum_fee.as_deref(), Some("0.01"));
     assert_eq!(found.rule.tax_bps.as_deref(), Some("1"));
     assert_eq!(found.rule.exchange_fee_bps.as_deref(), Some("0.5"));
