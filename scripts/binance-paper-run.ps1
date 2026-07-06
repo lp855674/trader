@@ -89,11 +89,28 @@ function Get-FirstHaltReason {
     param([object[]]$RiskRejections)
 
     foreach ($event in $RiskRejections) {
-        if ($event.decision -eq "rejected") {
+        if ($event.decision -eq "rejected" -and (Test-HardStopRiskType $event.risk_type)) {
             return [string]$event.risk_type
         }
     }
     return $null
+}
+
+function Test-HardStopRiskType {
+    param([string]$RiskType)
+
+    switch ($RiskType) {
+        "daily_loss_limit" { return $true }
+        "max_order_attempts" { return $true }
+        "max_order_failures" { return $true }
+        "stale_market_data" { return $true }
+        "price_deviation" { return $true }
+        "trading_session_closed" { return $true }
+        "strategy_loss_circuit_breaker" { return $true }
+        "strategy_error_circuit_breaker" { return $true }
+        "operator_kill_switch" { return $true }
+        default { return $false }
+    }
 }
 
 function Invoke-CheckedTrader {

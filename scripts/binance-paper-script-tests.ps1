@@ -47,6 +47,9 @@ switch (`$command) {
         if ("$Mode" -eq "stale_market_data") {
             Write-Output "risk_event: run_id=binance-script-test ts_ms=1 account=paper symbol=BTCUSDT risk_type=stale_market_data decision=rejected reason=market data age 6000ms exceeds limit 5000ms threshold=5000 observed_value=6000"
         }
+        if ("$Mode" -eq "short_selling_disabled") {
+            Write-Output "risk_event: run_id=binance-script-test ts_ms=1 account=paper symbol=BTCUSDT risk_type=short_selling_disabled decision=rejected reason=short selling is disabled threshold=0 observed_value=-1"
+        }
     }
     "risk-kill-switch" { Write-Output "risk kill switch ok: account_id=paper cancel_open_orders=true cancelled=0 symbol=BTCUSDT" }
     default {
@@ -74,6 +77,19 @@ Assert-True ($successSummary.failure_class -eq "ok") "expected ok success failur
 Assert-True ($null -eq $successSummary.halt_reason) "expected null halt reason on success"
 Assert-True ($successSummary.open_orders_remaining -eq 0) "expected zero open orders remaining on success"
 Assert-True (-not [bool]$successSummary.cancel_all_attempted) "expected no cancel-all attempt on success"
+
+Write-FakeTrader "short_selling_disabled"
+$nonHaltOutput = powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1 -SkipRefresh 2>&1
+$nonHaltOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected binance paper run success with non-halt risk rejection"
+$nonHaltSummaryPath = ($nonHaltOutput | Select-String -Pattern 'summary\s+:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($nonHaltSummaryPath)) "expected non-halt summary path"
+$nonHaltSummary = Read-Json $nonHaltSummaryPath
+Assert-True ($nonHaltSummary.status -eq "completed") "expected completed non-halt status"
+Assert-True ($nonHaltSummary.failure_class -eq "ok") "expected ok non-halt failure class"
+Assert-True ($null -eq $nonHaltSummary.halt_reason) "expected null halt reason on non-halt risk rejection"
+Assert-True ($nonHaltSummary.risk_rejections.Count -ge 1) "expected recorded non-halt risk rejection"
+Assert-True ($nonHaltSummary.risk_rejections[0].risk_type -eq "short_selling_disabled") "expected short_selling_disabled risk rejection"
 
 Write-FakeTrader "stale_market_data"
 $previousErrorActionPreference = $ErrorActionPreference

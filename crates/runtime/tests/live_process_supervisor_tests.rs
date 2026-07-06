@@ -69,7 +69,7 @@ async fn supervisor_kills_stale_heartbeat_worker() {
     let (db, db_url) = temp_db("stale").await;
     seed_running_live_run(&db, "run-1").await;
     let mut options = fake_options("silent", "run-1");
-    options.heartbeat_stale_after_ms = 20;
+    options.heartbeat_stale_after_ms = 1_000;
     options.health_response_timeout_ms = 20;
     let supervisor = LiveProcessSupervisor::with_options(db.clone(), options);
 
@@ -77,10 +77,9 @@ async fn supervisor_kills_stale_heartbeat_worker() {
         .start("run-1".to_string(), launch_spec("run-1", &db_url))
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
     assert_eq!(supervisor.check_heartbeats().await, 1);
 
-    let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    let run = wait_for_strategy_run(&db, "run-1", |run| run.status == "failed").await;
     assert_eq!(run.status, "failed");
 }
 
@@ -102,7 +101,7 @@ async fn supervisor_automatically_kills_stale_heartbeat_worker() {
     })
     .await;
 
-    let run = db.get_strategy_run("run-1").await.unwrap().unwrap();
+    let run = wait_for_strategy_run(&db, "run-1", |run| run.status == "failed").await;
     assert_eq!(run.status, "failed");
     assert_eq!(run.error.as_deref(), Some("heartbeat stale"));
 }
@@ -271,6 +270,25 @@ async fn wait_for_process_logs(db: &Db, run_id: &str, level: &str, search: Optio
         assert!(
             tokio::time::Instant::now() < deadline,
             "timed out waiting for live process logs"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_strategy_run(
+    db: &Db,
+    run_id: &str,
+    predicate: impl Fn(&storage::StrategyRunRecord) -> bool,
+) -> storage::StrategyRunRecord {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let run = db.get_strategy_run(run_id).await.unwrap().unwrap();
+        if predicate(&run) {
+            return run;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for strategy run"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }

@@ -234,6 +234,9 @@ impl BacktestRuntime {
                 let step = engine.on_market_slice(market_slice.clone())?;
                 for decision in step.decisions {
                     signals += 1;
+                    if let Some(db) = &self.db {
+                        record_runtime_events(db, &self.settings.run_id, &decision.events).await?;
+                    }
                     let Some(order) = decision.order else {
                         continue;
                     };
@@ -278,7 +281,6 @@ impl BacktestRuntime {
                     }
 
                     if let Some(db) = &self.db {
-                        record_runtime_events(db, &self.settings.run_id, &decision.events).await?;
                         record_runtime_events(db, &self.settings.run_id, &execution.events).await?;
                         db.record_backtest_filled_execution(BacktestFilledExecutionCommand {
                             run_id: self.settings.run_id.clone(),

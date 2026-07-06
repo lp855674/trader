@@ -2,7 +2,7 @@ use backtest::{BacktestRuntime, BacktestSettings, BacktestSummary};
 use data::{Bar, MarketSlice, SymbolBar};
 use feature_store::FeatureRecord;
 use rust_decimal_macros::dec;
-use storage::{Db, NewFeeRule, NewFeeRuleTier, NewFill, NewOrder};
+use storage::{Db, ExternalFillCommand, ExternalOrderCommand, NewFeeRule, NewFeeRuleTier};
 use strategies::{StrategyAlphaGateConfig, StrategyUniverseFilterConfig};
 
 async fn insert_historical_fee_fill(
@@ -13,8 +13,10 @@ async fn insert_historical_fee_fill(
     qty: &str,
     ts_ms: i64,
 ) {
-    db.insert_order(NewOrder {
-        id: "historical-backtest-order".to_string(),
+    let price = price.parse().unwrap();
+    let qty = qty.parse().unwrap();
+    db.record_external_order(ExternalOrderCommand {
+        order_id: "historical-backtest-order".to_string(),
         run_id: "historical-backtest-run".to_string(),
         client_order_id: "historical-backtest-client-order".to_string(),
         broker_order_id: None,
@@ -23,23 +25,22 @@ async fn insert_historical_fee_fill(
         side: "BUY".to_string(),
         order_type: "MARKET".to_string(),
         price: None,
-        qty: qty.to_string(),
-        filled_qty: qty.to_string(),
+        qty,
+        filled_qty: qty,
         status: "FILLED".to_string(),
-        created_at_ms: ts_ms,
-        updated_at_ms: ts_ms,
+        ts_ms,
     })
     .await
     .unwrap();
-    db.insert_fill(NewFill {
+    db.record_external_fill(ExternalFillCommand {
         id: "historical-backtest-fill".to_string(),
         order_id: "historical-backtest-order".to_string(),
         run_id: "historical-backtest-run".to_string(),
         symbol: symbol.to_string(),
         side: "BUY".to_string(),
-        price: price.to_string(),
-        qty: qty.to_string(),
-        fee: "0".to_string(),
+        price,
+        qty,
+        fee: dec!(0),
         ts_ms,
     })
     .await

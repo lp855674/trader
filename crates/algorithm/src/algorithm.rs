@@ -7,13 +7,14 @@ use data::{Bar, MarketSlice};
 use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
 use market_rules::{
-    ContractRiskLimits, MarketRuleProvider, MarketRuleSet, StaticMarketRuleProvider,
+    ContractRiskError, ContractRiskLimits, MarketRuleError, MarketRuleProvider, MarketRuleSet,
+    StaticMarketRuleProvider,
 };
 use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
 use risk::{
     DailyLossGuard, MarketDataFreshnessGuard, OrderThrottleGuard, PortfolioRiskPolicy,
-    PortfolioRiskState, PriceDeviationGuard, RiskPolicy, StrategyCircuitBreaker,
+    PortfolioRiskState, PriceDeviationGuard, RiskError, RiskPolicy, StrategyCircuitBreaker,
     TradingSessionGuard, check_max_position,
 };
 use rust_decimal::Decimal;
@@ -911,6 +912,43 @@ fn same_sign(left: Decimal, right: Decimal) -> bool {
         || (left < Decimal::ZERO && right < Decimal::ZERO)
 }
 
+fn risk_error_type(error: &RiskError) -> &'static str {
+    match error {
+        RiskError::MaxPosition => "max_position",
+        RiskError::MaxOrderQuantity => "max_order_quantity",
+        RiskError::MaxOrderNotional => "max_order_notional",
+        RiskError::InsufficientCash => "insufficient_cash",
+        RiskError::TradingHalted => "trading_halted",
+        RiskError::MaxExposure => "max_exposure",
+        RiskError::MaxDrawdown => "max_drawdown",
+        RiskError::MaxLeverage => "max_leverage",
+        RiskError::MaxMargin => "max_margin",
+        RiskError::ShortSellingDisabled => "short_selling_disabled",
+    }
+}
+
+fn market_rule_risk_type(error: &MarketRuleError) -> &'static str {
+    match error {
+        MarketRuleError::MinQuantity => "min_quantity",
+        MarketRuleError::InvalidLotSize => "invalid_lot_size",
+        MarketRuleError::InvalidTickSize => "invalid_tick_size",
+        MarketRuleError::MinNotional => "min_notional",
+        MarketRuleError::MarketOrdersDisabled => "market_orders_disabled",
+        MarketRuleError::InvalidReferencePrice => "invalid_reference_price",
+        MarketRuleError::UnsupportedSymbol(_) => "unsupported_symbol",
+    }
+}
+
+fn contract_risk_type(error: &ContractRiskError) -> &'static str {
+    match error {
+        ContractRiskError::MaxLeverage => "contract_max_leverage",
+        ContractRiskError::InsufficientMargin => "contract_insufficient_margin",
+        ContractRiskError::MaxPositionNotional => "contract_max_position_notional",
+        ContractRiskError::LiquidationBuffer => "contract_liquidation_buffer",
+        ContractRiskError::FundingRateBounds => "contract_funding_rate_bounds",
+    }
+}
+
 pub struct AlgorithmEngine {
     settings: AlgorithmEngineSettings,
     universe: Box<dyn UniverseSelector>,
@@ -1228,7 +1266,15 @@ impl AlgorithmEngine {
             return Ok(Some(self.rejected_decision(events)));
         }
         let market_rules = self.market_rules.rules_for_symbol(&order.symbol)?;
-        market_rules.validate_order(&order, bar.close)?;
+        if let Err(error) = market_rules.validate_order(&order, bar.close) {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                market_rule_risk_type(&error),
+                error.to_string(),
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
         if let Some(contract_limits) = ContractRiskLimits::for_symbol(&order.symbol) {
             let target_notional = target.target_qty.abs() * bar.close;
             let projected_margin = position_margin(&market_rules, target.target_qty, bar.close);
@@ -1237,13 +1283,21 @@ impl AlgorithmEngine {
             } else {
                 equity / projected_margin
             };
-            contract_limits.validate(
+            if let Err(error) = contract_limits.validate(
                 self.settings.max_leverage,
                 target_notional,
                 margin_ratio,
                 contract_limits.liquidation_buffer_bps,
                 Decimal::ZERO,
-            )?;
+            ) {
+                events.push(self.risk_rejected_event(
+                    bar.ts_ms,
+                    &order,
+                    contract_risk_type(&error),
+                    error.to_string(),
+                ));
+                return Ok(Some(self.rejected_decision(events)));
+            }
         }
         events.push(self.event(
             EngineEventKind::MarketRuleValidated,
@@ -1275,8 +1329,18 @@ impl AlgorithmEngine {
         let symbol_risk = self.portfolio_risk.clone().with_shorting(
             self.settings.allow_short || self.settings.shortable_symbols.contains(&target.symbol),
         );
-        symbol_risk.check_projected_target(&target, current_qty, bar.close, &portfolio_state)?;
-        RiskPolicy::new(
+        if let Err(error) =
+            symbol_risk.check_projected_target(&target, current_qty, bar.close, &portfolio_state)
+        {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                risk_error_type(&error),
+                error.to_string(),
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
+        if let Err(error) = RiskPolicy::new(
             self.settings.max_order_qty,
             self.settings.max_order_notional,
             self.settings.min_cash_after_order,
@@ -1286,7 +1350,15 @@ impl AlgorithmEngine {
             bar.close,
             self.account_book.cash(),
             self.settings.trading_halted,
-        )?;
+        ) {
+            events.push(self.risk_rejected_event(
+                bar.ts_ms,
+                &order,
+                risk_error_type(&error),
+                error.to_string(),
+            ));
+            return Ok(Some(self.rejected_decision(events)));
+        }
         tracing::info!(
             run_id = %self.settings.run_id,
             symbol = %order.symbol,

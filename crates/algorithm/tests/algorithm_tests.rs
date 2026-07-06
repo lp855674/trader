@@ -292,18 +292,21 @@ fn algorithm_engine_uses_injected_market_rules() {
         Box::new(ConfiguredMarketRuleProvider::new(configured_rules)),
     );
 
-    let error = engine
+    let step = engine
         .on_market_slice(MarketSlice::new(
             1,
             vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
         ))
-        .unwrap_err();
+        .unwrap();
 
-    assert!(
-        error
-            .to_string()
-            .contains("quantity is not a multiple of lot size")
-    );
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("invalid_lot_size")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("quantity is not a multiple of lot size"))
+    }));
 }
 
 #[test]
@@ -635,13 +638,20 @@ fn algorithm_engine_allows_short_only_for_configured_symbols_in_mixed_universe()
         Box::new(SymbolSellAlphaModel),
     );
 
-    let error = blocked_engine
+    let step = blocked_engine
         .on_market_slice(MarketSlice::new(
             1,
             vec![SymbolBar::new("US:NASDAQ:AAPL:EQUITY", bar(1, dec!(100)))],
         ))
-        .unwrap_err();
-    assert!(error.to_string().contains("short selling is disabled"));
+        .unwrap();
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("short_selling_disabled")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("short selling is disabled"))
+    }));
 }
 
 #[test]
@@ -679,18 +689,21 @@ fn algorithm_engine_rejects_derivative_target_above_margin_limit() {
         Box::new(SymbolSellAlphaModel),
     );
 
-    let error = engine
+    let step = engine
         .on_market_slice(MarketSlice::new(
             1,
             vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
         ))
-        .unwrap_err();
+        .unwrap();
 
-    assert!(
-        error
-            .to_string()
-            .contains("portfolio margin exceeds max margin")
-    );
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("max_margin")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("portfolio margin exceeds max margin"))
+    }));
 }
 
 #[test]
@@ -728,14 +741,21 @@ fn algorithm_engine_rejects_contract_order_exceeding_max_leverage() {
         Box::new(SymbolEchoAlphaModel),
     );
 
-    let error = engine
+    let step = engine
         .on_market_slice(MarketSlice::new(
             1,
             vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
         ))
-        .unwrap_err();
+        .unwrap();
 
-    assert!(error.to_string().contains("contract leverage exceeds max"));
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("contract_max_leverage")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("contract leverage exceeds max"))
+    }));
 }
 
 #[test]
