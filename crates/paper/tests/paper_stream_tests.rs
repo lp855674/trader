@@ -3,7 +3,7 @@ use events::{EventBus, TraderEvent};
 use paper::{PaperRunError, PaperRuntime, PaperSettings};
 use runtime::CancellationFlag;
 use rust_decimal_macros::dec;
-use storage::Db;
+use storage::{Db, NewMarketCalendar, NewTradingSessionRule};
 use tokio::sync::mpsc;
 
 #[tokio::test]
@@ -93,6 +93,101 @@ async fn paper_runtime_publishes_algorithm_events_to_event_bus() {
 }
 
 #[tokio::test]
+async fn paper_runtime_stream_refreshes_storage_backed_market_calendar() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.run_id = "stream-dynamic-calendar".to_string();
+    let run_id = settings.run_id.clone();
+    let (sender, receiver) = mpsc::channel(4);
+    let runtime = PaperRuntime::new(db.clone(), settings);
+    let task = tokio::spawn(async move {
+        runtime
+            .run_bar_stream_with_cancel(receiver, CancellationFlag::default())
+            .await
+    });
+
+    sender.send(july_3_bar(0, dec!(10))).await.unwrap();
+    sender.send(july_3_bar(60, dec!(11))).await.unwrap();
+    db.upsert_market_calendar(NewMarketCalendar {
+        id: "us-stream-dynamic-holiday".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: false,
+        session_template: Some("holiday".to_string()),
+    })
+    .await
+    .unwrap();
+    sender.send(july_3_bar(120, dec!(20))).await.unwrap();
+    drop(sender);
+
+    let summary = task.await.unwrap().unwrap();
+
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&run_id).await.unwrap().is_empty());
+    let events = db.list_events_by_source(&run_id).await.unwrap();
+    assert!(events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload_json.contains("\"trading_session_closed\"")
+            && event.payload_json.contains("market calendar closed")
+    }));
+}
+
+#[tokio::test]
+async fn paper_runtime_stream_refreshes_storage_backed_trading_sessions() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let mut settings = PaperSettings::sample();
+    settings.run_id = "stream-dynamic-session".to_string();
+    let run_id = settings.run_id.clone();
+    let (sender, receiver) = mpsc::channel(4);
+    let runtime = PaperRuntime::new(db.clone(), settings);
+    let task = tokio::spawn(async move {
+        runtime
+            .run_bar_stream_with_cancel(receiver, CancellationFlag::default())
+            .await
+    });
+
+    sender.send(july_3_bar(0, dec!(10))).await.unwrap();
+    sender.send(july_3_bar(60, dec!(11))).await.unwrap();
+    db.upsert_market_calendar(NewMarketCalendar {
+        id: "us-stream-dynamic-open".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: true,
+        session_template: Some("short".to_string()),
+    })
+    .await
+    .unwrap();
+    db.insert_trading_session_rule(NewTradingSessionRule {
+        id: "us-stream-dynamic-short-session".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        session_name: "short".to_string(),
+        open_time: "00:00".to_string(),
+        close_time: "02:00".to_string(),
+        timezone: "UTC".to_string(),
+    })
+    .await
+    .unwrap();
+    sender.send(july_3_bar(120, dec!(20))).await.unwrap();
+    drop(sender);
+
+    let summary = task.await.unwrap().unwrap();
+
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&run_id).await.unwrap().is_empty());
+    let events = db.list_events_by_source(&run_id).await.unwrap();
+    assert!(events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload_json.contains("\"trading_session_closed\"")
+            && event
+                .payload_json
+                .contains("outside configured trading sessions")
+    }));
+}
+
+#[tokio::test]
 async fn paper_runtime_stream_stops_when_cancelled_before_first_bar() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -123,6 +218,17 @@ fn signal_bars() -> Vec<Bar> {
         Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ]
+}
+
+fn july_3_bar(minute_offset: i64, close: rust_decimal::Decimal) -> Bar {
+    Bar::new(
+        1_783_036_800_000 + minute_offset * 60 * 1000,
+        close,
+        close,
+        close,
+        close,
+        dec!(1),
+    )
 }
 
 fn signal_market_slices() -> Vec<MarketSlice> {

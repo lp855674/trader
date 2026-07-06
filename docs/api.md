@@ -25,6 +25,8 @@ GET  /api/v1/live-runs/{run_id}/status
 POST /api/v1/live-runs/{run_id}/stop
 GET  /api/v1/brokers/status
 GET  /api/v1/brokers/account/{account_id}?broker={broker}
+GET  /api/v1/fee-rules
+POST /api/v1/fee-rules
 GET  /api/v1/runs/{run_id}/orders
 GET  /api/v1/runs/{run_id}/fills
 GET  /api/v1/runs/{run_id}/positions
@@ -89,6 +91,8 @@ REST event query responses use an API-owned response model. `payload` is returne
 `GET /api/v1/runs/{run_id}/order-events`, `GET /api/v1/runs/{run_id}/risk-events`, `GET /api/v1/runs/{run_id}/insights`, and `GET /api/v1/runs/{run_id}/portfolio-targets` are read-only projection queries derived from `event_store`. They do not replace `event_store` as the immutable audit truth and do not provide any manual trading command path. `order-events` supports `order_id`, `client_order_id`, `broker_order_id`, `account_id`, `symbol`, `status`, `event_type`, `from_ms`, `to_ms`, and `limit` filters for startup recovery / order lifecycle troubleshooting. `risk-events` supports `risk_type`, `decision`, `account_id`, `symbol`, `from_ms`, `to_ms`, and `limit` filters for pre-trade rejection and reconciliation drift audit.
 
 `GET /api/v1/runs/{run_id}/crypto-positions` and `GET /api/v1/funding-rates` are read-only queries over the contract storage boundary. Decimal values are returned as strings. Paper runtime now writes simulated contract position lifecycle and funding settlement state to `crypto_positions`; funding-rate rows are exposed from the `funding_rates` storage boundary.
+
+`POST /api/v1/fee-rules` creates a storage-backed fee rule with optional tiers. `GET /api/v1/fee-rules` queries the effective rule for `market`, `exchange`, `asset_class`, optional `symbol`, and optional `at_ms`. `volume_window` is returned on every rule and accepts `run`, `rolling_30d`, or `calendar_month`; omitted create requests default to `run`. Runtime fee tiers use rule-level volume: `run` starts with zero historical fee volume, `rolling_30d` seeds from prior persisted fills in the last 30 days and evicts fills as they leave the runtime window, and `calendar_month` seeds from the current UTC month and resets across UTC month boundaries.
 
 Run-owned read models should be queried through explicit run-scoped routes:
 
@@ -2522,6 +2526,89 @@ Query 参数：
   "error": null,
   "request_id": "req_001",
   "ts": 1700000000000
+}
+```
+
+---
+
+## 20.8 Fee Rules
+
+创建 fee rule：
+
+```http
+POST /api/v1/fee-rules
+```
+
+```json
+{
+  "id": "fee-us-nasdaq-equity",
+  "market": "US",
+  "exchange": "NASDAQ",
+  "asset_class": "EQUITY",
+  "symbol": null,
+  "volume_window": "rolling_30d",
+  "maker_bps": "1",
+  "taker_bps": "2",
+  "minimum_fee": "0.01",
+  "tax_bps": null,
+  "exchange_fee_bps": null,
+  "effective_from_ms": 1700000000000,
+  "effective_to_ms": null,
+  "tiers": [
+    {
+      "id": "fee-us-nasdaq-equity-tier-1",
+      "volume_from": "0",
+      "volume_to": "100000",
+      "maker_bps": "1",
+      "taker_bps": "2"
+    }
+  ]
+}
+```
+
+`volume_window` 可选值：
+
+| 值 | 说明 |
+| --- | --- |
+| `run` | 默认值；运行开始时不读取历史成交，tier 只按本次运行内累计成交名义金额推进。 |
+| `rolling_30d` | 运行启动时读取同账户、同规则 scope 最近 30 天历史成交作为初始 tier volume；运行中在每次成交计费前剔除滑出 30 天窗口的成交，再累计本次成交。 |
+| `calendar_month` | 运行启动时读取同账户、同规则 scope 当月 1 日 00:00:00 UTC 至启动时刻的历史成交作为初始 tier volume；运行中在每次成交计费前按 UTC 月初剔除上月成交，跨月后只累计当前 UTC 月成交。 |
+
+查询当前有效 fee rule：
+
+```http
+GET /api/v1/fee-rules?market=US&exchange=NASDAQ&asset_class=EQUITY&symbol=US:NASDAQ:AAPL:EQUITY&at_ms=1700000000000
+```
+
+响应：
+
+```json
+{
+  "rule": {
+    "id": "fee-us-nasdaq-equity",
+    "market": "US",
+    "exchange": "NASDAQ",
+    "asset_class": "EQUITY",
+    "symbol": null,
+    "volume_window": "rolling_30d",
+    "maker_bps": "1",
+    "taker_bps": "2",
+    "minimum_fee": "0.01",
+    "tax_bps": null,
+    "exchange_fee_bps": null,
+    "effective_from_ms": 1700000000000,
+    "effective_to_ms": null
+  },
+  "tiers": [
+    {
+      "id": "fee-us-nasdaq-equity-tier-1",
+      "fee_rule_id": "fee-us-nasdaq-equity",
+      "volume_from": "0",
+      "volume_to": "100000",
+      "maker_bps": "1",
+      "taker_bps": "2"
+    }
+  ]
 }
 ```
 

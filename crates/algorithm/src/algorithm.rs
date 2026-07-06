@@ -6,7 +6,9 @@ use chrono::{Datelike, FixedOffset, Offset, TimeZone, Timelike, Utc, Weekday};
 use data::{Bar, MarketSlice};
 use events::{EventBus, runtime_envelope};
 use execution::order_for_target_delta;
-use market_rules::{ContractRiskLimits, MarketRuleSet};
+use market_rules::{
+    ContractRiskLimits, MarketRuleProvider, MarketRuleSet, StaticMarketRuleProvider,
+};
 use oms::OrderStateMachine;
 use portfolio::equal_weight_target;
 use risk::{
@@ -95,6 +97,139 @@ impl TradingSessionWindow {
                 local.hour() * 60 + local.minute(),
             )
             .map_err(anyhow::Error::from)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TradingDaySession {
+    pub name: String,
+    pub timezone: String,
+    pub open_time: String,
+    pub close_time: String,
+}
+
+impl TradingDaySession {
+    pub fn new(
+        name: impl Into<String>,
+        timezone: impl Into<String>,
+        open_time: impl Into<String>,
+        close_time: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            timezone: timezone.into(),
+            open_time: open_time.into(),
+            close_time: close_time.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TradingDaySchedule {
+    pub trading_day: String,
+    pub timezone: String,
+    pub is_open: bool,
+    pub sessions: Vec<TradingDaySession>,
+}
+
+impl TradingDaySchedule {
+    pub fn new(
+        trading_day: impl Into<String>,
+        timezone: impl Into<String>,
+        is_open: bool,
+        sessions: Vec<TradingDaySession>,
+    ) -> Self {
+        Self {
+            trading_day: trading_day.into(),
+            timezone: timezone.into(),
+            is_open,
+            sessions,
+        }
+    }
+
+    fn check(&self, symbol: &str, ts_ms: i64) -> anyhow::Result<()> {
+        if !self.is_open {
+            anyhow::bail!(
+                "market calendar closed for {symbol} on {}",
+                self.trading_day
+            );
+        }
+        if self.sessions.is_empty() {
+            return Ok(());
+        }
+        for session in &self.sessions {
+            if session.contains(ts_ms, &self.trading_day)? {
+                return Ok(());
+            }
+        }
+        anyhow::bail!(
+            "outside configured trading sessions for {symbol} on {}",
+            self.trading_day
+        )
+    }
+
+    fn matches_timestamp(&self, ts_ms: i64) -> anyhow::Result<bool> {
+        trading_day_for_timestamp(&self.timezone, ts_ms).map(|day| day == self.trading_day)
+    }
+}
+
+impl TradingDaySession {
+    fn contains(&self, ts_ms: i64, trading_day: &str) -> anyhow::Result<bool> {
+        let local_day = trading_day_for_timestamp(&self.timezone, ts_ms)?;
+        if local_day != trading_day {
+            return Ok(false);
+        }
+        let offset = timezone_offset_for_timestamp(&self.timezone, ts_ms)?;
+        let local = offset
+            .timestamp_millis_opt(ts_ms)
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("invalid timestamp {ts_ms} for trading session"))?;
+        let minute = local.hour() * 60 + local.minute();
+        let open = parse_hhmm_to_minutes(&self.open_time)?;
+        let close = parse_hhmm_to_minutes(&self.close_time)?;
+        if open <= close {
+            Ok(minute >= open && minute < close)
+        } else {
+            Ok(minute >= open)
+        }
+    }
+}
+
+pub trait TradingScheduleProvider {
+    fn check(&self, symbol: &str, ts_ms: i64) -> Option<anyhow::Result<()>>;
+}
+
+pub struct EmptyTradingScheduleProvider;
+
+impl TradingScheduleProvider for EmptyTradingScheduleProvider {
+    fn check(&self, _symbol: &str, _ts_ms: i64) -> Option<anyhow::Result<()>> {
+        None
+    }
+}
+
+pub struct ConfiguredTradingScheduleProvider {
+    schedules_by_symbol: BTreeMap<String, Vec<TradingDaySchedule>>,
+}
+
+impl ConfiguredTradingScheduleProvider {
+    pub fn new(schedules_by_symbol: BTreeMap<String, Vec<TradingDaySchedule>>) -> Self {
+        Self {
+            schedules_by_symbol,
+        }
+    }
+}
+
+impl TradingScheduleProvider for ConfiguredTradingScheduleProvider {
+    fn check(&self, symbol: &str, ts_ms: i64) -> Option<anyhow::Result<()>> {
+        let schedules = self.schedules_by_symbol.get(symbol)?;
+        for schedule in schedules {
+            match schedule.matches_timestamp(ts_ms) {
+                Ok(true) => return Some(schedule.check(symbol, ts_ms)),
+                Ok(false) => {}
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        None
     }
 }
 
@@ -780,6 +915,8 @@ pub struct AlgorithmEngine {
     settings: AlgorithmEngineSettings,
     universe: Box<dyn UniverseSelector>,
     alpha: Box<dyn AlphaModel + Send + Sync>,
+    market_rules: Box<dyn MarketRuleProvider + Send + Sync>,
+    trading_schedule: Box<dyn TradingScheduleProvider + Send + Sync>,
     account_book: AccountBook,
     portfolio_risk: PortfolioRiskPolicy,
     event_bus: Option<EventBus>,
@@ -807,6 +944,36 @@ impl AlgorithmEngine {
         universe: Box<dyn UniverseSelector>,
         alpha: Box<dyn AlphaModel + Send + Sync>,
     ) -> Self {
+        Self::new_with_universe_and_market_rules(
+            settings,
+            universe,
+            alpha,
+            Box::new(StaticMarketRuleProvider),
+        )
+    }
+
+    pub fn new_with_universe_and_market_rules(
+        settings: AlgorithmEngineSettings,
+        universe: Box<dyn UniverseSelector>,
+        alpha: Box<dyn AlphaModel + Send + Sync>,
+        market_rules: Box<dyn MarketRuleProvider + Send + Sync>,
+    ) -> Self {
+        Self::new_with_universe_market_rules_and_trading_schedule(
+            settings,
+            universe,
+            alpha,
+            market_rules,
+            Box::new(EmptyTradingScheduleProvider),
+        )
+    }
+
+    pub fn new_with_universe_market_rules_and_trading_schedule(
+        settings: AlgorithmEngineSettings,
+        universe: Box<dyn UniverseSelector>,
+        alpha: Box<dyn AlphaModel + Send + Sync>,
+        market_rules: Box<dyn MarketRuleProvider + Send + Sync>,
+        trading_schedule: Box<dyn TradingScheduleProvider + Send + Sync>,
+    ) -> Self {
         let account_book = AccountBook::new(settings.account_id.clone(), settings.initial_cash);
         let portfolio_risk = PortfolioRiskPolicy::new(
             settings.max_exposure,
@@ -821,6 +988,8 @@ impl AlgorithmEngine {
             settings,
             universe,
             alpha,
+            market_rules,
+            trading_schedule,
             account_book,
             portfolio_risk,
             event_bus: None,
@@ -974,9 +1143,14 @@ impl AlgorithmEngine {
         let Some(order) = order else {
             return Ok(None);
         };
-        if let Some(window) = &self.settings.trading_session
-            && let Err(error) = window.check(evaluation_ts_ms)
-        {
+        let trading_schedule_check = self.trading_schedule.check(&order.symbol, evaluation_ts_ms);
+        let trading_session_check = trading_schedule_check.or_else(|| {
+            self.settings
+                .trading_session
+                .as_ref()
+                .map(|window| window.check(evaluation_ts_ms))
+        });
+        if let Some(Err(error)) = trading_session_check {
             events.push(self.risk_rejected_event(
                 bar.ts_ms,
                 &order,
@@ -1053,7 +1227,7 @@ impl AlgorithmEngine {
             ));
             return Ok(Some(self.rejected_decision(events)));
         }
-        let market_rules = MarketRuleSet::for_symbol(&order.symbol)?;
+        let market_rules = self.market_rules.rules_for_symbol(&order.symbol)?;
         market_rules.validate_order(&order, bar.close)?;
         if let Some(contract_limits) = ContractRiskLimits::for_symbol(&order.symbol) {
             let target_notional = target.target_qty.abs() * bar.close;
@@ -1395,7 +1569,7 @@ impl AlgorithmEngine {
                     .get(&position.symbol)
                     .copied()
                     .unwrap_or(Decimal::ZERO);
-                let rules = MarketRuleSet::for_symbol(&position.symbol)?;
+                let rules = self.market_rules.rules_for_symbol(&position.symbol)?;
                 Ok(total + position_margin(&rules, position.qty, price))
             })
     }
@@ -1450,6 +1624,20 @@ fn timezone_offset_for_timestamp(timezone: &str, ts_ms: i64) -> anyhow::Result<F
         "America/New_York" => eastern_offset_for_timestamp(ts_ms),
         other => parse_fixed_offset(other),
     }
+}
+
+pub fn trading_day_for_timestamp(timezone: &str, ts_ms: i64) -> anyhow::Result<String> {
+    let offset = timezone_offset_for_timestamp(timezone, ts_ms)?;
+    let local = offset
+        .timestamp_millis_opt(ts_ms)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid timestamp {ts_ms} for trading day"))?;
+    Ok(format!(
+        "{:04}-{:02}-{:02}",
+        local.year(),
+        local.month(),
+        local.day()
+    ))
 }
 
 fn parse_fixed_offset(value: &str) -> anyhow::Result<FixedOffset> {

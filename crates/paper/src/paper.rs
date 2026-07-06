@@ -10,17 +10,27 @@ pub use ibkr::{
 
 use algorithm::{
     AccountSnapshot, AlgorithmDecision, AlgorithmEngine, AlgorithmEngineSettings,
-    ContractAccountingBook, ContractFill, ContractPosition, EngineEvent, ExecutionReport,
-    FundingRateEvent, SimulatedContractAccounting, TradingSessionWindow,
+    ConfiguredTradingScheduleProvider, ContractAccountingBook, ContractFill, ContractPosition,
+    EngineEvent, ExecutionReport, FundingRateEvent, SimulatedContractAccounting,
+    TradingDaySchedule, TradingDaySession, TradingScheduleProvider, TradingSessionWindow,
+    trading_day_for_timestamp,
 };
 use async_trait::async_trait;
 use backtest::BacktestSummary;
 use broker::{SimulatedBrokerSettings, simulate_market_fill};
 use data::{Bar, MarketSlice};
 use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
+use market_rules::{ConfiguredMarketRuleProvider, FeeRuleEngine, MarketRuleSet};
 use runtime::CancellationFlag;
 use rust_decimal::Decimal;
-use std::{collections::BTreeSet, error::Error, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+    str::FromStr,
+    sync::{Arc, RwLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use storage::{
     CryptoPositionCommand, Db, DbSystemLogSink, PaperExecutionCommand, PaperFailedOrderCommand,
     PaperFinalStateCommand, PaperOrderCommand, PaperPortfolioSnapshotCommand, PositionCommand,
@@ -255,7 +265,7 @@ impl PaperRuntime {
             symbol = %self.primary_symbol(),
             "paper run started"
         );
-        let mut session = PaperRunSession::new(self)?;
+        let mut session = PaperRunSession::new_for_market_slices(self, &market_slices).await?;
         let result = async {
             for market_slice in market_slices {
                 self.wait_before_bar(&cancel).await?;
@@ -299,7 +309,7 @@ impl PaperRuntime {
             symbol = %self.primary_symbol(),
             "paper stream started"
         );
-        let mut session = PaperRunSession::new(self)?;
+        let mut session = PaperRunSession::new(self).await?;
         let result = async {
             while let Some(bar) = bars.recv().await {
                 self.wait_before_bar(&cancel).await?;
@@ -345,7 +355,7 @@ impl PaperRuntime {
             symbol = %self.primary_symbol(),
             "paper market slice stream started"
         );
-        let mut session = PaperRunSession::new(self)?;
+        let mut session = PaperRunSession::new(self).await?;
         let result = async {
             while let Some(market_slice) = market_slices.recv().await {
                 self.wait_before_bar(&cancel).await?;
@@ -409,6 +419,10 @@ pub struct ExecutedPaperOrder {
 pub trait PaperOrderExecutor: Send + Sync {
     fn client_order_id(&self, run_id: &str, order_number: usize) -> String;
 
+    fn uses_runtime_fee_rules(&self) -> bool {
+        false
+    }
+
     async fn execute_order(
         &self,
         order: OrderRequest,
@@ -426,6 +440,10 @@ struct SimulatedPaperOrderExecutor {
 impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
     fn client_order_id(&self, _run_id: &str, order_number: usize) -> String {
         format!("{}-order-{}", self.client_order_prefix, order_number)
+    }
+
+    fn uses_runtime_fee_rules(&self) -> bool {
+        true
     }
 
     async fn execute_order(
@@ -449,16 +467,59 @@ impl PaperOrderExecutor for SimulatedPaperOrderExecutor {
 struct PaperRunSession<'a> {
     runtime: &'a PaperRuntime,
     engine: AlgorithmEngine,
+    dynamic_trading_schedule: Option<DynamicTradingScheduleProvider>,
     signals: usize,
     orders: usize,
     started_at_ms: Option<i64>,
     ended_at_ms: i64,
     last_snapshot: AccountSnapshot,
     contract_accounting: SimulatedContractAccounting,
+    fee_rule_engine: FeeRuleEngine,
 }
 
 impl<'a> PaperRunSession<'a> {
-    fn new(runtime: &'a PaperRuntime) -> anyhow::Result<Self> {
+    async fn new(runtime: &'a PaperRuntime) -> anyhow::Result<Self> {
+        let trading_schedule = DynamicTradingScheduleProvider::default();
+        let as_of_ms = current_unix_ms()?;
+        Self::new_with_trading_schedule(
+            runtime,
+            Some(trading_schedule.clone().boxed()),
+            Some(trading_schedule),
+            as_of_ms,
+        )
+        .await
+    }
+
+    async fn new_for_market_slices(
+        runtime: &'a PaperRuntime,
+        market_slices: &[MarketSlice],
+    ) -> anyhow::Result<Self> {
+        let default_timezone = runtime
+            .settings
+            .trading_session
+            .as_ref()
+            .map(|window| window.timezone.as_str())
+            .unwrap_or("UTC");
+        let trading_schedule = load_configured_trading_schedule(
+            &runtime.db,
+            &runtime.settings.assembly_symbols(),
+            market_slices,
+            default_timezone,
+        )
+        .await?;
+        let as_of_ms = market_slices
+            .first()
+            .map_or(current_unix_ms()?, |slice| slice.ts_ms);
+        Self::new_with_trading_schedule(runtime, Some(Box::new(trading_schedule)), None, as_of_ms)
+            .await
+    }
+
+    async fn new_with_trading_schedule(
+        runtime: &'a PaperRuntime,
+        trading_schedule: Option<Box<dyn TradingScheduleProvider + Send + Sync>>,
+        dynamic_trading_schedule: Option<DynamicTradingScheduleProvider>,
+        as_of_ms: i64,
+    ) -> anyhow::Result<Self> {
         let registry = StrategyRegistry;
         let assembly = registry.assemble_alpha(
             StrategyAssemblyConfig {
@@ -475,37 +536,67 @@ impl<'a> PaperRunSession<'a> {
             },
             StrategyRuntimeMode::Paper,
         )?;
-        let mut engine = AlgorithmEngine::new_with_universe(
-            AlgorithmEngineSettings {
-                run_id: runtime.settings.run_id.clone(),
-                mode: StrategyRuntimeMode::Paper,
-                account_id: runtime.settings.account_id.clone(),
-                symbol: assembly.primary_symbol.clone(),
-                order_qty: runtime.settings.order_qty,
-                max_abs_qty: runtime.settings.max_abs_qty,
-                max_order_qty: runtime.settings.max_order_qty,
-                max_order_notional: runtime.settings.max_order_notional,
-                min_cash_after_order: runtime.settings.min_cash_after_order,
-                max_exposure: runtime.settings.max_exposure,
-                max_drawdown: runtime.settings.max_drawdown,
-                max_leverage: runtime.settings.max_leverage,
-                max_margin_used: runtime.settings.max_margin_used,
-                trading_halted: runtime.settings.trading_halted,
-                allow_short: runtime.settings.allow_short,
-                shortable_symbols: runtime.settings.shortable_symbols.clone(),
-                initial_cash: runtime.settings.initial_cash,
-                daily_loss_limit: runtime.settings.daily_loss_limit,
-                max_order_attempts_per_day: runtime.settings.max_order_attempts_per_day,
-                max_order_failures_per_day: runtime.settings.max_order_failures_per_day,
-                max_price_deviation_bps: runtime.settings.max_price_deviation_bps,
-                max_market_data_age_ms: runtime.settings.max_market_data_age_ms,
-                max_consecutive_strategy_losses: runtime.settings.max_consecutive_strategy_losses,
-                max_consecutive_strategy_errors: runtime.settings.max_consecutive_strategy_errors,
-                trading_session: runtime.settings.trading_session.clone(),
-            },
-            assembly.universe,
-            assembly.alpha,
+        let market_rules = load_configured_market_rules(
+            &runtime.db,
+            &runtime.settings.assembly_symbols(),
+            as_of_ms,
+        )
+        .await?;
+        let fee_rule_seed = runtime
+            .db
+            .load_market_fee_rules_with_account_volume(
+                &runtime.settings.assembly_symbols(),
+                &runtime.settings.account_id,
+                as_of_ms,
+            )
+            .await?;
+        let fee_rule_engine = FeeRuleEngine::with_volume_entries_by_rule(
+            fee_rule_seed.rules_by_symbol,
+            fee_rule_seed.volume_entries_by_rule,
         );
+        let engine_settings = AlgorithmEngineSettings {
+            run_id: runtime.settings.run_id.clone(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: runtime.settings.account_id.clone(),
+            symbol: assembly.primary_symbol.clone(),
+            order_qty: runtime.settings.order_qty,
+            max_abs_qty: runtime.settings.max_abs_qty,
+            max_order_qty: runtime.settings.max_order_qty,
+            max_order_notional: runtime.settings.max_order_notional,
+            min_cash_after_order: runtime.settings.min_cash_after_order,
+            max_exposure: runtime.settings.max_exposure,
+            max_drawdown: runtime.settings.max_drawdown,
+            max_leverage: runtime.settings.max_leverage,
+            max_margin_used: runtime.settings.max_margin_used,
+            trading_halted: runtime.settings.trading_halted,
+            allow_short: runtime.settings.allow_short,
+            shortable_symbols: runtime.settings.shortable_symbols.clone(),
+            initial_cash: runtime.settings.initial_cash,
+            daily_loss_limit: runtime.settings.daily_loss_limit,
+            max_order_attempts_per_day: runtime.settings.max_order_attempts_per_day,
+            max_order_failures_per_day: runtime.settings.max_order_failures_per_day,
+            max_price_deviation_bps: runtime.settings.max_price_deviation_bps,
+            max_market_data_age_ms: runtime.settings.max_market_data_age_ms,
+            max_consecutive_strategy_losses: runtime.settings.max_consecutive_strategy_losses,
+            max_consecutive_strategy_errors: runtime.settings.max_consecutive_strategy_errors,
+            trading_session: runtime.settings.trading_session.clone(),
+        };
+        let mut engine = if let Some(trading_schedule) = trading_schedule {
+            AlgorithmEngine::new_with_universe_market_rules_and_trading_schedule(
+                engine_settings,
+                assembly.universe,
+                assembly.alpha,
+                Box::new(market_rules),
+                trading_schedule,
+            )
+        } else {
+            AlgorithmEngine::new_with_universe_and_market_rules(
+                engine_settings,
+                assembly.universe,
+                assembly.alpha,
+                Box::new(market_rules),
+            )
+        };
         if let Some(event_bus) = &runtime.event_bus {
             engine.set_event_bus(event_bus.clone());
         }
@@ -514,6 +605,7 @@ impl<'a> PaperRunSession<'a> {
         Ok(Self {
             runtime,
             engine,
+            dynamic_trading_schedule,
             signals: 0,
             orders: 0,
             started_at_ms: None,
@@ -523,10 +615,12 @@ impl<'a> PaperRunSession<'a> {
                 runtime.settings.account_id.clone(),
                 runtime.settings.max_leverage,
             ),
+            fee_rule_engine,
         })
     }
 
     async fn process_market_slice(&mut self, market_slice: MarketSlice) -> anyhow::Result<()> {
+        self.refresh_dynamic_trading_schedule(&market_slice).await?;
         if self.started_at_ms.is_none() {
             let settings = &self.runtime.settings;
             self.runtime
@@ -560,7 +654,7 @@ impl<'a> PaperRunSession<'a> {
                 .client_order_id(&settings.run_id, decision.order_number);
             self.persist_submitted_order(&decision, &order, &client_order_id, bar)
                 .await?;
-            let fill = match self
+            let mut fill = match self
                 .runtime
                 .executor
                 .execute_order(order.clone(), bar.close, decision.order_number)
@@ -575,6 +669,7 @@ impl<'a> PaperRunSession<'a> {
                     return Err(error);
                 }
             };
+            self.apply_runtime_fee_rule(&order, &mut fill, bar.ts_ms);
             let applied = self.engine.apply_execution(
                 &order,
                 &ExecutionReport {
@@ -596,6 +691,57 @@ impl<'a> PaperRunSession<'a> {
 
         self.settle_contract_funding(&market_slice).await?;
         self.persist_snapshot(market_slice.ts_ms).await
+    }
+
+    async fn refresh_dynamic_trading_schedule(
+        &self,
+        market_slice: &MarketSlice,
+    ) -> anyhow::Result<()> {
+        let Some(provider) = &self.dynamic_trading_schedule else {
+            return Ok(());
+        };
+        let default_timezone = self
+            .runtime
+            .settings
+            .trading_session
+            .as_ref()
+            .map(|window| window.timezone.as_str())
+            .unwrap_or("UTC");
+        for symbol in self.runtime.settings.assembly_symbols() {
+            let Some((market, _exchange, _asset_class)) = market_rule_symbol_parts(&symbol) else {
+                continue;
+            };
+            let trading_day = trading_day_for_timestamp(default_timezone, market_slice.ts_ms)?;
+            let schedule = load_trading_day_schedule(
+                &self.runtime.db,
+                &market,
+                &trading_day,
+                default_timezone,
+            )
+            .await?;
+            provider.set_schedule(symbol, trading_day, schedule)?;
+        }
+        Ok(())
+    }
+
+    fn apply_runtime_fee_rule(
+        &mut self,
+        order: &OrderRequest,
+        fill: &mut ExecutedPaperOrder,
+        ts_ms: i64,
+    ) {
+        if !self.runtime.executor.uses_runtime_fee_rules() {
+            return;
+        }
+        if let Some(breakdown) = self.fee_rule_engine.apply_fill_at(
+            &order.symbol,
+            order.order_type,
+            fill.price,
+            fill.qty,
+            ts_ms,
+        ) {
+            fill.fee = breakdown.total;
+        }
     }
 
     async fn persist_submitted_order(
@@ -897,6 +1043,189 @@ impl<'a> PaperRunSession<'a> {
             .next()
             .unwrap_or_else(|| self.runtime.settings.symbol.clone())
     }
+}
+
+async fn load_configured_market_rules(
+    db: &Db,
+    symbols: &[String],
+    as_of_ms: i64,
+) -> anyhow::Result<ConfiguredMarketRuleProvider> {
+    let mut rules_by_symbol = BTreeMap::new();
+    for symbol in symbols {
+        let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
+            continue;
+        };
+        let lot_rule = db
+            .find_lot_size_rule(&market, &exchange, &asset_class, symbol, as_of_ms)
+            .await?;
+        let price_rule = db
+            .find_price_limit_rule(&market, &exchange, &asset_class, symbol, as_of_ms)
+            .await?;
+        if lot_rule.is_none() && price_rule.is_none() {
+            continue;
+        }
+
+        let mut rules = MarketRuleSet::for_symbol(symbol)?;
+        if let Some(lot_rule) = lot_rule {
+            rules.lot_size = parse_rule_decimal("lot_size", &lot_rule.lot_size)?;
+            rules.min_qty = parse_rule_decimal("min_qty", &lot_rule.min_qty)?;
+            rules.min_notional = parse_rule_decimal("min_notional", &lot_rule.min_notional)?;
+        }
+        if let Some(price_rule) = price_rule {
+            rules.tick_size = parse_rule_decimal("tick_size", &price_rule.tick_size)?;
+        }
+        rules_by_symbol.insert(symbol.clone(), rules);
+    }
+
+    Ok(ConfiguredMarketRuleProvider::new(rules_by_symbol))
+}
+
+async fn load_configured_trading_schedule(
+    db: &Db,
+    symbols: &[String],
+    market_slices: &[MarketSlice],
+    default_timezone: &str,
+) -> anyhow::Result<ConfiguredTradingScheduleProvider> {
+    let mut schedules_by_symbol = BTreeMap::new();
+    for symbol in symbols {
+        let Some((market, _exchange, _asset_class)) = market_rule_symbol_parts(symbol) else {
+            continue;
+        };
+        let mut schedules = Vec::new();
+        for trading_day in trading_days_for_market_slices(market_slices, default_timezone)? {
+            if let Some(schedule) =
+                load_trading_day_schedule(db, &market, &trading_day, default_timezone).await?
+            {
+                schedules.push(schedule);
+            }
+        }
+        if !schedules.is_empty() {
+            schedules_by_symbol.insert(symbol.clone(), schedules);
+        }
+    }
+    Ok(ConfiguredTradingScheduleProvider::new(schedules_by_symbol))
+}
+
+async fn load_trading_day_schedule(
+    db: &Db,
+    market: &str,
+    trading_day: &str,
+    default_timezone: &str,
+) -> anyhow::Result<Option<TradingDaySchedule>> {
+    let calendar = db.find_market_calendar(market, trading_day).await?;
+    let sessions = db.list_trading_session_rules(market, trading_day).await?;
+    if calendar.is_none() && sessions.is_empty() {
+        return Ok(None);
+    }
+    let timezone = sessions
+        .first()
+        .map(|session| session.timezone.clone())
+        .unwrap_or_else(|| default_timezone.to_string());
+    let is_open = calendar.as_ref().map_or(true, |calendar| calendar.is_open);
+    Ok(Some(TradingDaySchedule::new(
+        trading_day.to_string(),
+        timezone,
+        is_open,
+        sessions
+            .into_iter()
+            .map(|session| {
+                TradingDaySession::new(
+                    session.session_name,
+                    session.timezone,
+                    session.open_time,
+                    session.close_time,
+                )
+            })
+            .collect(),
+    )))
+}
+
+#[derive(Clone, Default)]
+struct DynamicTradingScheduleProvider {
+    schedules_by_symbol: Arc<RwLock<BTreeMap<String, Vec<TradingDaySchedule>>>>,
+}
+
+impl DynamicTradingScheduleProvider {
+    fn boxed(self) -> Box<dyn TradingScheduleProvider + Send + Sync> {
+        Box::new(self)
+    }
+
+    fn set_schedule(
+        &self,
+        symbol: String,
+        trading_day: String,
+        schedule: Option<TradingDaySchedule>,
+    ) -> anyhow::Result<()> {
+        let mut schedules_by_symbol = self
+            .schedules_by_symbol
+            .write()
+            .map_err(|_| anyhow::anyhow!("dynamic trading schedule lock poisoned"))?;
+        let schedules = schedules_by_symbol.entry(symbol.clone()).or_default();
+        schedules.retain(|existing| existing.trading_day != trading_day);
+        if let Some(schedule) = schedule {
+            schedules.push(schedule);
+        }
+        if schedules.is_empty() {
+            schedules_by_symbol.remove(&symbol);
+        }
+        Ok(())
+    }
+}
+
+impl TradingScheduleProvider for DynamicTradingScheduleProvider {
+    fn check(&self, symbol: &str, ts_ms: i64) -> Option<anyhow::Result<()>> {
+        let schedules = match self.schedules_by_symbol.read() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return Some(Err(anyhow::anyhow!(
+                    "dynamic trading schedule lock poisoned"
+                )));
+            }
+        }
+        .get(symbol)?
+        .clone();
+        let provider = ConfiguredTradingScheduleProvider::new(BTreeMap::from([(
+            symbol.to_string(),
+            schedules,
+        )]));
+        provider.check(symbol, ts_ms)
+    }
+}
+
+fn trading_days_for_market_slices(
+    market_slices: &[MarketSlice],
+    timezone: &str,
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut trading_days = BTreeSet::new();
+    for market_slice in market_slices {
+        trading_days.insert(trading_day_for_timestamp(timezone, market_slice.ts_ms)?);
+    }
+    Ok(trading_days)
+}
+
+fn parse_rule_decimal(field: &str, value: &str) -> anyhow::Result<Decimal> {
+    Decimal::from_str(value).map_err(|error| anyhow::anyhow!("invalid {field} {value}: {error}"))
+}
+
+fn market_rule_symbol_parts(symbol: &str) -> Option<(String, String, String)> {
+    let mut parts = symbol.split(':');
+    let market = parts.next()?;
+    let exchange = parts.next()?;
+    let _code = parts.next()?;
+    let asset_class = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((
+        market.to_string(),
+        exchange.to_string(),
+        asset_class.to_string(),
+    ))
+}
+
+fn current_unix_ms() -> anyhow::Result<i64> {
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| anyhow::anyhow!("current time is out of range"))
 }
 
 fn contract_symbol_parts(symbol: &str) -> Option<(String, String)> {

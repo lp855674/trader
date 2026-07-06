@@ -61,7 +61,50 @@ impl Db {
         ))
         .execute(&self.pool)
         .await?;
+        let fee_rule_minimum_fee_migration = sqlx::raw_sql(include_str!(
+            "../../../migrations/0007_fee_rule_minimum_fee.sql"
+        ))
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = fee_rule_minimum_fee_migration
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
+        }
+        let fee_rule_tax_exchange_fee_migration = sqlx::raw_sql(include_str!(
+            "../../../migrations/0008_fee_rule_tax_exchange_fees.sql"
+        ))
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = fee_rule_tax_exchange_fee_migration
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
+        }
+        sqlx::raw_sql(include_str!("../../../migrations/0009_fee_rule_tiers.sql"))
+            .execute(&self.pool)
+            .await?;
+        let fee_rule_symbol_migration =
+            sqlx::raw_sql(include_str!("../../../migrations/0010_fee_rule_symbol.sql"))
+                .execute(&self.pool)
+                .await;
+        if let Err(error) = fee_rule_symbol_migration
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
+        }
+        let fee_rule_volume_window_migration = sqlx::raw_sql(include_str!(
+            "../../../migrations/0011_fee_rule_volume_window.sql"
+        ))
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = fee_rule_volume_window_migration
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
+        }
         self.ensure_config_lifecycle_columns().await?;
+        self.ensure_fee_rule_columns().await?;
         self.ensure_strategy_runs_error_column().await?;
         Ok(())
     }
@@ -135,6 +178,68 @@ impl Db {
         {
             return Err(error.into());
         }
+        Ok(())
+    }
+
+    async fn ensure_fee_rule_columns(&self) -> StorageResult<()> {
+        let columns = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
+            "PRAGMA table_info(fee_rules)",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let has_column = |column_name: &str| {
+            columns
+                .iter()
+                .any(|(_, name, _, _, _, _)| name == column_name)
+        };
+        let required_columns = [
+            ("minimum_fee", "TEXT"),
+            ("tax_bps", "TEXT"),
+            ("exchange_fee_bps", "TEXT"),
+            ("symbol", "TEXT"),
+            ("volume_window", "TEXT NOT NULL DEFAULT 'run'"),
+        ];
+
+        for (column_name, column_type) in required_columns {
+            if has_column(column_name) {
+                continue;
+            }
+            let result = sqlx::query(&format!(
+                "ALTER TABLE fee_rules ADD COLUMN {column_name} {column_type}"
+            ))
+            .execute(&self.pool)
+            .await;
+            if let Err(error) = result
+                && !is_duplicate_column_error(&error)
+            {
+                return Err(error.into());
+            }
+        }
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_fee_rules_lookup
+            ON fee_rules(market, exchange, asset_class, symbol, effective_from_ms)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_orders_account_symbol
+            ON orders(account_id, symbol)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_fills_order_ts
+            ON fills(order_id, ts_ms)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

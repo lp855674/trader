@@ -3,9 +3,10 @@
 use algorithm::{AlgorithmEngine, AlgorithmEngineSettings, ExecutionReport};
 use data::{Bar, MarketSlice};
 use events::{EventBus, LogWriter, LogWriterSettings, SystemLogLayer};
+use market_rules::FeeRuleEngine;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use storage::{
     BacktestCompletedRun, BacktestFilledExecutionCommand, BacktestPositionCommand, Db,
     DbSystemLogSink, RuntimeEventCommand,
@@ -211,6 +212,21 @@ impl BacktestRuntime {
         let mut orders = 0;
         let started_at_ms = market_slices.first().map_or(0, |slice| slice.ts_ms);
         let mut ended_at_ms = started_at_ms;
+        let mut fee_rule_engine = if let Some(db) = &self.db {
+            let seed = db
+                .load_market_fee_rules_with_account_volume(
+                    &self.settings.assembly_symbols(),
+                    &self.settings.account_id,
+                    started_at_ms,
+                )
+                .await?;
+            FeeRuleEngine::with_volume_entries_by_rule(
+                seed.rules_by_symbol,
+                seed.volume_entries_by_rule,
+            )
+        } else {
+            FeeRuleEngine::new(BTreeMap::new())
+        };
 
         let result = async {
             for market_slice in market_slices {
@@ -225,6 +241,15 @@ impl BacktestRuntime {
                         anyhow::anyhow!("missing market bar for generated order {}", order.symbol)
                     })?;
                     let broker_order_id = format!("backtest-{}", decision.order_number);
+                    let fee = fee_rule_engine
+                        .apply_fill_at(
+                            &order.symbol,
+                            order.order_type,
+                            bar.close,
+                            order.qty,
+                            bar.ts_ms,
+                        )
+                        .map_or(Decimal::ZERO, |breakdown| breakdown.total);
                     let execution = engine.apply_execution(
                         &order,
                         &ExecutionReport {
@@ -232,7 +257,7 @@ impl BacktestRuntime {
                             status: "FILLED".to_string(),
                             price: bar.close,
                             qty: order.qty,
-                            fee: Decimal::ZERO,
+                            fee,
                         },
                         bar.ts_ms,
                     )?;
@@ -262,7 +287,7 @@ impl BacktestRuntime {
                             broker_order_id,
                             order,
                             fill_price: bar.close,
-                            fee: Decimal::ZERO,
+                            fee,
                             ts_ms: bar.ts_ms,
                         })
                         .await?;

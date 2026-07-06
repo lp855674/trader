@@ -1,15 +1,17 @@
 use algorithm::{
     AccountingUpdatedPayload, AlgorithmEngine, AlgorithmEngineSettings, AlgorithmOrderPayload,
     AlphaGeneratedPayload, BrokerCashSnapshot, BrokerPositionSnapshot, CashSnapshot,
-    ContractAccountingBook, ContractFill, DriftSeverity, EngineEventKind, FundingRateEvent,
-    PositionSide, ReconciliationSnapshotReport, RuntimePositionSnapshot,
-    SimulatedContractAccounting, UniverseSelectedPayload,
+    ConfiguredTradingScheduleProvider, ContractAccountingBook, ContractFill, DriftSeverity,
+    EngineEventKind, FundingRateEvent, PositionSide, ReconciliationSnapshotReport,
+    RuntimePositionSnapshot, SimulatedContractAccounting, TradingDaySchedule, TradingDaySession,
+    UniverseSelectedPayload,
 };
 use alpha::{AlphaModel, CompositeAlphaModel};
 use data::{Bar, MarketSlice, SymbolBar};
 use events::{EventBus, SignalEvent, SignalSide};
+use market_rules::{ConfiguredMarketRuleProvider, MarketRuleSet};
 use rust_decimal_macros::dec;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -240,6 +242,196 @@ fn algorithm_engine_emits_full_decision_chain_for_selected_symbol() {
         ]
     );
     assert_eq!(decision.order.unwrap().symbol, "US:NASDAQ:AAPL:EQUITY");
+}
+
+#[test]
+fn algorithm_engine_uses_injected_market_rules() {
+    let symbol = "US:NASDAQ:AAPL:EQUITY";
+    let mut configured_rules = BTreeMap::new();
+    configured_rules.insert(
+        symbol.to_string(),
+        MarketRuleSet {
+            lot_size: dec!(10),
+            tick_size: dec!(0.01),
+            min_qty: dec!(10),
+            min_notional: dec!(0),
+            allow_market_orders: true,
+            initial_margin_rate: dec!(0),
+        },
+    );
+    let mut engine = AlgorithmEngine::new_with_universe_and_market_rules(
+        AlgorithmEngineSettings {
+            run_id: "run-configured-rules".to_string(),
+            mode: StrategyRuntimeMode::Backtest,
+            account_id: "backtest".to_string(),
+            symbol: symbol.to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
+        },
+        Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
+        Box::new(SymbolEchoAlphaModel),
+        Box::new(ConfiguredMarketRuleProvider::new(configured_rules)),
+    );
+
+    let error = engine
+        .on_market_slice(MarketSlice::new(
+            1,
+            vec![SymbolBar::new(symbol, bar(1, dec!(100)))],
+        ))
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("quantity is not a multiple of lot size")
+    );
+}
+
+#[test]
+fn algorithm_engine_uses_injected_trading_schedule() {
+    let symbol = "US:NASDAQ:AAPL:EQUITY";
+    let mut schedules = BTreeMap::new();
+    schedules.insert(
+        symbol.to_string(),
+        vec![TradingDaySchedule::new(
+            "2026-07-03",
+            "UTC",
+            false,
+            Vec::new(),
+        )],
+    );
+    let mut engine = AlgorithmEngine::new_with_universe_market_rules_and_trading_schedule(
+        AlgorithmEngineSettings {
+            run_id: "run-configured-schedule".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: symbol.to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
+        },
+        Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
+        Box::new(SymbolEchoAlphaModel),
+        Box::new(market_rules::StaticMarketRuleProvider),
+        Box::new(ConfiguredTradingScheduleProvider::new(schedules)),
+    );
+
+    let step = engine
+        .on_market_slice(MarketSlice::single(
+            symbol,
+            bar(1_783_087_200_000, dec!(100)),
+        ))
+        .unwrap();
+
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("trading_session_closed")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("market calendar closed"))
+    }));
+}
+
+#[test]
+fn algorithm_engine_rejects_outside_injected_trading_session() {
+    let symbol = "US:NASDAQ:AAPL:EQUITY";
+    let mut schedules = BTreeMap::new();
+    schedules.insert(
+        symbol.to_string(),
+        vec![TradingDaySchedule::new(
+            "2026-07-03",
+            "UTC",
+            true,
+            vec![TradingDaySession::new("regular", "UTC", "00:00", "02:00")],
+        )],
+    );
+    let mut engine = AlgorithmEngine::new_with_universe_market_rules_and_trading_schedule(
+        AlgorithmEngineSettings {
+            run_id: "run-configured-session".to_string(),
+            mode: StrategyRuntimeMode::Paper,
+            account_id: "paper".to_string(),
+            symbol: symbol.to_string(),
+            order_qty: dec!(1),
+            max_abs_qty: dec!(100),
+            max_order_qty: dec!(100),
+            max_order_notional: dec!(1000000),
+            min_cash_after_order: dec!(0),
+            max_exposure: dec!(1000000),
+            max_drawdown: dec!(1),
+            max_leverage: dec!(10),
+            max_margin_used: dec!(0),
+            trading_halted: false,
+            allow_short: false,
+            shortable_symbols: BTreeSet::new(),
+            initial_cash: dec!(100000),
+            daily_loss_limit: None,
+            max_order_attempts_per_day: None,
+            max_order_failures_per_day: None,
+            max_price_deviation_bps: None,
+            max_market_data_age_ms: None,
+            max_consecutive_strategy_losses: None,
+            max_consecutive_strategy_errors: None,
+            trading_session: None,
+        },
+        Box::new(StaticUniverseSelector::new(vec![symbol.to_string()])),
+        Box::new(SymbolEchoAlphaModel),
+        Box::new(market_rules::StaticMarketRuleProvider),
+        Box::new(ConfiguredTradingScheduleProvider::new(schedules)),
+    );
+
+    let step = engine
+        .on_market_slice(MarketSlice::single(
+            symbol,
+            bar(1_783_087_200_000, dec!(100)),
+        ))
+        .unwrap();
+
+    assert!(step.decisions[0].order.is_none());
+    assert!(step.decisions[0].events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload["risk_type"] == serde_json::json!("trading_session_closed")
+            && event.payload["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("outside configured trading sessions"))
+    }));
 }
 
 #[test]
