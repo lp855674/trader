@@ -8,6 +8,59 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, serde/toml, rust_decimal, Tokio, Clap, PowerShell scripts.
 
+## Current Status
+
+Status as of 2026-07-06 on branch `live-trading-risk-hardening`:
+
+```text
+Implementation: complete
+Broad compile verification: complete
+Full acceptance test set: pending
+Real broker / Gateway evidence: pending external environment
+```
+
+Implemented surfaces:
+
+- [x] Config and `RunSpec` preserve live-risk hardening fields.
+- [x] Pure risk guards exist for stale market data, price deviation, daily loss, order attempts, order failures, strategy circuit breakers, and trading session windows.
+- [x] Algorithm / paper / backtest paths consume the live-risk settings and emit auditable `algorithm.risk.rejected` events.
+- [x] Paper and backtest fill accounting share `apply_fill_at`.
+- [x] Generic `trader risk-kill-switch` records `operator_kill_switch` and can cancel known open orders.
+- [x] Binance / IBKR paper run and soak scripts write `halt_reason`, `risk_rejections`, `open_orders_remaining`, `cancel_all_*`, and reconciliation evidence.
+- [x] `docs/roadmap.md` has explicit paper-ready, tiny-size candidate, and not-production-complete readiness buckets.
+
+Verification already run:
+
+```powershell
+cargo check --workspace
+```
+
+Result: PASS.
+
+Remaining acceptance verification:
+
+```powershell
+cargo test -p config
+cargo test -p risk
+cargo test -p algorithm
+cargo test -p paper
+cargo test -p broker
+cargo test -p trader-cli
+cargo check --workspace
+powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-script-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-script-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+```
+
+External/manual evidence before claiming tiny-size real-money readiness:
+
+- Binance paper runner exits with `failure_class = ok`, `halt_reason = null`, and `open_orders_remaining = 0`.
+- Binance paper soak exits with every iteration `failure_class = ok`.
+- IBKR read-only Gateway checks exit with `failure_class = ok`.
+- IBKR paper autorun exits with `failure_class = ok`, Gateway checks pass, and `open_orders_remaining = 0`.
+- IBKR paper soak exits with every iteration `failure_class = ok`.
+- Any hard halt writes a machine-usable `risk_type` and fails closed.
+
 ## Global Constraints
 
 - Do not introduce RBAC or multi-user approval flow in this phase.
@@ -65,7 +118,7 @@ Modify:
 - Consumes: existing `[risk]`, `[broker]`, `[live]` config blocks
 - Produces: `RiskConfig.daily_loss_limit`, `RiskConfig.max_order_attempts_per_day`, `RiskConfig.max_order_failures_per_day`, `RiskConfig.max_price_deviation_bps`, `RiskConfig.max_market_data_age_ms`, `RiskConfig.max_consecutive_strategy_losses`, `RiskConfig.max_consecutive_strategy_errors`, `RiskConfig.trading_session`, `LiveKillSwitchPolicy`
 
-- [ ] **Step 1: Write failing config parsing tests**
+- [x] **Step 1: Write failing config parsing tests**
 
 ```rust
 #[test]
@@ -142,12 +195,12 @@ fn loads_paper_config_with_live_risk_hardening_fields() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p config loads_paper_config_with_live_risk_hardening_fields --test file_config_tests`
 Expected: FAIL because the new fields do not exist.
 
-- [ ] **Step 3: Add config structs and defaults**
+- [x] **Step 3: Add config structs and defaults**
 
 ```rust
 #[derive(Debug, Clone, Deserialize)]
@@ -190,11 +243,11 @@ pub struct TradingSessionConfig {
 
 Also mirror the same fields into `crates/runtime/src/run_spec.rs` so config snapshots retain the exact effective risk contract.
 
-- [ ] **Step 4: Add parse coverage for disabled / omitted fields**
+- [x] **Step 4: Add parse coverage for disabled / omitted fields**
 
 Add tests asserting omitted fields stay `None` and do not change existing sample configs.
 
-- [ ] **Step 5: Run config tests**
+- [x] **Step 5: Run config tests**
 
 Run:
 
@@ -205,7 +258,7 @@ cargo check -p config -p runtime
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/config crates/runtime
@@ -224,7 +277,7 @@ git commit -m "feat: add live risk hardening config surface"
 - Consumes: `OrderRequest`, mark/reference price, snapshot timestamps, runtime counters
 - Produces: `DailyLossGuard`, `OrderThrottleGuard`, `MarketDataFreshnessGuard`, `PriceDeviationGuard`, `TradingSessionGuard`, `StrategyCircuitBreaker`, `LiveRiskRejection`
 
-- [ ] **Step 1: Write failing guard tests**
+- [x] **Step 1: Write failing guard tests**
 
 ```rust
 #[test]
@@ -251,12 +304,12 @@ fn rejects_after_daily_loss_limit_is_breached() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p risk live_guard --test live_guard_tests`
 Expected: FAIL because the module and types do not exist.
 
-- [ ] **Step 3: Implement pure guard types**
+- [x] **Step 3: Implement pure guard types**
 
 Create `crates/risk/src/live_guards.rs` with a small reusable error shape:
 
@@ -299,7 +352,7 @@ Use the same pattern for:
 - consecutive strategy errors
 - trading session closed
 
-- [ ] **Step 4: Export the guard API through `risk.rs`**
+- [x] **Step 4: Export the guard API through `risk.rs`**
 
 ```rust
 mod live_guards;
@@ -310,11 +363,11 @@ pub use live_guards::{
 };
 ```
 
-- [ ] **Step 5: Extend legacy `RiskError` mapping**
+- [x] **Step 5: Extend legacy `RiskError` mapping**
 
 Add a helper so algorithm/runtime code can convert `LiveRiskRejection` into audit-friendly risk events without overloading the old enum with every runtime-only case.
 
-- [ ] **Step 6: Run risk tests**
+- [x] **Step 6: Run risk tests**
 
 Run:
 
@@ -325,7 +378,7 @@ cargo check -p risk
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/risk
@@ -345,7 +398,7 @@ git commit -m "feat: add pure live risk guards"
 - Consumes: new risk config fields, current snapshot, latest bar timestamp, order/failure counters
 - Produces: pre-trade rejection events with `risk_type` values `daily_loss_limit`, `max_order_attempts`, `max_order_failures`, `stale_market_data`, `price_deviation`, `trading_session_closed`, `strategy_loss_circuit_breaker`, `strategy_error_circuit_breaker`
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
 ```rust
 #[tokio::test]
@@ -363,7 +416,7 @@ fn algorithm_rejects_order_when_bar_timestamp_is_stale() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -374,7 +427,7 @@ cargo test -p paper daily_loss_breach
 
 Expected: FAIL because the runtime does not track or enforce the new guards.
 
-- [ ] **Step 3: Extend algorithm settings and runtime state**
+- [x] **Step 3: Extend algorithm settings and runtime state**
 
 Add fields to `AlgorithmEngineSettings`:
 
@@ -397,7 +450,7 @@ Track in engine/runtime session state:
 - `consecutive_strategy_errors`
 - `halt_reason`
 
-- [ ] **Step 4: Enforce guards before order generation / submit**
+- [x] **Step 4: Enforce guards before order generation / submit**
 
 In `AlgorithmEngine::decision_for_symbol`, check in this order:
 1. trading session window
@@ -419,7 +472,7 @@ json!({
 })
 ```
 
-- [ ] **Step 5: Stop the runtime after hard halts**
+- [x] **Step 5: Stop the runtime after hard halts**
 
 In `crates/paper/src/paper.rs`, when a hard-stop risk event is emitted:
 - persist the event
@@ -429,7 +482,7 @@ In `crates/paper/src/paper.rs`, when a hard-stop risk event is emitted:
 
 Order execution failures must increment `order_failures_today`; closed losing trades must increment `consecutive_strategy_losses`; successful non-losing closes should reset the loss streak.
 
-- [ ] **Step 6: Run targeted tests**
+- [x] **Step 6: Run targeted tests**
 
 Run:
 
@@ -440,7 +493,7 @@ cargo test -p paper
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/algorithm crates/paper
@@ -459,7 +512,7 @@ git commit -m "feat: enforce live hard-risk guards in algorithm and paper runtim
 - Consumes: broker `open_orders`, local run/order metadata, operator confirmation flags
 - Produces: CLI commands `trader binance-paper-cancel-open-orders`, `trader ibkr-paper-cancel-order`, and new generic `trader risk-kill-switch --run-id <id> --cancel-open-orders`
 
-- [ ] **Step 1: Write failing CLI and broker tests**
+- [x] **Step 1: Write failing CLI and broker tests**
 
 ```rust
 #[tokio::test]
@@ -470,7 +523,7 @@ async fn kill_switch_marks_run_halted_and_requests_cancel_all() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -481,7 +534,7 @@ cargo test -p trader-cli kill_switch --test cli_tests
 
 Expected: FAIL because no generic kill-switch flow exists.
 
-- [ ] **Step 3: Add broker-side helper surface**
+- [x] **Step 3: Add broker-side helper surface**
 
 Do not add a broad mutable broker admin API. Add a narrow helper:
 
@@ -499,7 +552,7 @@ Implementation:
 - cancel each order by `broker_order_id`
 - return final cancelled / terminal statuses
 
-- [ ] **Step 4: Add CLI kill-switch command**
+- [x] **Step 4: Add CLI kill-switch command**
 
 Add a focused operator command:
 
@@ -524,7 +577,7 @@ Behavior:
 - if `--cancel-open-orders`, cancel known remote opens for the account/symbol
 - print a short summary for cancelled/open/failed cancels
 
-- [ ] **Step 5: Run broker and CLI tests**
+- [x] **Step 5: Run broker and CLI tests**
 
 Run:
 
@@ -535,7 +588,7 @@ cargo test -p trader-cli --test cli_tests
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/broker apps/trader-cli
@@ -556,7 +609,7 @@ git commit -m "feat: add operator kill switch and cancel-all workflow"
 - Consumes: runner summaries, open-order checks, reconcile output, risk-event output
 - Produces: `summary.json` fields `halt_reason`, `risk_rejections`, `open_orders_remaining`, `cancel_all_attempted`, `cancel_all_succeeded`, `gateway_checks`, `reconciliation_status`
 
-- [ ] **Step 1: Write failing script-contract tests or documented manual assertions**
+- [x] **Step 1: Write failing script-contract tests or documented manual assertions**
 
 If no PowerShell test harness exists for these scripts, add explicit expected `summary.json` contract examples to the plan implementation task and validate them by parsing script output in CLI tests where practical.
 
@@ -574,7 +627,7 @@ Example target shape:
 }
 ```
 
-- [ ] **Step 2: Update run scripts to fail hard on residue and halts**
+- [x] **Step 2: Update run scripts to fail hard on residue and halts**
 
 Each paper run script must:
 - collect `risk-events` for the run
@@ -583,7 +636,7 @@ Each paper run script must:
 - if residue exists, attempt documented cancel-all cleanup before exiting
 - record whether cleanup was attempted and whether it succeeded
 
-- [ ] **Step 3: Update soak scripts to classify new failures**
+- [x] **Step 3: Update soak scripts to classify new failures**
 
 Add failure classes:
 - `daily_loss_limit`
@@ -595,7 +648,7 @@ Add failure classes:
 - `operator_kill_switch`
 - `open_orders_remaining`
 
-- [ ] **Step 4: Document operator evidence chain**
+- [x] **Step 4: Document operator evidence chain**
 
 In [docs/broker.md](/abs/path/D:/code/trader/trader/docs/broker.md) and [docs/paper-readiness-runbook.md](/abs/path/D:/code/trader/trader/docs/paper-readiness-runbook.md), add the exact progression:
 1. readonly
@@ -608,6 +661,8 @@ Each stage must state required evidence artifacts and stop conditions.
 
 - [ ] **Step 5: Run script verification**
 
+Current status: pending for live broker-facing scripts. Contract-level script tests are available, but the broker paper runner / soak commands require the appropriate local credentials or Gateway/Testnet environment before their evidence can be accepted.
+
 Run:
 
 ```powershell
@@ -619,7 +674,7 @@ Then run the soak scripts in readonly/dry-run mode if available.
 
 Expected: summaries contain the new fields and no existing script contract regresses.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts docs/broker.md docs/paper-readiness-runbook.md
@@ -636,7 +691,7 @@ git commit -m "feat: harden paper evidence and soak gates"
 - Consumes: completed hardening tasks
 - Produces: a concrete readiness checklist for "paper", "tiny real-money", and "not yet allowed"
 
-- [ ] **Step 1: Add a readiness matrix**
+- [x] **Step 1: Add a readiness matrix**
 
 Update `docs/roadmap.md` with three explicit buckets:
 - `paper ready`
@@ -651,6 +706,8 @@ Criteria for `tiny-size real-money candidate` must include all of:
 - IBKR readonly, autorun, and soak evidence collected
 
 - [ ] **Step 2: Run acceptance test set**
+
+Current status: pending. `cargo check --workspace` passed on 2026-07-06, but the full crate test set and PowerShell verification commands below still need to be run before this plan is considered fully accepted.
 
 Run:
 
@@ -672,7 +729,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 Expected: PASS. If broker-network-dependent scripts cannot run in the current environment, record that gap explicitly in the final implementation notes.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/roadmap.md README.md
