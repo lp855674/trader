@@ -1,6 +1,6 @@
 use market_rules::{
     ConfiguredMarketRuleProvider, ContractRiskError, ContractRiskLimits, FeeRule, FeeRuleEngine,
-    FeeTier, FeeVolumeWindow, MarketRuleError, MarketRuleProvider, MarketRuleSet,
+    FeeTier, FeeVolumeEntry, FeeVolumeWindow, MarketRuleError, MarketRuleProvider, MarketRuleSet,
     StaticMarketRuleProvider,
 };
 use rust_decimal::Decimal;
@@ -249,6 +249,167 @@ fn fee_rule_engine_advances_tiers_from_accumulated_fill_notional() {
     assert_eq!(first.total, dec!(0.01));
     assert_eq!(second.total, dec!(0.002));
     assert_eq!(engine.volume_for_rule("fee-tiered"), dec!(20));
+}
+
+#[test]
+fn fee_rule_engine_evicts_rolling_30d_volume_before_selecting_tier() {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+    let mut rule = FeeRule::flat("fee-rolling", Decimal::from(99), Decimal::from(99));
+    rule.volume_window = FeeVolumeWindow::Rolling30d;
+    rule.tiers = vec![
+        FeeTier {
+            volume_from: Decimal::ZERO,
+            volume_to: Some(dec!(100)),
+            maker_bps: Decimal::ONE,
+            taker_bps: dec!(10),
+        },
+        FeeTier {
+            volume_from: dec!(100),
+            volume_to: None,
+            maker_bps: dec!(0.5),
+            taker_bps: Decimal::ONE,
+        },
+    ];
+    let mut rules_by_symbol = BTreeMap::new();
+    rules_by_symbol.insert("US:NASDAQ:AAPL:EQUITY".to_string(), rule);
+    let mut seed_entries = BTreeMap::new();
+    seed_entries.insert(
+        "fee-rolling".to_string(),
+        vec![
+            FeeVolumeEntry {
+                ts_ms: 0,
+                notional: dec!(100),
+            },
+            FeeVolumeEntry {
+                ts_ms: DAY_MS,
+                notional: dec!(10),
+            },
+        ],
+    );
+    let mut engine = FeeRuleEngine::with_volume_entries_by_rule(rules_by_symbol, seed_entries);
+
+    let breakdown = engine
+        .apply_fill_at(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            dec!(10),
+            Decimal::ONE,
+            30 * DAY_MS + 1,
+        )
+        .unwrap();
+
+    assert_eq!(breakdown.total, dec!(0.01));
+    assert_eq!(engine.volume_for_rule("fee-rolling"), dec!(20));
+}
+
+#[test]
+fn fee_rule_engine_evicts_seed_and_runtime_rolling_volume() {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+    let mut rule = FeeRule::flat("fee-rolling-runtime", Decimal::from(99), Decimal::from(99));
+    rule.volume_window = FeeVolumeWindow::Rolling30d;
+    rule.tiers = vec![
+        FeeTier {
+            volume_from: Decimal::ZERO,
+            volume_to: Some(dec!(20)),
+            maker_bps: Decimal::ONE,
+            taker_bps: dec!(10),
+        },
+        FeeTier {
+            volume_from: dec!(20),
+            volume_to: None,
+            maker_bps: dec!(0.5),
+            taker_bps: dec!(2),
+        },
+    ];
+    let mut rules_by_symbol = BTreeMap::new();
+    rules_by_symbol.insert("US:NASDAQ:AAPL:EQUITY".to_string(), rule);
+
+    let start_ms = 1_700_000_000_000;
+    let mut seed_entries = BTreeMap::new();
+    seed_entries.insert(
+        "fee-rolling-runtime".to_string(),
+        vec![FeeVolumeEntry {
+            ts_ms: start_ms - DAY_MS,
+            notional: dec!(20),
+        }],
+    );
+    let mut engine = FeeRuleEngine::with_volume_entries_by_rule(rules_by_symbol, seed_entries);
+
+    let first = engine
+        .apply_fill_at(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            dec!(20),
+            Decimal::ONE,
+            start_ms + 2,
+        )
+        .unwrap();
+    assert_eq!(first.total, dec!(0.004));
+
+    let second = engine
+        .apply_fill_at(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            Decimal::ONE,
+            dec!(2),
+            start_ms + 31 * DAY_MS,
+        )
+        .unwrap();
+
+    assert_eq!(second.total, dec!(0.002));
+    assert_eq!(engine.volume_for_rule("fee-rolling-runtime"), dec!(2));
+}
+
+#[test]
+fn fee_rule_engine_resets_calendar_month_volume_before_selecting_tier() {
+    let mut rule = FeeRule::flat("fee-calendar", Decimal::from(99), Decimal::from(99));
+    rule.volume_window = FeeVolumeWindow::CalendarMonth;
+    rule.tiers = vec![
+        FeeTier {
+            volume_from: Decimal::ZERO,
+            volume_to: Some(dec!(100)),
+            maker_bps: Decimal::ONE,
+            taker_bps: dec!(10),
+        },
+        FeeTier {
+            volume_from: dec!(100),
+            volume_to: None,
+            maker_bps: dec!(0.5),
+            taker_bps: Decimal::ONE,
+        },
+    ];
+    let mut rules_by_symbol = BTreeMap::new();
+    rules_by_symbol.insert("US:NASDAQ:AAPL:EQUITY".to_string(), rule);
+    let mut seed_entries = BTreeMap::new();
+    seed_entries.insert(
+        "fee-calendar".to_string(),
+        vec![
+            FeeVolumeEntry {
+                ts_ms: 1_703_980_800_000,
+                notional: dec!(100),
+            },
+            FeeVolumeEntry {
+                ts_ms: 1_704_153_600_000,
+                notional: dec!(10),
+            },
+        ],
+    );
+    let mut engine = FeeRuleEngine::with_volume_entries_by_rule(rules_by_symbol, seed_entries);
+
+    let breakdown = engine
+        .apply_fill_at(
+            "US:NASDAQ:AAPL:EQUITY",
+            OrderType::Market,
+            dec!(10),
+            Decimal::ONE,
+            1_707_868_800_000,
+        )
+        .unwrap();
+
+    assert_eq!(breakdown.total, dec!(0.01));
+    assert_eq!(engine.volume_for_rule("fee-calendar"), dec!(10));
 }
 
 #[test]

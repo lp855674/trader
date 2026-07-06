@@ -480,10 +480,12 @@ struct PaperRunSession<'a> {
 impl<'a> PaperRunSession<'a> {
     async fn new(runtime: &'a PaperRuntime) -> anyhow::Result<Self> {
         let trading_schedule = DynamicTradingScheduleProvider::default();
+        let as_of_ms = current_unix_ms()?;
         Self::new_with_trading_schedule(
             runtime,
             Some(trading_schedule.clone().boxed()),
             Some(trading_schedule),
+            as_of_ms,
         )
         .await
     }
@@ -505,13 +507,18 @@ impl<'a> PaperRunSession<'a> {
             default_timezone,
         )
         .await?;
-        Self::new_with_trading_schedule(runtime, Some(Box::new(trading_schedule)), None).await
+        let as_of_ms = market_slices
+            .first()
+            .map_or(current_unix_ms()?, |slice| slice.ts_ms);
+        Self::new_with_trading_schedule(runtime, Some(Box::new(trading_schedule)), None, as_of_ms)
+            .await
     }
 
     async fn new_with_trading_schedule(
         runtime: &'a PaperRuntime,
         trading_schedule: Option<Box<dyn TradingScheduleProvider + Send + Sync>>,
         dynamic_trading_schedule: Option<DynamicTradingScheduleProvider>,
+        as_of_ms: i64,
     ) -> anyhow::Result<Self> {
         let registry = StrategyRegistry;
         let assembly = registry.assemble_alpha(
@@ -529,7 +536,6 @@ impl<'a> PaperRunSession<'a> {
             },
             StrategyRuntimeMode::Paper,
         )?;
-        let as_of_ms = current_unix_ms()?;
         let market_rules = load_configured_market_rules(
             &runtime.db,
             &runtime.settings.assembly_symbols(),
@@ -544,9 +550,9 @@ impl<'a> PaperRunSession<'a> {
                 as_of_ms,
             )
             .await?;
-        let fee_rule_engine = FeeRuleEngine::with_volume_by_rule(
+        let fee_rule_engine = FeeRuleEngine::with_volume_entries_by_rule(
             fee_rule_seed.rules_by_symbol,
-            fee_rule_seed.volume_by_rule,
+            fee_rule_seed.volume_entries_by_rule,
         );
         let engine_settings = AlgorithmEngineSettings {
             run_id: runtime.settings.run_id.clone(),
@@ -663,7 +669,7 @@ impl<'a> PaperRunSession<'a> {
                     return Err(error);
                 }
             };
-            self.apply_runtime_fee_rule(&order, &mut fill);
+            self.apply_runtime_fee_rule(&order, &mut fill, bar.ts_ms);
             let applied = self.engine.apply_execution(
                 &order,
                 &ExecutionReport {
@@ -718,14 +724,22 @@ impl<'a> PaperRunSession<'a> {
         Ok(())
     }
 
-    fn apply_runtime_fee_rule(&mut self, order: &OrderRequest, fill: &mut ExecutedPaperOrder) {
+    fn apply_runtime_fee_rule(
+        &mut self,
+        order: &OrderRequest,
+        fill: &mut ExecutedPaperOrder,
+        ts_ms: i64,
+    ) {
         if !self.runtime.executor.uses_runtime_fee_rules() {
             return;
         }
-        if let Some(breakdown) =
-            self.fee_rule_engine
-                .apply_fill(&order.symbol, order.order_type, fill.price, fill.qty)
-        {
+        if let Some(breakdown) = self.fee_rule_engine.apply_fill_at(
+            &order.symbol,
+            order.order_type,
+            fill.price,
+            fill.qty,
+            ts_ms,
+        ) {
             fill.fee = breakdown.total;
         }
     }

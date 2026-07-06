@@ -220,7 +220,10 @@ impl BacktestRuntime {
                     started_at_ms,
                 )
                 .await?;
-            FeeRuleEngine::with_volume_by_rule(seed.rules_by_symbol, seed.volume_by_rule)
+            FeeRuleEngine::with_volume_entries_by_rule(
+                seed.rules_by_symbol,
+                seed.volume_entries_by_rule,
+            )
         } else {
             FeeRuleEngine::new(BTreeMap::new())
         };
@@ -239,7 +242,13 @@ impl BacktestRuntime {
                     })?;
                     let broker_order_id = format!("backtest-{}", decision.order_number);
                     let fee = fee_rule_engine
-                        .apply_fill(&order.symbol, order.order_type, bar.close, order.qty)
+                        .apply_fill_at(
+                            &order.symbol,
+                            order.order_type,
+                            bar.close,
+                            order.qty,
+                            bar.ts_ms,
+                        )
                         .map_or(Decimal::ZERO, |breakdown| breakdown.total);
                     let execution = engine.apply_execution(
                         &order,

@@ -694,6 +694,7 @@ CREATE TABLE IF NOT EXISTS fee_rules (
     exchange TEXT NOT NULL,
     asset_class TEXT NOT NULL,
     symbol TEXT,
+    volume_window TEXT NOT NULL DEFAULT 'run',
     maker_bps TEXT NOT NULL,
     taker_bps TEXT NOT NULL,
     minimum_fee TEXT,
@@ -717,6 +718,14 @@ ON fee_rules(market, exchange, asset_class, symbol, effective_from_ms);
 
 阶梯费率归属到父 `fee_rules`。tier 只覆盖 maker/taker bps；`minimum_fee`、
 `tax_bps`、`exchange_fee_bps` 仍来自父规则。
+
+`volume_window` 控制阶梯费率的成交额窗口：
+
+| 值 | 说明 |
+| --- | --- |
+| `run` | 默认值；不读取历史成交 seed，只按当前运行内成交额累计。 |
+| `rolling_30d` | 启动时读取同账户、同规则作用域最近 30 天已持久化成交额作为 seed；运行中每次成交计费前剔除滑出 30 天窗口的历史和运行内成交。 |
+| `calendar_month` | 启动时读取同账户、同规则作用域从 UTC 月初到启动时的已持久化成交额作为 seed；运行中每次成交计费前按 UTC 月初剔除上月成交，跨月后只累计当前 UTC 月成交。 |
 
 ```sql
 CREATE TABLE IF NOT EXISTS fee_rule_tiers (

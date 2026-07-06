@@ -9,7 +9,7 @@ use events::{
     AnyEventEnvelope, EventBus, EventCategory, EventEnvelope, LogSink, LogSinkError, RuntimeEvent,
     StructuredLogEntry, TraderEvent,
 };
-use market_rules::{FeeRule, FeeTier, FeeVolumeWindow};
+use market_rules::{FeeRule, FeeTier, FeeVolumeEntry, FeeVolumeWindow};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -989,6 +989,7 @@ pub struct FeeVolumeQuery {
 pub struct FeeRuleEngineSeed {
     pub rules_by_symbol: BTreeMap<String, FeeRule>,
     pub volume_by_rule: BTreeMap<String, Decimal>,
+    pub volume_entries_by_rule: BTreeMap<String, Vec<FeeVolumeEntry>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2583,6 +2584,7 @@ impl Db {
     ) -> StorageResult<FeeRuleEngineSeed> {
         let mut rules_by_symbol = BTreeMap::new();
         let mut volume_by_rule = BTreeMap::new();
+        let mut volume_entries_by_rule = BTreeMap::new();
         let mut logged_run_rules = BTreeSet::new();
         for symbol in symbols {
             let Some((market, exchange, asset_class)) = market_rule_symbol_parts(symbol) else {
@@ -2600,8 +2602,8 @@ impl Db {
             let window = fee_rule.volume_window;
             match fee_volume_seed_window(window, as_of_ms)? {
                 Some((from_ms, to_ms)) if !volume_by_rule.contains_key(&rule_id) => {
-                    let volume = self
-                        .sum_fee_volume_notional(FeeVolumeQuery {
+                    let entries = self
+                        .list_fee_volume_entries(FeeVolumeQuery {
                             account_id: account_id.to_string(),
                             market: rule_scope.market,
                             exchange: rule_scope.exchange,
@@ -2611,6 +2613,9 @@ impl Db {
                             to_ms,
                         })
                         .await?;
+                    let volume = entries
+                        .iter()
+                        .fold(Decimal::ZERO, |total, entry| total + entry.notional);
                     tracing::debug!(
                         rule_id = %rule_id,
                         window = %window.as_str(),
@@ -2619,6 +2624,7 @@ impl Db {
                         seed_volume = %volume,
                         "fee rule volume seed loaded"
                     );
+                    volume_entries_by_rule.insert(rule_id.clone(), entries);
                     volume_by_rule.insert(rule_id.clone(), volume);
                 }
                 None if logged_run_rules.insert(rule_id.clone()) => {
@@ -2638,6 +2644,7 @@ impl Db {
         Ok(FeeRuleEngineSeed {
             rules_by_symbol,
             volume_by_rule,
+            volume_entries_by_rule,
         })
     }
 
@@ -6055,14 +6062,17 @@ impl Db {
             .collect())
     }
 
-    pub async fn sum_fee_volume_notional(&self, query: FeeVolumeQuery) -> StorageResult<Decimal> {
+    pub async fn list_fee_volume_entries(
+        &self,
+        query: FeeVolumeQuery,
+    ) -> StorageResult<Vec<FeeVolumeEntry>> {
         if query.to_ms <= query.from_ms {
-            return Ok(Decimal::ZERO);
+            return Ok(Vec::new());
         }
 
         let mut query_builder = QueryBuilder::<Sqlite>::new(
             r#"
-            SELECT f.symbol, f.price, f.qty
+            SELECT f.symbol, f.price, f.qty, f.ts_ms
             FROM fills f
             INNER JOIN orders o ON o.id = f.order_id
             WHERE o.account_id =
@@ -6079,13 +6089,15 @@ impl Db {
             query_builder.push(" AND f.symbol = ").push_bind(symbol);
         }
 
+        query_builder.push(" ORDER BY f.ts_ms, f.id");
+
         let rows = query_builder
-            .build_query_as::<(String, String, String)>()
+            .build_query_as::<(String, String, String, i64)>()
             .fetch_all(self.pool())
             .await?;
 
         rows.into_iter()
-            .filter(|(symbol, _, _)| {
+            .filter(|(symbol, _, _, _)| {
                 query.symbol.is_some()
                     || fee_volume_symbol_matches_scope(
                         symbol,
@@ -6094,11 +6106,22 @@ impl Db {
                         &query.asset_class,
                     )
             })
-            .try_fold(Decimal::ZERO, |total, (_, price, qty)| {
+            .map(|(_, price, qty, ts_ms)| {
                 let price = parse_rule_decimal("fill price", &price)?;
                 let qty = parse_rule_decimal("fill qty", &qty)?;
-                Ok(total + price * qty)
+                Ok(FeeVolumeEntry {
+                    ts_ms,
+                    notional: price * qty,
+                })
             })
+            .collect()
+    }
+
+    pub async fn sum_fee_volume_notional(&self, query: FeeVolumeQuery) -> StorageResult<Decimal> {
+        let entries = self.list_fee_volume_entries(query).await?;
+        Ok(entries
+            .into_iter()
+            .fold(Decimal::ZERO, |total, entry| total + entry.notional))
     }
 
     pub async fn list_positions(&self, run_id: &str) -> StorageResult<Vec<StoredPosition>> {

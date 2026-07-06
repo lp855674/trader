@@ -10,12 +10,9 @@ use paper::{
     ibkr_stock_symbol,
 };
 use rust_decimal_macros::dec;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::{SystemTime, UNIX_EPOCH},
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use storage::{
     Db, LotSizeRuleCommand, NewFeeRule, NewFeeRuleTier, NewFill, NewMarketCalendar, NewOrder,
@@ -249,7 +246,9 @@ async fn paper_runtime_prefers_symbol_specific_fee_rule_for_simulated_fills() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
+    let mut settings = PaperSettings::sample();
+    settings.allow_short = true;
+    let summary = PaperRuntime::new(db.clone(), settings)
         .run_bars(bars)
         .await
         .unwrap();
@@ -447,23 +446,20 @@ async fn paper_runtime_does_not_seed_run_fee_tier_from_account_volume() {
     })
     .await
     .unwrap();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let start_ms = 1_700_000_000_000;
     insert_historical_fee_fill(
         &db,
         "paper",
         "US:NASDAQ:AAPL:EQUITY",
         "20",
         "1",
-        now_ms - 24 * 60 * 60 * 1_000,
+        start_ms - 24 * 60 * 60 * 1_000,
     )
     .await;
     let bars = vec![
-        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
-        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
-        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(start_ms, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(start_ms + 1, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(start_ms + 2, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
     let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
@@ -519,23 +515,20 @@ async fn paper_runtime_seeds_fee_tier_from_rolling_account_volume() {
     })
     .await
     .unwrap();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let start_ms = 1_700_000_000_000;
     insert_historical_fee_fill(
         &db,
         "paper",
         "US:NASDAQ:AAPL:EQUITY",
         "20",
         "1",
-        now_ms - 24 * 60 * 60 * 1_000,
+        start_ms - 24 * 60 * 60 * 1_000,
     )
     .await;
     let bars = vec![
-        Bar::new(1, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
-        Bar::new(2, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
-        Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(start_ms, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(start_ms + 1, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(start_ms + 2, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
     let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
@@ -548,6 +541,91 @@ async fn paper_runtime_seeds_fee_tier_from_rolling_account_volume() {
     assert_eq!(fills.len(), 1);
     assert_eq!(fills[0].price, "20");
     assert_eq!(fills[0].fee, "0.004");
+}
+
+#[tokio::test]
+async fn paper_runtime_reselects_rolling_fee_tier_as_window_moves() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_fee_rule(NewFeeRule {
+        id: "fee-us-equity-runtime-rolling-dynamic".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        volume_window: "rolling_30d".to_string(),
+        maker_bps: "99".to_string(),
+        taker_bps: "99".to_string(),
+        minimum_fee: None,
+        tax_bps: None,
+        exchange_fee_bps: None,
+        effective_from_ms: 0,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-rolling-dynamic-tier-1".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-rolling-dynamic".to_string(),
+        volume_from: "0".to_string(),
+        volume_to: Some("20".to_string()),
+        maker_bps: "1".to_string(),
+        taker_bps: "10".to_string(),
+    })
+    .await
+    .unwrap();
+    db.insert_fee_rule_tier(NewFeeRuleTier {
+        id: "fee-us-equity-runtime-rolling-dynamic-tier-2".to_string(),
+        fee_rule_id: "fee-us-equity-runtime-rolling-dynamic".to_string(),
+        volume_from: "20".to_string(),
+        volume_to: None,
+        maker_bps: "0.5".to_string(),
+        taker_bps: "2".to_string(),
+    })
+    .await
+    .unwrap();
+
+    const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+    let start_ms = 1_700_000_000_000;
+    insert_historical_fee_fill(
+        &db,
+        "paper",
+        "US:NASDAQ:AAPL:EQUITY",
+        "20",
+        "1",
+        start_ms - DAY_MS,
+    )
+    .await;
+    let bars = vec![
+        Bar::new(start_ms, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(start_ms + 1, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(start_ms + 2, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+        Bar::new(
+            start_ms + 31 * DAY_MS,
+            dec!(1),
+            dec!(1),
+            dec!(1),
+            dec!(1),
+            dec!(1),
+        ),
+    ];
+
+    let mut settings = PaperSettings::sample();
+    settings.allow_short = true;
+    let summary = PaperRuntime::new(db.clone(), settings)
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 2);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 2);
+    assert_eq!(fills[0].price, "20");
+    assert_eq!(fills[0].fee, "0.004");
+    assert_eq!(fills[1].price, "1");
+    assert_eq!(fills[1].qty, "2");
+    assert_eq!(fills[1].ts_ms, start_ms + 31 * DAY_MS);
+    assert_eq!(fills[1].fee, "0.002");
 }
 
 #[tokio::test]

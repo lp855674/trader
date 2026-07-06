@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use rust_decimal::Decimal;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
 use trader_core::{OrderRequest, OrderType};
 
@@ -200,6 +200,13 @@ pub struct FeeBreakdown {
 pub struct FeeRuleEngine {
     rules_by_symbol: BTreeMap<String, FeeRule>,
     volume_by_rule: BTreeMap<String, Decimal>,
+    volume_entries_by_rule: BTreeMap<String, VecDeque<FeeVolumeEntry>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeeVolumeEntry {
+    pub ts_ms: i64,
+    pub notional: Decimal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +298,7 @@ impl FeeRuleEngine {
         Self {
             rules_by_symbol,
             volume_by_rule: BTreeMap::new(),
+            volume_entries_by_rule: BTreeMap::new(),
         }
     }
 
@@ -301,6 +309,35 @@ impl FeeRuleEngine {
         Self {
             rules_by_symbol,
             volume_by_rule,
+            volume_entries_by_rule: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_volume_entries_by_rule(
+        rules_by_symbol: BTreeMap<String, FeeRule>,
+        volume_entries_by_rule: BTreeMap<String, Vec<FeeVolumeEntry>>,
+    ) -> Self {
+        let volume_by_rule = volume_entries_by_rule
+            .iter()
+            .map(|(rule_id, entries)| {
+                (
+                    rule_id.clone(),
+                    entries
+                        .iter()
+                        .fold(Decimal::ZERO, |total, entry| total + entry.notional),
+                )
+            })
+            .collect();
+        Self {
+            rules_by_symbol,
+            volume_by_rule,
+            volume_entries_by_rule: volume_entries_by_rule
+                .into_iter()
+                .map(|(rule_id, mut entries)| {
+                    entries.sort_by_key(|entry| entry.ts_ms);
+                    (rule_id, entries.into())
+                })
+                .collect(),
         }
     }
 
@@ -311,8 +348,21 @@ impl FeeRuleEngine {
         price: Decimal,
         qty: Decimal,
     ) -> Option<FeeBreakdown> {
-        let rule = self.rules_by_symbol.get(symbol)?;
+        self.apply_fill_at(symbol, order_type, price, qty, 0)
+    }
+
+    pub fn apply_fill_at(
+        &mut self,
+        symbol: &str,
+        order_type: OrderType,
+        price: Decimal,
+        qty: Decimal,
+        ts_ms: i64,
+    ) -> Option<FeeBreakdown> {
+        let rule = self.rules_by_symbol.get(symbol)?.clone();
         let rule_id = rule.id.clone();
+        let volume_window = rule.volume_window;
+        self.prune_volume_window(&rule_id, volume_window, ts_ms);
         let volume = self
             .volume_by_rule
             .get(&rule_id)
@@ -321,9 +371,16 @@ impl FeeRuleEngine {
         let breakdown = rule.fee_breakdown(order_type, price, qty, volume);
         let fill_notional = price * qty;
         self.volume_by_rule
-            .entry(rule_id)
+            .entry(rule_id.clone())
             .and_modify(|current| *current += fill_notional)
             .or_insert(fill_notional);
+        self.volume_entries_by_rule
+            .entry(rule_id)
+            .or_default()
+            .push_back(FeeVolumeEntry {
+                ts_ms,
+                notional: fill_notional,
+            });
         Some(breakdown)
     }
 
@@ -333,6 +390,78 @@ impl FeeRuleEngine {
             .copied()
             .unwrap_or(Decimal::ZERO)
     }
+
+    fn prune_volume_window(
+        &mut self,
+        rule_id: &str,
+        volume_window: FeeVolumeWindow,
+        as_of_ms: i64,
+    ) {
+        match volume_window {
+            FeeVolumeWindow::Run => {}
+            FeeVolumeWindow::Rolling30d => {
+                const ROLLING_30D_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+                self.prune_entries_before(rule_id, as_of_ms.saturating_sub(ROLLING_30D_MS));
+            }
+            FeeVolumeWindow::CalendarMonth => {
+                self.prune_entries_before(rule_id, utc_month_start_ms(as_of_ms));
+            }
+        }
+    }
+
+    fn prune_entries_before(&mut self, rule_id: &str, from_ms: i64) {
+        let Some(entries) = self.volume_entries_by_rule.get_mut(rule_id) else {
+            return;
+        };
+        let mut removed = Decimal::ZERO;
+        while entries.front().is_some_and(|entry| entry.ts_ms < from_ms) {
+            if let Some(entry) = entries.pop_front() {
+                removed += entry.notional;
+            }
+        }
+        if removed == Decimal::ZERO {
+            return;
+        }
+        let current = self
+            .volume_by_rule
+            .get(rule_id)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        self.volume_by_rule
+            .insert(rule_id.to_string(), (current - removed).max(Decimal::ZERO));
+    }
+}
+
+fn utc_month_start_ms(ts_ms: i64) -> i64 {
+    const MS_PER_DAY: i64 = 86_400_000;
+    let days = ts_ms.div_euclid(MS_PER_DAY);
+    let (year, month, _) = civil_from_days(days);
+    days_from_civil(year, month, 1) * MS_PER_DAY
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + i64::from(month <= 2);
+    (year as i32, month as u32, day as u32)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = i64::from(month);
+    let day = i64::from(day);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 pub fn liquidity_role_for_order_type(order_type: OrderType) -> LiquidityRole {
