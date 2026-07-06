@@ -15,8 +15,8 @@ Status as of 2026-07-06 on branch `live-trading-risk-hardening`:
 ```text
 Implementation: complete
 Broad compile verification: complete
-Full acceptance test set: pending
-Real broker / Gateway evidence: pending external environment
+Full acceptance test set: partial; script contracts and IBKR Gateway evidence complete
+Real broker / Gateway evidence: IBKR paper Gateway complete on 2026-07-06
 ```
 
 Implemented surfaces:
@@ -33,9 +33,25 @@ Verification already run:
 
 ```powershell
 cargo check --workspace
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-script-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DUQ645291 -Port 4002
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DUQ645291 -Port 4002 -ConfirmAutoRun
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DUQ645291 -Port 4002 -ConfirmIbkrPaperOrder
 ```
 
 Result: PASS.
+
+IBKR evidence artifacts:
+
+- Read-only summary: `data/ibkr-paper-test/read-only-414fa8a031fb/summary.json`
+- AutoRun summary: `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`
+- Soak summary: `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`
+
+IBKR acceptance observations:
+
+- Read-only Gateway checks completed with `failure_class = ok`.
+- AutoRun completed with `failure_class = ok`, `open_orders_remaining = 0`, and `reconciliation_status = ok`.
+- Three-iteration soak completed with every iteration `failure_class = ok`, `open_orders_remaining = 0`, and `reconciliation_status = ok`.
 
 Remaining acceptance verification:
 
@@ -56,9 +72,9 @@ External/manual evidence before claiming tiny-size real-money readiness:
 
 - Binance paper runner exits with `failure_class = ok`, `halt_reason = null`, and `open_orders_remaining = 0`.
 - Binance paper soak exits with every iteration `failure_class = ok`.
-- IBKR read-only Gateway checks exit with `failure_class = ok`.
-- IBKR paper autorun exits with `failure_class = ok`, Gateway checks pass, and `open_orders_remaining = 0`.
-- IBKR paper soak exits with every iteration `failure_class = ok`.
+- [x] IBKR read-only Gateway checks exit with `failure_class = ok`.
+- [x] IBKR paper autorun exits with `failure_class = ok`, Gateway checks pass, and `open_orders_remaining = 0`.
+- [x] IBKR paper soak exits with every iteration `failure_class = ok`.
 - Any hard halt writes a machine-usable `risk_type` and fails closed.
 
 ## Global Constraints
@@ -659,9 +675,9 @@ In [docs/broker.md](/abs/path/D:/code/trader/trader/docs/broker.md) and [docs/pa
 
 Each stage must state required evidence artifacts and stop conditions.
 
-- [ ] **Step 5: Run script verification**
+- [x] **Step 5: Run script verification**
 
-Current status: pending for live broker-facing scripts. Contract-level script tests are available, but the broker paper runner / soak commands require the appropriate local credentials or Gateway/Testnet environment before their evidence can be accepted.
+Current status: IBKR broker-facing script verification completed against local IBKR Gateway on 2026-07-06. Binance paper verification remains a separate external-environment item.
 
 Run:
 
@@ -673,6 +689,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
 Then run the soak scripts in readonly/dry-run mode if available.
 
 Expected: summaries contain the new fields and no existing script contract regresses.
+
+IBKR evidence:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-script-tests.ps1` passed, including transient `PendingCancel` open-order settlement coverage.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DUQ645291 -Port 4002 -ConfirmAutoRun` passed with summary `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DUQ645291 -Port 4002 -ConfirmIbkrPaperOrder` passed with summary `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`.
 
 - [x] **Step 6: Commit**
 
@@ -707,7 +729,7 @@ Criteria for `tiny-size real-money candidate` must include all of:
 
 - [ ] **Step 2: Run acceptance test set**
 
-Current status: pending. `cargo check --workspace` passed on 2026-07-06, but the full crate test set and PowerShell verification commands below still need to be run before this plan is considered fully accepted.
+Current status: partial. `cargo check --workspace`, IBKR script contracts, IBKR read-only, IBKR AutoRun, and IBKR three-iteration soak passed on 2026-07-06. The full crate test set, `scripts\verify.ps1`, and Binance paper evidence still need to be run before this plan is considered fully accepted.
 
 Run:
 

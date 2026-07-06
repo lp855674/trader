@@ -7,7 +7,9 @@ param(
     [string]$AccountId = "",
     [string]$GatewayHost = "",
     [int]$Port = 0,
-    [int]$ClientId = 0
+    [int]$ClientId = 0,
+    [int]$OpenOrdersSettleSeconds = 30,
+    [int]$OpenOrdersPollSeconds = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -323,6 +325,30 @@ function Invoke-IbkrPaperGatewayChecks {
     }
 }
 
+function Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders {
+    param([string]$Reason)
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds([Math]::Max(0, $OpenOrdersSettleSeconds))
+    $pollSeconds = [Math]::Max(1, $OpenOrdersPollSeconds)
+    $gatewayChecks = $null
+
+    do {
+        $gatewayChecks = Invoke-IbkrPaperGatewayChecks
+        $openOrdersRemaining = Get-OpenOrdersCount ([string]$gatewayChecks.open_orders)
+        if ($openOrdersRemaining -eq 0) {
+            return $gatewayChecks
+        }
+        if ($gatewayChecks.failure_class -ne "open_orders_remaining") {
+            return $gatewayChecks
+        }
+        if ([DateTimeOffset]::UtcNow -ge $deadline) {
+            return $gatewayChecks
+        }
+        Write-Host "IBKR paper open orders still settling after $Reason; open_orders=$openOrdersRemaining"
+        Start-Sleep -Seconds $pollSeconds
+    } while ($true)
+}
+
 function Get-IbkrReconciliationStatus {
     param([object]$GatewayChecks)
 
@@ -416,7 +442,7 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "text", "--output", $textReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
-    $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecks } else { $null }
+    $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason "paper-run" } else { $null }
     $riskEventsOutput = Invoke-CapturedTrader @("risk-events", "--config", $runConfigPath, "--run-id", $runId)
     $riskRejections = @(Get-RiskRejections $riskEventsOutput)
     $haltReason = Get-FirstHaltReason $riskRejections
@@ -440,7 +466,7 @@ try {
             Write-Warning "risk-kill-switch cleanup failed: $_"
             $cancelAllOutput = "failed: $_"
         }
-        $gatewayChecks = Invoke-IbkrPaperGatewayChecks
+        $gatewayChecks = Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason "risk-kill-switch"
         $openOrdersOutput = [string]$gatewayChecks.open_orders
         $openOrdersRemaining = Get-OpenOrdersCount $openOrdersOutput
         $cancelAllSucceeded = ($openOrdersRemaining -eq 0)

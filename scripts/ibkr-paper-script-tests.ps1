@@ -45,7 +45,21 @@ switch ($command) {
     "risk-events" { }
     "risk-kill-switch" { Write-Output "risk kill switch ok: account_id=DU12345 cancel_open_orders=true cancelled=0 symbol=*" }
     "ibkr-paper-readonly" { Write-Output "ibkr paper readonly ok: connected=true account=DU12345" }
-    "ibkr-paper-open-orders" { Write-Output "ibkr paper open orders ok: open_orders=0" }
+    "ibkr-paper-open-orders" {
+        if ($env:TRADER_FAKE_MODE -eq "open_orders_settle_once") {
+            $stateDir = if ($env:TRADER_FAKE_STATE_DIR) { $env:TRADER_FAKE_STATE_DIR } else { "." }
+            $statePath = Join-Path $stateDir "open-orders-seen.txt"
+            if (-not (Test-Path $statePath)) {
+                "seen" | Set-Content -Path $statePath -Encoding UTF8
+                Write-Output "ibkr paper open orders ok: open_orders=1"
+                Write-Output "order: id=1 symbol=AAPL status=PendingCancel remaining=1"
+            } else {
+                Write-Output "ibkr paper open orders ok: open_orders=0"
+            }
+        } else {
+            Write-Output "ibkr paper open orders ok: open_orders=0"
+        }
+    }
     "ibkr-paper-executions" { Write-Output "ibkr paper executions ok: executions=0" }
     "ibkr-paper-reconcile" { Write-Output "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0" }
     "ibkr-paper-recover" { Write-Output "ibkr paper recover ok: scanned=0 recovered=0 missing=0 remaining=0" }
@@ -58,6 +72,7 @@ switch ($command) {
 '@ | Set-Content -Path $fakeTrader -Encoding UTF8
 
 $env:TRADER_TEST_EXE = $fakeTrader
+$env:TRADER_FAKE_STATE_DIR = $testRoot
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "ok"
 $successOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU12345 2>&1
@@ -105,6 +120,21 @@ Assert-True ($runSummary.open_orders_remaining -eq 0) "expected zero open orders
 Assert-True (-not [bool]$runSummary.cancel_all_attempted) "expected no cancel-all attempt on success"
 Assert-True ($runSummary.gateway_checks.status -eq "completed") "expected gateway checks completed status"
 Assert-True ($runSummary.gateway_checks.failure_class -eq "ok") "expected gateway checks ok failure class"
+
+Remove-Item -LiteralPath (Join-Path $testRoot "open-orders-seen.txt") -Force -ErrorAction SilentlyContinue
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "open_orders_settle_once"
+$settledRunOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 -OpenOrdersSettleSeconds 3 -OpenOrdersPollSeconds 1 2>&1
+$settledRunOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected ibkr paper run success after transient open orders settle"
+$settledRunSummaryPath = ($settledRunOutput | Select-String -Pattern 'summary\s+:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($settledRunSummaryPath)) "expected settled ibkr paper run summary path"
+$settledRunSummary = Read-Json $settledRunSummaryPath
+Assert-True ($settledRunSummary.status -eq "completed") "expected settled ibkr paper run completed status"
+Assert-True ($settledRunSummary.failure_class -eq "ok") "expected settled ibkr paper run ok failure class"
+Assert-True ($settledRunSummary.open_orders_remaining -eq 0) "expected settled ibkr paper run zero open orders"
+Assert-True (-not [bool]$settledRunSummary.cancel_all_attempted) "expected settled ibkr paper run no cancel-all attempt"
+Assert-True ($settledRunSummary.gateway_checks.status -eq "completed") "expected settled gateway checks completed"
 
 $env:TRADER_TEST_GATEWAY_PORT = "unreachable"
 $env:TRADER_FAKE_MODE = "ok"
@@ -189,6 +219,7 @@ Assert-True ($failedSoakSummary.iterations[0].failure_class -eq "gateway_unreach
 Assert-True ($failedSoakSummary.iterations[0].open_orders_remaining -eq 0) "expected failed ibkr soak zero open orders"
 
 Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue
+Remove-Item Env:\TRADER_FAKE_STATE_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_TEST_GATEWAY_PORT -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_FAKE_MODE -ErrorAction SilentlyContinue
 Write-Host "IBKR paper script tests passed"
