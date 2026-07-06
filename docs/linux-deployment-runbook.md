@@ -10,7 +10,7 @@ Each Linux release archive contains:
 - `trader`: CLI binary for migrate/backtest/paper/replay/ops tasks
 - `linux-service.sh`: systemd install/update helper
 - `configs/trader-server.example.toml`: example config file
-- `VERSION`, `README.md`, `api.md`
+- `VERSION`, `README.md`, `docs/tech/api.md`
 
 ## Runtime configuration
 

@@ -2,17 +2,16 @@
 
 本文是 Trader 项目的技术规则入口，用来约束架构边界、运行链路、数据真源和交付门禁。
 
-本文不维护阶段计划、实施日志、脚本流水账或“当前已完成列表”。计划只放在 `docs/roadmap.md` 和 `docs/superpowers/plans/`；专题设计只放在 `docs/README.md` 指定的对应文档。
+本文不维护阶段计划、实施日志、脚本流水账或“当前已完成列表”。计划只放在 `docs/roadmap.md` 和 `docs/superpowers/plans/`；模块技术事实只放在 `docs/tech/*.md`。
 
 ## 文档真源
 
-- 架构总览、核心原则、分层边界只维护在 `docs/architecture.md`。
-- Rust workspace、crate 职责、依赖方向、feature flags 和测试策略只维护在 `docs/crates.md`。
-- SQLite 表、Parquet schema、repository、migration 和状态恢复只维护在 `docs/database.md`。
-- REST / WebSocket endpoint、payload、错误码和安全设计只维护在 `docs/api.md`。
-- Event envelope、事件分类、事件流和事件持久化只维护在 `docs/events.md`。
-- Strategy trait、StrategyContext、信号模型和策略边界只维护在 `docs/strategy.md`。
-- Broker trait、订单/成交/持仓映射、回报、重连和限流只维护在 `docs/broker.md`。
+- 架构总览、核心原则、分层边界和 crate 职责以本文件的跨模块规则和 `docs/tech/*.md` 的模块文档为准。
+- SQLite 表、Parquet schema、repository、migration 和状态恢复只维护在 `docs/tech/storage.md`、`docs/tech/data.md` 和 `docs/tech/feature_store.md`。
+- REST / WebSocket endpoint、payload、错误码和安全设计只维护在 `docs/tech/api.md`。
+- Event envelope、事件分类、事件流和事件持久化只维护在 `docs/tech/events.md`。
+- Strategy / Alpha / Broker 的当前实现边界只维护在 `docs/tech/strategies.md`、`docs/tech/alpha.md` 和 `docs/tech/broker.md`。
+- 已归档的 `docs/archive/legacy/*.md` 只作为历史资料，不作为当前实现真源。
 - 阶段目标、MVP 范围和发布计划只维护在 `docs/roadmap.md`。
 - 本文件只保留跨文档必须共同遵守的规则；不得复制专题文档中的表结构、API payload、完整 trait 或执行计划。
 
@@ -89,6 +88,64 @@ Trader/
 | `backtest` | 只负责历史回测 runtime、模拟时钟、成交模型和报告输入。 |
 | `replay` | 只负责历史行情回放、暂停、恢复、跳转和倍速。 |
 | `api` | 只负责 router、command handler、query handler 和 event broadcast。 |
+
+## 模块 tech.md 汇总与映射
+
+本节只维护模块技术文档索引和短摘要；模块细节以 `docs/tech/*.md` 为准。
+
+| 模块 | crate/app 路径 | tech.md | 文档聚焦点 |
+| --- | --- | --- | --- |
+| `trader-cli` | `apps/trader-cli` | `docs/tech/trader-cli.md` | 本地运维、迁移、数据导入、feature、回测、paper、broker smoke、报告。 |
+| `trader-server` | `apps/trader-server` | `docs/tech/trader-server.md` | 服务进程启动、server config、SQLite migration、API state、Axum 监听。 |
+| `core` (`trader_core`) | `crates/core` | `docs/tech/core.md` | 领域基础类型、订单/账户/市场/symbol、低层依赖边界。 |
+| `events` | `crates/events` | `docs/tech/events.md` | Event envelope、event bus、typed events、结构化日志写入边界。 |
+| `config` | `crates/config` | `docs/tech/config.md` | TOML 模型、server/run 配置分离、broker/risk/live/paper 配置派生。 |
+| `storage` | `crates/storage` | `docs/tech/storage.md` | SQLite、migration、repository、command/read model、审计真源。 |
+| `data` | `crates/data` | `docs/tech/data.md` | Bar/MarketSlice、CSV/Parquet、外部元数据/资金费率/公司行为采集。 |
+| `market_rules` | `crates/market_rules` | `docs/tech/market_rules.md` | lot/tick/min notional、合约规则、fee rule 和 tier engine。 |
+| `universe` | `crates/universe` | `docs/tech/universe.md` | static/filtered/ranked 标的池选择和当前行情过滤。 |
+| `alpha` | `crates/alpha` | `docs/tech/alpha.md` | AlphaModel、最高置信度、净信号、投票和权重聚合。 |
+| `strategies` | `crates/strategies` | `docs/tech/strategies.md` | 策略 registry、技术指标策略、多 alpha 装配、feature gate/rank。 |
+| `portfolio` | `crates/portfolio` | `docs/tech/portfolio.md` | Signal 到 TargetPosition 的目标仓位映射。 |
+| `risk` | `crates/risk` | `docs/tech/risk.md` | 组合风控、short 权限、live guards、broker 前业务闸门。 |
+| `execution` | `crates/execution` | `docs/tech/execution.md` | 目标仓位差额到订单意图、分片、reduce-only/post-only。 |
+| `oms` | `crates/oms` | `docs/tech/oms.md` | 订单状态机、部分成交、overfill 防护、report 幂等。 |
+| `broker` | `crates/broker` | `docs/tech/broker.md` | Broker trait、fake/simulated、Binance testnet、IBKR paper adapter。 |
+| `algorithm` | `crates/algorithm` | `docs/tech/algorithm.md` | 共享决策链、AlgorithmEngine、事件、账户和执行回填。 |
+| `backtest` | `crates/backtest` | `docs/tech/backtest.md` | 历史回测 runtime、MarketSlice、fee rule、回测成交和持久化。 |
+| `replay` | `crates/replay` | `docs/tech/replay.md` | 行情回放、暂停/恢复/seek、倍速和 market.bar 事件。 |
+| `runtime` | `crates/runtime` | `docs/tech/runtime.md` | RunSpec、RuntimeManager、LiveRuntime、worker protocol、取消和恢复。 |
+| `paper` | `crates/paper` | `docs/tech/paper.md` | PaperRuntime、simulated/Binance/IBKR paper executor、快照和审计写入。 |
+| `accounting` | `crates/accounting` | `docs/tech/accounting.md` | 现金、持仓均价、已实现/未实现 PnL、权益和敞口。 |
+| `metrics` | `crates/metrics` | `docs/tech/metrics.md` | 收益、回撤、胜率、Sharpe/Sortino 和 paper summary。 |
+| `api` | `crates/api` | `docs/tech/api.md` | Axum router、AppState、REST/WebSocket、运行控制和 response 映射。 |
+| `indicators` | `crates/indicators` | `docs/tech/indicators.md` | SMA、EMA、RSI 和指标状态边界。 |
+| `feature_store` | `crates/feature_store` | `docs/tech/feature_store.md` | Feature record、manifest、Parquet store、研究特征契约。 |
+
+### 模块简短总结
+
+- `trader-cli` 是本地操作面，负责把命令行、配置和文件装配到 crate 能力上。
+- `trader-server` 是服务进程入口，负责配置、数据库、migration、API state 和 HTTP/WebSocket 服务装配。
+- `core` 提供跨模块共享领域类型，保持低层、稳定、无业务流程。
+- `events` 统一事件 envelope、运行时广播和结构化日志写入边界。
+- `config` 是行为配置入口，区分 run template 与 server deployment。
+- `storage` 是 SQLite、repository、migration 和审计 read/write model 真源。
+- `data` 管理行情模型、历史文件、market slice 和外部数据采集。
+- `market_rules` 在 broker 前校验市场交易规则并计算费用。
+- `universe` 只选择标的池，不处理风控、订单或持久化。
+- `alpha` 和 `strategies` 只生成/组合信号，并保持策略运行可复现。
+- `portfolio` 将信号变成目标仓位，short 合法性留给 risk。
+- `risk` 是 broker 前最后业务闸门，负责组合风险和 live guard。
+- `execution` 将目标仓位差额转换为订单意图和订单片段。
+- `oms` 维护订单状态机和 broker report 幂等。
+- `broker` 封装外部交易通道，不承担策略、风控或 PnL。
+- `algorithm` 执行共享决策链，把 universe、alpha、portfolio、rules、risk、execution、OMS 和 accounting 串起来。
+- `backtest`、`replay`、`paper`、`runtime` 分别承担历史回测、行情回放、paper 交易和运行编排差异。
+- `accounting` 管理账户现金、持仓、均价和 PnL。
+- `metrics` 只做绩效指标和报告输入计算。
+- `api` 负责控制面/查询面/事件广播，不直接暴露 storage record。
+- `indicators` 提供策略可复用指标状态。
+- `feature_store` 提供研究特征、manifest 和 Parquet 契约。
 
 ## 依赖方向
 
@@ -229,9 +286,9 @@ Universe Selection
 ## 验证门禁
 
 - 修改领域规则、订单链路、风控、持久化或 broker adapter 后，必须补充或更新相应测试。
-- 修改 API contract 前必须同步 `docs/api.md`，并验证调用方和 response shape。
-- 修改数据库 schema 前必须同步 migration、repository、`docs/database.md` 和恢复路径。
-- 修改事件 schema 前必须同步 `docs/events.md`，并验证 event replay / WebSocket 消费路径。
+- 修改 API contract 前必须同步 `docs/tech/api.md`，并验证调用方和 response shape。
+- 修改数据库 schema 前必须同步 migration、repository、`docs/tech/storage.md` 和恢复路径。
+- 修改事件 schema 前必须同步 `docs/tech/events.md`，并验证 event replay / WebSocket 消费路径。
 - 修改 feature / research 路径前必须验证 Parquet round-trip、manifest 校验和 Backtest / Paper 装配路径。
 - Paper / broker 相关改动必须至少覆盖无网络 smoke；真实外部连接测试必须受显式确认参数保护。
 - 本地完整验证命令以 `scripts/` 中的 smoke/readiness 脚本为准；本文只记录门禁原则，不复制脚本清单。

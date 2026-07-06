@@ -229,7 +229,7 @@ Primary files:
 - `crates/runtime/src/*`
 - `crates/storage/src/repositories.rs`
 - `crates/api/tests/api_tests.rs`
-- `docs/api.md`
+- `docs/tech/api.md`
 
 ### Workstream C: Make run-scoped queries explicit
 
@@ -264,7 +264,7 @@ Primary files:
 - `crates/api/src/api.rs`
 - `crates/api/tests/api_tests.rs`
 - `crates/api/tests/backtest_api_tests.rs`
-- `docs/api.md`
+- `docs/tech/api.md`
 - `docs/web-admin-api.md`
 
 ### Workstream D: Upgrade `RuntimeManager` into run supervision
@@ -300,7 +300,7 @@ Primary files:
 - `crates/strategy/*`
 - `crates/api/src/api.rs`
 - `apps/trader-cli/src/main.rs`
-- `docs/strategy.md`
+- `docs/tech/strategies.md`
 
 Design direction:
 
