@@ -14,9 +14,9 @@ Trader 采用渐进式开发路线。
 
 ### Production Reconciliation / Contract Metadata Hardening
 
-- Status: active implementation plan saved in `docs/superpowers/plans/2026-07-07-production-reconciliation-contract-metadata-hardening.md`.
+- Status: IBKR paper-account gate accepted; implementation plan saved in `docs/superpowers/plans/2026-07-07-production-reconciliation-contract-metadata-hardening.md` and acceptance summary saved in `docs/production-reconciliation-acceptance-summary.md`.
 - Scope: broker account balances, positions, open orders, executions, IBKR contract metadata, reconciliation audits, and long-run evidence.
-- Exit gate: broker-connected soak produces `failure_class=ok` with zero cash, position, open-order, and execution drift counters.
+- Exit gate: passed for current IBKR paper-account scope with 39 audits across 6 read-only, 3 paper order-submit, and 30 extended read-only iterations; all cash, position, open-order, execution, and stale-input counters were zero.
 
 ### Paper Ready
 
@@ -42,7 +42,7 @@ Trader 采用渐进式开发路线。
 ### Not Yet Production Complete
 
 ```text
-1. 还没有多 broker 的长期 reconciliation evidence
+1. 还没有 live account / multi-broker 的长期 reconciliation evidence
 2. 还没有生产级监控告警值班链路
 3. 还没有完整真实资金长跑恢复证据
 4. 还没有多人审批 / 更细粒度权限治理
@@ -54,7 +54,7 @@ Trader 采用渐进式开发路线。
 - Keep `event_store` as immutable audit truth.
 - `order_events`、`risk_events`、`insights` and `portfolio_targets` exist as query projections.
 - Market-rule reference tables exist as storage boundary; runtime rule assembly still needs phased wiring before claiming configurable multi-market support.
-- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, Binance funding-rate ingestion can populate historical funding rows, Binance reconciliation has drift-detection tests, and the IBKR paper adapter can return broker account/position snapshots through the broker boundary. Production crypto derivative accounting still needs real Gateway long-run verification and full IBKR contract reconciliation verification.
+- `crypto_positions` and `funding_rates` exist as storage boundary and read-only API/CLI query surface; simulated paper runtime writes contract positions and funding settlement, Binance funding-rate ingestion can populate historical funding rows, Binance reconciliation has drift-detection tests, and the IBKR paper adapter can return broker account/position snapshots through the broker boundary. IBKR paper-account production reconciliation has accepted 39-audit evidence; production crypto derivative accounting still needs live account, multi-asset filled-order, and multi-broker long-run verification.
 - `cash_snapshots` and `position_snapshots` are captured by paper runtime and exposed through explicit run-scoped API/CLI queries; live runtime writes a startup baseline cash snapshot, can periodically capture fake broker cash/position snapshots from `[live].broker_snapshot_interval_ms`, can inject the IBKR paper Gateway adapter from live API config for account/position snapshots, and emits cash/position `reconciliation_drift` risk events when broker state diverges from the latest runtime snapshots. API/CLI reconciliation status can summarize snapshots plus drift events, and dedicated reconciliation-drift audit queries can list persisted drift events across runs or for a single run. Non-IBKR real broker-reported cash/position scheduling remains follow-up work.
 - API-launched Backtest, Paper, Replay, and Live runs plus CLI-launched Backtest, Paper, and Replay runs capture `RUN` config snapshots in `configs`; managed configs now support version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue, JSON diff, rollback-to-new-draft, release/audit/event logging, run-version bindings, and API/CLI status queries for local lifecycle tracking. Full authenticated RBAC, multi-environment permission matrices, and multi-person approval queues remain follow-up work.
 - API-launched Backtest, Paper, Replay, and Live runs index lifecycle messages in `system_logs`; runtime/ingestion/system log filtering, count/search pagination, JSONL export, HTTP NDJSON shipper, polling tail, retention purge, startup-time and server background `[logging].retention_days` cleanup, and drop-metric ops readback are exposed through API/CLI. `events::LogWriter` / `SystemLogLayer` / `DbSystemLogSink` now provide async buffered tracing writes for algorithm decision points, paper, backtest, API request completion logs, and live runtime lifecycle/snapshot/reconciliation logs, including dropped-log counting when tracing channels are full, and `[logging]` config maps enabled/level/categories/buffer/flush settings into CLI/API-launched runtime writers. Reconciliation drift also writes dedicated `runtime.alert` records plus API/CLI alert-summary readback and `runtime.alert_delivery` records plus API/CLI delivery-summary readback; CLI can export both alert and delivery records as JSONL, ship filtered `system_logs` to an external HTTP collector with optional bearer auth, HMAC signature headers, and retry/backoff for transient collector failures, and locally redeliver failed alert records to a specified webhook. `[live.alerts]` now supports backward-compatible single-sink config plus `[[live.alerts.sinks]]` multi-sink routing to local JSONL file and webhook POST sinks with optional `cooldown_ms` dedup, `webhook_timeout_ms`, `webhook_max_retries`, and bearer-token auth. `system_logs` remains the full audit trail. Managed external collector deployment remains follow-up work.
@@ -98,8 +98,8 @@ Current status:
 Remaining:
 
 ```text
-1. Real Gateway verification for IBKR account/position snapshot scheduling
-2. Full IBKR contract reconciliation verification
+1. Live-account verification for broker account/position snapshot scheduling
+2. Multi-asset IBKR filled-order reconciliation verification
 3. Real broker adapter account/position snapshot implementations beyond IBKR/fake/Binance parser scaffolding
 4. Production alerts for reconciliation drift
 5. Production hardening for reference-data rate limits and stale-data alerts
