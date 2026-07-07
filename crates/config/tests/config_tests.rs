@@ -474,6 +474,134 @@ fn parses_live_alert_multi_sink_config() {
 }
 
 #[test]
+fn parses_live_reconciliation_gate_config() {
+    let input = r#"
+        [runtime]
+        mode = "live"
+        run_id = "live-gated"
+
+        [database]
+        url = "sqlite://data/live-gated.sqlite"
+
+        [data]
+        source = "parquet"
+        path = "datasets/ibkr/aapl_1d.parquet"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "10000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "10"
+
+        [risk]
+        max_order_notional = "1000"
+        min_cash_after_order = "1000"
+        max_exposure = "10000"
+        max_drawdown = "0.2"
+        max_leverage = "1"
+        max_margin_used = "1000"
+        trading_halted = false
+
+        [broker]
+        kind = "ibkr"
+        mode = "live"
+        host = "127.0.0.1"
+        port = 4001
+        client_id = 1
+        order_submit_enabled = false
+
+        [paper]
+        account_id = "DU****91"
+        slippage_bps = "1"
+        fee_bps = "1"
+
+        [live]
+        enabled = true
+        heartbeat_ms = 1000
+        broker_snapshot_interval_ms = 1000
+
+        [live.reconciliation_gate]
+        enabled = true
+        min_successful_audits = 3
+        max_audit_age_ms = 300000
+        required_accounts = ["ibkr:DU****91", "binance:paper"]
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(config.live.reconciliation_gate.enabled);
+    assert_eq!(config.live.reconciliation_gate.min_successful_audits, 3);
+    assert_eq!(config.live.reconciliation_gate.max_audit_age_ms, 300000);
+    assert_eq!(
+        config.live.reconciliation_gate.required_accounts,
+        vec!["ibkr:DU****91".to_string(), "binance:paper".to_string()]
+    );
+}
+
+#[test]
+fn defaults_live_reconciliation_gate_to_disabled() {
+    let input = r#"
+        [runtime]
+        mode = "backtest"
+        run_id = "sample-ma-cross"
+
+        [database]
+        url = "sqlite://data/trader.sqlite"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 20
+        slow_window = 60
+
+        [portfolio]
+        initial_cash = "100000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "paper"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = false
+        broker_snapshot_interval_ms = 250
+    "#;
+
+    let config = AppConfig::from_toml_str(input).unwrap();
+
+    assert!(!config.live.reconciliation_gate.enabled);
+    assert_eq!(config.live.reconciliation_gate.min_successful_audits, 1);
+    assert_eq!(config.live.reconciliation_gate.max_audit_age_ms, 300000);
+    assert!(config.live.reconciliation_gate.required_accounts.is_empty());
+}
+
+#[test]
 fn parses_ingestion_config() {
     let config = AppConfig::from_toml_str(
         r#"

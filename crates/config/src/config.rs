@@ -283,9 +283,42 @@ pub struct LiveConfig {
     pub heartbeat_ms: Option<u64>,
     pub broker_snapshot_interval_ms: Option<u64>,
     #[serde(default)]
+    pub reconciliation_gate: LiveReconciliationGateConfig,
+    #[serde(default)]
     pub startup_recovery: LiveStartupRecoveryConfig,
     #[serde(default)]
     pub alerts: LiveAlertsConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiveReconciliationGateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_reconciliation_gate_min_successful_audits")]
+    pub min_successful_audits: usize,
+    #[serde(default = "default_reconciliation_gate_max_audit_age_ms")]
+    pub max_audit_age_ms: i64,
+    #[serde(default)]
+    pub required_accounts: Vec<String>,
+}
+
+impl Default for LiveReconciliationGateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_successful_audits: default_reconciliation_gate_min_successful_audits(),
+            max_audit_age_ms: default_reconciliation_gate_max_audit_age_ms(),
+            required_accounts: Vec::new(),
+        }
+    }
+}
+
+fn default_reconciliation_gate_min_successful_audits() -> usize {
+    1
+}
+
+fn default_reconciliation_gate_max_audit_age_ms() -> i64 {
+    300_000
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
