@@ -40,7 +40,13 @@ switch ($command) {
     "check-config" { Write-Output "config ok" }
     "paper-preflight" { Write-Output "paper preflight ok: real_broker_connection=true order_submit_enabled=true" }
     "migrate" { Write-Output "migrated" }
-    "paper-run" { Write-Output "paper completed: signals=1 orders=1" }
+    "paper-run" {
+        if ($env:TRADER_FAIL_ON_PAPER_RUN -eq "1") {
+            Write-Error "paper-run must not be called"
+            exit 3
+        }
+        Write-Output "paper completed: signals=1 orders=1"
+    }
     "report" { Write-Output "report ok" }
     "risk-events" { }
     "risk-kill-switch" { Write-Output "risk kill switch ok: account_id=DU12345 cancel_open_orders=true cancelled=0 symbol=*" }
@@ -104,6 +110,24 @@ $summary = Read-Json (Join-Path $latest.FullName "summary.json")
 Assert-True ($summary.status -eq "failed") "expected failed summary"
 Assert-True ($summary.failure_class -eq "gateway_unreachable") "expected gateway_unreachable classification"
 Assert-True ($summary.failed_check -eq "gateway_preflight") "expected failed gateway preflight check"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "ok"
+$env:TRADER_FAIL_ON_PAPER_RUN = "1"
+$readOnlyRunOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -SkipRefresh -ReadOnly -AccountId DU12345 2>&1
+$readOnlyRunOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected ibkr read-only run to skip paper-run"
+$readOnlyRunSummaryPath = ($readOnlyRunOutput | Select-String -Pattern 'summary\s+:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($readOnlyRunSummaryPath)) "expected ibkr read-only run summary path"
+$readOnlyRunSummary = Read-Json $readOnlyRunSummaryPath
+Assert-True ($readOnlyRunSummary.status -eq "completed") "expected ibkr read-only run completed status"
+Assert-True ($readOnlyRunSummary.failure_class -eq "ok") "expected ibkr read-only run ok failure class"
+Assert-True ($readOnlyRunSummary.order_submit -eq "disabled") "expected ibkr read-only order submit disabled"
+Assert-True ($readOnlyRunSummary.reconciliation_status -eq "ok") "expected ibkr read-only reconciliation status"
+Assert-True ($readOnlyRunSummary.reconciliation_audits -eq 1) "expected ibkr read-only reconciliation audit"
+Assert-True ($readOnlyRunSummary.reconciliation_open_order_drifts -eq 0) "expected ibkr read-only zero open order drifts"
+Assert-True ($readOnlyRunSummary.reconciliation_execution_drifts -eq 0) "expected ibkr read-only zero execution drifts"
+Remove-Item Env:\TRADER_FAIL_ON_PAPER_RUN -ErrorAction SilentlyContinue
 
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "ok"
@@ -222,4 +246,5 @@ Remove-Item Env:\TRADER_TEST_EXE -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_FAKE_STATE_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_TEST_GATEWAY_PORT -ErrorAction SilentlyContinue
 Remove-Item Env:\TRADER_FAKE_MODE -ErrorAction SilentlyContinue
+Remove-Item Env:\TRADER_FAIL_ON_PAPER_RUN -ErrorAction SilentlyContinue
 Write-Host "IBKR paper script tests passed"

@@ -483,19 +483,25 @@ try {
     Invoke-CheckedTrader @("check-config", "--config", $runConfigPath)
     Invoke-CheckedTrader @("paper-preflight", "--config", $runConfigPath)
     Invoke-CheckedTrader @("migrate", "--config", $runConfigPath)
-    try {
-        Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
-    } catch {
-        if ($usesGateway) {
-            Invoke-IbkrPaperGatewayChecks
+    if ($ReadOnly) {
+        Write-Host "Skipping paper-run for read-only IBKR Gateway reconciliation"
+    } else {
+        try {
+            Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
+        } catch {
+            if ($usesGateway) {
+                Invoke-IbkrPaperGatewayChecks
+            }
+            throw
         }
-        throw
     }
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "text", "--output", $textReportPath)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
-    Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
-    $gatewayChecks = if ($usesGateway) { Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason "paper-run" } else { $null }
+    if (-not $ReadOnly) {
+        Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId)
+        Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "text", "--output", $textReportPath)
+        Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
+        Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
+    }
+    $gatewayChecks = if ($usesGateway) { Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason $(if ($ReadOnly) { "read-only reconciliation" } else { "paper-run" }) } else { $null }
     $riskEventsOutput = Invoke-CapturedTrader @("risk-events", "--config", $runConfigPath, "--run-id", $runId)
     $riskRejections = @(Get-RiskRejections $riskEventsOutput)
     $haltReason = Get-FirstHaltReason $riskRejections
