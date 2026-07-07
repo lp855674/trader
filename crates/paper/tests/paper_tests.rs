@@ -94,13 +94,23 @@ async fn paper_runtime_rejects_order_above_max_order_qty() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let result = PaperRuntime::new(db, settings).run_bars(bars).await;
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
 
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&settings.run_id).await.unwrap().is_empty());
+    let risk_events = db.list_risk_events(&settings.run_id).await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "max_order_quantity");
+    assert_eq!(risk_events[0].decision, "rejected");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("max order quantity")
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("max order quantity"))
     );
 }
 
@@ -151,15 +161,24 @@ async fn paper_runtime_uses_storage_backed_market_rules() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let result = PaperRuntime::new(db, PaperSettings::sample())
+    let settings = PaperSettings::sample();
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
         .run_bars(bars)
-        .await;
+        .await
+        .unwrap();
 
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&settings.run_id).await.unwrap().is_empty());
+    let risk_events = db.list_risk_events(&settings.run_id).await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "invalid_lot_size");
+    assert_eq!(risk_events[0].decision, "rejected");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("quantity is not a multiple of lot size")
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("quantity is not a multiple of lot size"))
     );
 }
 
@@ -832,9 +851,24 @@ async fn paper_runtime_rejects_projected_exposure_above_limit() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let result = PaperRuntime::new(db, settings).run_bars(bars).await;
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
 
-    assert!(result.unwrap_err().to_string().contains("max exposure"));
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&settings.run_id).await.unwrap().is_empty());
+    let risk_events = db.list_risk_events(&settings.run_id).await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "max_exposure");
+    assert_eq!(risk_events[0].decision, "rejected");
+    assert!(
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("max exposure"))
+    );
 }
 
 #[tokio::test]

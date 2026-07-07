@@ -64,7 +64,7 @@ fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 }
 
 fn is_retryable_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect()
+    error.is_timeout() || error.is_connect() || error.is_request()
 }
 
 async fn sleep_backoff(backoff: Duration) {

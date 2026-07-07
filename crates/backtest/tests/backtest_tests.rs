@@ -77,9 +77,23 @@ async fn backtest_runtime_rejects_projected_exposure_above_limit() {
         Bar::new(3, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
     ];
 
-    let result = BacktestRuntime::new(db, settings).run(bars).await;
+    let summary = BacktestRuntime::new(db.clone(), settings)
+        .run(bars)
+        .await
+        .unwrap();
 
-    assert!(result.unwrap_err().to_string().contains("max exposure"));
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
+    let risk_events = db.list_risk_events("sample-ma-cross").await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "max_exposure");
+    assert_eq!(risk_events[0].decision, "rejected");
+    assert!(
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("max exposure"))
+    );
 }
 
 #[tokio::test]
@@ -505,14 +519,25 @@ async fn backtest_runtime_rejects_short_position_when_shorting_is_disabled() {
         Bar::new(3, dec!(20), dec!(20), dec!(20), dec!(20), dec!(1)),
     ];
 
-    let error = BacktestRuntime::new(db.clone(), settings)
+    let summary = BacktestRuntime::new(db.clone(), settings)
         .run(bars)
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert!(error.to_string().contains("short selling is disabled"));
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
     let orders = db.list_orders("sample-ma-cross").await.unwrap();
     assert!(orders.is_empty());
+    let risk_events = db.list_risk_events("sample-ma-cross").await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "short_selling_disabled");
+    assert_eq!(risk_events[0].decision, "rejected");
+    assert!(
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("short selling is disabled"))
+    );
 }
 
 fn market_slice(

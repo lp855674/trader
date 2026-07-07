@@ -322,6 +322,34 @@ async fn ingestion_http_retry_recovers_after_timeout() {
 }
 
 #[tokio::test]
+async fn ingestion_http_retry_recovers_after_connection_closed_without_response() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let url = spawn_sequence_server(
+        attempts.clone(),
+        vec![
+            TestHttpResponse::close_without_response(),
+            TestHttpResponse::status(200, "{\"ok\":true}"),
+        ],
+    );
+    let client = reqwest::Client::new();
+
+    let body = get_text_with_retry_policy(
+        &client,
+        &url,
+        &[],
+        FetchRetryPolicy {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(0),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(body, "{\"ok\":true}");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn ingestion_scheduled_disabled_returns_no_work() {
     let db = storage::Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -336,7 +364,7 @@ async fn ingestion_scheduled_disabled_returns_no_work() {
 }
 
 struct TestHttpResponse {
-    status: u16,
+    status: Option<u16>,
     body: &'static str,
     delay: Duration,
 }
@@ -344,7 +372,7 @@ struct TestHttpResponse {
 impl TestHttpResponse {
     fn status(status: u16, body: &'static str) -> Self {
         Self {
-            status,
+            status: Some(status),
             body,
             delay: Duration::from_millis(0),
         }
@@ -352,9 +380,17 @@ impl TestHttpResponse {
 
     fn delayed_status(status: u16, body: &'static str, delay: Duration) -> Self {
         Self {
-            status,
+            status: Some(status),
             body,
             delay,
+        }
+    }
+
+    fn close_without_response() -> Self {
+        Self {
+            status: None,
+            body: "",
+            delay: Duration::from_millis(0),
         }
     }
 }
@@ -370,9 +406,12 @@ fn spawn_sequence_server(attempts: Arc<AtomicUsize>, responses: Vec<TestHttpResp
                 let mut buffer = [0_u8; 1024];
                 let _ = stream.read(&mut buffer);
                 std::thread::sleep(response.delay);
+                let Some(status) = response.status else {
+                    return;
+                };
                 let payload = format!(
                     "HTTP/1.1 {} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response.status,
+                    status,
                     response.body.len(),
                     response.body
                 );
