@@ -272,6 +272,16 @@ enum Command {
         #[arg(long)]
         run_id: String,
     },
+    ReconciliationGate {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long = "account")]
+        accounts: Vec<String>,
+        #[arg(long)]
+        min_successful_audits: Option<usize>,
+        #[arg(long)]
+        max_audit_age_ms: Option<i64>,
+    },
     OrderEvents {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -945,6 +955,21 @@ fn local_orders_from_storage(orders: Vec<storage::StoredOrder>) -> Vec<LocalOrde
 
 fn local_fills_from_storage(fills: Vec<storage::StoredFill>) -> Vec<LocalFill> {
     fills.into_iter().map(LocalFill::from).collect()
+}
+
+fn parse_gate_account_requirement(value: &str) -> Result<broker::ReconciliationGateRequirement> {
+    let Some((broker, account_id)) = value.split_once(':') else {
+        bail!("expected broker:account_id");
+    };
+    if broker.trim().is_empty() || account_id.trim().is_empty() {
+        bail!("expected broker:account_id");
+    }
+    Ok(broker::ReconciliationGateRequirement {
+        broker: broker.trim().to_string(),
+        account_id: account_id.trim().to_string(),
+        min_successful_audits: 1,
+        max_audit_age_ms: 300_000,
+    })
 }
 
 fn main() -> Result<()> {
@@ -2430,6 +2455,13 @@ async fn run_command(command: Command) -> Result<()> {
                 );
             }
         }
+        Command::ReconciliationGate {
+            config,
+            accounts,
+            min_successful_audits,
+            max_audit_age_ms,
+        } => run_reconciliation_gate(&config, accounts, min_successful_audits, max_audit_age_ms)
+            .await?,
         Command::OrderEvents {
             config,
             run_id,
@@ -4289,6 +4321,84 @@ fn log_ship_signature(secret: &str, timestamp_ms: &str, body: &str) -> String {
     hex::encode(mac.finalize().into_bytes())
 }
 
+async fn run_reconciliation_gate(
+    config: &str,
+    accounts: Vec<String>,
+    min_successful_audits: Option<usize>,
+    max_audit_age_ms: Option<i64>,
+) -> Result<()> {
+    let (app_config, db) = load_db(config).await?;
+    let mut requirements = if accounts.is_empty() {
+        app_config
+            .live
+            .reconciliation_gate
+            .required_accounts
+            .iter()
+            .map(|value| parse_gate_account_requirement(value))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        accounts
+            .iter()
+            .map(|value| parse_gate_account_requirement(value))
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    for requirement in &mut requirements {
+        requirement.min_successful_audits = min_successful_audits
+            .unwrap_or(app_config.live.reconciliation_gate.min_successful_audits);
+        requirement.max_audit_age_ms =
+            max_audit_age_ms.unwrap_or(app_config.live.reconciliation_gate.max_audit_age_ms);
+    }
+
+    if requirements.is_empty() {
+        bail!("reconciliation gate has no required accounts");
+    }
+
+    let mut audits = Vec::new();
+    for requirement in &requirements {
+        let rows = db
+            .list_latest_reconciliation_audits_for_gate(
+                &requirement.broker,
+                &requirement.account_id,
+                requirement.min_successful_audits as i64,
+            )
+            .await?;
+        audits.extend(rows.into_iter().map(|row| broker::ReconciliationGateAudit {
+            broker: row.broker_kind,
+            account_id: row.account_id,
+            ts_ms: row.ts_ms,
+            cash_drifts: row.cash_drift_count as usize,
+            position_drifts: row.position_drift_count as usize,
+            open_order_drifts: row.open_order_drift_count as usize,
+            execution_drifts: row.execution_drift_count as usize,
+            stale_inputs: row.stale_input_count as usize,
+        }));
+    }
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let decision = broker::evaluate_reconciliation_gate(broker::ReconciliationGateInput {
+        now_ms,
+        requirements,
+        audits,
+    });
+
+    match decision.status {
+        broker::ReconciliationGateStatus::Allow => {
+            println!("reconciliation gate ok");
+            Ok(())
+        }
+        broker::ReconciliationGateStatus::Block => {
+            for failure in decision.failures {
+                eprintln!(
+                    "reconciliation gate blocked: broker={} account={} reason={} detail={}",
+                    failure.broker, failure.account_id, failure.reason, failure.detail
+                );
+            }
+            bail!("reconciliation gate blocked")
+        }
+    }
+}
+
 async fn load_db(config_path: &str) -> Result<(config::AppConfig, storage::Db)> {
     let app_config = config::AppConfig::from_toml_file(config_path)?;
     ensure_database_parent(&app_config.database.url)?;
@@ -5247,7 +5357,8 @@ mod tests {
         binance_local_order_matches_remote_open, binance_testnet_settings,
         ibkr_execution_matches_local, ibkr_local_order_expects_remote_open,
         ibkr_local_order_matches_remote_open, ibkr_recovered_order_status, paper_settings,
-        settings_with_broker_initial_cash, sync_cancelled_open_orders,
+        parse_gate_account_requirement, settings_with_broker_initial_cash,
+        sync_cancelled_open_orders,
         system_log_retention_policy,
     };
     use broker::{
@@ -5434,6 +5545,21 @@ mod tests {
             &by_broker,
             &remote_orders
         ));
+    }
+
+    #[test]
+    fn parses_gate_account_requirement() {
+        let requirement = parse_gate_account_requirement("ibkr:DU****91").unwrap();
+
+        assert_eq!(requirement.broker, "ibkr");
+        assert_eq!(requirement.account_id, "DU****91");
+    }
+
+    #[test]
+    fn rejects_gate_account_requirement_without_separator() {
+        let error = parse_gate_account_requirement("ibkr").unwrap_err().to_string();
+
+        assert!(error.contains("expected broker:account_id"));
     }
 
     #[test]

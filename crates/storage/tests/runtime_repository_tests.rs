@@ -2757,6 +2757,87 @@ async fn production_reconciliation_account_balance_and_audit_round_trip() {
 }
 
 #[tokio::test]
+async fn lists_latest_reconciliation_audits_for_gate() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-a".to_string(),
+        name: "moving_average_cross".to_string(),
+        mode: "live".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_reconciliation_audit(ReconciliationAuditCommand {
+        id: "old".to_string(),
+        run_id: "run-a".to_string(),
+        account_id: "DU****91".to_string(),
+        broker_kind: "ibkr".to_string(),
+        ts_ms: 1000,
+        severity: "info".to_string(),
+        cash_drift_count: 0,
+        position_drift_count: 0,
+        open_order_drift_count: 0,
+        execution_drift_count: 0,
+        stale_input_count: 0,
+        payload_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_reconciliation_audit(ReconciliationAuditCommand {
+        id: "new".to_string(),
+        run_id: "run-a".to_string(),
+        account_id: "DU****91".to_string(),
+        broker_kind: "ibkr".to_string(),
+        ts_ms: 2000,
+        severity: "info".to_string(),
+        cash_drift_count: 0,
+        position_drift_count: 0,
+        open_order_drift_count: 0,
+        execution_drift_count: 0,
+        stale_input_count: 0,
+        payload_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_reconciliation_audit(ReconciliationAuditCommand {
+        id: "other-account".to_string(),
+        run_id: "run-a".to_string(),
+        account_id: "paper".to_string(),
+        broker_kind: "binance".to_string(),
+        ts_ms: 3000,
+        severity: "info".to_string(),
+        cash_drift_count: 0,
+        position_drift_count: 0,
+        open_order_drift_count: 0,
+        execution_drift_count: 0,
+        stale_input_count: 0,
+        payload_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let audits = db
+        .list_latest_reconciliation_audits_for_gate("ibkr", "DU****91", 1)
+        .await
+        .unwrap();
+
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].id, "new");
+    assert_eq!(audits[0].ts_ms, 2000);
+    assert_eq!(audits[0].broker_kind, "ibkr");
+    assert_eq!(audits[0].account_id, "DU****91");
+}
+
+#[tokio::test]
 async fn system_log_batch_insert_count_search_and_offset_filters() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
