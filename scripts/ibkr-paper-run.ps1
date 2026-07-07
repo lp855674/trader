@@ -3,6 +3,7 @@ param(
     [string]$InputCsv = "datasets/sample/aapl_1d.csv",
     [string]$OutputParquet = "datasets/ibkr/aapl_1d.parquet",
     [switch]$SkipRefresh,
+    [switch]$ReadOnly,
     [switch]$ConfirmIbkrPaperOrder,
     [string]$AccountId = "",
     [string]$GatewayHost = "",
@@ -353,7 +354,7 @@ function Get-IbkrReconciliationStatus {
     param([object]$GatewayChecks)
 
     if ($null -eq $GatewayChecks) {
-        if ($ConfirmIbkrPaperOrder) {
+        if ($ReadOnly -or $ConfirmIbkrPaperOrder) {
             return "unknown"
         }
         return "not_run"
@@ -364,6 +365,57 @@ function Get-IbkrReconciliationStatus {
         return "ok"
     }
     return "unknown"
+}
+
+function Get-ReconciliationInt {
+    param(
+        [string]$Text,
+        [string]$Name
+    )
+
+    $match = [regex]::Match($Text, "$Name=(-?\d+)")
+    if ($match.Success) {
+        return [int]$match.Groups[1].Value
+    }
+    return 0
+}
+
+function Get-ReconciliationDecimal {
+    param(
+        [string]$Text,
+        [string]$Name
+    )
+
+    $match = [regex]::Match($Text, "$Name=([-+]?\d+(?:\.\d+)?)")
+    if ($match.Success) {
+        return [decimal]$match.Groups[1].Value
+    }
+    return [decimal]0
+}
+
+function Get-IbkrReconciliationCounters {
+    param([object]$GatewayChecks)
+
+    $output = if ($null -ne $GatewayChecks) { [string]$GatewayChecks.reconciliation } else { "" }
+    $audits = if ($output -match "ibkr paper reconcile ok:") { 1 } else { 0 }
+    $localOnlyOrders = Get-ReconciliationInt -Text $output -Name "local_only_orders"
+    $remoteOpenUnmatched = Get-ReconciliationInt -Text $output -Name "remote_open_unmatched"
+    $remoteExecutionUnmatched = Get-ReconciliationInt -Text $output -Name "remote_execution_unmatched"
+    $qtyDelta = Get-ReconciliationDecimal -Text $output -Name "qty_delta"
+    $executionDrifts = $remoteExecutionUnmatched
+    if ($qtyDelta -ne [decimal]0) {
+        $executionDrifts += 1
+    }
+
+    [pscustomobject]@{
+        audits = $audits
+        cash_drifts = 0
+        position_drifts = 0
+        open_order_drifts = $localOnlyOrders + $remoteOpenUnmatched
+        execution_drifts = $executionDrifts
+        stale_inputs = 0
+        total_drifts = $localOnlyOrders + $remoteOpenUnmatched + $executionDrifts
+    }
 }
 
 try {
@@ -390,8 +442,9 @@ try {
     }
 
     $effectiveAccountId = Get-IbkrAccountId $configText
-    if ($ConfirmIbkrPaperOrder -and ($effectiveAccountId.Length -eq 0 -or $effectiveAccountId -eq "DU000000")) {
-        throw "ConfirmIbkrPaperOrder requires a real IBKR paper account id; pass -AccountId DU... or update the config"
+    $usesGateway = $ReadOnly -or $ConfirmIbkrPaperOrder
+    if ($usesGateway -and ($effectiveAccountId.Length -eq 0 -or $effectiveAccountId -eq "DU000000")) {
+        throw "IBKR paper gateway checks require a real IBKR paper account id; pass -AccountId DU... or update the config"
     }
 
     $runConfigText = $configText `
@@ -402,7 +455,7 @@ try {
     }
     Set-Content -Path $runConfigPath -Value $runConfigText -Encoding UTF8
 
-    if ($ConfirmIbkrPaperOrder) {
+    if ($usesGateway) {
         $effectiveGatewayHost = Get-IbkrGatewayValue -ConfigText $runConfigText -Name "host" -DefaultValue "127.0.0.1"
         $effectiveGatewayPort = [int](Get-IbkrGatewayValue -ConfigText $runConfigText -Name "port" -DefaultValue "7497")
         if (-not (Test-GatewayPort -HostName $effectiveGatewayHost -PortNumber $effectiveGatewayPort)) {
@@ -433,7 +486,7 @@ try {
     try {
         Invoke-CheckedTrader @("paper-run", "--config", $runConfigPath)
     } catch {
-        if ($ConfirmIbkrPaperOrder) {
+        if ($usesGateway) {
             Invoke-IbkrPaperGatewayChecks
         }
         throw
@@ -442,7 +495,7 @@ try {
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "text", "--output", $textReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "csv", "--output", $csvReportPath)
     Invoke-CheckedTrader @("report", "--config", $runConfigPath, "--run-id", $runId, "--format", "html", "--output", $htmlReportPath)
-    $gatewayChecks = if ($ConfirmIbkrPaperOrder) { Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason "paper-run" } else { $null }
+    $gatewayChecks = if ($usesGateway) { Invoke-IbkrPaperGatewayChecksUntilNoOpenOrders -Reason "paper-run" } else { $null }
     $riskEventsOutput = Invoke-CapturedTrader @("risk-events", "--config", $runConfigPath, "--run-id", $runId)
     $riskRejections = @(Get-RiskRejections $riskEventsOutput)
     $haltReason = Get-FirstHaltReason $riskRejections
@@ -471,12 +524,15 @@ try {
         $openOrdersRemaining = Get-OpenOrdersCount $openOrdersOutput
         $cancelAllSucceeded = ($openOrdersRemaining -eq 0)
     }
+    $reconciliationCounters = Get-IbkrReconciliationCounters $gatewayChecks
     $runFailureClass = if ($openOrdersRemaining -gt 0) {
         "open_orders_remaining"
     } elseif ($null -ne $haltReason) {
         $haltReason
     } elseif ($null -ne $gatewayChecks -and $gatewayChecks.failure_class -ne "ok") {
         $gatewayChecks.failure_class
+    } elseif ($reconciliationCounters.total_drifts -gt 0) {
+        "reconciliation_drift"
     } else {
         "ok"
     }
@@ -500,6 +556,12 @@ try {
         halt_reason = $haltReason
         risk_rejections = $riskRejections
         open_orders_remaining = $openOrdersRemaining
+        reconciliation_audits = $reconciliationCounters.audits
+        reconciliation_cash_drifts = $reconciliationCounters.cash_drifts
+        reconciliation_position_drifts = $reconciliationCounters.position_drifts
+        reconciliation_open_order_drifts = $reconciliationCounters.open_order_drifts
+        reconciliation_execution_drifts = $reconciliationCounters.execution_drifts
+        reconciliation_stale_inputs = $reconciliationCounters.stale_inputs
         cancel_all_attempted = $cancelAllAttempted
         cancel_all_succeeded = $cancelAllSucceeded
         cancel_all = $cancelAllOutput

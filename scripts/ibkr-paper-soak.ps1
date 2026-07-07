@@ -2,6 +2,7 @@ param(
     [int]$Iterations = 3,
     [int]$DelaySeconds = 0,
     [switch]$SkipRefresh,
+    [switch]$ReadOnly,
     [switch]$ConfirmIbkrPaperOrder,
     [string]$AccountId = "",
     [string]$GatewayHost = "127.0.0.1",
@@ -15,8 +16,8 @@ if ($Iterations -lt 1) {
     throw "Iterations must be at least 1"
 }
 
-if ($ConfirmIbkrPaperOrder -and ($AccountId.Trim().Length -eq 0 -or $AccountId -eq "DU000000")) {
-    throw "ConfirmIbkrPaperOrder requires a real IBKR paper account id; pass -AccountId DU..."
+if (($ReadOnly -or $ConfirmIbkrPaperOrder) -and ($AccountId.Trim().Length -eq 0 -or $AccountId -eq "DU000000")) {
+    throw "IBKR paper gateway checks require a real IBKR paper account id; pass -AccountId DU..."
 }
 
 $repoRoot = Get-Location
@@ -85,6 +86,15 @@ try {
         )
         if ($SkipRefresh) {
             $args += "-SkipRefresh"
+        }
+        if ($ReadOnly) {
+            $args += @(
+                "-ReadOnly",
+                "-AccountId", $AccountId,
+                "-GatewayHost", $GatewayHost,
+                "-Port", $Port,
+                "-ClientId", $ClientId
+            )
         }
         if ($ConfirmIbkrPaperOrder) {
             $args += @(
@@ -163,7 +173,8 @@ try {
         iterations_requested = $Iterations
         iterations_completed = $iterationSummaries.Count
         skipped_refresh = [bool]$SkipRefresh
-        account_id = if ($ConfirmIbkrPaperOrder) { $AccountId } else { "not_used" }
+        account_id = if ($ReadOnly -or $ConfirmIbkrPaperOrder) { $AccountId } else { "not_used" }
+        read_only = [bool]$ReadOnly
         order_submit = if ($ConfirmIbkrPaperOrder) { "enabled" } else { "disabled" }
         status = if ($failed) { "failed" } else { "completed" }
         failure_class = $failureClass
