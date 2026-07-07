@@ -4,7 +4,7 @@
 
 - Account: `DU...`
 - Gateway host: `127.0.0.1`
-- Gateway port: `7497`
+- Gateway port: `4002`
 - Client id: `1`
 - Soak iterations: `3`
 
@@ -13,9 +13,9 @@
 | Stage | Summary | Status | failure_class | Notes |
 | --- | --- | --- | --- | --- |
 | Local readiness | `data/paper-readiness/paper-readiness-afc967981176/summary.json` | completed | ok | All five local gates passed. |
-| ReadOnly | pending | pending | pending | Requires running IBKR TWS / Gateway in Paper Trading mode and a real `DU...` account id. |
-| AutoRun | pending | pending | pending | Blocked until ReadOnly passes against the real Gateway. |
-| Soak | pending | pending | pending | Blocked until AutoRun passes against the real Gateway. |
+| ReadOnly | `data/ibkr-paper-test/read-only-414fa8a031fb/summary.json` | completed | ok | Gateway read-only account, open orders, executions, reconcile, recover, and next-order-id checks passed. |
+| AutoRun | `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json` | completed | ok | Confirmed paper order run completed with Gateway checks ok, no halt, and no residual open orders. |
+| Soak | `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json` | completed | ok | Three confirmed paper order iterations completed with no halt, no residual open orders, and reconciliation ok. |
 
 ## Local Readiness Gates
 
@@ -29,4 +29,4 @@
 
 ## Decision
 
-Local paper readiness passed. Gateway verification is not complete until ReadOnly, AutoRun, and Soak all report `failure_class = ok` against a running IBKR paper Gateway.
+IBKR paper Gateway verification passed for Local readiness, ReadOnly, AutoRun, and Soak. The remaining gap is broader production and real-money readiness, not the paper Gateway validation path.

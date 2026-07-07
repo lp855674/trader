@@ -8,6 +8,18 @@
 
 **Tech Stack:** PowerShell verification scripts, `trader` CLI, IBKR paper Gateway on `127.0.0.1:7497`, SQLite evidence under `data/`, Markdown result document.
 
+## Current Status
+
+Status as of 2026-07-07: complete for the IBKR paper Gateway validation path. ReadOnly, AutoRun, and a three-iteration Soak all completed with `failure_class = ok` against a local IBKR paper Gateway on `127.0.0.1:4002`. Generated `data/` evidence remains uncommitted; committed docs redact the paper account as `DU...`.
+
+Evidence recorded in `docs/ibkr-paper-gateway-long-run-results-paper-readiness-afc967981176.md`:
+
+- ReadOnly: `data/ibkr-paper-test/read-only-414fa8a031fb/summary.json`
+- AutoRun: `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`
+- Soak: `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`
+
+Remaining gap: broader production and real-money readiness, not this IBKR paper Gateway validation path.
+
 ## Global Constraints
 
 - Do not use a real-money IBKR account.
@@ -82,7 +94,7 @@ Create `docs/ibkr-paper-gateway-long-run-results-<run-id>.md`:
 
 - Account: `DU...`
 - Gateway host: `127.0.0.1`
-- Gateway port: `7497`
+- Gateway port: `4002`
 - Client id: `1`
 - Soak iterations: `3`
 
@@ -91,13 +103,13 @@ Create `docs/ibkr-paper-gateway-long-run-results-<run-id>.md`:
 | Stage | Summary | Status | failure_class | Notes |
 | --- | --- | --- | --- | --- |
 | Local readiness | `data/paper-readiness/<readiness_id>/summary.json` | completed | ok | All five local gates passed. |
-| ReadOnly | pending | pending | pending | Not run yet. |
-| AutoRun | pending | pending | pending | Not run yet. |
-| Soak | pending | pending | pending | Not run yet. |
+| ReadOnly | `data/ibkr-paper-test/read-only-414fa8a031fb/summary.json` | completed | ok | Gateway read-only account, open orders, executions, reconcile, recover, and next-order-id checks passed. |
+| AutoRun | `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json` | completed | ok | Confirmed paper order run completed with Gateway checks ok, no halt, and no residual open orders. |
+| Soak | `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json` | completed | ok | Three confirmed paper order iterations completed with no halt, no residual open orders, and reconciliation ok. |
 
 ## Decision
 
-Gateway verification is not complete until ReadOnly, AutoRun, and Soak all report `failure_class = ok`.
+IBKR paper Gateway verification passed for ReadOnly, AutoRun, and Soak. The remaining production gap is broader real-money readiness, not the paper Gateway validation path.
 ```
 
 - [x] **Step 4: Commit the readiness result skeleton**
@@ -120,34 +132,34 @@ git commit -m "docs: start ibkr paper gateway verification results"
 - Consumes: running IBKR TWS / Gateway in Paper Trading mode and a real `DU...` paper account id.
 - Produces: read-only Gateway evidence without order submission.
 
-- [ ] **Step 1: Verify Gateway prerequisites**
+- [x] **Step 1: Verify Gateway prerequisites**
 
 Confirm these operator-side settings before running the command:
 
 ```text
 TWS / IB Gateway is in Paper Trading mode
 API socket clients are enabled
-Socket port is 7497
+Socket port is 4002
 Account id starts with DU
 No real-money account is selected
 ```
 
 Expected: all five statements are true.
 
-- [ ] **Step 2: Run ReadOnly verification**
+- [x] **Step 2: Run ReadOnly verification**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
   -Stage ReadOnly `
-  -AccountId DU12345 `
+  -AccountId DU... `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1
 ```
 
 Expected: command exits `0` and prints `IBKR paper read-only summary: data/ibkr-paper-test/read-only-<id>/summary.json`.
 
-- [ ] **Step 3: Inspect ReadOnly summary**
+- [x] **Step 3: Inspect ReadOnly summary**
 
 ```powershell
 Get-Content .\data\ibkr-paper-test\read-only-<id>\summary.json
@@ -155,7 +167,7 @@ Get-Content .\data\ibkr-paper-test\read-only-<id>\summary.json
 
 Expected: `status = completed`, `failure_class = ok`, `failed_check = ""`, and all read-only checks have exit code `0`.
 
-- [ ] **Step 4: Update the result document**
+- [x] **Step 4: Update the result document**
 
 Replace the ReadOnly row:
 
@@ -165,7 +177,7 @@ Replace the ReadOnly row:
 
 If the stage failed, record the actual `failure_class`, `failed_check`, and the failing `.log` path instead of continuing.
 
-- [ ] **Step 5: Commit ReadOnly evidence summary**
+- [x] **Step 5: Commit ReadOnly evidence summary**
 
 ```powershell
 git add docs/ibkr-paper-gateway-long-run-results-<run-id>.md
@@ -186,7 +198,7 @@ git commit -m "docs: record ibkr paper readonly verification"
 - Consumes: successful Task 2 ReadOnly evidence.
 - Produces: one confirmed paper order-submitting AutoRun with post-run Gateway checks.
 
-- [ ] **Step 1: Confirm ReadOnly passed**
+- [x] **Step 1: Confirm ReadOnly passed**
 
 Open the result document and verify the ReadOnly row is:
 
@@ -196,21 +208,21 @@ Open the result document and verify the ReadOnly row is:
 
 Expected: ReadOnly is complete with `failure_class = ok`.
 
-- [ ] **Step 2: Run AutoRun with explicit confirmation**
+- [x] **Step 2: Run AutoRun with explicit confirmation**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
   -Stage AutoRun `
-  -AccountId DU12345 `
+  -AccountId DU... `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1 `
   -ConfirmAutoRun
 ```
 
 Expected: command exits `0` and the runner prints `summary : data/ibkr-paper-runs/<run_id>/summary.json`.
 
-- [ ] **Step 3: Inspect AutoRun summary**
+- [x] **Step 3: Inspect AutoRun summary**
 
 ```powershell
 Get-Content .\data\ibkr-paper-runs\<run_id>\summary.json
@@ -218,7 +230,7 @@ Get-Content .\data\ibkr-paper-runs\<run_id>\summary.json
 
 Expected: `status = completed`, `failure_class = ok`, `order_submit = enabled`, `gateway_checks.status = completed`, and `gateway_checks.failure_class = ok`.
 
-- [ ] **Step 4: Update the result document**
+- [x] **Step 4: Update the result document**
 
 Replace the AutoRun row:
 
@@ -228,7 +240,7 @@ Replace the AutoRun row:
 
 If the stage failed, record the actual `failure_class`, `gateway_checks.failed_check`, and the summary path instead of continuing.
 
-- [ ] **Step 5: Commit AutoRun evidence summary**
+- [x] **Step 5: Commit AutoRun evidence summary**
 
 ```powershell
 git add docs/ibkr-paper-gateway-long-run-results-<run-id>.md
@@ -248,7 +260,7 @@ git commit -m "docs: record ibkr paper autorun verification"
 - Consumes: successful Task 3 AutoRun evidence.
 - Produces: multi-iteration paper Gateway soak evidence.
 
-- [ ] **Step 1: Confirm AutoRun passed**
+- [x] **Step 1: Confirm AutoRun passed**
 
 Open the result document and verify the AutoRun row is:
 
@@ -258,21 +270,21 @@ Open the result document and verify the AutoRun row is:
 
 Expected: AutoRun is complete with `failure_class = ok`.
 
-- [ ] **Step 2: Run a three-iteration soak**
+- [x] **Step 2: Run a three-iteration soak**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 `
   -Iterations 3 `
-  -AccountId DU12345 `
+  -AccountId DU... `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1 `
   -ConfirmIbkrPaperOrder
 ```
 
 Expected: command exits `0` and prints `IBKR paper soak summary: data/ibkr-paper-soak/<soak_id>/summary.json`.
 
-- [ ] **Step 3: Inspect soak summary**
+- [x] **Step 3: Inspect soak summary**
 
 ```powershell
 Get-Content .\data\ibkr-paper-soak\<soak_id>\summary.json
@@ -280,7 +292,7 @@ Get-Content .\data\ibkr-paper-soak\<soak_id>\summary.json
 
 Expected: `status = completed`, `failure_class = ok`, `iterations_requested = 3`, `iterations_completed = 3`, and no iteration has non-`ok` `failure_class`.
 
-- [ ] **Step 4: Update the result document**
+- [x] **Step 4: Update the result document**
 
 Replace the Soak row and final decision:
 
@@ -294,7 +306,7 @@ IBKR paper Gateway verification passed for ReadOnly, AutoRun, and Soak. The rema
 
 If the stage failed, record `failed_iteration`, `first_failed_log`, and the actual `failure_class`.
 
-- [ ] **Step 5: Commit soak evidence summary**
+- [x] **Step 5: Commit soak evidence summary**
 
 ```powershell
 git add docs/ibkr-paper-gateway-long-run-results-<run-id>.md
