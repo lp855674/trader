@@ -1899,6 +1899,7 @@ async fn start_live_run(
         run_spec,
         snapshot,
     } = prepare_launch(&state, config::RuntimeMode::Live, "live launch", request).await?;
+    enforce_live_reconciliation_gate_preflight(&app_config, &state.db).await?;
     run_configured_log_retention(&state.db, &app_config).await?;
     let run_id = run_spec.run_id.clone();
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -1932,6 +1933,30 @@ async fn start_live_run(
             status: "running".to_string(),
         }),
     ))
+}
+
+async fn enforce_live_reconciliation_gate_preflight(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+) -> Result<(), ApiError> {
+    let decision =
+        match runtime::evaluate_live_reconciliation_gate_from_storage(app_config, db).await {
+            Ok(decision) => decision,
+            Err(error) if error.downcast_ref::<storage::StorageError>().is_some() => {
+                return Err(ApiError(error));
+            }
+            Err(error) => return Err(bad_request(error.to_string())),
+        };
+
+    let Some(decision) = decision else {
+        return Ok(());
+    };
+    match decision.status {
+        broker::ReconciliationGateStatus::Allow => Ok(()),
+        broker::ReconciliationGateStatus::Block => Err(bad_request(
+            runtime::format_reconciliation_gate_failures(&decision.failures),
+        )),
+    }
 }
 
 fn startup_recovery_unmatched_open_orders_policy(

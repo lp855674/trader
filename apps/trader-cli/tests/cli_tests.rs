@@ -104,6 +104,153 @@ fn live_worker_starts_and_stops_over_jsonl() {
 }
 
 #[test]
+fn live_worker_reconciliation_gate_allows_recent_clean_audit() {
+    let (launch_path, db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-ok",
+        "paper",
+        true,
+        &["simulated:paper"],
+        300_000,
+    );
+    seed_live_worker_gate_audits(
+        &db_path,
+        &[(
+            "audit-ok",
+            "simulated",
+            "paper",
+            chrono::Utc::now().timestamp_millis(),
+        )],
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .write_stdin("{\"type\":\"shutdown\",\"request_id\":\"stop-1\",\"reason\":\"test\"}\n")
+        .assert()
+        .success()
+        .stdout(contains("\"type\":\"runtime_started\""));
+}
+
+#[test]
+fn live_worker_reconciliation_gate_blocks_missing_audit() {
+    let (launch_path, _db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-missing",
+        "paper",
+        true,
+        &["simulated:paper"],
+        300_000,
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .assert()
+        .failure()
+        .stderr(contains("missing_required_audit"))
+        .stderr(contains("reconciliation gate blocked"));
+}
+
+#[test]
+fn live_worker_reconciliation_gate_blocks_stale_audit() {
+    let (launch_path, db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-stale",
+        "paper",
+        true,
+        &["simulated:paper"],
+        1,
+    );
+    seed_live_worker_gate_audits(&db_path, &[("audit-stale", "simulated", "paper", 1)]);
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .assert()
+        .failure()
+        .stderr(contains("audit_too_old"));
+}
+
+#[test]
+fn live_worker_reconciliation_gate_blocks_missing_required_accounts() {
+    let (launch_path, _db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-no-accounts",
+        "paper",
+        true,
+        &[],
+        300_000,
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .assert()
+        .failure()
+        .stderr(contains("reconciliation gate has no required accounts"));
+}
+
+#[test]
+fn live_worker_reconciliation_gate_allows_multiple_broker_requirements() {
+    let (launch_path, db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-multi",
+        "paper",
+        true,
+        &["simulated:paper", "binance:paper-binance"],
+        300_000,
+    );
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    seed_live_worker_gate_audits(
+        &db_path,
+        &[
+            ("audit-simulated", "simulated", "paper", now_ms),
+            ("audit-binance", "binance", "paper-binance", now_ms),
+        ],
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .write_stdin("{\"type\":\"shutdown\",\"request_id\":\"stop-1\",\"reason\":\"test\"}\n")
+        .assert()
+        .success()
+        .stdout(contains("\"type\":\"runtime_started\""));
+}
+
+#[test]
+fn live_worker_real_money_mode_requires_reconciliation_gate_accounts() {
+    let (launch_path, _db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-real-money",
+        "live",
+        false,
+        &[],
+        300_000,
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .assert()
+        .failure()
+        .stderr(contains("reconciliation gate has no required accounts"));
+}
+
+#[test]
 fn backtest_accepts_config_argument() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -3579,6 +3726,125 @@ fn temp_output(prefix: &str, extension: &str) -> PathBuf {
             .as_nanos(),
         extension
     ))
+}
+
+fn write_live_worker_gate_launch(
+    prefix: &str,
+    broker_mode: &str,
+    gate_enabled: bool,
+    required_accounts: &[&str],
+    max_audit_age_ms: i64,
+) -> (PathBuf, PathBuf) {
+    let db_path = temp_output(prefix, "sqlite");
+    let launch_path = temp_output(prefix, "json");
+    let db_url = format!("sqlite://{}", toml_path(&db_path));
+    let required_accounts = required_accounts
+        .iter()
+        .map(|account| format!(r#""{account}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let config_content = format!(
+        r#"
+        [runtime]
+        mode = "live"
+        run_id = "{prefix}"
+
+        [database]
+        url = "{db_url}"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "25000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "{broker_mode}"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+
+        [live.reconciliation_gate]
+        enabled = {gate_enabled}
+        min_successful_audits = 1
+        max_audit_age_ms = {max_audit_age_ms}
+        required_accounts = [{required_accounts}]
+        "#
+    );
+    let launch = serde_json::json!({
+        "run_id": prefix,
+        "db_url": db_url,
+        "config_path": null,
+        "config_content": config_content,
+        "config_format": "TOML",
+        "run_spec": null,
+        "broker_snapshot_interval_ms": null,
+        "startup_recovery_unmatched_open_orders_policy": "Fail"
+    });
+    std::fs::write(&launch_path, serde_json::to_vec(&launch).unwrap()).unwrap();
+    (launch_path, db_path)
+}
+
+fn seed_live_worker_gate_audits(db_path: &std::path::Path, audits: &[(&str, &str, &str, i64)]) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.start_strategy_run(storage::StrategyRunStartCommand {
+            run_id: "live-worker-gate-seed".to_string(),
+            name: "live-worker-gate".to_string(),
+            mode: "live".to_string(),
+            started_at_ms: 1,
+            config: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+        for (id, broker_kind, account_id, ts_ms) in audits {
+            db.record_reconciliation_audit(storage::ReconciliationAuditCommand {
+                id: (*id).to_string(),
+                run_id: "live-worker-gate-seed".to_string(),
+                account_id: (*account_id).to_string(),
+                broker_kind: (*broker_kind).to_string(),
+                ts_ms: *ts_ms,
+                severity: "info".to_string(),
+                cash_drift_count: 0,
+                position_drift_count: 0,
+                open_order_drift_count: 0,
+                execution_drift_count: 0,
+                stale_input_count: 0,
+                payload_json: "{}".to_string(),
+            })
+            .await
+            .unwrap();
+        }
+    });
 }
 
 fn write_ibkr_cli_config(port: u16, account_id: &str, symbol: &str) -> PathBuf {

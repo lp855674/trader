@@ -957,21 +957,6 @@ fn local_fills_from_storage(fills: Vec<storage::StoredFill>) -> Vec<LocalFill> {
     fills.into_iter().map(LocalFill::from).collect()
 }
 
-fn parse_gate_account_requirement(value: &str) -> Result<broker::ReconciliationGateRequirement> {
-    let Some((broker, account_id)) = value.split_once(':') else {
-        bail!("expected broker:account_id");
-    };
-    if broker.trim().is_empty() || account_id.trim().is_empty() {
-        bail!("expected broker:account_id");
-    }
-    Ok(broker::ReconciliationGateRequirement {
-        broker: broker.trim().to_string(),
-        account_id: account_id.trim().to_string(),
-        min_successful_audits: 1,
-        max_audit_age_ms: 300_000,
-    })
-}
-
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .name("trader-cli".to_string())
@@ -2460,8 +2445,10 @@ async fn run_command(command: Command) -> Result<()> {
             accounts,
             min_successful_audits,
             max_audit_age_ms,
-        } => run_reconciliation_gate(&config, accounts, min_successful_audits, max_audit_age_ms)
-            .await?,
+        } => {
+            run_reconciliation_gate(&config, accounts, min_successful_audits, max_audit_age_ms)
+                .await?
+        }
         Command::OrderEvents {
             config,
             run_id,
@@ -3896,7 +3883,11 @@ async fn reconcile_ibkr_paper(
 
 fn ibkr_local_order_expects_remote_open(local: &LocalOrder) -> bool {
     matches!(
-        local.status.replace(['_', '-', ' '], "").to_uppercase().as_str(),
+        local
+            .status
+            .replace(['_', '-', ' '], "")
+            .to_uppercase()
+            .as_str(),
         "SUBMITTED" | "NEW" | "PARTIALLYFILLED" | "PENDINGSUBMIT" | "PRESUBMITTED" | "APIPENDING"
     )
 }
@@ -4328,59 +4319,14 @@ async fn run_reconciliation_gate(
     max_audit_age_ms: Option<i64>,
 ) -> Result<()> {
     let (app_config, db) = load_db(config).await?;
-    let mut requirements = if accounts.is_empty() {
-        app_config
-            .live
-            .reconciliation_gate
-            .required_accounts
-            .iter()
-            .map(|value| parse_gate_account_requirement(value))
-            .collect::<Result<Vec<_>>>()?
-    } else {
-        accounts
-            .iter()
-            .map(|value| parse_gate_account_requirement(value))
-            .collect::<Result<Vec<_>>>()?
-    };
-
-    for requirement in &mut requirements {
-        requirement.min_successful_audits = min_successful_audits
-            .unwrap_or(app_config.live.reconciliation_gate.min_successful_audits);
-        requirement.max_audit_age_ms =
-            max_audit_age_ms.unwrap_or(app_config.live.reconciliation_gate.max_audit_age_ms);
-    }
-
-    if requirements.is_empty() {
-        bail!("reconciliation gate has no required accounts");
-    }
-
-    let mut audits = Vec::new();
-    for requirement in &requirements {
-        let rows = db
-            .list_latest_reconciliation_audits_for_gate(
-                &requirement.broker,
-                &requirement.account_id,
-                requirement.min_successful_audits as i64,
-            )
-            .await?;
-        audits.extend(rows.into_iter().map(|row| broker::ReconciliationGateAudit {
-            broker: row.broker_kind,
-            account_id: row.account_id,
-            ts_ms: row.ts_ms,
-            cash_drifts: row.cash_drift_count as usize,
-            position_drifts: row.position_drift_count as usize,
-            open_order_drifts: row.open_order_drift_count as usize,
-            execution_drifts: row.execution_drift_count as usize,
-            stale_inputs: row.stale_input_count as usize,
-        }));
-    }
-
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let decision = broker::evaluate_reconciliation_gate(broker::ReconciliationGateInput {
-        now_ms,
-        requirements,
-        audits,
-    });
+    let decision = runtime::evaluate_reconciliation_gate_from_storage(
+        &app_config,
+        &db,
+        &accounts,
+        min_successful_audits,
+        max_audit_age_ms,
+    )
+    .await?;
 
     match decision.status {
         broker::ReconciliationGateStatus::Allow => {
@@ -4388,14 +4334,33 @@ async fn run_reconciliation_gate(
             Ok(())
         }
         broker::ReconciliationGateStatus::Block => {
-            for failure in decision.failures {
-                eprintln!(
-                    "reconciliation gate blocked: broker={} account={} reason={} detail={}",
-                    failure.broker, failure.account_id, failure.reason, failure.detail
-                );
-            }
+            print_reconciliation_gate_failures(&decision.failures);
             bail!("reconciliation gate blocked")
         }
+    }
+}
+
+async fn enforce_live_reconciliation_gate(
+    app_config: &config::AppConfig,
+    db: &storage::Db,
+) -> Result<()> {
+    if let Some(decision) =
+        runtime::evaluate_live_reconciliation_gate_from_storage(app_config, db).await?
+    {
+        match decision.status {
+            broker::ReconciliationGateStatus::Allow => {}
+            broker::ReconciliationGateStatus::Block => {
+                print_reconciliation_gate_failures(&decision.failures);
+                bail!("reconciliation gate blocked")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_reconciliation_gate_failures(failures: &[broker::ReconciliationGateFailure]) {
+    for failure in failures {
+        eprintln!("{}", runtime::format_reconciliation_gate_failure(failure));
     }
 }
 
@@ -4418,6 +4383,7 @@ async fn run_live_worker(launch_file: &str) -> Result<()> {
     let app_config = app_config_from_launch(&launch)?;
     let db = storage::Db::connect(&launch.db_url).await?;
     db.migrate().await?;
+    enforce_live_reconciliation_gate(&app_config, &db).await?;
     let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
     let settings = runtime::LiveRuntimeSettings {
         run_id: launch.run_id.clone(),
@@ -5357,9 +5323,7 @@ mod tests {
         binance_local_order_matches_remote_open, binance_testnet_settings,
         ibkr_execution_matches_local, ibkr_local_order_expects_remote_open,
         ibkr_local_order_matches_remote_open, ibkr_recovered_order_status, paper_settings,
-        parse_gate_account_requirement, settings_with_broker_initial_cash,
-        sync_cancelled_open_orders,
-        system_log_retention_policy,
+        settings_with_broker_initial_cash, sync_cancelled_open_orders, system_log_retention_policy,
     };
     use broker::{
         BinanceAssetBalance, BinanceOpenOrder, BrokerOpenOrder, BrokerOrder, BrokerOrderStatus,
@@ -5549,7 +5513,8 @@ mod tests {
 
     #[test]
     fn parses_gate_account_requirement() {
-        let requirement = parse_gate_account_requirement("ibkr:DU****91").unwrap();
+        let requirement =
+            runtime::parse_reconciliation_gate_account_requirement("ibkr:DU****91").unwrap();
 
         assert_eq!(requirement.broker, "ibkr");
         assert_eq!(requirement.account_id, "DU****91");
@@ -5557,7 +5522,9 @@ mod tests {
 
     #[test]
     fn rejects_gate_account_requirement_without_separator() {
-        let error = parse_gate_account_requirement("ibkr").unwrap_err().to_string();
+        let error = runtime::parse_reconciliation_gate_account_requirement("ibkr")
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("expected broker:account_id"));
     }

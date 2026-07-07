@@ -9,7 +9,7 @@ use storage::{
     AccountBalanceCommand, CorporateActionMetaCommand, CryptoMarketMetaCommand,
     CryptoPositionCommand, Db, ExternalFillCommand, ExternalOrderCommand, FundingRateCommand,
     NewConfigVersion, PaperPortfolioSnapshotCommand, PortfolioSnapshotCommand, PositionCommand,
-    RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
+    ReconciliationAuditCommand, RuntimeEventCommand, StrategyRunStartCommand, SystemLogCommand,
 };
 use tokio::sync::Notify;
 use tower::ServiceExt;
@@ -2430,6 +2430,195 @@ async fn live_runtime_routes_start_report_status_and_stop() {
 }
 
 #[tokio::test]
+async fn live_runtime_route_reconciliation_gate_allows_recent_clean_audit() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-ok").await;
+    db.migrate().await.unwrap();
+    seed_reconciliation_gate_audits(
+        &db,
+        &[(
+            "api-gate-ok-audit",
+            "simulated",
+            "paper",
+            chrono::Utc::now().timestamp_millis(),
+        )],
+    )
+    .await;
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-ok",
+        &db_url,
+        "paper",
+        true,
+        &["simulated:paper"],
+        300_000,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db,
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app.clone(), &config_path).await;
+    assert_status(response, StatusCode::ACCEPTED).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs/api-live-gate-ok/stop")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn live_runtime_route_reconciliation_gate_blocks_missing_audit() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-missing").await;
+    db.migrate().await.unwrap();
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-missing",
+        &db_url,
+        "paper",
+        true,
+        &["simulated:paper"],
+        300_000,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db.clone(),
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app, &config_path).await;
+    assert_bad_request_contains(response, "missing_required_audit").await;
+    assert!(
+        db.get_strategy_run("api-live-gate-missing")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn live_runtime_route_reconciliation_gate_blocks_stale_audit() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-stale").await;
+    db.migrate().await.unwrap();
+    seed_reconciliation_gate_audits(&db, &[("api-gate-stale-audit", "simulated", "paper", 1)])
+        .await;
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-stale",
+        &db_url,
+        "paper",
+        true,
+        &["simulated:paper"],
+        1,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db,
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app, &config_path).await;
+    assert_bad_request_contains(response, "audit_too_old").await;
+}
+
+#[tokio::test]
+async fn live_runtime_route_reconciliation_gate_blocks_missing_required_accounts() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-no-accounts").await;
+    db.migrate().await.unwrap();
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-no-accounts",
+        &db_url,
+        "paper",
+        true,
+        &[],
+        300_000,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db,
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app, &config_path).await;
+    assert_bad_request_contains(response, "reconciliation gate has no required accounts").await;
+}
+
+#[tokio::test]
+async fn live_runtime_route_reconciliation_gate_allows_multiple_broker_requirements() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-multi").await;
+    db.migrate().await.unwrap();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    seed_reconciliation_gate_audits(
+        &db,
+        &[
+            ("api-gate-simulated-audit", "simulated", "paper", now_ms),
+            ("api-gate-binance-audit", "binance", "paper-binance", now_ms),
+        ],
+    )
+    .await;
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-multi",
+        &db_url,
+        "paper",
+        true,
+        &["simulated:paper", "binance:paper-binance"],
+        300_000,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db,
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app.clone(), &config_path).await;
+    assert_status(response, StatusCode::ACCEPTED).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/live-runs/api-live-gate-multi/stop")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn live_runtime_route_real_money_mode_requires_reconciliation_gate_accounts() {
+    std::env::set_current_dir(workspace_root()).unwrap();
+    let (db, db_url) = live_process_test_db("gate-real-money").await;
+    db.migrate().await.unwrap();
+    let config_path = write_live_reconciliation_gate_config(
+        "api-live-gate-real-money",
+        &db_url,
+        "live",
+        false,
+        &[],
+        300_000,
+    );
+    let app = api::router_with_state(api::AppState::with_server_config_and_db_url(
+        db,
+        config::ServerConfig::with_default_run_config_path(config_path.display().to_string()),
+        Some(db_url),
+    ));
+
+    let response = post_live_launch(app, &config_path).await;
+    assert_bad_request_contains(response, "reconciliation gate has no required accounts").await;
+}
+
+#[tokio::test]
 async fn live_runtime_route_uses_configured_broker_snapshot_interval() {
     std::env::set_current_dir(workspace_root()).unwrap();
     let (db, db_url) = live_process_test_db("snapshot").await;
@@ -3657,9 +3846,40 @@ async fn assert_status(response: axum::response::Response, expected: StatusCode)
     }
 }
 
+async fn assert_bad_request_contains(response: axum::response::Response, expected: &str) {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8_lossy(&bytes);
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "expected BAD_REQUEST, got {status}: {body}"
+    );
+    assert!(
+        body.contains(expected),
+        "expected response body to contain {expected:?}, got {body}"
+    );
+}
+
 fn launch_config_path_body(path: impl AsRef<std::path::Path>, mode: &str) -> Body {
     let config_toml = std::fs::read_to_string(path).unwrap();
     Body::from(serde_json::json!({ "config_toml": config_toml, "mode": mode }).to_string())
+}
+
+async fn post_live_launch(
+    app: axum::Router,
+    config_path: impl AsRef<std::path::Path>,
+) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/live-runs")
+            .header("content-type", "application/json")
+            .body(launch_config_path_body(config_path, "live"))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
 }
 
 fn replay_launch_config_toml(run_id: &str, data_path: &std::path::Path) -> String {
@@ -3786,6 +4006,110 @@ fn live_startup_recovery_config(
         {startup_recovery}
         "#
     )
+}
+
+fn write_live_reconciliation_gate_config(
+    run_id: &str,
+    db_url: &str,
+    broker_mode: &str,
+    gate_enabled: bool,
+    required_accounts: &[&str],
+    max_audit_age_ms: i64,
+) -> std::path::PathBuf {
+    let config_path = temp_config_path(run_id);
+    let required_accounts = required_accounts
+        .iter()
+        .map(|account| format!(r#""{account}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+        [runtime]
+        mode = "live"
+        run_id = "{run_id}"
+
+        [database]
+        url = "{db_url}"
+
+        [data]
+        source = "csv"
+        path = "datasets/sample/aapl_1d.csv"
+
+        [strategy]
+        name = "moving_average_cross"
+        symbols = ["US:NASDAQ:AAPL:EQUITY"]
+        fast_window = 2
+        slow_window = 3
+
+        [portfolio]
+        initial_cash = "25000"
+        base_currency = "USD"
+        order_qty = "1"
+        max_abs_qty = "100"
+
+        [risk]
+        max_order_notional = "1000000"
+        min_cash_after_order = "0"
+        max_exposure = "1000000"
+        max_drawdown = "1"
+        max_leverage = "10"
+        max_margin_used = "0"
+        trading_halted = false
+
+        [broker]
+        kind = "simulated"
+        mode = "{broker_mode}"
+
+        [paper]
+        account_id = "paper"
+        slippage_bps = "25"
+        fee_bps = "10"
+
+        [live]
+        enabled = true
+
+        [live.reconciliation_gate]
+        enabled = {gate_enabled}
+        min_successful_audits = 1
+        max_audit_age_ms = {max_audit_age_ms}
+        required_accounts = [{required_accounts}]
+        "#
+        ),
+    )
+    .unwrap();
+    config_path
+}
+
+async fn seed_reconciliation_gate_audits(db: &Db, audits: &[(&str, &str, &str, i64)]) {
+    db.start_strategy_run(StrategyRunStartCommand {
+        run_id: "api-reconciliation-gate-seed".to_string(),
+        name: "api-reconciliation-gate".to_string(),
+        mode: "live".to_string(),
+        started_at_ms: 1,
+        config: serde_json::json!({}),
+    })
+    .await
+    .unwrap();
+    for (id, broker_kind, account_id, ts_ms) in audits {
+        db.record_reconciliation_audit(ReconciliationAuditCommand {
+            id: (*id).to_string(),
+            run_id: "api-reconciliation-gate-seed".to_string(),
+            account_id: (*account_id).to_string(),
+            broker_kind: (*broker_kind).to_string(),
+            ts_ms: *ts_ms,
+            severity: "info".to_string(),
+            cash_drift_count: 0,
+            position_drift_count: 0,
+            open_order_drift_count: 0,
+            execution_drift_count: 0,
+            stale_input_count: 0,
+            payload_json: "{}".to_string(),
+        })
+        .await
+        .unwrap();
+    }
 }
 
 async fn insert_recoverable_order(db: &Db, run_id: &str) {

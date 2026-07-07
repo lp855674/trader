@@ -174,7 +174,10 @@ mod tests {
     fn gate_allows_when_each_requirement_has_recent_clean_audits() {
         let decision = evaluate_reconciliation_gate(ReconciliationGateInput {
             now_ms: 100_000,
-            requirements: vec![requirement("ibkr", "DU****91"), requirement("binance", "paper")],
+            requirements: vec![
+                requirement("ibkr", "DU****91"),
+                requirement("binance", "paper"),
+            ],
             audits: vec![
                 audit("ibkr", "DU****91", 90_000),
                 audit("ibkr", "DU****91", 95_000),
@@ -191,13 +194,39 @@ mod tests {
     fn gate_blocks_missing_required_broker_account() {
         let decision = evaluate_reconciliation_gate(ReconciliationGateInput {
             now_ms: 100_000,
-            requirements: vec![requirement("ibkr", "DU****91"), requirement("binance", "paper")],
-            audits: vec![audit("ibkr", "DU****91", 95_000), audit("ibkr", "DU****91", 96_000)],
+            requirements: vec![
+                requirement("ibkr", "DU****91"),
+                requirement("binance", "paper"),
+            ],
+            audits: vec![
+                audit("ibkr", "DU****91", 95_000),
+                audit("ibkr", "DU****91", 96_000),
+            ],
         });
 
         assert_eq!(decision.status, ReconciliationGateStatus::Block);
         assert_eq!(decision.failures[0].reason, "missing_required_audit");
         assert_eq!(decision.failures[0].broker, "binance");
+    }
+
+    #[test]
+    fn gate_blocks_old_audits() {
+        let decision = evaluate_reconciliation_gate(ReconciliationGateInput {
+            now_ms: 100_000,
+            requirements: vec![requirement("ibkr", "DU****91")],
+            audits: vec![
+                audit("ibkr", "DU****91", 10_000),
+                audit("ibkr", "DU****91", 20_000),
+            ],
+        });
+
+        assert_eq!(decision.status, ReconciliationGateStatus::Block);
+        assert!(
+            decision
+                .failures
+                .iter()
+                .any(|failure| failure.reason == "audit_too_old")
+        );
     }
 
     #[test]
