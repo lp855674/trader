@@ -1,7 +1,9 @@
 use crate::CancellationFlag;
 use broker::{
-    Broker, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerPositionSide, BrokerStatus,
-    FakeBrokerAdapter,
+    Broker, BrokerCashBalance, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerPositionSide,
+    BrokerReconciliationInput, BrokerReconciliationSeverity, BrokerReconciliationThresholds,
+    BrokerStatus, FakeBrokerAdapter, RuntimeCashBalance, RuntimePositionSnapshot,
+    reconcile_broker_audit,
 };
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
@@ -9,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
-    BrokerPositionSnapshotCommand, Db, DbSystemLogSink, ExternalFillCommand, LiveRunCommand,
-    PaperPortfolioSnapshotCommand, RuntimeEventCommand, StoredOrder, SystemLogCommand,
+    BrokerAccountBalanceCommand, BrokerPositionSnapshotCommand, Db, DbSystemLogSink,
+    ExternalFillCommand, LiveRunCommand, PaperPortfolioSnapshotCommand, ReconciliationAuditCommand,
+    RuntimeEventCommand, StoredOrder, SystemLogCommand,
 };
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -456,13 +459,45 @@ impl LiveRuntime {
     }
 
     async fn record_broker_snapshot(&self) -> anyhow::Result<()> {
+        let ts_ms = chrono::Utc::now().timestamp_millis();
         let snapshot = self
             .broker
             .account_snapshot(&self.settings.account_id)
             .await?;
+        let broker_cash = if snapshot.cash_balances.is_empty() {
+            vec![BrokerCashBalance {
+                account_id: snapshot.account_id.clone(),
+                currency: self.settings.base_currency.clone(),
+                cash: snapshot.cash,
+                available_cash: snapshot.cash,
+                frozen_cash: Decimal::ZERO,
+                equity: Some(snapshot.equity),
+                buying_power: Some(snapshot.buying_power),
+                margin_used: Some(snapshot.margin_used),
+                source_ts_ms: ts_ms,
+            }]
+        } else {
+            snapshot.cash_balances.clone()
+        };
+        for balance in &broker_cash {
+            self.db
+                .record_broker_account_balance(BrokerAccountBalanceCommand {
+                    run_id: self.settings.run_id.clone(),
+                    account_id: balance.account_id.clone(),
+                    broker_kind: broker_kind_slug(self.settings.broker_kind).to_string(),
+                    ts_ms,
+                    currency: balance.currency.clone(),
+                    cash: balance.cash,
+                    available_cash: balance.available_cash,
+                    frozen_cash: balance.frozen_cash,
+                    equity: balance.equity,
+                    buying_power: balance.buying_power,
+                    margin_used: balance.margin_used,
+                    source_ts_ms: balance.source_ts_ms,
+                })
+                .await?;
+        }
         self.record_cash_drift_if_needed(snapshot.cash).await?;
-        self.record_cash_snapshot(chrono::Utc::now().timestamp_millis(), snapshot.cash)
-            .await?;
         tracing::info!(
             run_id = %self.settings.run_id,
             account_id = %self.settings.account_id,
@@ -483,14 +518,25 @@ impl LiveRuntime {
             }),
         )
         .await?;
-        for position in self
+        let broker_positions = self
             .broker
             .position_snapshots(&self.settings.account_id)
-            .await?
-        {
+            .await?;
+        self.record_reconciliation_audit(ts_ms, broker_cash, broker_positions.clone())
+            .await?;
+        self.record_cash_snapshot(ts_ms, snapshot.cash).await?;
+        for position in &broker_positions {
             let symbol = position.symbol.clone();
             let position_side = position_side_slug(position.position_side);
             let qty = position.qty;
+            let contract_metadata_json = position
+                .contract
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| storage::StorageError::Protocol(error.to_string()))?;
+            let liquidation_price = position.liquidation_price;
+            let open_interest = position.open_interest;
             self.record_position_drift_if_needed(&symbol, position_side, qty)
                 .await?;
             tracing::info!(
@@ -506,10 +552,10 @@ impl LiveRuntime {
             self.db
                 .record_broker_position_snapshot(BrokerPositionSnapshotCommand {
                     run_id: self.settings.run_id.clone(),
-                    account_id: position.account_id,
-                    ts_ms: chrono::Utc::now().timestamp_millis(),
-                    exchange: position.exchange,
-                    symbol: position.symbol,
+                    account_id: position.account_id.clone(),
+                    ts_ms,
+                    exchange: position.exchange.clone(),
+                    symbol: position.symbol.clone(),
                     position_side: position_side.to_string(),
                     qty: position.qty,
                     avg_price: position.avg_price,
@@ -518,6 +564,9 @@ impl LiveRuntime {
                     unrealized_pnl: position.unrealized_pnl,
                     realized_pnl: Decimal::ZERO,
                     currency: self.settings.base_currency.clone(),
+                    contract_metadata_json,
+                    liquidation_price,
+                    open_interest,
                 })
                 .await?;
             self.record_system_log(
@@ -531,6 +580,150 @@ impl LiveRuntime {
                     "position_side": position_side,
                     "qty": qty.to_string(),
                     "currency": &self.settings.base_currency,
+                }),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn record_reconciliation_audit(
+        &self,
+        ts_ms: i64,
+        broker_cash: Vec<BrokerCashBalance>,
+        broker_positions: Vec<broker::BrokerPositionSnapshot>,
+    ) -> anyhow::Result<()> {
+        let latest_cash = self
+            .db
+            .get_latest_cash_snapshot(&self.settings.run_id, Some(&self.settings.base_currency))
+            .await?;
+        let runtime_cash = match latest_cash {
+            Some(snapshot) => vec![RuntimeCashBalance {
+                account_id: self.settings.account_id.clone(),
+                currency: snapshot.currency,
+                cash: snapshot.cash.parse::<Decimal>()?,
+                ts_ms: snapshot.ts_ms,
+            }],
+            None => Vec::new(),
+        };
+        let runtime_positions = self
+            .db
+            .list_position_snapshots(&self.settings.run_id)
+            .await?
+            .into_iter()
+            .filter_map(|position| {
+                Some(RuntimePositionSnapshot {
+                    account_id: self.settings.account_id.clone(),
+                    exchange: position.exchange,
+                    symbol: position.symbol,
+                    position_side: match position.position_side.as_deref() {
+                        Some("short") => BrokerPositionSide::Short,
+                        Some("long") => BrokerPositionSide::Long,
+                        _ => return None,
+                    },
+                    qty: position.qty.parse::<Decimal>().ok()?,
+                    avg_price: position
+                        .avg_price
+                        .as_deref()
+                        .unwrap_or("0")
+                        .parse::<Decimal>()
+                        .ok()?,
+                    margin_used: Decimal::ZERO,
+                })
+            })
+            .collect::<Vec<_>>();
+        let local_orders = self.db.list_orders(&self.settings.run_id).await?;
+        let runtime_open_order_ids = local_orders
+            .iter()
+            .flat_map(|order| {
+                [
+                    order.id.clone(),
+                    order.client_order_id.clone(),
+                    order.broker_order_id.clone().unwrap_or_default(),
+                ]
+            })
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        let runtime_execution_ids = self
+            .db
+            .list_fills(&self.settings.run_id)
+            .await?
+            .into_iter()
+            .map(|fill| fill.id)
+            .collect::<Vec<_>>();
+        let broker_open_orders = self.broker.open_orders(&self.settings.account_id).await?;
+        let mut symbols = BTreeSet::new();
+        symbols.extend(local_orders.iter().map(|order| order.symbol.clone()));
+        symbols.extend(
+            broker_positions
+                .iter()
+                .map(|position| position.symbol.clone()),
+        );
+        symbols.extend(broker_open_orders.iter().map(|order| order.symbol.clone()));
+        let mut broker_executions = Vec::new();
+        for symbol in symbols {
+            broker_executions.extend(
+                self.broker
+                    .executions(&self.settings.account_id, Some(&symbol))
+                    .await?,
+            );
+        }
+
+        let audit = reconcile_broker_audit(BrokerReconciliationInput {
+            account_id: self.settings.account_id.clone(),
+            broker_kind: self.settings.broker_kind,
+            ts_ms,
+            thresholds: BrokerReconciliationThresholds {
+                cash_abs: Decimal::ZERO,
+                position_qty_abs: Decimal::ZERO,
+                stale_after_ms: self.settings.broker_snapshot_interval_ms.unwrap_or(60_000) as i64
+                    * 3,
+            },
+            runtime_cash,
+            broker_cash,
+            runtime_positions,
+            broker_positions,
+            runtime_open_order_ids,
+            broker_open_orders,
+            runtime_execution_ids,
+            broker_executions,
+        });
+        let severity = reconciliation_severity_slug(audit.severity);
+        let payload_json = serde_json::to_string(&audit)?;
+        self.db
+            .record_reconciliation_audit(ReconciliationAuditCommand {
+                id: format!("{}-reconciliation-{ts_ms}", self.settings.run_id),
+                run_id: self.settings.run_id.clone(),
+                account_id: audit.account_id.clone(),
+                broker_kind: broker_kind_slug(audit.broker_kind).to_string(),
+                ts_ms: audit.ts_ms,
+                severity: severity.to_string(),
+                cash_drift_count: audit.cash_drifts.len() as i64,
+                position_drift_count: audit.position_drifts.len() as i64,
+                open_order_drift_count: audit.open_order_drifts.len() as i64,
+                execution_drift_count: audit.execution_drifts.len() as i64,
+                stale_input_count: audit.stale_inputs.len() as i64,
+                payload_json,
+            })
+            .await?;
+        if audit.severity != BrokerReconciliationSeverity::Info {
+            self.record_system_log(
+                if audit.severity == BrokerReconciliationSeverity::Error {
+                    "WARN"
+                } else {
+                    "INFO"
+                },
+                "runtime.reconciliation",
+                "reconciliation.audit",
+                serde_json::json!({
+                    "run_id": &self.settings.run_id,
+                    "account_id": &self.settings.account_id,
+                    "severity": severity,
+                    "cash_drifts": audit.cash_drifts.len(),
+                    "position_drifts": audit.position_drifts.len(),
+                    "open_order_drifts": audit.open_order_drifts.len(),
+                    "execution_drifts": audit.execution_drifts.len(),
+                    "stale_inputs": audit.stale_inputs.len(),
                 }),
             )
             .await?;
@@ -1037,6 +1230,24 @@ fn position_side_slug(side: BrokerPositionSide) -> &'static str {
     match side {
         BrokerPositionSide::Long => "long",
         BrokerPositionSide::Short => "short",
+    }
+}
+
+fn broker_kind_slug(kind: BrokerKind) -> &'static str {
+    match kind {
+        BrokerKind::Simulated => "simulated",
+        BrokerKind::Futu => "futu",
+        BrokerKind::Binance => "binance",
+        BrokerKind::Okx => "okx",
+        BrokerKind::InteractiveBrokers => "interactive_brokers",
+    }
+}
+
+fn reconciliation_severity_slug(severity: BrokerReconciliationSeverity) -> &'static str {
+    match severity {
+        BrokerReconciliationSeverity::Info => "info",
+        BrokerReconciliationSeverity::Warn => "warn",
+        BrokerReconciliationSeverity::Error => "error",
     }
 }
 

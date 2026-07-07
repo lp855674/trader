@@ -109,6 +109,52 @@ async fn live_runtime_periodically_records_broker_reported_cash_snapshot() {
 }
 
 #[tokio::test]
+async fn live_runtime_records_production_reconciliation_audit_and_broker_balances() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-production-reconciliation".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(StaticSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_audit(&db, "live-production-reconciliation").await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let balances = db
+        .list_broker_account_balances("live-production-reconciliation")
+        .await
+        .unwrap();
+    assert!(!balances.is_empty());
+    assert_eq!(balances[0].account_id, "live-account");
+    assert_eq!(balances[0].currency, "USD");
+    assert_eq!(balances[0].cash, "123456");
+
+    let audits = db
+        .list_reconciliation_audits("live-production-reconciliation")
+        .await
+        .unwrap();
+    assert!(!audits.is_empty());
+    assert_eq!(audits[0].severity, "error");
+    assert_eq!(audits[0].cash_drift_count, 1);
+    assert_eq!(audits[0].position_drift_count, 1);
+}
+
+#[tokio::test]
 async fn live_runtime_periodically_records_broker_reported_position_snapshot() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -815,6 +861,7 @@ impl Broker for StaticSnapshotBroker {
             equity: dec("123456"),
             buying_power: dec("123456"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -832,6 +879,9 @@ impl Broker for StaticSnapshotBroker {
             margin_used: Decimal::ZERO,
             unrealized_pnl: Decimal::ZERO,
             ts_ms: 1_700_000_000_000,
+            contract: None,
+            liquidation_price: None,
+            open_interest: None,
         }])
     }
 
@@ -879,6 +929,7 @@ impl Broker for StartupRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -969,6 +1020,7 @@ impl Broker for NativeSymbolExecutionRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -1046,6 +1098,7 @@ impl Broker for IncrementalExecutionRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -1123,6 +1176,7 @@ impl Broker for OpenOrderOnlyPartialRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -1198,6 +1252,7 @@ impl Broker for UnmatchedStartupRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -1314,6 +1369,7 @@ impl Broker for UnmatchedExecutionOnlyStartupRecoveryBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -1416,6 +1472,7 @@ impl Broker for StartupRecoveryFailureBroker {
             equity: dec("100000"),
             buying_power: dec("100000"),
             margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
         })
     }
 
@@ -2228,6 +2285,21 @@ async fn wait_for_system_log(db: &Db, run_id: &str, target: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{run_id} did not emit system log target {target}");
+}
+
+async fn wait_for_reconciliation_audit(db: &Db, run_id: &str) {
+    for _ in 0..50 {
+        if !db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .is_empty()
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record reconciliation audit");
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

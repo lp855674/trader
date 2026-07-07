@@ -1,11 +1,12 @@
 use rust_decimal::Decimal;
 use storage::{
-    BrokerPositionSnapshotCommand, ConfigState, Db, FeeVolumeQuery, NewAccountBalance,
-    NewCashSnapshot, NewConfigRecord, NewConfigVersion, NewCorporateActionMeta,
+    BrokerAccountBalanceCommand, BrokerPositionSnapshotCommand, ConfigState, Db, FeeVolumeQuery,
+    NewAccountBalance, NewCashSnapshot, NewConfigRecord, NewConfigVersion, NewCorporateActionMeta,
     NewCryptoMarketMeta, NewCryptoPosition, NewEventRecord, NewFeeRule, NewFill, NewFundingRate,
     NewLotSizeRule, NewMarketCalendar, NewOrder, NewOrderEvent, NewPortfolioSnapshot, NewPosition,
     NewPositionSnapshot, NewPriceLimitRule, NewRiskEvent, NewStrategyRun, NewSystemLog,
-    NewTradingSessionRule, RuntimeEventCommand, StrategyRunStartCommand,
+    NewTradingSessionRule, ReconciliationAuditCommand, RuntimeEventCommand,
+    StrategyRunStartCommand,
 };
 
 async fn insert_test_order_fill(
@@ -2326,6 +2327,9 @@ async fn reference_snapshot_and_ops_records_round_trip() {
         unrealized_pnl: Some("24.96915".to_string()),
         realized_pnl: Some("0".to_string()),
         currency: "USDT".to_string(),
+        contract_metadata_json: None,
+        liquidation_price: None,
+        open_interest: None,
         created_at_ms: 21,
     })
     .await
@@ -2355,6 +2359,9 @@ async fn reference_snapshot_and_ops_records_round_trip() {
         unrealized_pnl: Some("15".to_string()),
         realized_pnl: Some("0".to_string()),
         currency: "USDT".to_string(),
+        contract_metadata_json: None,
+        liquidation_price: None,
+        open_interest: None,
         created_at_ms: 22,
     })
     .await
@@ -2377,6 +2384,9 @@ async fn reference_snapshot_and_ops_records_round_trip() {
         unrealized_pnl: Some("75".to_string()),
         realized_pnl: Some("0".to_string()),
         currency: "USDT".to_string(),
+        contract_metadata_json: None,
+        liquidation_price: None,
+        open_interest: None,
         created_at_ms: 31,
     })
     .await
@@ -2635,6 +2645,11 @@ async fn broker_position_snapshot_command_preserves_side_and_pnl_fields() {
         unrealized_pnl: dec("12.5"),
         realized_pnl: Decimal::ZERO,
         currency: "USDT".to_string(),
+        contract_metadata_json: Some(
+            r#"{"sec_type":"CRYPTO_PERP","exchange":"BINANCE"}"#.to_string(),
+        ),
+        liquidation_price: Some(dec("50000")),
+        open_interest: Some(dec("12345.67")),
     })
     .await
     .unwrap();
@@ -2658,6 +2673,87 @@ async fn broker_position_snapshot_command_preserves_side_and_pnl_fields() {
     assert_eq!(snapshot.market_value.as_deref(), Some("32512.5"));
     assert_eq!(snapshot.unrealized_pnl.as_deref(), Some("12.5"));
     assert_eq!(snapshot.realized_pnl.as_deref(), Some("0"));
+    assert_eq!(
+        snapshot.contract_metadata_json.as_deref(),
+        Some(r#"{"sec_type":"CRYPTO_PERP","exchange":"BINANCE"}"#)
+    );
+    assert_eq!(snapshot.liquidation_price.as_deref(), Some("50000"));
+    assert_eq!(snapshot.open_interest.as_deref(), Some("12345.67"));
+}
+
+#[tokio::test]
+async fn production_reconciliation_account_balance_and_audit_round_trip() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-production-reconciliation".to_string(),
+        name: "live-reconciliation".to_string(),
+        mode: "live".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    db.record_broker_account_balance(BrokerAccountBalanceCommand {
+        run_id: "run-production-reconciliation".to_string(),
+        account_id: "DU123".to_string(),
+        broker_kind: "interactive_brokers".to_string(),
+        ts_ms: 1_700_000_000_100,
+        currency: "USD".to_string(),
+        cash: dec("1000.25"),
+        available_cash: dec("900.25"),
+        frozen_cash: dec("100"),
+        equity: Some(dec("1500")),
+        buying_power: Some(dec("2000")),
+        margin_used: Some(dec("250")),
+        source_ts_ms: 1_700_000_000_000,
+    })
+    .await
+    .unwrap();
+
+    db.record_reconciliation_audit(ReconciliationAuditCommand {
+        id: "audit-1".to_string(),
+        run_id: "run-production-reconciliation".to_string(),
+        account_id: "DU123".to_string(),
+        broker_kind: "interactive_brokers".to_string(),
+        ts_ms: 1_700_000_000_100,
+        severity: "error".to_string(),
+        cash_drift_count: 1,
+        position_drift_count: 2,
+        open_order_drift_count: 3,
+        execution_drift_count: 4,
+        stale_input_count: 5,
+        payload_json: r#"{"severity":"error"}"#.to_string(),
+    })
+    .await
+    .unwrap();
+
+    let balances = db
+        .list_broker_account_balances("run-production-reconciliation")
+        .await
+        .unwrap();
+    assert_eq!(balances.len(), 1);
+    assert_eq!(balances[0].account_id, "DU123");
+    assert_eq!(balances[0].currency, "USD");
+    assert_eq!(balances[0].cash, "1000.25");
+    assert_eq!(balances[0].equity.as_deref(), Some("1500"));
+    assert_eq!(balances[0].source_ts_ms, 1_700_000_000_000);
+
+    let audits = db
+        .list_reconciliation_audits("run-production-reconciliation")
+        .await
+        .unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].severity, "error");
+    assert_eq!(audits[0].cash_drift_count, 1);
+    assert_eq!(audits[0].position_drift_count, 2);
+    assert_eq!(audits[0].open_order_drift_count, 3);
+    assert_eq!(audits[0].execution_drift_count, 4);
+    assert_eq!(audits[0].stale_input_count, 5);
 }
 
 #[tokio::test]

@@ -17,9 +17,9 @@ use tokio::time::timeout;
 use trader_core::OrderRequest;
 
 use crate::{
-    Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerError, BrokerExecution, BrokerKind,
-    BrokerOpenOrder, BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus,
-    PlaceOrderResponse,
+    Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerCashBalance, BrokerContractMetadata,
+    BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerPositionSide,
+    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -751,6 +751,11 @@ fn map_position_snapshot(
         margin_used: Decimal::ZERO,
         unrealized_pnl: Decimal::ZERO,
         ts_ms: Utc::now().timestamp_millis(),
+        contract: Some(broker_contract_metadata_from_ibkr_contract(
+            &position.contract,
+        )?),
+        liquidation_price: None,
+        open_interest: None,
     }))
 }
 
@@ -758,12 +763,27 @@ fn account_snapshot_from_summary(
     account_id: &str,
     values: &HashMap<String, String>,
 ) -> Result<BrokerAccountSnapshot, BrokerError> {
+    let cash = summary_decimal(values, AccountSummaryTags::TOTAL_CASH_VALUE)?;
+    let equity = summary_decimal(values, AccountSummaryTags::NET_LIQUIDATION)?;
+    let buying_power = summary_decimal(values, AccountSummaryTags::BUYING_POWER)?;
+    let margin_used = summary_decimal(values, AccountSummaryTags::MAINT_MARGIN_REQ)?;
     Ok(BrokerAccountSnapshot {
         account_id: account_id.to_string(),
-        cash: summary_decimal(values, AccountSummaryTags::TOTAL_CASH_VALUE)?,
-        equity: summary_decimal(values, AccountSummaryTags::NET_LIQUIDATION)?,
-        buying_power: summary_decimal(values, AccountSummaryTags::BUYING_POWER)?,
-        margin_used: summary_decimal(values, AccountSummaryTags::MAINT_MARGIN_REQ)?,
+        cash,
+        equity,
+        buying_power,
+        margin_used,
+        cash_balances: vec![BrokerCashBalance {
+            account_id: account_id.to_string(),
+            currency: "USD".to_string(),
+            cash,
+            available_cash: cash,
+            frozen_cash: Decimal::ZERO,
+            equity: Some(equity),
+            buying_power: Some(buying_power),
+            margin_used: Some(margin_used),
+            source_ts_ms: Utc::now().timestamp_millis(),
+        }],
     })
 }
 
@@ -792,6 +812,55 @@ fn ibkr_position_symbol(contract: &Contract) -> String {
             contract.symbol, contract.security_type
         ),
     }
+}
+
+fn broker_contract_metadata_from_ibkr_contract(
+    contract: &Contract,
+) -> Result<BrokerContractMetadata, BrokerError> {
+    Ok(BrokerContractMetadata {
+        conid: if contract.contract_id == 0 {
+            None
+        } else {
+            Some(i64::from(contract.contract_id))
+        },
+        sec_type: Some(contract.security_type.to_string()),
+        currency: non_empty_string(contract.currency.to_string()),
+        exchange: non_empty_string(contract.exchange.to_string()),
+        primary_exchange: non_empty_string(contract.primary_exchange.to_string()),
+        multiplier: non_empty_decimal(contract.multiplier.to_string(), "IBKR contract multiplier")?,
+        expiry: non_empty_string(contract.last_trade_date_or_contract_month.to_string()),
+        right: contract
+            .right
+            .as_ref()
+            .and_then(|right| non_empty_string(right.to_string())),
+        strike: if contract.strike == 0.0 {
+            None
+        } else {
+            Some(decimal_from_f64(contract.strike, "IBKR option strike")?)
+        },
+        local_symbol: non_empty_string(contract.local_symbol.to_string()),
+        trading_class: non_empty_string(contract.trading_class.to_string()),
+    })
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn non_empty_decimal(value: String, name: &str) -> Result<Option<Decimal>, BrokerError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    trimmed
+        .parse::<Decimal>()
+        .map(Some)
+        .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
 }
 
 fn ibkr_stock_contract(symbol: &str) -> Contract {
@@ -874,4 +943,51 @@ fn map_ibapi_connect_error(address: &str, error: ibapi::Error) -> BrokerError {
     BrokerError::Connection(format!(
         "unable to connect to IBKR paper gateway at {address}: IBKR API error: {error}"
     ))
+}
+
+#[cfg(test)]
+mod ibkr_contract_metadata_tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn ibkr_contract_metadata_maps_stock_contract_fields() {
+        let mut contract = Contract::stock("AAPL").build();
+        contract.contract_id = 265598;
+        contract.exchange = "SMART".into();
+        contract.primary_exchange = "NASDAQ".into();
+        contract.currency = "USD".into();
+        contract.local_symbol = "AAPL".into();
+        contract.trading_class = "NMS".into();
+
+        let metadata = broker_contract_metadata_from_ibkr_contract(&contract).unwrap();
+
+        assert_eq!(metadata.conid, Some(265598));
+        assert_eq!(metadata.currency.as_deref(), Some("USD"));
+        assert_eq!(metadata.exchange.as_deref(), Some("SMART"));
+        assert_eq!(metadata.primary_exchange.as_deref(), Some("NASDAQ"));
+        assert_eq!(metadata.local_symbol.as_deref(), Some("AAPL"));
+        assert_eq!(metadata.trading_class.as_deref(), Some("NMS"));
+    }
+
+    #[test]
+    fn ibkr_position_snapshot_keeps_contract_metadata() {
+        let mut contract = Contract::stock("AAPL").build();
+        contract.contract_id = 265598;
+        contract.exchange = "SMART".into();
+        contract.primary_exchange = "NASDAQ".into();
+        contract.currency = "USD".into();
+
+        let position = ibapi::accounts::Position {
+            account: "DU123".to_string(),
+            contract,
+            position: 2.0,
+            average_cost: 180.0,
+        };
+
+        let snapshot = map_position_snapshot(position).unwrap().unwrap();
+        assert_eq!(snapshot.symbol, "US:NASDAQ:AAPL:EQUITY");
+        assert_eq!(snapshot.contract.unwrap().conid, Some(265598));
+        assert_eq!(snapshot.qty, dec!(2));
+    }
 }

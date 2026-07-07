@@ -493,6 +493,40 @@ pub struct NewCashSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerAccountBalanceCommand {
+    pub run_id: String,
+    pub account_id: String,
+    pub broker_kind: String,
+    pub ts_ms: i64,
+    pub currency: String,
+    pub cash: Decimal,
+    pub available_cash: Decimal,
+    pub frozen_cash: Decimal,
+    pub equity: Option<Decimal>,
+    pub buying_power: Option<Decimal>,
+    pub margin_used: Option<Decimal>,
+    pub source_ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredBrokerAccountBalance {
+    pub id: i64,
+    pub run_id: String,
+    pub account_id: String,
+    pub broker_kind: String,
+    pub ts_ms: i64,
+    pub currency: String,
+    pub cash: String,
+    pub available_cash: String,
+    pub frozen_cash: String,
+    pub equity: Option<String>,
+    pub buying_power: Option<String>,
+    pub margin_used: Option<String>,
+    pub source_ts_ms: i64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoredCashSnapshot {
     pub id: i64,
     pub run_id: String,
@@ -523,6 +557,9 @@ pub struct NewPositionSnapshot {
     pub unrealized_pnl: Option<String>,
     pub realized_pnl: Option<String>,
     pub currency: String,
+    pub contract_metadata_json: Option<String>,
+    pub liquidation_price: Option<String>,
+    pub open_interest: Option<String>,
     pub created_at_ms: i64,
 }
 
@@ -546,6 +583,42 @@ pub struct StoredPositionSnapshot {
     pub unrealized_pnl: Option<String>,
     pub realized_pnl: Option<String>,
     pub currency: String,
+    pub contract_metadata_json: Option<String>,
+    pub liquidation_price: Option<String>,
+    pub open_interest: Option<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReconciliationAuditCommand {
+    pub id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub broker_kind: String,
+    pub ts_ms: i64,
+    pub severity: String,
+    pub cash_drift_count: i64,
+    pub position_drift_count: i64,
+    pub open_order_drift_count: i64,
+    pub execution_drift_count: i64,
+    pub stale_input_count: i64,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoredReconciliationAudit {
+    pub id: String,
+    pub run_id: String,
+    pub account_id: String,
+    pub broker_kind: String,
+    pub ts_ms: i64,
+    pub severity: String,
+    pub cash_drift_count: i64,
+    pub position_drift_count: i64,
+    pub open_order_drift_count: i64,
+    pub execution_drift_count: i64,
+    pub stale_input_count: i64,
+    pub payload_json: String,
     pub created_at_ms: i64,
 }
 
@@ -1380,6 +1453,9 @@ pub struct BrokerPositionSnapshotCommand {
     pub unrealized_pnl: Decimal,
     pub realized_pnl: Decimal,
     pub currency: String,
+    pub contract_metadata_json: Option<String>,
+    pub liquidation_price: Option<Decimal>,
+    pub open_interest: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1633,6 +1709,9 @@ fn position_snapshot_from_command(
         unrealized_pnl: None,
         realized_pnl: None,
         currency: currency.to_string(),
+        contract_metadata_json: None,
+        liquidation_price: None,
+        open_interest: None,
         created_at_ms: position.updated_at_ms,
     })
 }
@@ -1661,6 +1740,9 @@ fn runtime_position_snapshot_from_command(
         unrealized_pnl: Some(Decimal::ZERO.to_string()),
         realized_pnl: Some(Decimal::ZERO.to_string()),
         currency: command.currency,
+        contract_metadata_json: None,
+        liquidation_price: None,
+        open_interest: None,
         created_at_ms: command.ts_ms,
     })
 }
@@ -1689,6 +1771,9 @@ fn broker_position_snapshot_from_command(
         unrealized_pnl: Some(command.unrealized_pnl.to_string()),
         realized_pnl: Some(command.realized_pnl.to_string()),
         currency: command.currency,
+        contract_metadata_json: command.contract_metadata_json,
+        liquidation_price: command.liquidation_price.map(|price| price.to_string()),
+        open_interest: command.open_interest.map(|value| value.to_string()),
         created_at_ms: command.ts_ms,
     })
 }
@@ -3376,6 +3461,77 @@ impl Db {
         Ok(())
     }
 
+    pub async fn record_broker_account_balance(
+        &self,
+        command: BrokerAccountBalanceCommand,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO broker_account_balances (
+                run_id, account_id, broker_kind, ts, currency, cash, available_cash,
+                frozen_cash, equity, buying_power, margin_used, source_ts, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(command.run_id)
+        .bind(command.account_id)
+        .bind(command.broker_kind)
+        .bind(command.ts_ms)
+        .bind(command.currency)
+        .bind(command.cash.to_string())
+        .bind(command.available_cash.to_string())
+        .bind(command.frozen_cash.to_string())
+        .bind(command.equity.map(|value| value.to_string()))
+        .bind(command.buying_power.map(|value| value.to_string()))
+        .bind(command.margin_used.map(|value| value.to_string()))
+        .bind(command.source_ts_ms)
+        .bind(command.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_broker_account_balances(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredBrokerAccountBalance>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, run_id, account_id, broker_kind, ts AS ts_ms, currency, cash,
+                   available_cash, frozen_cash, equity, buying_power, margin_used,
+                   source_ts AS source_ts_ms, created_at AS created_at_ms
+            FROM broker_account_balances
+            WHERE run_id = ?
+            ORDER BY ts, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(StoredBrokerAccountBalance {
+                    id: row.try_get("id")?,
+                    run_id: row.try_get("run_id")?,
+                    account_id: row.try_get("account_id")?,
+                    broker_kind: row.try_get("broker_kind")?,
+                    ts_ms: row.try_get("ts_ms")?,
+                    currency: row.try_get("currency")?,
+                    cash: row.try_get("cash")?,
+                    available_cash: row.try_get("available_cash")?,
+                    frozen_cash: row.try_get("frozen_cash")?,
+                    equity: row.try_get("equity")?,
+                    buying_power: row.try_get("buying_power")?,
+                    margin_used: row.try_get("margin_used")?,
+                    source_ts_ms: row.try_get("source_ts_ms")?,
+                    created_at_ms: row.try_get("created_at_ms")?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn list_cash_snapshots(
         &self,
         run_id: &str,
@@ -3489,9 +3645,10 @@ impl Db {
             INSERT INTO position_snapshots (
                 run_id, ts, market, exchange, symbol, asset_class, position_side,
                 qty, available_qty, avg_price, entry_price, market_price, mark_price,
-                market_value, unrealized_pnl, realized_pnl, currency, created_at
+                market_value, unrealized_pnl, realized_pnl, currency, contract_metadata_json,
+                liquidation_price, open_interest, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(snapshot.run_id)
@@ -3511,6 +3668,9 @@ impl Db {
         .bind(snapshot.unrealized_pnl)
         .bind(snapshot.realized_pnl)
         .bind(snapshot.currency)
+        .bind(snapshot.contract_metadata_json)
+        .bind(snapshot.liquidation_price)
+        .bind(snapshot.open_interest)
         .bind(snapshot.created_at_ms)
         .execute(self.pool())
         .await?;
@@ -3536,7 +3696,8 @@ impl Db {
         let mut query_builder = QueryBuilder::<Sqlite>::new(
             "SELECT id, run_id, ts AS ts_ms, market, exchange, symbol, asset_class, position_side, \
              qty, available_qty, avg_price, entry_price, market_price, mark_price, \
-             market_value, unrealized_pnl, realized_pnl, currency, created_at AS created_at_ms \
+             market_value, unrealized_pnl, realized_pnl, currency, contract_metadata_json, \
+             liquidation_price, open_interest, created_at AS created_at_ms \
              FROM position_snapshots WHERE run_id = ",
         );
         query_builder.push_bind(run_id);
@@ -3580,10 +3741,85 @@ impl Db {
                 unrealized_pnl: row.try_get("unrealized_pnl")?,
                 realized_pnl: row.try_get("realized_pnl")?,
                 currency: row.try_get("currency")?,
+                contract_metadata_json: row.try_get("contract_metadata_json")?,
+                liquidation_price: row.try_get("liquidation_price")?,
+                open_interest: row.try_get("open_interest")?,
                 created_at_ms: row.try_get("created_at_ms")?,
             });
         }
         Ok(snapshots)
+    }
+
+    pub async fn record_reconciliation_audit(
+        &self,
+        command: ReconciliationAuditCommand,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO broker_reconciliation_audits (
+                id, run_id, account_id, broker_kind, ts, severity, cash_drift_count,
+                position_drift_count, open_order_drift_count, execution_drift_count,
+                stale_input_count, payload_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(command.id)
+        .bind(command.run_id)
+        .bind(command.account_id)
+        .bind(command.broker_kind)
+        .bind(command.ts_ms)
+        .bind(command.severity)
+        .bind(command.cash_drift_count)
+        .bind(command.position_drift_count)
+        .bind(command.open_order_drift_count)
+        .bind(command.execution_drift_count)
+        .bind(command.stale_input_count)
+        .bind(command.payload_json)
+        .bind(command.ts_ms)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_reconciliation_audits(
+        &self,
+        run_id: &str,
+    ) -> StorageResult<Vec<StoredReconciliationAudit>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, run_id, account_id, broker_kind, ts AS ts_ms, severity,
+                   cash_drift_count, position_drift_count, open_order_drift_count,
+                   execution_drift_count, stale_input_count, payload_json,
+                   created_at AS created_at_ms
+            FROM broker_reconciliation_audits
+            WHERE run_id = ?
+            ORDER BY ts, id
+            "#,
+        )
+        .bind(run_id)
+        .fetch_all(self.pool())
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(StoredReconciliationAudit {
+                    id: row.try_get("id")?,
+                    run_id: row.try_get("run_id")?,
+                    account_id: row.try_get("account_id")?,
+                    broker_kind: row.try_get("broker_kind")?,
+                    ts_ms: row.try_get("ts_ms")?,
+                    severity: row.try_get("severity")?,
+                    cash_drift_count: row.try_get("cash_drift_count")?,
+                    position_drift_count: row.try_get("position_drift_count")?,
+                    open_order_drift_count: row.try_get("open_order_drift_count")?,
+                    execution_drift_count: row.try_get("execution_drift_count")?,
+                    stale_input_count: row.try_get("stale_input_count")?,
+                    payload_json: row.try_get("payload_json")?,
+                    created_at_ms: row.try_get("created_at_ms")?,
+                })
+            })
+            .collect()
     }
 
     pub async fn get_latest_position_snapshot(

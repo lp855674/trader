@@ -7,9 +7,9 @@ use std::{fmt, sync::Arc};
 use trader_core::{OrderRequest, OrderSide};
 
 use crate::{
-    Broker, BrokerAccountSnapshot, BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder,
-    BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
-    fake_status,
+    Broker, BrokerAccountSnapshot, BrokerCashBalance, BrokerContractMetadata, BrokerError,
+    BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerPositionSide,
+    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse, fake_status,
 };
 
 #[derive(Debug, Clone)]
@@ -692,6 +692,15 @@ impl BinancePositionRiskResponse {
             margin_used,
             unrealized_pnl,
             ts_ms: self.update_time,
+            contract: Some(BrokerContractMetadata {
+                sec_type: Some("CRYPTO_PERP".to_string()),
+                currency: Some("USDT".to_string()),
+                exchange: Some("BINANCE".to_string()),
+                local_symbol: Some(self.symbol),
+                ..BrokerContractMetadata::default()
+            }),
+            liquidation_price: None,
+            open_interest: None,
         }))
     }
 }
@@ -752,17 +761,38 @@ impl Broker for BinanceSpotTestnetAdapter {
             .await?;
         let response = serde_json::from_str::<BinanceAccountResponse>(&body)
             .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let cash = response
+            .balances
+            .iter()
+            .find(|balance| balance.asset == "USDT")
+            .and_then(|balance| balance.free.parse::<Decimal>().ok())
+            .unwrap_or(Decimal::ZERO);
+        let cash_balances = response
+            .balances
+            .iter()
+            .filter_map(|balance| {
+                let available_cash = balance.free.parse::<Decimal>().ok()?;
+                let frozen_cash = balance.locked.parse::<Decimal>().ok()?;
+                Some(BrokerCashBalance {
+                    account_id: account_id.to_string(),
+                    currency: balance.asset.clone(),
+                    cash: available_cash + frozen_cash,
+                    available_cash,
+                    frozen_cash,
+                    equity: None,
+                    buying_power: None,
+                    margin_used: None,
+                    source_ts_ms: 0,
+                })
+            })
+            .collect();
         Ok(BrokerAccountSnapshot {
             account_id: account_id.to_string(),
-            cash: response
-                .balances
-                .iter()
-                .find(|balance| balance.asset == "USDT")
-                .and_then(|balance| balance.free.parse::<Decimal>().ok())
-                .unwrap_or(Decimal::ZERO),
+            cash,
             equity: Decimal::ZERO,
             buying_power: Decimal::ZERO,
             margin_used: Decimal::ZERO,
+            cash_balances,
         })
     }
 

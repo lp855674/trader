@@ -105,6 +105,43 @@ pub struct BrokerAccountSnapshot {
     pub equity: Decimal,
     pub buying_power: Decimal,
     pub margin_used: Decimal,
+    pub cash_balances: Vec<BrokerCashBalance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerCashBalance {
+    pub account_id: String,
+    pub currency: String,
+    pub cash: Decimal,
+    pub available_cash: Decimal,
+    pub frozen_cash: Decimal,
+    pub equity: Option<Decimal>,
+    pub buying_power: Option<Decimal>,
+    pub margin_used: Option<Decimal>,
+    pub source_ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeCashBalance {
+    pub account_id: String,
+    pub currency: String,
+    pub cash: Decimal,
+    pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct BrokerContractMetadata {
+    pub conid: Option<i64>,
+    pub sec_type: Option<String>,
+    pub currency: Option<String>,
+    pub exchange: Option<String>,
+    pub primary_exchange: Option<String>,
+    pub multiplier: Option<Decimal>,
+    pub expiry: Option<String>,
+    pub right: Option<String>,
+    pub strike: Option<Decimal>,
+    pub local_symbol: Option<String>,
+    pub trading_class: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -148,6 +185,9 @@ pub struct BrokerPositionSnapshot {
     pub margin_used: Decimal,
     pub unrealized_pnl: Decimal,
     pub ts_ms: i64,
+    pub contract: Option<BrokerContractMetadata>,
+    pub liquidation_price: Option<Decimal>,
+    pub open_interest: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -168,6 +208,201 @@ impl PositionReconciliationReport {
     pub fn drift_count(&self) -> usize {
         self.drifts.len()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerReconciliationSeverity {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerReconciliationThresholds {
+    pub cash_abs: Decimal,
+    pub position_qty_abs: Decimal,
+    pub stale_after_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerReconciliationDrift {
+    pub account_id: String,
+    pub reason: String,
+    pub symbol: Option<String>,
+    pub currency: Option<String>,
+    pub local_value: Option<String>,
+    pub broker_value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerReconciliationAudit {
+    pub account_id: String,
+    pub broker_kind: BrokerKind,
+    pub ts_ms: i64,
+    pub severity: BrokerReconciliationSeverity,
+    pub cash_drifts: Vec<BrokerReconciliationDrift>,
+    pub position_drifts: Vec<BrokerReconciliationDrift>,
+    pub open_order_drifts: Vec<BrokerReconciliationDrift>,
+    pub execution_drifts: Vec<BrokerReconciliationDrift>,
+    pub stale_inputs: Vec<BrokerReconciliationDrift>,
+}
+
+pub struct BrokerReconciliationInput {
+    pub account_id: String,
+    pub broker_kind: BrokerKind,
+    pub ts_ms: i64,
+    pub thresholds: BrokerReconciliationThresholds,
+    pub runtime_cash: Vec<RuntimeCashBalance>,
+    pub broker_cash: Vec<BrokerCashBalance>,
+    pub runtime_positions: Vec<RuntimePositionSnapshot>,
+    pub broker_positions: Vec<BrokerPositionSnapshot>,
+    pub runtime_open_order_ids: Vec<String>,
+    pub broker_open_orders: Vec<BrokerOpenOrder>,
+    pub runtime_execution_ids: Vec<String>,
+    pub broker_executions: Vec<BrokerExecution>,
+}
+
+pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconciliationAudit {
+    let mut audit = BrokerReconciliationAudit {
+        account_id: input.account_id.clone(),
+        broker_kind: input.broker_kind,
+        ts_ms: input.ts_ms,
+        severity: BrokerReconciliationSeverity::Info,
+        cash_drifts: Vec::new(),
+        position_drifts: Vec::new(),
+        open_order_drifts: Vec::new(),
+        execution_drifts: Vec::new(),
+        stale_inputs: Vec::new(),
+    };
+
+    for broker_cash in &input.broker_cash {
+        if input.ts_ms - broker_cash.source_ts_ms > input.thresholds.stale_after_ms {
+            audit.stale_inputs.push(BrokerReconciliationDrift {
+                account_id: broker_cash.account_id.clone(),
+                reason: "broker_cash_stale".to_string(),
+                symbol: None,
+                currency: Some(broker_cash.currency.clone()),
+                local_value: None,
+                broker_value: Some(broker_cash.source_ts_ms.to_string()),
+            });
+        }
+
+        match input.runtime_cash.iter().find(|runtime_cash| {
+            runtime_cash.account_id == broker_cash.account_id
+                && runtime_cash.currency == broker_cash.currency
+        }) {
+            Some(runtime_cash) => {
+                let drift = (runtime_cash.cash - broker_cash.cash).abs();
+                if drift > input.thresholds.cash_abs {
+                    audit.cash_drifts.push(BrokerReconciliationDrift {
+                        account_id: broker_cash.account_id.clone(),
+                        reason: "cash_total_drift".to_string(),
+                        symbol: None,
+                        currency: Some(broker_cash.currency.clone()),
+                        local_value: Some(runtime_cash.cash.to_string()),
+                        broker_value: Some(broker_cash.cash.to_string()),
+                    });
+                }
+            }
+            None => audit.cash_drifts.push(BrokerReconciliationDrift {
+                account_id: broker_cash.account_id.clone(),
+                reason: "cash_missing_runtime".to_string(),
+                symbol: None,
+                currency: Some(broker_cash.currency.clone()),
+                local_value: None,
+                broker_value: Some(broker_cash.cash.to_string()),
+            }),
+        }
+    }
+
+    for position in &input.broker_positions {
+        match input.runtime_positions.iter().find(|runtime_position| {
+            runtime_position.account_id == position.account_id
+                && runtime_position.exchange == position.exchange
+                && runtime_position.symbol == position.symbol
+                && runtime_position.position_side == position.position_side
+        }) {
+            Some(runtime_position) => {
+                let drift = (runtime_position.qty - position.qty).abs();
+                if drift > input.thresholds.position_qty_abs {
+                    audit.position_drifts.push(BrokerReconciliationDrift {
+                        account_id: position.account_id.clone(),
+                        reason: "position_qty_drift".to_string(),
+                        symbol: Some(position.symbol.clone()),
+                        currency: position
+                            .contract
+                            .as_ref()
+                            .and_then(|contract| contract.currency.clone()),
+                        local_value: Some(runtime_position.qty.to_string()),
+                        broker_value: Some(position.qty.to_string()),
+                    });
+                }
+            }
+            None => audit.position_drifts.push(BrokerReconciliationDrift {
+                account_id: position.account_id.clone(),
+                reason: "position_missing_runtime".to_string(),
+                symbol: Some(position.symbol.clone()),
+                currency: position
+                    .contract
+                    .as_ref()
+                    .and_then(|contract| contract.currency.clone()),
+                local_value: None,
+                broker_value: Some(position.qty.to_string()),
+            }),
+        }
+    }
+
+    for open_order in &input.broker_open_orders {
+        if input
+            .runtime_open_order_ids
+            .iter()
+            .any(|id| id == &open_order.client_order_id || id == &open_order.broker_order_id)
+        {
+            continue;
+        }
+        audit.open_order_drifts.push(BrokerReconciliationDrift {
+            account_id: open_order.account_id.clone(),
+            reason: "open_order_missing_runtime".to_string(),
+            symbol: Some(open_order.symbol.clone()),
+            currency: None,
+            local_value: None,
+            broker_value: Some(open_order.broker_order_id.clone()),
+        });
+    }
+
+    for execution in &input.broker_executions {
+        if input.runtime_execution_ids.iter().any(|id| {
+            id == &execution.trade_id
+                || id == &execution.broker_order_id
+                || execution.client_order_id.as_ref() == Some(id)
+        }) {
+            continue;
+        }
+        audit.execution_drifts.push(BrokerReconciliationDrift {
+            account_id: execution.account_id.clone(),
+            reason: "execution_missing_runtime".to_string(),
+            symbol: Some(execution.symbol.clone()),
+            currency: None,
+            local_value: None,
+            broker_value: Some(execution.trade_id.clone()),
+        });
+    }
+
+    audit.severity = if audit.cash_drifts.is_empty()
+        && audit.position_drifts.is_empty()
+        && audit.open_order_drifts.is_empty()
+        && audit.execution_drifts.is_empty()
+    {
+        if audit.stale_inputs.is_empty() {
+            BrokerReconciliationSeverity::Info
+        } else {
+            BrokerReconciliationSeverity::Warn
+        }
+    } else {
+        BrokerReconciliationSeverity::Error
+    };
+    audit
 }
 
 pub fn reconcile_positions(
@@ -516,12 +751,24 @@ impl Broker for FakeBrokerAdapter {
 }
 
 fn fake_account_snapshot(account_id: &str) -> BrokerAccountSnapshot {
+    let cash = Decimal::from(100_000);
     BrokerAccountSnapshot {
         account_id: account_id.to_string(),
-        cash: Decimal::from(100_000),
-        equity: Decimal::from(100_000),
-        buying_power: Decimal::from(100_000),
+        cash,
+        equity: cash,
+        buying_power: cash,
         margin_used: Decimal::ZERO,
+        cash_balances: vec![BrokerCashBalance {
+            account_id: account_id.to_string(),
+            currency: "USD".to_string(),
+            cash,
+            available_cash: cash,
+            frozen_cash: Decimal::ZERO,
+            equity: Some(cash),
+            buying_power: Some(cash),
+            margin_used: Some(Decimal::ZERO),
+            source_ts_ms: 1_700_000_000_000,
+        }],
     }
 }
 
@@ -542,6 +789,9 @@ fn fake_position_snapshots(account_id: &str, kind: BrokerKind) -> Vec<BrokerPosi
         margin_used: Decimal::from(3_250),
         unrealized_pnl: Decimal::new(125, 1),
         ts_ms: 1_700_000_000_000,
+        contract: None,
+        liquidation_price: None,
+        open_interest: None,
     }]
 }
 
@@ -593,4 +843,135 @@ pub fn simulate_market_fill(
         qty: request.qty,
         fee: notional * fee_rate,
     })
+}
+
+#[cfg(test)]
+mod production_reconciliation_tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn account_snapshot_exposes_multi_currency_balances() {
+        let snapshot = BrokerAccountSnapshot {
+            account_id: "DU123".to_string(),
+            cash: dec!(1000),
+            equity: dec!(1500),
+            buying_power: dec!(2000),
+            margin_used: dec!(100),
+            cash_balances: vec![
+                BrokerCashBalance {
+                    account_id: "DU123".to_string(),
+                    currency: "USD".to_string(),
+                    cash: dec!(1000),
+                    available_cash: dec!(900),
+                    frozen_cash: dec!(100),
+                    equity: Some(dec!(1500)),
+                    buying_power: Some(dec!(2000)),
+                    margin_used: Some(dec!(100)),
+                    source_ts_ms: 1_700_000_000_000,
+                },
+                BrokerCashBalance {
+                    account_id: "DU123".to_string(),
+                    currency: "HKD".to_string(),
+                    cash: dec!(7800),
+                    available_cash: dec!(7800),
+                    frozen_cash: dec!(0),
+                    equity: None,
+                    buying_power: None,
+                    margin_used: None,
+                    source_ts_ms: 1_700_000_000_000,
+                },
+            ],
+        };
+
+        assert_eq!(snapshot.cash_balances.len(), 2);
+        assert_eq!(snapshot.cash_balances[0].currency, "USD");
+        assert_eq!(snapshot.cash_balances[1].cash, dec!(7800));
+    }
+
+    #[test]
+    fn reconciliation_report_detects_cash_position_order_and_execution_drift() {
+        let audit = reconcile_broker_audit(BrokerReconciliationInput {
+            account_id: "DU123".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            ts_ms: 1_700_000_000_000,
+            thresholds: BrokerReconciliationThresholds {
+                cash_abs: dec!(1),
+                position_qty_abs: dec!(0),
+                stale_after_ms: 60_000,
+            },
+            runtime_cash: vec![RuntimeCashBalance {
+                account_id: "DU123".to_string(),
+                currency: "USD".to_string(),
+                cash: dec!(1000),
+                ts_ms: 1_700_000_000_000,
+            }],
+            broker_cash: vec![BrokerCashBalance {
+                account_id: "DU123".to_string(),
+                currency: "USD".to_string(),
+                cash: dec!(998),
+                available_cash: dec!(998),
+                frozen_cash: dec!(0),
+                equity: None,
+                buying_power: None,
+                margin_used: None,
+                source_ts_ms: 1_700_000_000_000,
+            }],
+            runtime_positions: vec![RuntimePositionSnapshot {
+                account_id: "DU123".to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Long,
+                qty: dec!(2),
+                avg_price: dec!(180),
+                margin_used: dec!(0),
+            }],
+            broker_positions: vec![BrokerPositionSnapshot {
+                account_id: "DU123".to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Long,
+                qty: dec!(1),
+                avg_price: dec!(180),
+                margin_used: dec!(0),
+                unrealized_pnl: dec!(0),
+                ts_ms: 1_700_000_000_000,
+                contract: Some(BrokerContractMetadata::default()),
+                liquidation_price: None,
+                open_interest: None,
+            }],
+            runtime_open_order_ids: vec!["local-order-1".to_string()],
+            broker_open_orders: vec![BrokerOpenOrder {
+                broker_order_id: "remote-order-1".to_string(),
+                client_order_id: "missing-client".to_string(),
+                account_id: "DU123".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: trader_core::OrderSide::Buy,
+                order_type: trader_core::OrderType::Limit,
+                price: Some(dec!(170)),
+                qty: dec!(1),
+                filled_qty: dec!(0),
+                status: "Submitted".to_string(),
+            }],
+            runtime_execution_ids: vec![],
+            broker_executions: vec![BrokerExecution {
+                trade_id: "exec-1".to_string(),
+                broker_order_id: "remote-order-1".to_string(),
+                client_order_id: None,
+                account_id: "DU123".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: trader_core::OrderSide::Buy,
+                price: dec!(170),
+                qty: dec!(1),
+                fee: dec!(1),
+                ts_ms: 1_700_000_000_000,
+            }],
+        });
+
+        assert_eq!(audit.cash_drifts.len(), 1);
+        assert_eq!(audit.position_drifts.len(), 1);
+        assert_eq!(audit.open_order_drifts.len(), 1);
+        assert_eq!(audit.execution_drifts.len(), 1);
+        assert_eq!(audit.severity, BrokerReconciliationSeverity::Error);
+    }
 }

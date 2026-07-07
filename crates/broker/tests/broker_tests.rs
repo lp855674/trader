@@ -215,6 +215,17 @@ impl FakeIbkrGatewayClient {
                 equity: dec!(120000.50),
                 buying_power: dec!(200000),
                 margin_used: dec!(5000.75),
+                cash_balances: vec![broker::BrokerCashBalance {
+                    account_id: "DU12345".to_string(),
+                    currency: "USD".to_string(),
+                    cash: dec!(100000.25),
+                    available_cash: dec!(100000.25),
+                    frozen_cash: dec!(0),
+                    equity: Some(dec!(120000.50)),
+                    buying_power: Some(dec!(200000)),
+                    margin_used: Some(dec!(5000.75)),
+                    source_ts_ms: 1_700_000_000_000,
+                }],
             },
             open_orders: vec![IbkrOpenOrder {
                 order_id: 42,
@@ -248,6 +259,9 @@ impl FakeIbkrGatewayClient {
                 margin_used: dec!(0),
                 unrealized_pnl: dec!(0),
                 ts_ms: 1_700_000_000_000,
+                contract: None,
+                liquidation_price: None,
+                open_interest: None,
             }],
             next_order_id: 43,
         }
@@ -891,6 +905,9 @@ fn binance_reconciliation_detects_drift() {
         margin_used: dec!(3250),
         unrealized_pnl: dec!(12.5),
         ts_ms: 1_700_000_000_000,
+        contract: None,
+        liquidation_price: None,
+        open_interest: None,
     }];
 
     let report = reconcile_positions(&runtime, &broker);

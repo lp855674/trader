@@ -137,6 +137,11 @@ try {
             cancel_all_attempted = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_attempted } else { $false }
             cancel_all_succeeded = if ($null -ne $runSummary) { [bool]$runSummary.cancel_all_succeeded } else { $false }
             reconciliation_status = if ($null -ne $runSummary) { [string]$runSummary.reconciliation_status } else { "" }
+            reconciliation_audits = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_audits) { [int]$runSummary.reconciliation_audits } else { 0 }
+            reconciliation_cash_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_cash_drifts) { [int]$runSummary.reconciliation_cash_drifts } else { 0 }
+            reconciliation_position_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_position_drifts) { [int]$runSummary.reconciliation_position_drifts } else { 0 }
+            reconciliation_open_order_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_open_order_drifts) { [int]$runSummary.reconciliation_open_order_drifts } else { 0 }
+            reconciliation_execution_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_execution_drifts) { [int]$runSummary.reconciliation_execution_drifts } else { 0 }
         }
         $iterationSummaries += $iterationSummary
 

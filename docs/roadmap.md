@@ -12,6 +12,12 @@ Trader 采用渐进式开发路线。
 
 ## Live Trading Readiness Matrix
 
+### Production Reconciliation / Contract Metadata Hardening
+
+- Status: active implementation plan saved in `docs/superpowers/plans/2026-07-07-production-reconciliation-contract-metadata-hardening.md`.
+- Scope: broker account balances, positions, open orders, executions, IBKR contract metadata, reconciliation audits, and long-run evidence.
+- Exit gate: broker-connected soak produces `failure_class=ok` with zero cash, position, open-order, and execution drift counters.
+
 ### Paper Ready
 
 ```text

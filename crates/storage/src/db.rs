@@ -103,9 +103,20 @@ impl Db {
         {
             return Err(error.into());
         }
+        let production_reconciliation_migration = sqlx::raw_sql(include_str!(
+            "../../../migrations/0012_production_reconciliation_contract_metadata.sql"
+        ))
+        .execute(&self.pool)
+        .await;
+        if let Err(error) = production_reconciliation_migration
+            && !is_duplicate_column_error(&error)
+        {
+            return Err(error.into());
+        }
         self.ensure_config_lifecycle_columns().await?;
         self.ensure_fee_rule_columns().await?;
         self.ensure_strategy_runs_error_column().await?;
+        self.ensure_production_reconciliation_columns().await?;
         Ok(())
     }
 
@@ -240,6 +251,40 @@ impl Db {
         )
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn ensure_production_reconciliation_columns(&self) -> StorageResult<()> {
+        let columns = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
+            "PRAGMA table_info(position_snapshots)",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let has_column = |column_name: &str| {
+            columns
+                .iter()
+                .any(|(_, name, _, _, _, _)| name == column_name)
+        };
+        for (column_name, column_type) in [
+            ("contract_metadata_json", "TEXT"),
+            ("liquidation_price", "TEXT"),
+            ("open_interest", "TEXT"),
+        ] {
+            if has_column(column_name) {
+                continue;
+            }
+            let result = sqlx::query(&format!(
+                "ALTER TABLE position_snapshots ADD COLUMN {column_name} {column_type}"
+            ))
+            .execute(&self.pool)
+            .await;
+            if let Err(error) = result
+                && !is_duplicate_column_error(&error)
+            {
+                return Err(error.into());
+            }
+        }
         Ok(())
     }
 }

@@ -192,6 +192,8 @@ async fn migration_creates_reference_snapshot_and_ops_tables() {
     assert!(tables.contains(&"position_snapshots".to_string()));
     assert!(tables.contains(&"configs".to_string()));
     assert!(tables.contains(&"system_logs".to_string()));
+    assert!(tables.contains(&"broker_account_balances".to_string()));
+    assert!(tables.contains(&"broker_reconciliation_audits".to_string()));
 }
 
 #[tokio::test]
