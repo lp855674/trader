@@ -120,6 +120,9 @@ try {
         $output | ForEach-Object { Write-Host $_ }
 
         $summaryPath = Get-MatchValue $text 'summary\s+:\s+(.+summary\.json)'
+        if ([string]::IsNullOrWhiteSpace($summaryPath)) {
+            $summaryPath = Get-MatchValue $text 'see\s+(.+summary\.json)'
+        }
         $runId = Get-MatchValue $text 'run_id\s+:\s+(\S+)'
         if ([string]::IsNullOrWhiteSpace($runId)) {
             $runId = Get-MatchValue $text 'IBKR stock paper run id:\s+(\S+)'
@@ -131,6 +134,9 @@ try {
             [string]$runSummary.failure_class
         } else {
             Get-IbkrFailureClass -Text $text -ExitCode $exitCode -OpenOrdersFailure $openOrdersFailure
+        }
+        if ($text -match "reconciliation_drift") {
+            $iterationFailureClass = "reconciliation_drift"
         }
 
         $iterationSummary = [pscustomobject]@{
@@ -152,6 +158,7 @@ try {
             reconciliation_position_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_position_drifts) { [int]$runSummary.reconciliation_position_drifts } else { 0 }
             reconciliation_open_order_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_open_order_drifts) { [int]$runSummary.reconciliation_open_order_drifts } else { 0 }
             reconciliation_execution_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_execution_drifts) { [int]$runSummary.reconciliation_execution_drifts } else { 0 }
+            reconciliation_stale_inputs = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_stale_inputs) { [int]$runSummary.reconciliation_stale_inputs } else { 0 }
         }
         $iterationSummaries += $iterationSummary
 
