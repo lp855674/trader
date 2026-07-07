@@ -2501,6 +2501,29 @@ async fn live_runtime_route_reconciliation_gate_blocks_missing_audit() {
             .unwrap()
             .is_none()
     );
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some("api-live-gate-missing".to_string()),
+            target: Some("runtime.reconciliation_gate".to_string()),
+            ..storage::SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].level, "WARN");
+    assert_eq!(logs[0].message, "reconciliation_gate.block");
+    let fields: serde_json::Value =
+        serde_json::from_str(logs[0].fields_json.as_deref().unwrap()).unwrap();
+    assert_eq!(fields["status"], "block");
+    assert_eq!(fields["source"], "api.live_launch");
+    assert_eq!(fields["failures"][0]["reason"], "missing_required_audit");
+    assert_eq!(fields["requirements"][0]["broker"], "simulated");
+    assert!(
+        fields["config_snapshot"]["checksum"]
+            .as_str()
+            .unwrap()
+            .starts_with("fnv1a64:")
+    );
 }
 
 #[tokio::test]

@@ -44,6 +44,7 @@ pub struct ReconciliationGateInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconciliationGateDecision {
     pub status: ReconciliationGateStatus,
+    pub requirements: Vec<ReconciliationGateRequirement>,
     pub failures: Vec<ReconciliationGateFailure>,
 }
 
@@ -127,6 +128,7 @@ pub fn evaluate_reconciliation_gate(input: ReconciliationGateInput) -> Reconcili
         } else {
             ReconciliationGateStatus::Block
         },
+        requirements: input.requirements,
         failures,
     }
 }

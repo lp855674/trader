@@ -4327,6 +4327,21 @@ async fn run_reconciliation_gate(
         max_audit_age_ms,
     )
     .await?;
+    runtime::record_reconciliation_gate_decision(
+        &db,
+        &app_config,
+        &decision,
+        runtime::ReconciliationGateAuditLogContext {
+            run_id: Some(app_config.runtime.run_id.clone()),
+            source: "cli.reconciliation_gate".to_string(),
+            config_path: Some(config.to_string()),
+            config_format: Some("TOML".to_string()),
+            config_checksum: Some(stable_file_content_hash(config)?),
+            config_id: None,
+            config_version: None,
+        },
+    )
+    .await?;
 
     match decision.status {
         broker::ReconciliationGateStatus::Allow => {
@@ -4343,10 +4358,12 @@ async fn run_reconciliation_gate(
 async fn enforce_live_reconciliation_gate(
     app_config: &config::AppConfig,
     db: &storage::Db,
+    context: runtime::ReconciliationGateAuditLogContext,
 ) -> Result<()> {
     if let Some(decision) =
         runtime::evaluate_live_reconciliation_gate_from_storage(app_config, db).await?
     {
+        runtime::record_reconciliation_gate_decision(db, app_config, &decision, context).await?;
         match decision.status {
             broker::ReconciliationGateStatus::Allow => {}
             broker::ReconciliationGateStatus::Block => {
@@ -4383,7 +4400,20 @@ async fn run_live_worker(launch_file: &str) -> Result<()> {
     let app_config = app_config_from_launch(&launch)?;
     let db = storage::Db::connect(&launch.db_url).await?;
     db.migrate().await?;
-    enforce_live_reconciliation_gate(&app_config, &db).await?;
+    enforce_live_reconciliation_gate(
+        &app_config,
+        &db,
+        runtime::ReconciliationGateAuditLogContext {
+            run_id: Some(launch.run_id.clone()),
+            source: "cli.live_worker".to_string(),
+            config_path: launch.config_path.clone(),
+            config_format: Some(launch.config_format.clone()),
+            config_checksum: Some(stable_bytes_hash(launch.config_content.as_bytes())),
+            config_id: None,
+            config_version: None,
+        },
+    )
+    .await?;
     let initial_cash = Decimal::from_str(&app_config.portfolio.initial_cash)?;
     let settings = runtime::LiveRuntimeSettings {
         run_id: launch.run_id.clone(),

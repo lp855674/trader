@@ -1899,7 +1899,8 @@ async fn start_live_run(
         run_spec,
         snapshot,
     } = prepare_launch(&state, config::RuntimeMode::Live, "live launch", request).await?;
-    enforce_live_reconciliation_gate_preflight(&app_config, &state.db).await?;
+    enforce_live_reconciliation_gate_preflight(&app_config, &state.db, &run_spec.run_id, &snapshot)
+        .await?;
     run_configured_log_retention(&state.db, &app_config).await?;
     let run_id = run_spec.run_id.clone();
     let started_at_ms = chrono::Utc::now().timestamp_millis();
@@ -1938,6 +1939,8 @@ async fn start_live_run(
 async fn enforce_live_reconciliation_gate_preflight(
     app_config: &config::AppConfig,
     db: &storage::Db,
+    run_id: &str,
+    snapshot: &FinalConfigSnapshot,
 ) -> Result<(), ApiError> {
     let decision =
         match runtime::evaluate_live_reconciliation_gate_from_storage(app_config, db).await {
@@ -1951,6 +1954,27 @@ async fn enforce_live_reconciliation_gate_preflight(
     let Some(decision) = decision else {
         return Ok(());
     };
+    runtime::record_reconciliation_gate_decision(
+        db,
+        app_config,
+        &decision,
+        runtime::ReconciliationGateAuditLogContext {
+            run_id: Some(run_id.to_string()),
+            source: "api.live_launch".to_string(),
+            config_path: None,
+            config_format: Some(snapshot.format.to_string()),
+            config_checksum: Some(stable_bytes_hash(snapshot.content.as_bytes())),
+            config_id: snapshot
+                .binding
+                .as_ref()
+                .map(|binding| binding.config_id.clone()),
+            config_version: snapshot
+                .binding
+                .as_ref()
+                .map(|binding| binding.version.clone()),
+        },
+    )
+    .await?;
     match decision.status {
         broker::ReconciliationGateStatus::Allow => Ok(()),
         broker::ReconciliationGateStatus::Block => Err(bad_request(

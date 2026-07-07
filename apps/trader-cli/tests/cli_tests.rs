@@ -132,11 +132,27 @@ fn live_worker_reconciliation_gate_allows_recent_clean_audit() {
         .assert()
         .success()
         .stdout(contains("\"type\":\"runtime_started\""));
+
+    let logs = live_worker_gate_system_logs(&db_path, "trader-live-worker-gate-ok");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].level, "INFO");
+    assert_eq!(logs[0].message, "reconciliation_gate.allow");
+    let fields = system_log_fields(&logs[0]);
+    assert_eq!(fields["status"], "allow");
+    assert_eq!(fields["source"], "cli.live_worker");
+    assert_eq!(fields["requirements"][0]["broker"], "simulated");
+    assert_eq!(fields["requirements"][0]["account_id"], "paper");
+    assert!(
+        fields["config_snapshot"]["checksum"]
+            .as_str()
+            .unwrap()
+            .starts_with("fnv1a64:")
+    );
 }
 
 #[test]
 fn live_worker_reconciliation_gate_blocks_missing_audit() {
-    let (launch_path, _db_path) = write_live_worker_gate_launch(
+    let (launch_path, db_path) = write_live_worker_gate_launch(
         "trader-live-worker-gate-missing",
         "paper",
         true,
@@ -154,6 +170,17 @@ fn live_worker_reconciliation_gate_blocks_missing_audit() {
         .failure()
         .stderr(contains("missing_required_audit"))
         .stderr(contains("reconciliation gate blocked"));
+
+    let logs = live_worker_gate_system_logs(&db_path, "trader-live-worker-gate-missing");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].level, "WARN");
+    assert_eq!(logs[0].message, "reconciliation_gate.block");
+    let fields = system_log_fields(&logs[0]);
+    assert_eq!(fields["status"], "block");
+    assert_eq!(fields["failure_count"], 1);
+    assert_eq!(fields["failures"][0]["reason"], "missing_required_audit");
+    assert_eq!(fields["failures"][0]["broker"], "simulated");
+    assert_eq!(fields["failures"][0]["account_id"], "paper");
 }
 
 #[test]
@@ -3845,6 +3872,29 @@ fn seed_live_worker_gate_audits(db_path: &std::path::Path, audits: &[(&str, &str
             .unwrap();
         }
     });
+}
+
+fn live_worker_gate_system_logs(
+    db_path: &std::path::Path,
+    run_id: &str,
+) -> Vec<storage::StoredSystemLog> {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(db_path)))
+            .await
+            .unwrap();
+        db.list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.reconciliation_gate".to_string()),
+            ..storage::SystemLogFilter::default()
+        })
+        .await
+        .unwrap()
+    })
+}
+
+fn system_log_fields(log: &storage::StoredSystemLog) -> serde_json::Value {
+    serde_json::from_str(log.fields_json.as_deref().unwrap()).unwrap()
 }
 
 fn write_ibkr_cli_config(port: u16, account_id: &str, symbol: &str) -> PathBuf {
