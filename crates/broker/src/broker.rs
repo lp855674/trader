@@ -2,6 +2,7 @@
 
 pub mod binance;
 pub mod ibkr;
+pub mod reconciliation_gate;
 
 pub use binance::{
     BinanceAssetBalance, BinanceHttpClient, BinanceKlineBar, BinanceLimitOrderRequest,
@@ -13,6 +14,12 @@ pub use ibkr::{
     IbapiIbkrGatewayClient, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest, IbkrOpenOrder,
     IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
     IbkrPaperGatewaySettings, IbkrServerVersion, IbkrTrade,
+};
+
+pub use reconciliation_gate::{
+    ReconciliationGateAudit, ReconciliationGateDecision, ReconciliationGateFailure,
+    ReconciliationGateInput, ReconciliationGateRequirement, ReconciliationGateStatus,
+    evaluate_reconciliation_gate,
 };
 
 use async_trait::async_trait;
