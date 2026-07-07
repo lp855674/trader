@@ -67,7 +67,13 @@ switch ($command) {
         }
     }
     "ibkr-paper-executions" { Write-Output "ibkr paper executions ok: executions=0" }
-    "ibkr-paper-reconcile" { Write-Output "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0" }
+    "ibkr-paper-reconcile" {
+        if ($env:TRADER_FAKE_MODE -eq "reconciliation_drift") {
+            Write-Output "ibkr paper reconcile ok: local_orders=1 local_fills=0 matched_orders=0 local_only_orders=1 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=0 remote_execution_matched=0 remote_execution_unmatched=0 local_fill_qty=0 remote_execution_qty=0 qty_delta=0"
+        } else {
+            Write-Output "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0"
+        }
+    }
     "ibkr-paper-recover" { Write-Output "ibkr paper recover ok: scanned=0 recovered=0 missing=0 remaining=0" }
     "ibkr-paper-next-order-id" { Write-Output "ibkr paper next order id ok: next_order_id=1" }
     default {
@@ -200,6 +206,25 @@ Assert-True ($failedRunSummary.status -eq "failed") "expected failed ibkr paper 
 Assert-True ($failedRunSummary.failure_class -eq "gateway_unreachable") "expected failed ibkr paper run gateway class"
 Assert-True ($failedRunSummary.open_orders_remaining -eq 0) "expected zero open orders on gateway check failure"
 Assert-True ($failedRunSummary.gateway_checks.failed_check -eq "readonly") "expected failed gateway check name"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "reconciliation_drift"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $driftSoakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected ibkr paper soak failure on reconciliation drift"
+$driftSoakSummaryPath = ($driftSoakOutput | Select-String -Pattern 'IBKR paper soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($driftSoakSummaryPath)) "expected drift ibkr soak summary path"
+$driftSoakSummary = Read-Json $driftSoakSummaryPath
+Assert-True ($driftSoakSummary.status -eq "failed") "expected drift ibkr soak failed status"
+Assert-True ($driftSoakSummary.failure_class -eq "reconciliation_drift") "expected drift ibkr soak failure class"
+Assert-True ($driftSoakSummary.iterations[0].reconciliation_audits -eq 1) "expected failed drift audit counter"
+Assert-True ($driftSoakSummary.iterations[0].reconciliation_open_order_drifts -eq 1) "expected failed drift open order counter"
+Assert-True (-not [string]::IsNullOrWhiteSpace([string]$driftSoakSummary.iterations[0].summary)) "expected failed drift run summary path"
 
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "ok"

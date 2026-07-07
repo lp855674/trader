@@ -120,7 +120,7 @@ Expected for credential-free CI: unit tests pass, broker-connected PowerShell so
   - `BrokerReconciliationThresholds { cash_abs, position_qty_abs, stale_after_ms }`
   - `BrokerReconciliationAudit { account_id, broker_kind, ts_ms, cash_drifts, position_drifts, open_order_drifts, execution_drifts, stale_inputs }`
 
-- [ ] **Step 1: Add failing broker model tests**
+- [x] **Step 1: Add failing broker model tests**
 
 Add to the bottom of `crates/broker/src/broker.rs`:
 
@@ -259,13 +259,13 @@ mod production_reconciliation_tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p broker production_reconciliation_tests`
 
 Expected: compile fails with missing `BrokerCashBalance`, `BrokerContractMetadata`, `BrokerReconciliationInput`, `RuntimeCashBalance`, and `reconcile_broker_audit`.
 
-- [ ] **Step 3: Add minimal broker structs**
+- [x] **Step 3: Add minimal broker structs**
 
 Add near `BrokerAccountSnapshot` in `crates/broker/src/broker.rs`:
 
@@ -341,7 +341,7 @@ pub struct BrokerPositionSnapshot {
 
 Update existing fake snapshot constructors so `cash_balances` has one base-currency row and fake positions set `contract: None`, `liquidation_price: None`, `open_interest: None`.
 
-- [ ] **Step 4: Add audit structs and reconciliation implementation**
+- [x] **Step 4: Add audit structs and reconciliation implementation**
 
 Add near `PositionReconciliationReport`:
 
@@ -539,13 +539,13 @@ pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconci
 }
 ```
 
-- [ ] **Step 5: Run broker tests**
+- [x] **Step 5: Run broker tests**
 
 Run: `cargo test -p broker production_reconciliation_tests`
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/broker/src/broker.rs
@@ -570,7 +570,7 @@ git commit -m "feat: extend broker reconciliation model"
   - `record_reconciliation_audit(command: ReconciliationAuditCommand)`
   - query methods used by runtime tests and soak summaries.
 
-- [ ] **Step 1: Add failing storage tests**
+- [x] **Step 1: Add failing storage tests**
 
 Add to `crates/storage/tests/runtime_repository_tests.rs`:
 
@@ -637,13 +637,13 @@ async fn production_reconciliation_audit_round_trip() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p storage production_reconciliation`
 
 Expected: compile fails with missing storage commands and methods.
 
-- [ ] **Step 3: Add migration**
+- [x] **Step 3: Add migration**
 
 Create `migrations/0006_production_reconciliation_contract_metadata.sql`:
 
@@ -699,7 +699,7 @@ ALTER TABLE position_snapshots ADD COLUMN liquidation_price TEXT;
 ALTER TABLE position_snapshots ADD COLUMN open_interest TEXT;
 ```
 
-- [ ] **Step 4: Add storage command structs and methods**
+- [x] **Step 4: Add storage command structs and methods**
 
 Add command/stored structs near existing snapshot command structs in `crates/storage/src/repositories.rs`:
 
@@ -811,13 +811,13 @@ pub async fn record_broker_account_balances(
 
 Use `sqlx::query_as` for `list_broker_account_balances` and `list_reconciliation_audits`, matching the repository's existing row mapping pattern.
 
-- [ ] **Step 5: Run storage tests**
+- [x] **Step 5: Run storage tests**
 
 Run: `cargo test -p storage production_reconciliation`
 
 Expected: pass.
 
-- [ ] **Step 6: Run boundary checks**
+- [x] **Step 6: Run boundary checks**
 
 Run:
 
@@ -828,7 +828,7 @@ bash ./scripts/check-storage-dto-boundary
 
 Expected: both pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add migrations/0006_production_reconciliation_contract_metadata.sql crates/storage/src/repositories.rs crates/storage/tests/runtime_repository_tests.rs
@@ -850,7 +850,7 @@ git commit -m "feat: persist production reconciliation audit evidence"
 - Consumes: Task 1 `reconcile_broker_audit`; Task 2 storage methods.
 - Produces: one persisted `reconciliation_audits` row per broker snapshot cycle, plus risk events and alert logs for non-info audits.
 
-- [ ] **Step 1: Add failing runtime tests**
+- [x] **Step 1: Add failing runtime tests**
 
 Add tests to `crates/runtime/tests/live_runtime_tests.rs`:
 
@@ -906,13 +906,13 @@ async fn production_reconciliation_records_audit_for_cash_position_order_and_exe
 
 The helper `ProductionReconciliationFakeBroker` should implement `broker::Broker` in the test module and return one USD cash drift, one AAPL position qty drift, one unmatched open order, and one unmatched execution.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p runtime production_reconciliation_records_audit`
 
 Expected: compile fails because runtime settings and test-only snapshot method do not exist.
 
-- [ ] **Step 3: Add reconciliation settings**
+- [x] **Step 3: Add reconciliation settings**
 
 In `crates/runtime/src/live.rs`:
 
@@ -943,7 +943,7 @@ pub reconciliation: ProductionReconciliationSettings,
 
 Update all `LiveRuntimeSettings` construction sites to use `ProductionReconciliationSettings::default()` or configured values.
 
-- [ ] **Step 4: Replace ad hoc drift checks with audit cycle**
+- [x] **Step 4: Replace ad hoc drift checks with audit cycle**
 
 Refactor `record_broker_snapshot`:
 
@@ -975,7 +975,7 @@ serde_json::json!({
 
 Keep the old `record_cash_drift_if_needed` and `record_position_drift_if_needed` functions only if tests still use them; otherwise delete them in the same commit.
 
-- [ ] **Step 5: Add test-only snapshot method**
+- [x] **Step 5: Add test-only snapshot method**
 
 Add under `impl LiveRuntime`:
 
@@ -986,7 +986,7 @@ pub async fn record_broker_snapshot_for_test(&self) -> anyhow::Result<()> {
 }
 ```
 
-- [ ] **Step 6: Wire config parsing**
+- [x] **Step 6: Wire config parsing**
 
 In `crates/config/src/config.rs`, add fields under the existing live config struct:
 
@@ -1001,7 +1001,7 @@ pub struct ReconciliationConfig {
 
 Map config into `LiveRuntimeSettings.reconciliation` at the existing live runtime construction site.
 
-- [ ] **Step 7: Run runtime and config tests**
+- [x] **Step 7: Run runtime and config tests**
 
 Run:
 
@@ -1012,7 +1012,7 @@ cargo test -p config reconciliation
 
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add crates/runtime/src/live.rs crates/runtime/tests/live_runtime_tests.rs crates/config/src/config.rs configs
@@ -1033,7 +1033,7 @@ git commit -m "feat: harden live production reconciliation audit"
 - Consumes: `BrokerCashBalance`, `BrokerContractMetadata`.
 - Produces: IBKR position snapshots with conid/sec_type/currency/exchange/primary_exchange/multiplier/expiry/right/strike/local_symbol/trading_class where `ibapi` exposes them.
 
-- [ ] **Step 1: Add failing IBKR mapping tests**
+- [x] **Step 1: Add failing IBKR mapping tests**
 
 Add to `crates/broker/src/ibkr.rs`:
 
@@ -1087,13 +1087,13 @@ mod ibkr_contract_metadata_tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p broker ibkr_contract_metadata`
 
 Expected: compile fails with missing `broker_contract_metadata_from_ibkr_contract` and missing fields in `BrokerPositionSnapshot`.
 
-- [ ] **Step 3: Implement contract metadata mapper**
+- [x] **Step 3: Implement contract metadata mapper**
 
 Add in `crates/broker/src/ibkr.rs` near `ibkr_position_symbol`:
 
@@ -1149,7 +1149,7 @@ liquidation_price: None,
 open_interest: None,
 ```
 
-- [ ] **Step 4: Add multi-currency account balances for IBKR summary**
+- [x] **Step 4: Add multi-currency account balances for IBKR summary**
 
 Update `account_snapshot_from_summary` so the returned `BrokerAccountSnapshot` includes one `BrokerCashBalance` row for the summary currency. If IBKR account summary values expose per-currency tags in this adapter version, parse each currency into a separate row; otherwise produce a single row using `USD` only when the caller's config base currency is `USD` and record the limitation in `docs/分析.md`.
 
@@ -1169,7 +1169,7 @@ cash_balances: vec![BrokerCashBalance {
 }]
 ```
 
-- [ ] **Step 5: Run broker tests**
+- [x] **Step 5: Run broker tests**
 
 Run:
 
@@ -1180,7 +1180,7 @@ cargo test -p broker production_reconciliation_tests
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/broker/src/ibkr.rs crates/broker/src/broker.rs
@@ -1201,7 +1201,7 @@ git commit -m "feat: enrich IBKR contract metadata mapping"
 - Consumes: existing `scripts/ibkr-paper-soak.ps1` summary format.
 - Produces: `data/production-reconciliation/<soak_id>/summary.json` with audit counters and failure class.
 
-- [ ] **Step 1: Create production soak script**
+- [x] **Step 1: Create production soak script**
 
 Create `scripts/production-reconciliation-soak.ps1`:
 
@@ -1308,7 +1308,7 @@ if ($failed) {
 $summary
 ```
 
-- [ ] **Step 2: Extend IBKR soak summary counters**
+- [x] **Step 2: Extend IBKR soak summary counters**
 
 Modify `scripts/ibkr-paper-soak.ps1` so each iteration summary includes:
 
@@ -1320,7 +1320,7 @@ reconciliation_open_order_drifts = if ($null -ne $runSummary -and $null -ne $run
 reconciliation_execution_drifts = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_execution_drifts) { [int]$runSummary.reconciliation_execution_drifts } else { 0 }
 ```
 
-- [ ] **Step 3: Syntax check scripts**
+- [x] **Step 3: Syntax check scripts**
 
 Run:
 
@@ -1331,7 +1331,7 @@ powershell -NoProfile -Command "$null = [System.Management.Automation.PSParser]:
 
 Expected: both commands exit 0.
 
-- [ ] **Step 4: Run a local parameter validation smoke**
+- [x] **Step 4: Run a local parameter validation smoke**
 
 Run:
 
@@ -1341,7 +1341,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soa
 
 Expected: fails with `Iterations must be at least 1`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add scripts/production-reconciliation-soak.ps1 scripts/ibkr-paper-soak.ps1
@@ -1364,7 +1364,7 @@ git commit -m "feat: add production reconciliation soak script"
 - Consumes: soak summary path from Task 5.
 - Produces: clear operator procedure and committed result template.
 
-- [ ] **Step 1: Write runbook**
+- [x] **Step 1: Write runbook**
 
 Create `docs/production-reconciliation-runbook.md`:
 
@@ -1409,7 +1409,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soa
 - `iteration_failed`: command failed without a more specific class.
 ```
 
-- [ ] **Step 2: Write result template**
+- [x] **Step 2: Write result template**
 
 Create `docs/production-reconciliation-results-template.md`:
 
@@ -1454,7 +1454,7 @@ Create `docs/production-reconciliation-results-template.md`:
 This run is acceptable for pre-production reconciliation only when all drift counters are zero and failure class is `ok`.
 ```
 
-- [ ] **Step 3: Update roadmap**
+- [x] **Step 3: Update roadmap**
 
 In `docs/roadmap.md`, add an active milestone entry:
 
@@ -1466,7 +1466,7 @@ In `docs/roadmap.md`, add an active milestone entry:
 - Exit gate: broker-connected soak produces `failure_class=ok` with zero cash, position, open-order, and execution drift counters.
 ```
 
-- [ ] **Step 4: Update analysis document**
+- [x] **Step 4: Update analysis document**
 
 In `docs/分析.md`, record:
 
@@ -1481,7 +1481,7 @@ Remaining limits after this plan starts:
 - Non-IBKR broker account snapshot scheduling remains a follow-up once the shared broker boundary is stable.
 ```
 
-- [ ] **Step 5: Commit docs**
+- [x] **Step 5: Commit docs**
 
 ```powershell
 git add docs/production-reconciliation-runbook.md docs/production-reconciliation-results-template.md docs/roadmap.md docs/分析.md
@@ -1501,7 +1501,7 @@ git commit -m "docs: add production reconciliation runbook"
 - Consumes: all previous tasks and a real IBKR paper Gateway session.
 - Produces: committed result summary for the first production reconciliation soak.
 
-- [ ] **Step 1: Run unit and boundary gates**
+- [x] **Step 1: Run unit and boundary gates**
 
 Run:
 
@@ -1518,7 +1518,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: all pass.
 
-- [ ] **Step 2: Run read-only IBKR production reconciliation soak**
+- [x] **Step 2: Run read-only IBKR production reconciliation soak**
 
 Run with the actual paper account:
 
@@ -1533,11 +1533,11 @@ Expected:
 - `failure_class` is `ok`.
 - Drift counters are zero, or the result document records the exact drift and the run is not accepted.
 
-- [ ] **Step 3: Create committed results document**
+- [x] **Step 3: Create committed results document**
 
 Copy the fields from `docs/production-reconciliation-results-template.md` into `docs/production-reconciliation-results-<soak_id>.md`, replacing template markers with the actual values from the summary JSON. Redact account id to the first two and last two visible characters, for example `DU****89`.
 
-- [ ] **Step 4: Commit final evidence document**
+- [x] **Step 4: Commit final evidence document**
 
 ```powershell
 git add docs/production-reconciliation-results-<soak_id>.md

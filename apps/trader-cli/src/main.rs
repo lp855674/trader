@@ -3806,15 +3806,19 @@ async fn reconcile_ibkr_paper(
     let remote_executions = adapter
         .executions(request_id, &app_config.paper.account_id, symbol)
         .await?;
+    let local_open_orders = local_orders
+        .iter()
+        .filter(|order| ibkr_local_order_expects_remote_open(order))
+        .collect::<Vec<_>>();
 
-    let matched_orders = local_orders
+    let matched_orders = local_open_orders
         .iter()
         .filter(|order| ibkr_local_order_matches_remote_open(order, &remote_open_orders))
         .count();
     let remote_open_matched = remote_open_orders
         .iter()
         .filter(|remote| {
-            local_orders.iter().any(|local| {
+            local_open_orders.iter().any(|local| {
                 local.broker_order_id.as_deref() == Some(&remote.order_id.to_string())
                     || (!remote.client_order_id.is_empty()
                         && local.client_order_id == remote.client_order_id)
@@ -3845,7 +3849,7 @@ async fn reconcile_ibkr_paper(
         local_orders: local_orders.len(),
         local_fills: local_fills.len(),
         matched_orders,
-        local_only_orders: local_orders.len() - matched_orders,
+        local_only_orders: local_open_orders.len() - matched_orders,
         remote_open_orders: remote_open_orders.len(),
         remote_open_matched,
         remote_open_unmatched: remote_open_orders.len() - remote_open_matched,
@@ -3856,6 +3860,13 @@ async fn reconcile_ibkr_paper(
         remote_execution_qty,
         qty_delta: remote_execution_qty - local_fill_qty,
     })
+}
+
+fn ibkr_local_order_expects_remote_open(local: &LocalOrder) -> bool {
+    matches!(
+        local.status.replace(['_', '-', ' '], "").to_uppercase().as_str(),
+        "SUBMITTED" | "NEW" | "PARTIALLYFILLED" | "PENDINGSUBMIT" | "PRESUBMITTED" | "APIPENDING"
+    )
 }
 
 fn ibkr_local_order_matches_remote_open(
@@ -5234,9 +5245,10 @@ mod tests {
         LocalFill, LocalOrder, backtest_settings, binance_accounting_records_from_fills,
         binance_balance_total, binance_base_asset, binance_cancel_outcome,
         binance_local_order_matches_remote_open, binance_testnet_settings,
-        ibkr_execution_matches_local, ibkr_local_order_matches_remote_open,
-        ibkr_recovered_order_status, paper_settings, settings_with_broker_initial_cash,
-        sync_cancelled_open_orders, system_log_retention_policy,
+        ibkr_execution_matches_local, ibkr_local_order_expects_remote_open,
+        ibkr_local_order_matches_remote_open, ibkr_recovered_order_status, paper_settings,
+        settings_with_broker_initial_cash, sync_cancelled_open_orders,
+        system_log_retention_policy,
     };
     use broker::{
         BinanceAssetBalance, BinanceOpenOrder, BrokerOpenOrder, BrokerOrder, BrokerOrderStatus,
@@ -5422,6 +5434,44 @@ mod tests {
             &by_broker,
             &remote_orders
         ));
+    }
+
+    #[test]
+    fn ibkr_reconcile_only_expects_active_local_orders_to_be_remote_open() {
+        for status in [
+            "SUBMITTED",
+            "NEW",
+            "PARTIALLY_FILLED",
+            "PendingSubmit",
+            "PreSubmitted",
+            "Submitted",
+            "ApiPending",
+        ] {
+            let mut order = sample_order("client-active", None);
+            order.status = status.to_string();
+            assert!(
+                ibkr_local_order_expects_remote_open(&order),
+                "status should require remote open order: {status}"
+            );
+        }
+
+        for status in [
+            "PendingCancel",
+            "Cancelled",
+            "Canceled",
+            "ApiCancelled",
+            "Filled",
+            "Inactive",
+            "REJECTED",
+            "EXPIRED",
+        ] {
+            let mut order = sample_order("client-terminal", None);
+            order.status = status.to_string();
+            assert!(
+                !ibkr_local_order_expects_remote_open(&order),
+                "status should not require remote open order: {status}"
+            );
+        }
     }
 
     #[test]

@@ -182,13 +182,23 @@ where
             }
         };
         let mut status = queried.status.clone();
-        let trades = self.client.executions(&symbol, placed.order_id).await?;
+        let mut trades = self.client.executions(&symbol, placed.order_id).await?;
         if trades.is_empty() && ibkr_order_is_open(&queried.status) {
             status = self
                 .client
                 .cancel_order(&symbol, placed.order_id)
                 .await?
                 .status;
+            if ibkr_order_is_open(&status) {
+                status = match self.client.query_order(&symbol, placed.order_id).await {
+                    Ok(order) => order.status,
+                    Err(BrokerError::OrderNotFound(_)) => "Cancelled".to_string(),
+                    Err(error) => return Err(error.into()),
+                };
+            }
+            if trades.is_empty() {
+                trades = self.client.executions(&symbol, placed.order_id).await?;
+            }
         }
         if trades.is_empty() {
             return Ok(ExecutedPaperOrder {

@@ -1454,6 +1454,31 @@ async fn ibkr_paper_executor_cancels_unfilled_open_paper_order() {
 }
 
 #[tokio::test]
+async fn ibkr_paper_executor_marks_unfilled_order_cancelled_when_cancel_status_disappears() {
+    let executor = IbkrPaperOrderExecutor::new(UnfilledIbkrCancelDisappearsClient);
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(195),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.broker_order_id, "2010");
+    assert_eq!(fill.status, "Cancelled");
+    assert_eq!(fill.qty, dec!(0));
+}
+
+#[tokio::test]
 async fn ibkr_paper_executor_recovers_existing_order_by_client_order_id() {
     let executor =
         IbkrPaperOrderExecutor::new_with_client_order_prefix(RecoveringIbkrClient, "paper-run-1");
@@ -2095,6 +2120,52 @@ impl IbkrPaperOrderClient for CancellableUnfilledIbkrClient {
             order_id,
             client_order_id: "trader-paper-run-1".to_string(),
             status: "Cancelled".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn executions(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<Vec<IbkrTrade>, BrokerError> {
+        Ok(Vec::new())
+    }
+}
+
+struct UnfilledIbkrCancelDisappearsClient;
+
+#[async_trait]
+impl IbkrPaperOrderClient for UnfilledIbkrCancelDisappearsClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id: 2010,
+            client_order_id: order.client_order_id.clone(),
+            status: "PreSubmitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        Err(BrokerError::OrderNotFound(order_id.to_string()))
+    }
+
+    async fn cancel_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "PreSubmitted".to_string(),
             filled_qty: dec!(0),
         })
     }

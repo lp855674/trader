@@ -575,6 +575,7 @@ try {
         gateway_checks = $gatewayChecks
     }
     $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $summaryPath -Encoding UTF8
+    Write-Host "summary : $summaryPath"
 
     if ($runStatus -ne "completed") {
         throw "IBKR paper run failed post-run checks: $runFailureClass; see $summaryPath"
