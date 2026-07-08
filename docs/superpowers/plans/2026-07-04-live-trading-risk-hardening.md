@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, serde/toml, rust_decimal, Tokio, Clap, PowerShell scripts.
 
-## Current Status
+## Current Status (2026-07-08 Sync)
 
 Status as of 2026-07-06 on branch `live-trading-risk-hardening`:
 
@@ -86,6 +86,8 @@ Acceptance verification:
 - Any hard halt writes a machine-usable `risk_type` and fails closed.
 
 This completes the paper-validation scope for this plan. It does not claim production real-money readiness; broader production gaps remain in RBAC, multi-environment approvals, managed log collection, reference-data stale alerts, and wider real broker reconciliation coverage.
+
+2026-07-08 sync: subsequent live-reconciliation gate evidence now records both archival replay and fresh read-only multi-broker checks from accepted IBKR paper Gateway and Binance paper/Testnet evidence. See `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md` and `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`. This strengthens the operator evidence trail for the paper/testnet readiness bucket, but does not change this plan's boundary: no live-money claim, no production real-money order support, and no RBAC / multi-approval / managed-ops completion claim.
 
 ## Global Constraints
 
