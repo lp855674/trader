@@ -12,9 +12,11 @@
 
 This plan is now implemented for the local DB-backed tracing path. The repository has the `system_logs` storage/query surface, a generic async tracing writer, a SQLite-backed sink adapter, CLI/API log query access, tracing capture for algorithm decision points, paper, backtest, API request completion logs, and live runtime lifecycle/snapshot/reconciliation events, plus loadable `[logging]` config defaults/examples. `[logging]` now controls runtime writer enablement, level/category filtering, buffer size, flush interval, and retention cleanup for CLI/API-launched backtest, paper, and live runs plus server background cleanup. The async writer exposes dropped-log metrics for channel backpressure through API/CLI ops readback. CLI `logs ship` can POST filtered `system_logs` as NDJSON to an external collector with optional bearer auth, HMAC signature headers, and configurable retry/backoff for transient failures. Live runtime still keeps explicit `record_system_log` calls for compatibility with reconciliation alert and delivery summaries; managed production collector deployment remains follow-up work.
 
+Task checkboxes below have been synchronized to this implementation status. The remaining gap is operational deployment of a managed external production collector, not the local logging/query/shipper implementation.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
-| System log storage | Done | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `insert_system_logs_batch`, `list_system_logs_filtered`, `count_system_logs`, `purge_system_logs`, `purge_system_logs_by_retention` | Long-running background retention scheduler is not implemented |
+| System log storage | Done | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `insert_system_logs_batch`, `list_system_logs_filtered`, `count_system_logs`, `purge_system_logs`, `purge_system_logs_by_retention` | None for local storage/query/retention |
 | Runtime/API/ingestion log writes | Done for local tracing surface | API run lifecycle logs, live runtime source logs, ingestion tracker logs, algorithm decision tracing, paper/backtest tracing logs, API request completion logs, and live runtime tracing logs write `system_logs` | Managed collector deployment is not implemented |
 | CLI/API readback | Done for local query surface | `logs list`, `logs count`, `logs tail`, `logs export`, `logs purge`, `GET /api/v1/logs`, `GET /api/v1/system-logs`, and `GET /api/v1/runs/{run_id}/system-logs` support run/level/target/time/search/limit/offset style filters where applicable | Real streaming is still polling-based |
 | Retention/config | Done | CLI purge supports retention-style cleanup by timestamp/target/run; `AppConfig.logging` loads enabled/level/categories/buffer/flush/retention/console settings with defaults; CLI/API settings map enabled/level/categories/buffer/flush to `LogWriterSettings`; CLI/API-launched backtest, paper, and live runs execute `retention_days` cleanup at startup; trader-server runs a background retention scheduler | None for local retention cleanup |
@@ -38,8 +40,8 @@ In scope:
 
 Out of scope:
 
-- External log aggregation (ELK, Datadog, etc.).
-- Log shipping to remote services.
+- Managed external log aggregation deployment (ELK, Datadog, etc.).
+- Managed remote collector operation beyond the CLI NDJSON shipper handoff.
 - Real-time log streaming (polling model).
 - Log encryption.
 - Per-field access control on logs.
@@ -206,7 +208,7 @@ pub struct SystemLogFilter {
 }
 ```
 
-- [ ] **Step 3: Add batch insert for performance**
+- [x] **Step 3: Add batch insert for performance**
 
 ```rust
 pub async fn insert_system_logs_batch(&self, logs: &[NewSystemLog]) -> StorageResult<()> {
@@ -215,7 +217,7 @@ pub async fn insert_system_logs_batch(&self, logs: &[NewSystemLog]) -> StorageRe
 }
 ```
 
-- [ ] **Step 4: Add storage tests**
+- [x] **Step 4: Add storage tests**
 
 ```rust
 #[tokio::test]
@@ -246,7 +248,7 @@ async fn system_log_batch_insert() {
 }
 ```
 
-- [ ] **Step 5: Run storage tests**
+- [x] **Step 5: Run storage tests**
 
 ```powershell
 cargo test -p storage system_log
@@ -254,7 +256,7 @@ cargo test -p storage system_log
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/storage
@@ -272,7 +274,7 @@ git commit -m "feat: extend system_logs storage for structured logging"
 - Modify: `crates/events/Cargo.toml`
 - Modify: `crates/events/tests/log_writer_tests.rs`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 ```toml
 # crates/events/Cargo.toml
@@ -281,7 +283,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["sync"] }
 ```
 
-- [ ] **Step 2: Implement LogWriter**
+- [x] **Step 2: Implement LogWriter**
 
 ```rust
 pub struct LogWriter {
@@ -332,7 +334,7 @@ impl LogWriter {
 }
 ```
 
-- [ ] **Step 3: Implement tracing Layer**
+- [x] **Step 3: Implement tracing Layer**
 
 ```rust
 pub struct SystemLogLayer {
@@ -351,7 +353,7 @@ impl tracing_subscriber::Layer for SystemLogLayer {
 }
 ```
 
-- [ ] **Step 4: Add tests**
+- [x] **Step 4: Add tests**
 
 ```rust
 #[tokio::test]
@@ -377,7 +379,7 @@ async fn tracing_layer_captures_events() {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 cargo test -p events log_writer
@@ -385,7 +387,7 @@ cargo test -p events log_writer
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add crates/events
@@ -403,7 +405,7 @@ git commit -m "feat: async buffered log writer with tracing integration"
 - Modify: `crates/runtime/src/runtime.rs`
 - Modify: `crates/algorithm/src/algorithm.rs`
 
-- [ ] **Step 1: Initialize logging in paper runtime**
+- [x] **Step 1: Initialize logging in paper runtime**
 
 ```rust
 // At paper run start:
@@ -418,7 +420,7 @@ tracing_subscriber::registry()
 tracing::info!(run_id = %run_id, mode = "paper", "Paper run started");
 ```
 
-- [ ] **Step 2: Add structured logging to algorithm**
+- [x] **Step 2: Add structured logging to algorithm**
 
 ```rust
 // In algorithm execution:
@@ -446,7 +448,7 @@ tracing::warn!(
 );
 ```
 
-- [ ] **Step 3: Add structured logging to paper/backtest**
+- [x] **Step 3: Add structured logging to paper/backtest**
 
 ```rust
 tracing::info!(
@@ -468,7 +470,7 @@ tracing::info!(
 );
 ```
 
-- [ ] **Step 4: Add structured logging to API**
+- [x] **Step 4: Add structured logging to API**
 
 ```rust
 // In API middleware:
@@ -484,7 +486,7 @@ tracing::info!(
 );
 ```
 
-- [ ] **Step 5: Add paper test**
+- [x] **Step 5: Add paper test**
 
 ```rust
 #[tokio::test]
@@ -496,7 +498,7 @@ async fn paper_run_captures_structured_logs() {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```powershell
 cargo test -p paper paper_structured_logging
@@ -506,7 +508,7 @@ cargo test -p backtest
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add crates/paper crates/backtest crates/runtime crates/algorithm crates/api
@@ -521,7 +523,7 @@ git commit -m "feat: wire structured logging into runtime"
 
 - Modify: `apps/trader-cli/src/main.rs`
 
-- [ ] **Step 1: Add CLI commands**
+- [x] **Step 1: Add CLI commands**
 
 ```
 trader logs list [--level <level>] [--category <cat>] [--run-id <id>] [--from <ts>] [--to <ts>] [--search <text>] [--limit <n>]
@@ -530,11 +532,11 @@ trader logs count [--level <level>] [--category <cat>] [--run-id <id>]
 trader logs cleanup --before <ts>
 ```
 
-- [ ] **Step 2: Implement commands**
+- [x] **Step 2: Implement commands**
 
 Each command calls the storage repository methods with appropriate filters.
 
-- [ ] **Step 3: Add CLI tests**
+- [x] **Step 3: Add CLI tests**
 
 ```rust
 #[test]
@@ -543,7 +545,7 @@ fn logs_list_with_level_filter() { ... }
 fn logs_count_by_category() { ... }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add apps/trader-cli
@@ -560,7 +562,7 @@ git commit -m "feat: log query CLI commands"
 - Modify: `crates/api/tests/api_tests.rs`
 - Modify: `docs/api.md`
 
-- [ ] **Step 1: Add API endpoint**
+- [x] **Step 1: Add API endpoint**
 
 ```
 GET /api/v1/logs?level={level}&category={cat}&run_id={id}&from_ms={t1}&to_ms={t2}&search={text}&limit={n}&offset={n}
@@ -587,7 +589,7 @@ Response:
 }
 ```
 
-- [ ] **Step 2: Add API response struct**
+- [x] **Step 2: Add API response struct**
 
 ```rust
 #[derive(Serialize)]
@@ -612,12 +614,12 @@ struct LogEntryResponse {
 }
 ```
 
-- [ ] **Step 3: Add tests and docs**
+- [x] **Step 3: Add tests and docs**
 
 - API test for log query endpoint.
 - `docs/api.md` documentation.
 
-- [ ] **Step 4: Run full acceptance**
+- [x] **Step 4: Run full acceptance**
 
 ```powershell
 cargo test -p api logs
@@ -629,7 +631,7 @@ bash ./scripts/check-api-read-model-boundary
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add crates/api docs/api.md
@@ -682,7 +684,7 @@ let before_ms = now_ms() - (config.retention_days as i64 * 86400 * 1000);
 db.cleanup_old_logs(before_ms).await?;
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add crates/config configs
@@ -698,15 +700,15 @@ git commit -m "feat: logging configuration and retention"
 - Modify: `docs/分析.md`
 - Modify: `docs/roadmap.md`
 
-- [ ] **Step 1: Update `docs/分析.md`**
+- [x] **Step 1: Update `docs/分析.md`**
 
 Update system_logs section from "API lifecycle logging" to "full-chain structured logging".
 
-- [ ] **Step 2: Update `docs/roadmap.md`**
+- [x] **Step 2: Update `docs/roadmap.md`**
 
 Add "Production Log Collection" milestone.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add docs
