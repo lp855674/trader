@@ -4728,7 +4728,9 @@ fn ibkr_paper_gateway_settings(
             .unwrap_or_else(|| "127.0.0.1".to_string()),
         port: app_config.broker.port.unwrap_or(7497),
         client_id: app_config.broker.client_id.unwrap_or(1),
-        connect_timeout: std::time::Duration::from_secs(2),
+        connect_timeout: std::time::Duration::from_millis(
+            app_config.broker.connect_timeout_ms.unwrap_or(15_000),
+        ),
     })
 }
 

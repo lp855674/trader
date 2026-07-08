@@ -36,6 +36,7 @@ mode = "paper"
 host = "127.0.0.1"
 port = 7497
 client_id = 1
+connect_timeout_ms = 15000
 order_submit_enabled = false
 
 [paper]

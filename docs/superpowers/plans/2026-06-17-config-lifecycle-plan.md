@@ -16,6 +16,8 @@ Run config binding is implemented through `RUN` snapshots in `configs` plus `run
 
 2026-07-08 sync: targeted local verification reconfirmed storage/API/CLI evidence for version creation, version queries, state transitions, production/staging role policy checks, independent production approver checks, pending approval readback, JSON diff, rollback-to-draft, release/audit readback, run config version bindings, and ops smoke coverage for pending approvals plus release/audit readback. This remains a local lifecycle/governance MVP: authenticated RBAC, multi-environment permission matrices, multi-person approval queues, and production change reports are still follow-up work.
 
+Boundary: this plan proves local config lifecycle, audit/readback, and run-version binding behavior. It does not provide authenticated production authorization, multi-operator governance, or live-money deployment approval by itself.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Run config snapshots | Done for API-launched and CLI-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions; Backtest, Paper, and Replay CLI starts bind run config versions | None for current local run entrypoints |

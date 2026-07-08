@@ -8,6 +8,18 @@
 
 **Tech Stack:** Rust 2024, Tokio, Axum, SQLx SQLite, serde, clap, chrono.
 
+## Current Status (2026-07-08 Sync)
+
+This control-plane refactor is complete for the local/API/CLI multi-run orchestration scope. The implementation moved launch identity out of the server process and into per-run `RunSpec` / config snapshot inputs, added run-scoped control/query behavior, and established the server as a deployment-scoped control plane rather than a single runtime wrapper.
+
+Accepted follow-on work now depends on this foundation:
+
+- `docs/superpowers/plans/2026-06-30-live-process-isolation-implementation.md` builds on `RunSpec` and the API control-plane shape to isolate API-started Live runs in supervised child processes.
+- `docs/superpowers/plans/2026-07-07-live-account-multi-broker-reconciliation-gate.md` builds on run-scoped reconciliation/audit surfaces and accepted paper/testnet evidence to gate live-account promotion from clean broker/account audits.
+- `docs/superpowers/plans/2026-06-17-config-lifecycle-plan.md` and the later config release/run-version binding work build on the same run-owned config snapshot model so launches can be tied back to explicit config versions and approvals.
+
+Boundary: this plan proves the control-plane migration and run-scoped launch/query model. It does not by itself prove live-money readiness, broker process recovery, filled real-broker order reconciliation, multi-symbol burst behavior, Gateway restart recovery, RBAC/multi-approval governance, or production managed-ops coverage. Those are covered by later plans and still require explicit operator evidence before any real-money claim.
+
 ## Global Constraints
 
 - Preserve existing `run_id`-keyed storage tables and projections unless a schema addition is strictly necessary.

@@ -260,6 +260,7 @@ pub struct BrokerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub client_id: Option<u32>,
+    pub connect_timeout_ms: Option<u64>,
     pub api_key_env: Option<String>,
     pub secret_key_env: Option<String>,
     pub recv_window_ms: Option<u64>,

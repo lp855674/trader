@@ -1113,6 +1113,38 @@ async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_bo
 }
 
 #[tokio::test]
+async fn ibkr_paper_gateway_adapter_cancels_broker_open_order_by_id() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+
+    let cancelled = Broker::cancel_order(&adapter, "42").await.unwrap();
+
+    assert_eq!(cancelled.broker_order_id, "42");
+    assert_eq!(cancelled.account_id, "DU12345");
+    assert_eq!(cancelled.symbol, "AAPL");
+    assert_eq!(cancelled.side, OrderSide::Buy);
+    assert_eq!(cancelled.order_type, OrderType::Limit);
+    assert_eq!(cancelled.qty, dec!(1));
+    assert_eq!(cancelled.price, Some(dec!(185.25)));
+    assert_eq!(cancelled.status, BrokerOrderStatus::Cancelled);
+    assert_eq!(
+        client.calls(),
+        vec![
+            FakeIbkrGatewayCall::OpenOrders,
+            FakeIbkrGatewayCall::CancelOrder { order_id: 42 },
+        ]
+    );
+}
+
+#[tokio::test]
 async fn ibkr_paper_gateway_adapter_reports_connection_error_when_gateway_is_absent() {
     let adapter = IbkrPaperGatewayAdapter::try_new(IbkrPaperGatewaySettings {
         host: "127.0.0.1".to_string(),

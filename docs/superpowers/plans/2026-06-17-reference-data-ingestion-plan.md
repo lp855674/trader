@@ -14,6 +14,8 @@ This plan is backfilled and the local MVP scope is complete. The remaining work 
 
 2026-07-08 sync note: targeted local verification reconfirmed the reference-data ingestion boundary in `crates/data`, `crates/storage`, `crates/api`, and `apps/trader-cli`: Binance market metadata parsing, Binance funding-rate parsing/incremental filtering, Yahoo corporate-action parsing, ingestion status readback, HTTP retry/backoff behavior, scheduled-ingestion disabled behavior, and stale reference-data alert logging. No external provider network ingestion was run in this sync.
 
+Boundary: this plan proves local ingestion parsing, storage/readback, retry behavior, scheduler wiring, and stale-data alert logging. It does not prove live provider freshness under production rate limits, provider outage handling, or live-money reference-data readiness.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Binance market metadata ingestion | Done for local MVP | `ingest_binance_market_meta`, idempotent storage upsert and parser tests exist | Network-backed production tests remain gated by connectivity |

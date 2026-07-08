@@ -18,6 +18,8 @@ Implementation, unit/boundary verification, runbook updates, and broker-connecte
 
 Across those accepted runs, the IBKR paper-account gate records 39 reconciliation audits with cash, position, open-order, execution, and stale-input counters all zero. This closes the planned paper-account production reconciliation evidence loop, including read-only and protected paper order-submit modes. It does not prove live-account trading behavior, filled paper orders, multi-symbol order bursts, IBKR Gateway restart recovery, overnight soak behavior, or real-money readiness.
 
+Additional 2026-07-08 operator evidence attempted IBKR paper order-submit reconciliation after the accepted loop. The first attempt failed at paper order submission with a Gateway `place limit order` timeout; post-failure checks reported no visible open orders or executions. After increasing the configured Gateway response timeout, a follow-up attempt submitted one low-priced AAPL paper limit order successfully; non-fill was expected because the limit price was far below market, and the run then exposed a generic IBKR paper cleanup-cancel bug that has since been fixed. A post-fix wrapper run (`production-reconciliation-ibkr-d7e9c0474e72`) completed with `failure_class=ok`, one reconciliation audit, zero drifts, and no remaining open orders. Separate marketable-price attempts did not produce IBKR executions. See `docs/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. Filled paper-order reconciliation remains open.
+
 ## Global Constraints
 
 - Do not use floating point for money, quantity, margin, PnL, funding, or liquidation calculations; use `rust_decimal::Decimal`.

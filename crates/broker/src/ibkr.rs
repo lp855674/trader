@@ -18,8 +18,8 @@ use trader_core::OrderRequest;
 
 use crate::{
     Broker, BrokerAccountSnapshot, BrokerCapabilities, BrokerCashBalance, BrokerContractMetadata,
-    BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerPositionSide,
-    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
+    BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerOrderStatus,
+    BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -564,7 +564,21 @@ impl Broker for IbkrPaperGatewayAdapter {
     }
 
     async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
-        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+        let order_id = broker_order_id
+            .parse::<i64>()
+            .map_err(|_| BrokerError::OrderNotFound(broker_order_id.to_string()))?;
+        let open_order = self
+            .client
+            .open_orders()
+            .await?
+            .into_iter()
+            .find(|order| order.order_id == order_id)
+            .ok_or_else(|| BrokerError::OrderNotFound(broker_order_id.to_string()))?;
+        let cancelled = self.client.cancel_order(order_id).await?;
+        Ok(ibkr_open_order_into_broker_order(
+            open_order,
+            broker_order_status_from_ibkr_status(&cancelled.status),
+        ))
     }
 
     async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
@@ -640,6 +654,30 @@ fn ibkr_open_order_into_broker_open_order(order: IbkrOpenOrder) -> BrokerOpenOrd
         qty: order.quantity,
         filled_qty: order.filled_qty,
         status: order.status,
+    }
+}
+
+fn ibkr_open_order_into_broker_order(
+    order: IbkrOpenOrder,
+    status: BrokerOrderStatus,
+) -> BrokerOrder {
+    BrokerOrder {
+        broker_order_id: order.order_id.to_string(),
+        account_id: order.account_id,
+        symbol: order.symbol,
+        side: parse_broker_order_side(&order.side),
+        order_type: parse_broker_order_type(&order.order_type),
+        price: order.limit_price,
+        qty: order.quantity,
+        status,
+    }
+}
+
+fn broker_order_status_from_ibkr_status(status: &str) -> BrokerOrderStatus {
+    if status.eq_ignore_ascii_case("cancelled") || status.eq_ignore_ascii_case("apicancelled") {
+        BrokerOrderStatus::Cancelled
+    } else {
+        BrokerOrderStatus::Accepted
     }
 }
 

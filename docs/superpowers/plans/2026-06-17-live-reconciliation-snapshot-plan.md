@@ -14,6 +14,8 @@ This plan file has now been backfilled for the audited local MVP. Checked items 
 
 2026-07-08 sync note: targeted verification reconfirmed the local MVP evidence for algorithm reconciliation, paper fill-time snapshots, and live fake-broker broker-reported snapshot/reconciliation drift paths. The original paper-runtime periodic snapshot config and paper-runtime mock-broker reconciliation trigger steps remain unchecked because the current implemented evidence is narrower or lives in the live runtime path.
 
+Boundary: this plan proves local snapshot persistence, fake-broker live reconciliation drift projection, and readback surfaces. It does not prove real broker snapshot scheduling, live-money reconciliation, filled-order reconciliation, or production alert operations.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Snapshot storage | Done for local MVP | `cash_snapshots` and `position_snapshots` repositories support insert/list/latest/filter; covered by `runtime_repository_tests` | None for local storage boundary |

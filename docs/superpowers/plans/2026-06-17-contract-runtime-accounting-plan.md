@@ -14,6 +14,8 @@ This plan file has now been backfilled for the audited local MVP. Checked items 
 
 2026-07-08 sync note: targeted local verification reconfirmed the current broker-boundary evidence in `crates/broker`: Binance position-risk parsing and reconciliation drift tests, IBKR paper Gateway account/position snapshot adapter tests, and local production reconciliation/gate tests. The original Task 3 external-network testnet/Gateway steps remain unchecked because no fresh broker network action was run in this sync.
 
+Boundary: this plan proves local contract accounting storage/runtime behavior plus broker-boundary parsing and paper/testnet-derived reconciliation evidence. It does not prove live-money contract accounting, filled real-broker order reconciliation, or complete production multi-asset coverage.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Storage lifecycle | Done for local MVP | `Db::upsert_crypto_position`, `list_crypto_positions`, `get_crypto_position`, `upsert_funding_rate`, `list_funding_rates`, `get_latest_funding_rate`; covered by `runtime_repository_tests` | None for local storage boundary |

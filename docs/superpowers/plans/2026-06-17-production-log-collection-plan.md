@@ -16,6 +16,8 @@ Task checkboxes below have been synchronized to this implementation status. The 
 
 2026-07-08 sync: targeted local verification reconfirmed storage/API/CLI/events coverage for `system_logs` filtering/count/search/pagination, retention purge and server retention cleanup, async tracing writer batching and drop metrics, logging config defaults/overrides, API request log capture, CLI log list/count/tail/export/purge/metrics, HTTP NDJSON shipper with bearer/HMAC/retry behavior, reconciliation alert and alert-delivery summaries/exports, and `ops-smoke.ps1` readback of runtime logs plus alert exports. This is still a local DB-backed logging and collector-handoff MVP; managed external collector deployment, production collector operations, per-field log access control, and real streaming remain follow-up work.
 
+Boundary: this plan proves local structured logging, retention, query/export, and HTTP collector handoff behavior. It does not prove managed production log collection, operator access controls, live-money operational observability, or external collector reliability.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | System log storage | Done | `SystemLogCommand`, `SystemLogFilter`, `record_system_log`, `insert_system_logs_batch`, `list_system_logs_filtered`, `count_system_logs`, `purge_system_logs`, `purge_system_logs_by_retention` | None for local storage/query/retention |

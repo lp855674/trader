@@ -89,6 +89,8 @@ This completes the paper-validation scope for this plan. It does not claim produ
 
 2026-07-08 sync: subsequent live-reconciliation gate evidence now records both archival replay and fresh read-only multi-broker checks from accepted IBKR paper Gateway and Binance paper/Testnet evidence. See `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md` and `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`. This strengthens the operator evidence trail for the paper/testnet readiness bucket, but does not change this plan's boundary: no live-money claim, no production real-money order support, and no RBAC / multi-approval / managed-ops completion claim.
 
+Additional 2026-07-08 IBKR paper order-submit follow-up exposed that the dedicated `ibkr-paper-cancel-order` path worked, but the generic `Broker::cancel_order` path used by `risk-kill-switch --cancel-open-orders` still returned `OrderNotFound` for IBKR paper open orders. That cleanup-cancel gap has been fixed and covered by `cargo test -p broker ibkr_paper_gateway_adapter_cancels_broker_open_order_by_id`. See `docs/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. This is cleanup evidence for paper open orders, not live-money readiness or filled-order reconciliation acceptance.
+
 ## Global Constraints
 
 - Do not introduce RBAC or multi-user approval flow in this phase.
