@@ -8,7 +8,7 @@
 
 **Tech Stack:** PowerShell verification scripts, `trader` CLI, IBKR paper Gateway on `127.0.0.1:7497`, SQLite evidence under `data/`, Markdown result document.
 
-## Current Status
+## Current Status (2026-07-08 Sync)
 
 Status as of 2026-07-07: complete for the IBKR paper Gateway validation path. ReadOnly, AutoRun, and a three-iteration Soak all completed with `failure_class = ok` against a local IBKR paper Gateway on `127.0.0.1:4002`. Generated `data/` evidence remains uncommitted; committed docs redact the paper account as `DU...`.
 
@@ -19,6 +19,8 @@ Evidence recorded in `docs/ibkr-paper-gateway-long-run-results-paper-readiness-a
 - Soak: `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`
 
 Remaining gap: broader production and real-money readiness, not this IBKR paper Gateway validation path.
+
+2026-07-08 sync: rechecked the committed result document and local script-contract evidence. The committed operator evidence records Local readiness, ReadOnly, AutoRun, and three-iteration Soak as completed with `failure_class = ok`; generated `data/` evidence remains uncommitted and account values remain redacted. No fresh Gateway, broker network, paper order, or real-money action was run for this sync. Broader production, real-money, and multi-broker readiness remain outside this IBKR paper Gateway validation path.
 
 ## Global Constraints
 
