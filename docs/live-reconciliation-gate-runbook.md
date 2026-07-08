@@ -59,6 +59,14 @@ Then run the gate against the generated config:
 powershell -ExecutionPolicy Bypass -Command "& .\scripts\live-reconciliation-gate.ps1 -Config 'data/live-reconciliation-gate-replay/gate-evidence-fresh-readonly-<DATE>.toml' -Account @('ibkr:DU****91','binance:binance-testnet') -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000"
 ```
 
+## Long Fresh Read-Only Evidence
+
+The 2026-07-08 long fresh read-only check raised the gate requirement to 10 clean recent rows per required account after running longer fresh evidence collection:
+
+- Result document: `docs/live-reconciliation-gate-results-long-readonly-2026-07-08.md`
+- Scope: 30 fresh IBKR paper Gateway read-only audits, 10 fresh Binance paper/Testnet no-submit iterations, followed by script-generated gate-readable aggregation.
+- Decision: gate allowed both required accounts with 10 clean recent rows each.
+
 ## Blocking Conditions
 
 - Missing required audit.
