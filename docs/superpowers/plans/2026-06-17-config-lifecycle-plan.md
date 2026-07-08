@@ -8,11 +8,13 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, serde_json, chrono, PowerShell CLI.
 
-## Current Status (2026-06-19 Implementation Update)
+## Current Status (2026-07-08 Sync)
 
 The local lifecycle MVP is implemented. Managed configs now support immutable version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue readback, latest/published/specific queries, structured JSON diff, rollback-to-new-draft, API routes, CLI commands, release/audit readback, and event-store logging for state changes. Remaining work is full production governance: authenticated RBAC, multi-environment permission matrices, and multi-person approval queues.
 
 Run config binding is implemented through `RUN` snapshots in `configs` plus `run_config_versions` bindings. This avoided adding a `strategy_runs.config_version` column while still giving API/CLI readback for the config version used by local run entrypoints.
+
+2026-07-08 sync: targeted local verification reconfirmed storage/API/CLI evidence for version creation, version queries, state transitions, production/staging role policy checks, independent production approver checks, pending approval readback, JSON diff, rollback-to-draft, release/audit readback, run config version bindings, and ops smoke coverage for pending approvals plus release/audit readback. This remains a local lifecycle/governance MVP: authenticated RBAC, multi-environment permission matrices, multi-person approval queues, and production change reports are still follow-up work.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
