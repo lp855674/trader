@@ -8,9 +8,11 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, rust_decimal, tokio intervals, PowerShell smoke scripts.
 
-## Current Status (2026-06-19 Audit)
+## Current Status (2026-07-08 Sync)
 
 This plan file has now been backfilled for the audited local MVP. Checked items below are confirmed implemented; unchecked items remain original production scope or exact plan steps that have not landed.
+
+2026-07-08 sync note: targeted verification reconfirmed the local MVP evidence for algorithm reconciliation, paper fill-time snapshots, and live fake-broker broker-reported snapshot/reconciliation drift paths. The original paper-runtime periodic snapshot config and paper-runtime mock-broker reconciliation trigger steps remain unchecked because the current implemented evidence is narrower or lives in the live runtime path.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
@@ -230,6 +232,8 @@ git commit -m "feat: extend storage for cash and position snapshots"
 - Modify: `crates/paper/tests/paper_tests.rs`
 - Modify: `crates/config/src/config.rs`
 
+2026-07-08 status: `paper_runtime_persists_cash_and_position_snapshots` confirms paper fill-time cash/position snapshot persistence. The original sketched configurable `SnapshotConfig` and periodic bar/seconds snapshot cadence are still not marked complete here.
+
 - [ ] **Step 1: Add snapshot config**
 
 ```rust
@@ -322,6 +326,8 @@ git commit -m "feat: wire snapshots into paper runtime"
 - Create: `crates/algorithm/src/reconciliation.rs`
 - Modify: `crates/algorithm/src/algorithm.rs`
 - Modify: `crates/algorithm/tests/algorithm_tests.rs`
+
+2026-07-08 status: targeted `cargo test -p algorithm reconciliation` passed the reconciliation report tests for cash drift, missing/orphaned positions, and contract quantity drift.
 
 - [x] **Step 1: Define reconciliation types**
 
@@ -430,7 +436,7 @@ fn detects_orphaned_position() {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```powershell
 cargo test -p algorithm reconciliation
@@ -438,7 +444,7 @@ cargo test -p algorithm reconciliation
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add crates/algorithm
@@ -454,6 +460,8 @@ git commit -m "feat: reconciliation logic with drift detection"
 - Modify: `crates/paper/src/paper.rs`
 - Modify: `crates/runtime/src/runtime.rs`
 - Modify: `crates/paper/tests/paper_tests.rs`
+
+2026-07-08 status: live runtime fake-broker reconciliation is implemented and covered by targeted tests for periodic broker-reported cash/position snapshots and cash/position drift events. The original paper-runtime mock-broker reconciliation trigger below remains unchecked.
 
 - [ ] **Step 1: Add reconciliation trigger to paper runtime**
 
