@@ -2294,6 +2294,108 @@ async fn reconciliation_alert_summary_routes_aggregate_runtime_alert_logs() {
 }
 
 #[tokio::test]
+async fn reconciliation_gate_alert_summary_routes_aggregate_block_alert_logs() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    for (run_id, ts_ms, message, level, fields) in [
+        (
+            Some("run-gate-alert-a"),
+            100,
+            "reconciliation_gate.block.alert",
+            "ERROR",
+            serde_json::json!({
+                "reason": "reconciliation_gate_block",
+                "failure_count": 1,
+                "failures": [{
+                    "broker": "simulated",
+                    "account_id": "paper",
+                    "reason": "missing_required_audit",
+                    "detail": "missing required clean reconciliation audit"
+                }]
+            }),
+        ),
+        (
+            Some("run-gate-alert-b"),
+            200,
+            "reconciliation_gate.block.alert",
+            "ERROR",
+            serde_json::json!({
+                "reason": "reconciliation_gate_block",
+                "failure_count": 1,
+                "failures": [{
+                    "broker": "simulated",
+                    "account_id": "paper",
+                    "reason": "audit_too_old",
+                    "detail": "latest clean reconciliation audit is stale"
+                }]
+            }),
+        ),
+        (
+            Some("run-gate-alert-c"),
+            300,
+            "reconciliation_gate.block.alert",
+            "WARN",
+            serde_json::json!({
+                "reason": "reconciliation_gate_block",
+                "failures": [{
+                    "broker": "simulated",
+                    "account_id": "ignored",
+                    "reason": "warn_only"
+                }]
+            }),
+        ),
+        (
+            Some("run-gate-alert-d"),
+            400,
+            "reconciliation_drift.alert",
+            "ERROR",
+            serde_json::json!({
+                "account_id": "paper",
+                "reason": "cash_total_drift"
+            }),
+        ),
+    ] {
+        db.record_system_log(SystemLogCommand {
+            run_id: run_id.map(str::to_string),
+            ts_ms,
+            level: level.to_string(),
+            target: "runtime.alert".to_string(),
+            message: message.to_string(),
+            fields: Some(fields),
+        })
+        .await
+        .unwrap();
+    }
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+
+    let summary = get_json(
+        app.clone(),
+        "/api/v1/reconciliation-gate-alerts/summary?account_id=paper",
+    )
+    .await;
+    assert_eq!(summary["block_count"], 2);
+    assert_eq!(summary["latest_block_ts_ms"], 200);
+    assert_eq!(summary["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(summary["accounts"][0], "paper");
+    assert_eq!(summary["brokers"][0], "simulated");
+    assert_eq!(summary["reasons"].as_array().unwrap().len(), 2);
+
+    let run_summary = get_json(
+        app,
+        "/api/v1/runs/run-gate-alert-b/reconciliation-gate-alerts/summary",
+    )
+    .await;
+    assert_eq!(run_summary["run_id"], "run-gate-alert-b");
+    assert_eq!(run_summary["block_count"], 1);
+    assert_eq!(run_summary["latest_block_ts_ms"], 200);
+    assert_eq!(run_summary["runs"][0], "run-gate-alert-b");
+    assert_eq!(run_summary["reasons"][0], "audit_too_old");
+}
+
+#[tokio::test]
 async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -2304,6 +2406,7 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
             serde_json::json!({
                 "account_id": "paper",
                 "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                "message": "reconciliation_drift.alert",
                 "sink": "webhook",
                 "status": "failed",
                 "http_status": 500
@@ -2315,6 +2418,7 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
             serde_json::json!({
                 "account_id": "paper",
                 "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                "message": "reconciliation_drift.alert",
                 "sink": "file",
                 "status": "sent"
             }),
@@ -2324,8 +2428,19 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
             300,
             serde_json::json!({
                 "account_id": "other",
+                "message": "reconciliation_drift.alert",
                 "sink": "webhook",
                 "status": "sent"
+            }),
+        ),
+        (
+            Some("run-gate-delivery"),
+            400,
+            serde_json::json!({
+                "message": "reconciliation_gate.block.alert",
+                "sink": "webhook",
+                "status": "failed",
+                "http_status": 500
             }),
         ),
     ] {
@@ -2355,9 +2470,10 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
     assert_eq!(summary["sent_count"], 1);
     assert_eq!(summary["failed_count"], 1);
     assert_eq!(summary["sinks"].as_array().unwrap().len(), 2);
+    assert_eq!(summary["alert_messages"][0], "reconciliation_drift.alert");
 
     let run_summary = get_json(
-        app,
+        app.clone(),
         "/api/v1/runs/run-delivery-b/reconciliation-alert-deliveries/summary?symbol=CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
     )
     .await;
@@ -2367,6 +2483,23 @@ async fn reconciliation_alert_delivery_summary_routes_aggregate_delivery_logs() 
     assert_eq!(run_summary["failed_count"], 0);
     assert_eq!(run_summary["sinks"][0], "file");
     assert_eq!(run_summary["statuses"][0], "sent");
+
+    let gate_summary = get_json(
+        app,
+        "/api/v1/reconciliation-alert-deliveries/summary?alert_message=reconciliation_gate.block.alert",
+    )
+    .await;
+    assert_eq!(
+        gate_summary["alert_message"],
+        "reconciliation_gate.block.alert"
+    );
+    assert_eq!(gate_summary["delivery_count"], 1);
+    assert_eq!(gate_summary["sent_count"], 0);
+    assert_eq!(gate_summary["failed_count"], 1);
+    assert_eq!(
+        gate_summary["alert_messages"][0],
+        "reconciliation_gate.block.alert"
+    );
 }
 
 #[tokio::test]

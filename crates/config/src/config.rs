@@ -300,6 +300,20 @@ pub struct LiveReconciliationGateConfig {
     pub max_audit_age_ms: i64,
     #[serde(default)]
     pub required_accounts: Vec<String>,
+    #[serde(default)]
+    pub missing_required_accounts: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub missing_required_audit: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub insufficient_clean_recent_audits: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub audit_too_old: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub audit_has_drift: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub audit_has_stale_inputs: LiveReconciliationGateFailurePolicy,
+    #[serde(default)]
+    pub log_write_failure: LiveReconciliationGateFailurePolicy,
 }
 
 impl Default for LiveReconciliationGateConfig {
@@ -309,8 +323,23 @@ impl Default for LiveReconciliationGateConfig {
             min_successful_audits: default_reconciliation_gate_min_successful_audits(),
             max_audit_age_ms: default_reconciliation_gate_max_audit_age_ms(),
             required_accounts: Vec::new(),
+            missing_required_accounts: LiveReconciliationGateFailurePolicy::default(),
+            missing_required_audit: LiveReconciliationGateFailurePolicy::default(),
+            insufficient_clean_recent_audits: LiveReconciliationGateFailurePolicy::default(),
+            audit_too_old: LiveReconciliationGateFailurePolicy::default(),
+            audit_has_drift: LiveReconciliationGateFailurePolicy::default(),
+            audit_has_stale_inputs: LiveReconciliationGateFailurePolicy::default(),
+            log_write_failure: LiveReconciliationGateFailurePolicy::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveReconciliationGateFailurePolicy {
+    #[default]
+    Block,
+    WarnOnly,
 }
 
 fn default_reconciliation_gate_min_successful_audits() -> usize {

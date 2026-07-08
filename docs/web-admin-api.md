@@ -30,7 +30,7 @@ Source of Truth: `crates/api/src/api.rs`
 | 运行管理 | `/preflight/paper` `/backtests` `/paper-runs` `/replays` `/live-runs` `/runs/{run_id}` `/runs/{run_id}/status` `/runs/{run_id}/cancel` `/live-runs/{run_id}/stop` |
 | Replay 控制 | `/replay/{run_id}/pause` `/replay/{run_id}/resume` `/replay/{run_id}/seek/{offset}` `/replay/{run_id}/speed/{speed}` |
 | 订单/成交/持仓 | `/runs/{run_id}/orders` `/runs/{run_id}/fills` `/runs/{run_id}/positions` `/runs/{run_id}/account-balances` `/runs/{run_id}/portfolio-snapshots` `/runs/{run_id}/cash-snapshots` `/runs/{run_id}/position-snapshots` |
-| 风控/审计 | `/runs/{run_id}/reconciliation` `/reconciliation-drifts` `/reconciliation-alerts/summary` `/reconciliation-alert-deliveries/summary` `/runs/{run_id}/risk-events` |
+| 风控/审计 | `/runs/{run_id}/reconciliation` `/reconciliation-drifts` `/reconciliation-alerts/summary` `/reconciliation-gate-alerts/summary` `/reconciliation-alert-deliveries/summary` `/runs/{run_id}/risk-events` |
 | 配置管理 | `/configs` `/configs/{name}` `/configs/{name}/latest` `/configs/{name}/published` `/configs/{name}/{version}` `/configs/{name}/{version}/state` `/configs/{name}/{version}/rollback` `/config-approvals/pending` `/configs/{name}/diff` `/configs/{config_id}/releases` `/configs/{config_id}/audits` `/runs/{run_id}/config-version` |
 | 日志中心 | `/logs` `/system-logs` `/runs/{run_id}/system-logs` `/events` `/runs/{run_id}/events` `/runs/{run_id}/order-events` `/runs/{run_id}/risk-events` `/runs/{run_id}/insights` `/runs/{run_id}/portfolio-targets` |
 | 实时看板 | `/ws` |
@@ -166,8 +166,14 @@ Web 管理页应按当前选中的运行读取指标。顶层 `GET /api/v1/metri
 
 - `GET /api/v1/reconciliation-alerts/summary`
 - `GET /api/v1/runs/{run_id}/reconciliation-alerts/summary`
+- `GET /api/v1/reconciliation-gate-alerts/summary`
+- `GET /api/v1/runs/{run_id}/reconciliation-gate-alerts/summary`
 - `GET /api/v1/reconciliation-alert-deliveries/summary`
 - `GET /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary`
+
+`reconciliation-gate-alerts/summary` 聚合 `target=runtime.alert`、`level=ERROR`、`message=reconciliation_gate.block.alert`，用于看 live reconciliation gate block 次数、最近告警时间、涉及 run/account/broker 和失败原因。返回 `block_count`、`latest_block_ts_ms`、`runs`、`accounts`、`brokers`、`reasons`。支持 `run_id`、`account_id`、`from_ms`、`to_ms`、`limit`。
+
+`reconciliation-alert-deliveries/summary` 聚合 `target=runtime.alert_delivery`，返回 `delivery_count`、`latest_delivery_ts_ms`、`sent_count`、`failed_count`、`sinks`、`statuses`、`alert_messages`。支持 `run_id`、`alert_message`、`account_id`、`symbol`、`from_ms`、`to_ms`、`limit`；查看 gate block alert 送达情况时传 `alert_message=reconciliation_gate.block.alert`。
 
 ### 8.3 风险事件
 
@@ -222,6 +228,14 @@ Rollback 请求字段：`actor`、`reason`。
 `GET /api/v1/runs/{run_id}/system-logs`
 
 适合详情页和实时 tail。
+
+Live reconciliation gate 审计查询：
+
+- Gate 决策：`GET /api/v1/runs/{run_id}/system-logs?target=runtime.reconciliation_gate`
+- Gate block 摘要：`GET /api/v1/runs/{run_id}/reconciliation-gate-alerts/summary`
+- Gate block alert：`GET /api/v1/runs/{run_id}/system-logs?target=runtime.alert&search=reconciliation_gate.block.alert`
+- Gate block alert delivery 摘要：`GET /api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary?alert_message=reconciliation_gate.block.alert`
+- Gate block alert delivery 日志：`GET /api/v1/runs/{run_id}/system-logs?target=runtime.alert_delivery&search=reconciliation_gate.block.alert`
 
 ---
 

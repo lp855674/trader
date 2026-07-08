@@ -1,4 +1,4 @@
-use config::{AppConfig, RuntimeMode, ServerConfig};
+use config::{AppConfig, LiveReconciliationGateFailurePolicy, RuntimeMode, ServerConfig};
 
 #[test]
 fn server_config_parses_deployment_only_file() {
@@ -531,6 +531,8 @@ fn parses_live_reconciliation_gate_config() {
         min_successful_audits = 3
         max_audit_age_ms = 300000
         required_accounts = ["ibkr:DU****91", "binance:paper"]
+        audit_too_old = "warn_only"
+        log_write_failure = "warn_only"
     "#;
 
     let config = AppConfig::from_toml_str(input).unwrap();
@@ -541,6 +543,18 @@ fn parses_live_reconciliation_gate_config() {
     assert_eq!(
         config.live.reconciliation_gate.required_accounts,
         vec!["ibkr:DU****91".to_string(), "binance:paper".to_string()]
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.audit_too_old,
+        LiveReconciliationGateFailurePolicy::WarnOnly
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.log_write_failure,
+        LiveReconciliationGateFailurePolicy::WarnOnly
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.missing_required_audit,
+        LiveReconciliationGateFailurePolicy::Block
     );
 }
 
@@ -599,6 +613,37 @@ fn defaults_live_reconciliation_gate_to_disabled() {
     assert_eq!(config.live.reconciliation_gate.min_successful_audits, 1);
     assert_eq!(config.live.reconciliation_gate.max_audit_age_ms, 300000);
     assert!(config.live.reconciliation_gate.required_accounts.is_empty());
+    assert_eq!(
+        config.live.reconciliation_gate.missing_required_accounts,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.missing_required_audit,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config
+            .live
+            .reconciliation_gate
+            .insufficient_clean_recent_audits,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.audit_too_old,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.audit_has_drift,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.audit_has_stale_inputs,
+        LiveReconciliationGateFailurePolicy::Block
+    );
+    assert_eq!(
+        config.live.reconciliation_gate.log_write_failure,
+        LiveReconciliationGateFailurePolicy::Block
+    );
 }
 
 #[test]

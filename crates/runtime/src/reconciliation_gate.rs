@@ -36,6 +36,33 @@ pub fn should_enforce_live_reconciliation_gate(app_config: &config::AppConfig) -
         || app_config.broker.mode == config::BrokerMode::Live
 }
 
+pub fn should_enforce_reconciliation_gate_block(
+    app_config: &config::AppConfig,
+    decision: &broker::ReconciliationGateDecision,
+) -> bool {
+    if decision.status != broker::ReconciliationGateStatus::Block {
+        return false;
+    }
+    if app_config.broker.mode == config::BrokerMode::Live {
+        return true;
+    }
+    decision
+        .failures
+        .iter()
+        .any(|failure| reconciliation_gate_failure_policy(app_config, &failure.reason).is_block())
+}
+
+pub fn should_fail_on_reconciliation_gate_log_write_failure(
+    app_config: &config::AppConfig,
+) -> bool {
+    app_config.broker.mode == config::BrokerMode::Live
+        || app_config
+            .live
+            .reconciliation_gate
+            .log_write_failure
+            .is_block()
+}
+
 pub async fn evaluate_live_reconciliation_gate_from_storage(
     app_config: &config::AppConfig,
     db: &storage::Db,
@@ -126,6 +153,7 @@ pub async fn record_reconciliation_gate_decision(
     app_config: &config::AppConfig,
     decision: &broker::ReconciliationGateDecision,
     context: ReconciliationGateAuditLogContext,
+    alert_sink: &crate::AlertSinkSettings,
 ) -> Result<()> {
     let status = reconciliation_gate_status_label(decision.status);
     let level = match decision.status {
@@ -159,34 +187,64 @@ pub async fn record_reconciliation_gate_decision(
 
     let run_id = context.run_id.clone();
     let ts_ms = chrono::Utc::now().timestamp_millis();
+    let fields = json!({
+        "event_type": "live.reconciliation_gate.decision",
+        "status": status,
+        "enforcement_action": reconciliation_gate_enforcement_action(app_config, decision),
+        "source": context.source,
+        "run_id": context.run_id,
+        "broker_kind": app_config.broker.kind,
+        "broker_mode": app_config.broker.mode,
+        "gate_enabled": app_config.live.reconciliation_gate.enabled,
+        "required_account_count": requirements.len(),
+        "requirements": requirements,
+        "failure_count": failures.len(),
+        "failures": failures,
+        "config_snapshot": {
+            "path": context.config_path,
+            "format": context.config_format,
+            "checksum": context.config_checksum,
+            "config_id": context.config_id,
+            "version": context.config_version,
+        },
+        "policy": {
+            "missing_required_accounts": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.missing_required_accounts),
+            "missing_required_audit": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.missing_required_audit),
+            "insufficient_clean_recent_audits": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.insufficient_clean_recent_audits),
+            "audit_too_old": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.audit_too_old),
+            "audit_has_drift": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.audit_has_drift),
+            "audit_has_stale_inputs": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.audit_has_stale_inputs),
+            "log_write_failure": reconciliation_gate_policy_label(app_config.live.reconciliation_gate.log_write_failure),
+            "live_mode_forces_block": app_config.broker.mode == config::BrokerMode::Live,
+        },
+    });
     db.record_system_log(storage::SystemLogCommand {
-        run_id,
+        run_id: run_id.clone(),
         ts_ms,
         level: level.to_string(),
         target: "runtime.reconciliation_gate".to_string(),
         message: format!("reconciliation_gate.{status}"),
-        fields: Some(json!({
-            "event_type": "live.reconciliation_gate.decision",
-            "status": status,
-            "source": context.source,
-            "run_id": context.run_id,
-            "broker_kind": app_config.broker.kind,
-            "broker_mode": app_config.broker.mode,
-            "gate_enabled": app_config.live.reconciliation_gate.enabled,
-            "required_account_count": requirements.len(),
-            "requirements": requirements,
-            "failure_count": failures.len(),
-            "failures": failures,
-            "config_snapshot": {
-                "path": context.config_path,
-                "format": context.config_format,
-                "checksum": context.config_checksum,
-                "config_id": context.config_id,
-                "version": context.config_version,
-            },
-        })),
+        fields: Some(fields.clone()),
     })
     .await?;
+    if decision.status == broker::ReconciliationGateStatus::Block {
+        let mut alert_fields = fields;
+        if let Some(object) = alert_fields.as_object_mut() {
+            object.insert(
+                "event_type".to_string(),
+                json!("live.reconciliation_gate.block_alert"),
+            );
+            object.insert("reason".to_string(), json!("reconciliation_gate_block"));
+        }
+        crate::record_runtime_alert(
+            db,
+            run_id.as_deref(),
+            alert_sink,
+            "reconciliation_gate.block.alert",
+            alert_fields,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -194,6 +252,57 @@ fn reconciliation_gate_status_label(status: broker::ReconciliationGateStatus) ->
     match status {
         broker::ReconciliationGateStatus::Allow => "allow",
         broker::ReconciliationGateStatus::Block => "block",
+    }
+}
+
+fn reconciliation_gate_enforcement_action(
+    app_config: &config::AppConfig,
+    decision: &broker::ReconciliationGateDecision,
+) -> &'static str {
+    match decision.status {
+        broker::ReconciliationGateStatus::Allow => "allow",
+        broker::ReconciliationGateStatus::Block => {
+            if should_enforce_reconciliation_gate_block(app_config, decision) {
+                "block"
+            } else {
+                "warn_only"
+            }
+        }
+    }
+}
+
+fn reconciliation_gate_failure_policy(
+    app_config: &config::AppConfig,
+    reason: &str,
+) -> config::LiveReconciliationGateFailurePolicy {
+    let gate = &app_config.live.reconciliation_gate;
+    match reason {
+        "missing_required_accounts" => gate.missing_required_accounts,
+        "missing_required_audit" => gate.missing_required_audit,
+        "insufficient_clean_recent_audits" => gate.insufficient_clean_recent_audits,
+        "audit_too_old" => gate.audit_too_old,
+        "audit_has_drift" => gate.audit_has_drift,
+        "audit_has_stale_inputs" => gate.audit_has_stale_inputs,
+        _ => config::LiveReconciliationGateFailurePolicy::Block,
+    }
+}
+
+fn reconciliation_gate_policy_label(
+    policy: config::LiveReconciliationGateFailurePolicy,
+) -> &'static str {
+    match policy {
+        config::LiveReconciliationGateFailurePolicy::Block => "block",
+        config::LiveReconciliationGateFailurePolicy::WarnOnly => "warn_only",
+    }
+}
+
+trait ReconciliationGateFailurePolicyExt {
+    fn is_block(self) -> bool;
+}
+
+impl ReconciliationGateFailurePolicyExt for config::LiveReconciliationGateFailurePolicy {
+    fn is_block(self) -> bool {
+        self == config::LiveReconciliationGateFailurePolicy::Block
     }
 }
 

@@ -50,6 +50,37 @@ pub enum AlertSinkSettings {
     },
 }
 
+pub async fn record_runtime_alert(
+    db: &Db,
+    run_id: Option<&str>,
+    alert_sink: &AlertSinkSettings,
+    message: &str,
+    fields: serde_json::Value,
+) -> storage::StorageResult<()> {
+    let now_ts_ms = chrono::Utc::now().timestamp_millis();
+    let should_notify =
+        should_send_alert_notification(db, run_id, alert_sink, message, &fields, now_ts_ms)
+            .await
+            .unwrap_or(true);
+    record_system_log(
+        db,
+        run_id,
+        "ERROR",
+        "runtime.alert",
+        message,
+        fields.clone(),
+    )
+    .await?;
+    if should_notify {
+        let deliveries =
+            send_alert_notification(run_id, alert_sink, message, &fields, now_ts_ms).await;
+        for delivery in deliveries {
+            let _ = record_alert_delivery_log(db, run_id, message, &fields, &delivery).await;
+        }
+    }
+    Ok(())
+}
+
 pub struct LiveRuntime {
     db: Db,
     settings: LiveRuntimeSettings,
@@ -943,265 +974,12 @@ impl LiveRuntime {
         message: &str,
         fields: serde_json::Value,
     ) -> storage::StorageResult<()> {
-        let now_ts_ms = chrono::Utc::now().timestamp_millis();
-        let should_notify = self
-            .should_send_alert_notification(message, &fields, now_ts_ms)
-            .await
-            .unwrap_or(true);
-        self.record_system_log("ERROR", "runtime.alert", message, fields.clone())
-            .await?;
-        if should_notify {
-            let deliveries = self
-                .send_alert_notification(message, &fields, now_ts_ms)
-                .await;
-            for delivery in deliveries {
-                let _ = self
-                    .record_alert_delivery_log(message, &fields, &delivery)
-                    .await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn should_send_alert_notification(
-        &self,
-        message: &str,
-        fields: &serde_json::Value,
-        now_ts_ms: i64,
-    ) -> storage::StorageResult<bool> {
-        let cooldown_ms = match &self.settings.alert_sink {
-            AlertSinkSettings::Noop => return Ok(false),
-            AlertSinkSettings::Multi(sinks) if sinks.is_empty() => return Ok(false),
-            AlertSinkSettings::Multi(sinks) => sinks
-                .iter()
-                .map(alert_sink_cooldown_ms)
-                .max()
-                .unwrap_or_default(),
-            AlertSinkSettings::File { cooldown_ms, .. }
-            | AlertSinkSettings::Webhook { cooldown_ms, .. } => *cooldown_ms,
-        };
-        let from_ms = now_ts_ms.saturating_sub(cooldown_ms as i64);
-        let recent_logs = self
-            .db
-            .list_system_logs_filtered(storage::SystemLogFilter {
-                run_id: Some(self.settings.run_id.clone()),
-                level: None,
-                target: Some("runtime.alert".to_string()),
-                from_ms: Some(from_ms),
-                to_ms: Some(now_ts_ms),
-                search: None,
-                limit: None,
-                offset: None,
-            })
-            .await?;
-        let dedup_key = alert_dedup_key(message, &self.settings.run_id, fields);
-        Ok(!recent_logs.into_iter().any(|log| {
-            log.message == message
-                && log
-                    .fields_json
-                    .as_deref()
-                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
-                    .as_ref()
-                    .is_some_and(|parsed| {
-                        alert_dedup_key(&log.message, log.run_id.as_deref().unwrap_or(""), parsed)
-                            == dedup_key
-                    })
-        }))
-    }
-
-    async fn send_alert_notification(
-        &self,
-        message: &str,
-        fields: &serde_json::Value,
-        ts_ms: i64,
-    ) -> Vec<AlertDeliveryResult> {
-        match &self.settings.alert_sink {
-            AlertSinkSettings::Multi(sinks) => {
-                let mut deliveries = Vec::with_capacity(sinks.len());
-                for sink in sinks {
-                    deliveries.push(self.send_alert_to_sink(sink, message, fields, ts_ms).await);
-                }
-                deliveries
-            }
-            sink => vec![self.send_alert_to_sink(sink, message, fields, ts_ms).await],
-        }
-    }
-
-    async fn send_alert_to_sink(
-        &self,
-        sink: &AlertSinkSettings,
-        message: &str,
-        fields: &serde_json::Value,
-        ts_ms: i64,
-    ) -> AlertDeliveryResult {
-        match sink {
-            AlertSinkSettings::Noop => AlertDeliveryResult {
-                sink: "noop".to_string(),
-                status: "skipped".to_string(),
-                attempts: 0,
-                http_status: None,
-                error: None,
-            },
-            AlertSinkSettings::Multi(_) => AlertDeliveryResult {
-                sink: "multi".to_string(),
-                status: "skipped".to_string(),
-                attempts: 0,
-                http_status: None,
-                error: Some("nested multi alert sinks are not supported".to_string()),
-            },
-            AlertSinkSettings::File { path, .. } => {
-                let file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .await;
-                let dedup_key = alert_dedup_key(message, &self.settings.run_id, fields);
-                let payload = serde_json::json!({
-                    "ts_ms": ts_ms,
-                    "run_id": &self.settings.run_id,
-                    "target": "runtime.alert",
-                    "message": message,
-                    "dedup_key": dedup_key,
-                    "fields": fields,
-                });
-                match file {
-                    Ok(mut file) => {
-                        let result = async {
-                            file.write_all(payload.to_string().as_bytes()).await?;
-                            file.write_all(b"\n").await?;
-                            file.flush().await
-                        }
-                        .await;
-                        match result {
-                            Ok(()) => AlertDeliveryResult {
-                                sink: "file".to_string(),
-                                status: "sent".to_string(),
-                                attempts: 1,
-                                http_status: None,
-                                error: None,
-                            },
-                            Err(error) => AlertDeliveryResult {
-                                sink: "file".to_string(),
-                                status: "failed".to_string(),
-                                attempts: 1,
-                                http_status: None,
-                                error: Some(error.to_string()),
-                            },
-                        }
-                    }
-                    Err(error) => AlertDeliveryResult {
-                        sink: "file".to_string(),
-                        status: "failed".to_string(),
-                        attempts: 1,
-                        http_status: None,
-                        error: Some(error.to_string()),
-                    },
-                }
-            }
-            AlertSinkSettings::Webhook {
-                url,
-                timeout_ms,
-                max_retries,
-                auth_token,
-                ..
-            } => {
-                let dedup_key = alert_dedup_key(message, &self.settings.run_id, fields);
-                let payload = serde_json::json!({
-                    "ts_ms": ts_ms,
-                    "run_id": &self.settings.run_id,
-                    "target": "runtime.alert",
-                    "message": message,
-                    "dedup_key": dedup_key,
-                    "fields": fields,
-                });
-                let client = reqwest::Client::builder()
-                    .timeout(Duration::from_millis(*timeout_ms))
-                    .build();
-                let client = match client {
-                    Ok(client) => client,
-                    Err(error) => {
-                        return AlertDeliveryResult {
-                            sink: "webhook".to_string(),
-                            status: "failed".to_string(),
-                            attempts: 0,
-                            http_status: None,
-                            error: Some(error.to_string()),
-                        };
-                    }
-                };
-                let mut attempt = 0u32;
-                loop {
-                    let mut request = client.post(url).json(&payload);
-                    if let Some(token) = auth_token.as_deref() {
-                        request = request.bearer_auth(token);
-                    }
-                    match request.send().await {
-                        Ok(response) => {
-                            let status = response.status();
-                            if status.is_success() {
-                                return AlertDeliveryResult {
-                                    sink: "webhook".to_string(),
-                                    status: "sent".to_string(),
-                                    attempts: attempt + 1,
-                                    http_status: Some(status.as_u16()),
-                                    error: None,
-                                };
-                            }
-                            let should_retry = status.is_server_error() && attempt < *max_retries;
-                            if !should_retry {
-                                return AlertDeliveryResult {
-                                    sink: "webhook".to_string(),
-                                    status: "failed".to_string(),
-                                    attempts: attempt + 1,
-                                    http_status: Some(status.as_u16()),
-                                    error: Some(format!("http status {}", status.as_u16())),
-                                };
-                            }
-                        }
-                        Err(error) => {
-                            if attempt >= *max_retries {
-                                return AlertDeliveryResult {
-                                    sink: "webhook".to_string(),
-                                    status: "failed".to_string(),
-                                    attempts: attempt + 1,
-                                    http_status: None,
-                                    error: Some(error.to_string()),
-                                };
-                            }
-                        }
-                    }
-                    attempt += 1;
-                    sleep(Duration::from_millis(50 * i64::from(attempt) as u64)).await;
-                }
-            }
-        }
-    }
-
-    async fn record_alert_delivery_log(
-        &self,
-        message: &str,
-        fields: &serde_json::Value,
-        delivery: &AlertDeliveryResult,
-    ) -> storage::StorageResult<()> {
-        let level = if delivery.status == "sent" {
-            "INFO"
-        } else {
-            "WARN"
-        };
-        self.record_system_log(
-            level,
-            "runtime.alert_delivery",
-            "alert.delivery",
-            serde_json::json!({
-                "run_id": &self.settings.run_id,
-                "message": message,
-                "sink": delivery.sink,
-                "status": delivery.status,
-                "attempts": delivery.attempts,
-                "http_status": delivery.http_status,
-                "error": delivery.error,
-                "dedup_key": alert_dedup_key(message, &self.settings.run_id, fields),
-            }),
+        record_runtime_alert(
+            &self.db,
+            Some(&self.settings.run_id),
+            &self.settings.alert_sink,
+            message,
+            fields,
         )
         .await
     }
@@ -1224,6 +1002,274 @@ impl LiveRuntime {
             })
             .await
     }
+}
+
+async fn should_send_alert_notification(
+    db: &Db,
+    run_id: Option<&str>,
+    alert_sink: &AlertSinkSettings,
+    message: &str,
+    fields: &serde_json::Value,
+    now_ts_ms: i64,
+) -> storage::StorageResult<bool> {
+    let cooldown_ms = match alert_sink {
+        AlertSinkSettings::Noop => return Ok(false),
+        AlertSinkSettings::Multi(sinks) if sinks.is_empty() => return Ok(false),
+        AlertSinkSettings::Multi(sinks) => sinks
+            .iter()
+            .map(alert_sink_cooldown_ms)
+            .max()
+            .unwrap_or_default(),
+        AlertSinkSettings::File { cooldown_ms, .. }
+        | AlertSinkSettings::Webhook { cooldown_ms, .. } => *cooldown_ms,
+    };
+    let from_ms = now_ts_ms.saturating_sub(cooldown_ms as i64);
+    let recent_logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: run_id.map(str::to_string),
+            level: None,
+            target: Some("runtime.alert".to_string()),
+            from_ms: Some(from_ms),
+            to_ms: Some(now_ts_ms),
+            search: None,
+            limit: None,
+            offset: None,
+        })
+        .await?;
+    let dedup_key = alert_dedup_key(message, run_id.unwrap_or(""), fields);
+    Ok(!recent_logs.into_iter().any(|log| {
+        log.message == message
+            && log
+                .fields_json
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                .as_ref()
+                .is_some_and(|parsed| {
+                    alert_dedup_key(&log.message, log.run_id.as_deref().unwrap_or(""), parsed)
+                        == dedup_key
+                })
+    }))
+}
+
+async fn send_alert_notification(
+    run_id: Option<&str>,
+    alert_sink: &AlertSinkSettings,
+    message: &str,
+    fields: &serde_json::Value,
+    ts_ms: i64,
+) -> Vec<AlertDeliveryResult> {
+    match alert_sink {
+        AlertSinkSettings::Multi(sinks) => {
+            let mut deliveries = Vec::with_capacity(sinks.len());
+            for sink in sinks {
+                deliveries.push(send_alert_to_sink(run_id, sink, message, fields, ts_ms).await);
+            }
+            deliveries
+        }
+        sink => vec![send_alert_to_sink(run_id, sink, message, fields, ts_ms).await],
+    }
+}
+
+async fn send_alert_to_sink(
+    run_id: Option<&str>,
+    sink: &AlertSinkSettings,
+    message: &str,
+    fields: &serde_json::Value,
+    ts_ms: i64,
+) -> AlertDeliveryResult {
+    let run_id_value = run_id.unwrap_or("");
+    match sink {
+        AlertSinkSettings::Noop => AlertDeliveryResult {
+            sink: "noop".to_string(),
+            status: "skipped".to_string(),
+            attempts: 0,
+            http_status: None,
+            error: None,
+        },
+        AlertSinkSettings::Multi(_) => AlertDeliveryResult {
+            sink: "multi".to_string(),
+            status: "skipped".to_string(),
+            attempts: 0,
+            http_status: None,
+            error: Some("nested multi alert sinks are not supported".to_string()),
+        },
+        AlertSinkSettings::File { path, .. } => {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await;
+            let dedup_key = alert_dedup_key(message, run_id_value, fields);
+            let payload = serde_json::json!({
+                "ts_ms": ts_ms,
+                "run_id": run_id,
+                "target": "runtime.alert",
+                "message": message,
+                "dedup_key": dedup_key,
+                "fields": fields,
+            });
+            match file {
+                Ok(mut file) => {
+                    let result = async {
+                        file.write_all(payload.to_string().as_bytes()).await?;
+                        file.write_all(b"\n").await?;
+                        file.flush().await
+                    }
+                    .await;
+                    match result {
+                        Ok(()) => AlertDeliveryResult {
+                            sink: "file".to_string(),
+                            status: "sent".to_string(),
+                            attempts: 1,
+                            http_status: None,
+                            error: None,
+                        },
+                        Err(error) => AlertDeliveryResult {
+                            sink: "file".to_string(),
+                            status: "failed".to_string(),
+                            attempts: 1,
+                            http_status: None,
+                            error: Some(error.to_string()),
+                        },
+                    }
+                }
+                Err(error) => AlertDeliveryResult {
+                    sink: "file".to_string(),
+                    status: "failed".to_string(),
+                    attempts: 1,
+                    http_status: None,
+                    error: Some(error.to_string()),
+                },
+            }
+        }
+        AlertSinkSettings::Webhook {
+            url,
+            timeout_ms,
+            max_retries,
+            auth_token,
+            ..
+        } => {
+            let dedup_key = alert_dedup_key(message, run_id_value, fields);
+            let payload = serde_json::json!({
+                "ts_ms": ts_ms,
+                "run_id": run_id,
+                "target": "runtime.alert",
+                "message": message,
+                "dedup_key": dedup_key,
+                "fields": fields,
+            });
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_millis(*timeout_ms))
+                .build();
+            let client = match client {
+                Ok(client) => client,
+                Err(error) => {
+                    return AlertDeliveryResult {
+                        sink: "webhook".to_string(),
+                        status: "failed".to_string(),
+                        attempts: 0,
+                        http_status: None,
+                        error: Some(error.to_string()),
+                    };
+                }
+            };
+            let mut attempt = 0u32;
+            loop {
+                let mut request = client.post(url).json(&payload);
+                if let Some(token) = auth_token.as_deref() {
+                    request = request.bearer_auth(token);
+                }
+                match request.send().await {
+                    Ok(response) => {
+                        let status = response.status();
+                        if status.is_success() {
+                            return AlertDeliveryResult {
+                                sink: "webhook".to_string(),
+                                status: "sent".to_string(),
+                                attempts: attempt + 1,
+                                http_status: Some(status.as_u16()),
+                                error: None,
+                            };
+                        }
+                        let should_retry = status.is_server_error() && attempt < *max_retries;
+                        if !should_retry {
+                            return AlertDeliveryResult {
+                                sink: "webhook".to_string(),
+                                status: "failed".to_string(),
+                                attempts: attempt + 1,
+                                http_status: Some(status.as_u16()),
+                                error: Some(format!("http status {}", status.as_u16())),
+                            };
+                        }
+                    }
+                    Err(error) => {
+                        if attempt >= *max_retries {
+                            return AlertDeliveryResult {
+                                sink: "webhook".to_string(),
+                                status: "failed".to_string(),
+                                attempts: attempt + 1,
+                                http_status: None,
+                                error: Some(error.to_string()),
+                            };
+                        }
+                    }
+                }
+                attempt += 1;
+                sleep(Duration::from_millis(50 * i64::from(attempt) as u64)).await;
+            }
+        }
+    }
+}
+
+async fn record_alert_delivery_log(
+    db: &Db,
+    run_id: Option<&str>,
+    message: &str,
+    fields: &serde_json::Value,
+    delivery: &AlertDeliveryResult,
+) -> storage::StorageResult<()> {
+    let level = if delivery.status == "sent" {
+        "INFO"
+    } else {
+        "WARN"
+    };
+    record_system_log(
+        db,
+        run_id,
+        level,
+        "runtime.alert_delivery",
+        "alert.delivery",
+        serde_json::json!({
+            "run_id": run_id,
+            "message": message,
+            "sink": delivery.sink,
+            "status": delivery.status,
+            "attempts": delivery.attempts,
+            "http_status": delivery.http_status,
+            "error": delivery.error,
+            "dedup_key": alert_dedup_key(message, run_id.unwrap_or(""), fields),
+        }),
+    )
+    .await
+}
+
+async fn record_system_log(
+    db: &Db,
+    run_id: Option<&str>,
+    level: &str,
+    target: &str,
+    message: &str,
+    fields: serde_json::Value,
+) -> storage::StorageResult<()> {
+    db.record_system_log(SystemLogCommand {
+        run_id: run_id.map(str::to_string),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        level: level.to_string(),
+        target: target.to_string(),
+        message: message.to_string(),
+        fields: Some(fields),
+    })
+    .await
 }
 
 fn position_side_slug(side: BrokerPositionSide) -> &'static str {

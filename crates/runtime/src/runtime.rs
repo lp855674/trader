@@ -11,6 +11,7 @@ mod worker_protocol;
 pub use cancel::CancellationFlag;
 pub use live::{
     AlertSinkSettings, LiveRuntime, LiveRuntimeSettings, StartupRecoveryUnmatchedOpenOrdersPolicy,
+    record_runtime_alert,
 };
 pub use manager::{
     RunSpawnError, RuntimeManager, RuntimeRunInfo, RuntimeRunMetadata, RuntimeRunSnapshot,
@@ -25,6 +26,7 @@ pub use reconciliation_gate::{
     evaluate_reconciliation_gate_from_storage, format_reconciliation_gate_failure,
     format_reconciliation_gate_failures, parse_reconciliation_gate_account_requirement,
     record_reconciliation_gate_decision, should_enforce_live_reconciliation_gate,
+    should_enforce_reconciliation_gate_block, should_fail_on_reconciliation_gate_log_write_failure,
 };
 pub use run_spec::{
     BrokerSpec, DataInputSpec, DataSpec, PaperSpec, PortfolioSpec, RiskSpec, RunSpec, StrategySpec,

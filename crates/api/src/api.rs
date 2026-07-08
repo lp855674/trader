@@ -24,7 +24,6 @@ use paper::{
     PaperSettings,
 };
 use replay::{ReplayController, ReplayRuntime, ReplayState, ReplaySummary};
-#[cfg(test)]
 use runtime::AlertSinkSettings;
 use runtime::{
     LiveProcessStatus, RunSpec, RuntimeRunMetadata, RuntimeRunSnapshot, RuntimeRunStatus,
@@ -413,6 +412,7 @@ struct ReconciliationDriftsQuery {
 #[derive(Deserialize)]
 struct ReconciliationAlertsSummaryQuery {
     run_id: Option<String>,
+    alert_message: Option<String>,
     account_id: Option<String>,
     symbol: Option<String>,
     from_ms: Option<i64>,
@@ -605,14 +605,27 @@ struct ReconciliationAlertSummaryResponse {
 }
 
 #[derive(Serialize)]
+struct ReconciliationGateAlertSummaryResponse {
+    run_id: Option<String>,
+    block_count: usize,
+    latest_block_ts_ms: Option<i64>,
+    runs: Vec<String>,
+    accounts: Vec<String>,
+    brokers: Vec<String>,
+    reasons: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct ReconciliationAlertDeliverySummaryResponse {
     run_id: Option<String>,
+    alert_message: Option<String>,
     delivery_count: usize,
     latest_delivery_ts_ms: Option<i64>,
     sent_count: usize,
     failed_count: usize,
     statuses: Vec<String>,
     sinks: Vec<String>,
+    alert_messages: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -876,6 +889,10 @@ pub fn router_with_state(state: AppState) -> Router {
             get(get_reconciliation_alerts_summary),
         )
         .route(
+            "/api/v1/reconciliation-gate-alerts/summary",
+            get(get_reconciliation_gate_alerts_summary),
+        )
+        .route(
             "/api/v1/reconciliation-alert-deliveries/summary",
             get(get_reconciliation_alert_deliveries_summary),
         )
@@ -921,6 +938,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runs/{run_id}/reconciliation-alerts/summary",
             get(get_run_reconciliation_alerts_summary),
+        )
+        .route(
+            "/api/v1/runs/{run_id}/reconciliation-gate-alerts/summary",
+            get(get_run_reconciliation_gate_alerts_summary),
         )
         .route(
             "/api/v1/runs/{run_id}/reconciliation-alert-deliveries/summary",
@@ -1954,7 +1975,7 @@ async fn enforce_live_reconciliation_gate_preflight(
     let Some(decision) = decision else {
         return Ok(());
     };
-    runtime::record_reconciliation_gate_decision(
+    if let Err(error) = runtime::record_reconciliation_gate_decision(
         db,
         app_config,
         &decision,
@@ -1973,13 +1994,25 @@ async fn enforce_live_reconciliation_gate_preflight(
                 .as_ref()
                 .map(|binding| binding.version.clone()),
         },
+        &alert_sink_settings(&app_config.live.alerts),
     )
-    .await?;
+    .await
+    {
+        if runtime::should_fail_on_reconciliation_gate_log_write_failure(app_config) {
+            return Err(ApiError(error));
+        }
+    }
     match decision.status {
         broker::ReconciliationGateStatus::Allow => Ok(()),
-        broker::ReconciliationGateStatus::Block => Err(bad_request(
-            runtime::format_reconciliation_gate_failures(&decision.failures),
-        )),
+        broker::ReconciliationGateStatus::Block => {
+            if runtime::should_enforce_reconciliation_gate_block(app_config, &decision) {
+                Err(bad_request(runtime::format_reconciliation_gate_failures(
+                    &decision.failures,
+                )))
+            } else {
+                Ok(())
+            }
+        }
     }
 }
 
@@ -2996,6 +3029,37 @@ async fn get_run_reconciliation_alerts_summary(
     .await
 }
 
+async fn get_reconciliation_gate_alerts_summary(
+    State(state): State<AppState>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationGateAlertSummaryResponse>, ApiError> {
+    reconciliation_gate_alerts_summary_response(
+        &state.db,
+        query.run_id,
+        query.account_id,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
+async fn get_run_reconciliation_gate_alerts_summary(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<ReconciliationAlertsSummaryQuery>,
+) -> Result<Json<ReconciliationGateAlertSummaryResponse>, ApiError> {
+    reconciliation_gate_alerts_summary_response(
+        &state.db,
+        Some(run_id),
+        query.account_id,
+        query.from_ms,
+        query.to_ms,
+        query.limit,
+    )
+    .await
+}
+
 async fn get_reconciliation_alert_deliveries_summary(
     State(state): State<AppState>,
     Query(query): Query<ReconciliationAlertsSummaryQuery>,
@@ -3003,6 +3067,7 @@ async fn get_reconciliation_alert_deliveries_summary(
     reconciliation_alert_deliveries_summary_response(
         &state.db,
         query.run_id,
+        query.alert_message,
         query.account_id,
         query.symbol,
         query.from_ms,
@@ -3020,6 +3085,7 @@ async fn get_run_reconciliation_alert_deliveries_summary(
     reconciliation_alert_deliveries_summary_response(
         &state.db,
         Some(run_id),
+        query.alert_message,
         query.account_id,
         query.symbol,
         query.from_ms,
@@ -3151,9 +3217,83 @@ async fn reconciliation_alerts_summary_response(
     }))
 }
 
+async fn reconciliation_gate_alerts_summary_response(
+    db: &storage::Db,
+    run_id: Option<String>,
+    account_id: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Json<ReconciliationGateAlertSummaryResponse>, ApiError> {
+    let logs = db
+        .list_system_logs_filtered(storage::SystemLogFilter {
+            run_id: run_id.clone(),
+            level: Some("ERROR".to_string()),
+            target: Some("runtime.alert".to_string()),
+            from_ms,
+            to_ms,
+            search: Some("reconciliation_gate.block.alert".to_string()),
+            limit,
+            offset: None,
+        })
+        .await?;
+
+    let mut latest_alert_ts_ms = None;
+    let mut runs = BTreeSet::new();
+    let mut accounts = BTreeSet::new();
+    let mut brokers = BTreeSet::new();
+    let mut reasons = BTreeSet::new();
+    let mut block_count = 0usize;
+
+    for log in logs {
+        if log.message != "reconciliation_gate.block.alert" {
+            continue;
+        }
+        let fields = log
+            .fields_json
+            .as_deref()
+            .and_then(parse_log_fields)
+            .unwrap_or(serde_json::Value::Null);
+        let failure_accounts = gate_failure_values(&fields, "account_id");
+        if account_id
+            .as_deref()
+            .is_some_and(|expected| !failure_accounts.iter().any(|value| value == expected))
+        {
+            continue;
+        }
+
+        block_count += 1;
+        latest_alert_ts_ms =
+            Some(latest_alert_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)));
+        if let Some(run_id) = log.run_id {
+            runs.insert(run_id);
+        }
+        for account_id in failure_accounts {
+            accounts.insert(account_id);
+        }
+        for broker in gate_failure_values(&fields, "broker") {
+            brokers.insert(broker);
+        }
+        for reason in gate_failure_values(&fields, "reason") {
+            reasons.insert(reason);
+        }
+    }
+
+    Ok(Json(ReconciliationGateAlertSummaryResponse {
+        run_id,
+        block_count,
+        latest_block_ts_ms: latest_alert_ts_ms,
+        runs: runs.into_iter().collect(),
+        accounts: accounts.into_iter().collect(),
+        brokers: brokers.into_iter().collect(),
+        reasons: reasons.into_iter().collect(),
+    }))
+}
+
 async fn reconciliation_alert_deliveries_summary_response(
     db: &storage::Db,
     run_id: Option<String>,
+    alert_message: Option<String>,
     account_id: Option<String>,
     symbol: Option<String>,
     from_ms: Option<i64>,
@@ -3167,7 +3307,7 @@ async fn reconciliation_alert_deliveries_summary_response(
             target: Some("runtime.alert_delivery".to_string()),
             from_ms,
             to_ms,
-            search: None,
+            search: alert_message.clone(),
             limit,
             offset: None,
         })
@@ -3176,6 +3316,7 @@ async fn reconciliation_alert_deliveries_summary_response(
     let mut latest_delivery_ts_ms = None;
     let mut statuses = BTreeSet::new();
     let mut sinks = BTreeSet::new();
+    let mut alert_messages = BTreeSet::new();
     let mut delivery_count = 0usize;
     let mut sent_count = 0usize;
     let mut failed_count = 0usize;
@@ -3191,6 +3332,13 @@ async fn reconciliation_alert_deliveries_summary_response(
             .unwrap_or(serde_json::Value::Null);
         let log_account_id = json_string_field(&fields, "account_id");
         let log_symbol = json_string_field(&fields, "symbol");
+        let log_alert_message = json_string_field(&fields, "message");
+        if alert_message
+            .as_deref()
+            .is_some_and(|expected| log_alert_message.as_deref() != Some(expected))
+        {
+            continue;
+        }
         if account_id
             .as_deref()
             .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
@@ -3219,16 +3367,21 @@ async fn reconciliation_alert_deliveries_summary_response(
         if let Some(sink) = json_string_field(&fields, "sink") {
             sinks.insert(sink);
         }
+        if let Some(message) = log_alert_message {
+            alert_messages.insert(message);
+        }
     }
 
     Ok(Json(ReconciliationAlertDeliverySummaryResponse {
         run_id,
+        alert_message,
         delivery_count,
         latest_delivery_ts_ms,
         sent_count,
         failed_count,
         statuses: statuses.into_iter().collect(),
         sinks: sinks.into_iter().collect(),
+        alert_messages: alert_messages.into_iter().collect(),
     }))
 }
 
@@ -3240,7 +3393,17 @@ fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
     value.get(key)?.as_str().map(str::to_string)
 }
 
-#[cfg(test)]
+fn gate_failure_values(fields: &serde_json::Value, key: &str) -> Vec<String> {
+    fields
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|failure| failure.get(key).and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
 fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     if !alerts.enabled {
         return AlertSinkSettings::Noop;
@@ -3260,7 +3423,6 @@ fn alert_sink_settings(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     alert_sink_from_legacy_config(alerts)
 }
 
-#[cfg(test)]
 fn alert_sink_from_legacy_config(alerts: &config::LiveAlertsConfig) -> AlertSinkSettings {
     let sink = config::LiveAlertSinkConfig {
         sink: alerts.sink.clone().unwrap_or_default(),
@@ -3274,7 +3436,6 @@ fn alert_sink_from_legacy_config(alerts: &config::LiveAlertsConfig) -> AlertSink
     alert_sink_from_config(&sink, alerts).unwrap_or(AlertSinkSettings::Noop)
 }
 
-#[cfg(test)]
 fn alert_sink_from_config(
     sink: &config::LiveAlertSinkConfig,
     defaults: &config::LiveAlertsConfig,

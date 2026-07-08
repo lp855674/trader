@@ -360,6 +360,20 @@ enum Command {
         #[arg(long)]
         limit: Option<i64>,
     },
+    ReconciliationGateAlertsSummary {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
+        account_id: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     ReconciliationAlertsExport {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -383,6 +397,8 @@ enum Command {
         config: String,
         #[arg(long)]
         run_id: Option<String>,
+        #[arg(long)]
+        alert_message: Option<String>,
         #[arg(long)]
         account_id: Option<String>,
         #[arg(long)]
@@ -2661,6 +2677,81 @@ async fn run_command(command: Command) -> Result<()> {
                 reasons.into_iter().collect::<Vec<_>>().join(","),
             );
         }
+        Command::ReconciliationGateAlertsSummary {
+            config,
+            run_id,
+            account_id,
+            from_ms,
+            to_ms,
+            limit,
+        } => {
+            let (_, db) = load_db(&config).await?;
+            let logs = db
+                .list_system_logs_filtered(storage::SystemLogFilter {
+                    run_id: run_id.clone(),
+                    level: Some("ERROR".to_string()),
+                    target: Some("runtime.alert".to_string()),
+                    from_ms,
+                    to_ms,
+                    search: Some("reconciliation_gate.block.alert".to_string()),
+                    limit,
+                    offset: None,
+                })
+                .await?;
+            let mut block_count = 0usize;
+            let mut latest_block_ts_ms = None;
+            let mut runs = BTreeSet::new();
+            let mut accounts = BTreeSet::new();
+            let mut brokers = BTreeSet::new();
+            let mut reasons = BTreeSet::new();
+            for log in logs {
+                if log.message != "reconciliation_gate.block.alert" {
+                    continue;
+                }
+                let fields = log
+                    .fields_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                let failure_account_matches = gate_failure_values(&fields, "account_id")
+                    .into_iter()
+                    .any(|value| account_id.as_deref() == Some(value.as_str()));
+                if account_id
+                    .as_deref()
+                    .is_some_and(|_| !failure_account_matches)
+                {
+                    continue;
+                }
+                block_count += 1;
+                latest_block_ts_ms = Some(
+                    latest_block_ts_ms.map_or(log.ts_ms, |current: i64| current.max(log.ts_ms)),
+                );
+                if let Some(run_id) = log.run_id {
+                    runs.insert(run_id);
+                }
+                for account in gate_failure_values(&fields, "account_id") {
+                    accounts.insert(account);
+                }
+                for broker in gate_failure_values(&fields, "broker") {
+                    brokers.insert(broker);
+                }
+                for reason in gate_failure_values(&fields, "reason") {
+                    reasons.insert(reason);
+                }
+            }
+            println!(
+                "reconciliation_gate_alert_summary: run_id={} block_count={} latest_block_ts_ms={} runs={} accounts={} brokers={} reasons={}",
+                run_id.as_deref().unwrap_or("*"),
+                block_count,
+                latest_block_ts_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                runs.into_iter().collect::<Vec<_>>().join(","),
+                accounts.into_iter().collect::<Vec<_>>().join(","),
+                brokers.into_iter().collect::<Vec<_>>().join(","),
+                reasons.into_iter().collect::<Vec<_>>().join(","),
+            );
+        }
         Command::ReconciliationAlertsExport {
             config,
             output,
@@ -2748,6 +2839,7 @@ async fn run_command(command: Command) -> Result<()> {
         Command::ReconciliationAlertDeliveriesSummary {
             config,
             run_id,
+            alert_message,
             account_id,
             symbol,
             from_ms,
@@ -2762,7 +2854,7 @@ async fn run_command(command: Command) -> Result<()> {
                     target: Some("runtime.alert_delivery".to_string()),
                     from_ms,
                     to_ms,
-                    search: None,
+                    search: alert_message.clone(),
                     limit,
                     offset: None,
                 })
@@ -2773,6 +2865,7 @@ async fn run_command(command: Command) -> Result<()> {
             let mut failed_count = 0usize;
             let mut statuses = BTreeSet::new();
             let mut sinks = BTreeSet::new();
+            let mut alert_messages = BTreeSet::new();
             for log in logs {
                 if log.message != "alert.delivery" {
                     continue;
@@ -2790,6 +2883,16 @@ async fn run_command(command: Command) -> Result<()> {
                     .get("symbol")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string);
+                let log_alert_message = fields
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                if alert_message
+                    .as_deref()
+                    .is_some_and(|expected| log_alert_message.as_deref() != Some(expected))
+                {
+                    continue;
+                }
                 if account_id
                     .as_deref()
                     .is_some_and(|expected| log_account_id.as_deref() != Some(expected))
@@ -2818,10 +2921,14 @@ async fn run_command(command: Command) -> Result<()> {
                 if let Some(sink) = fields.get("sink").and_then(serde_json::Value::as_str) {
                     sinks.insert(sink.to_string());
                 }
+                if let Some(message) = log_alert_message {
+                    alert_messages.insert(message);
+                }
             }
             println!(
-                "reconciliation_alert_delivery_summary: run_id={} delivery_count={} latest_delivery_ts_ms={} sent_count={} failed_count={} sinks={} statuses={}",
+                "reconciliation_alert_delivery_summary: run_id={} alert_message={} delivery_count={} latest_delivery_ts_ms={} sent_count={} failed_count={} sinks={} statuses={} alert_messages={}",
                 run_id.as_deref().unwrap_or("*"),
+                alert_message.as_deref().unwrap_or("*"),
                 delivery_count,
                 latest_delivery_ts_ms
                     .map(|value| value.to_string())
@@ -2830,6 +2937,7 @@ async fn run_command(command: Command) -> Result<()> {
                 failed_count,
                 sinks.into_iter().collect::<Vec<_>>().join(","),
                 statuses.into_iter().collect::<Vec<_>>().join(","),
+                alert_messages.into_iter().collect::<Vec<_>>().join(","),
             );
         }
         Command::ReconciliationAlertDeliveriesExport {
@@ -4327,7 +4435,7 @@ async fn run_reconciliation_gate(
         max_audit_age_ms,
     )
     .await?;
-    runtime::record_reconciliation_gate_decision(
+    if let Err(error) = runtime::record_reconciliation_gate_decision(
         &db,
         &app_config,
         &decision,
@@ -4340,8 +4448,15 @@ async fn run_reconciliation_gate(
             config_id: None,
             config_version: None,
         },
+        &live_worker_alert_sink_settings(&app_config.live.alerts),
     )
-    .await?;
+    .await
+    {
+        if runtime::should_fail_on_reconciliation_gate_log_write_failure(&app_config) {
+            return Err(error);
+        }
+        eprintln!("reconciliation gate audit log write failed: {error}");
+    }
 
     match decision.status {
         broker::ReconciliationGateStatus::Allow => {
@@ -4350,7 +4465,11 @@ async fn run_reconciliation_gate(
         }
         broker::ReconciliationGateStatus::Block => {
             print_reconciliation_gate_failures(&decision.failures);
-            bail!("reconciliation gate blocked")
+            if runtime::should_enforce_reconciliation_gate_block(&app_config, &decision) {
+                bail!("reconciliation gate blocked")
+            }
+            println!("reconciliation gate warn-only policy allowed");
+            Ok(())
         }
     }
 }
@@ -4363,12 +4482,28 @@ async fn enforce_live_reconciliation_gate(
     if let Some(decision) =
         runtime::evaluate_live_reconciliation_gate_from_storage(app_config, db).await?
     {
-        runtime::record_reconciliation_gate_decision(db, app_config, &decision, context).await?;
+        if let Err(error) = runtime::record_reconciliation_gate_decision(
+            db,
+            app_config,
+            &decision,
+            context,
+            &live_worker_alert_sink_settings(&app_config.live.alerts),
+        )
+        .await
+        {
+            if runtime::should_fail_on_reconciliation_gate_log_write_failure(app_config) {
+                return Err(error);
+            }
+            eprintln!("reconciliation gate audit log write failed: {error}");
+        }
         match decision.status {
             broker::ReconciliationGateStatus::Allow => {}
             broker::ReconciliationGateStatus::Block => {
                 print_reconciliation_gate_failures(&decision.failures);
-                bail!("reconciliation gate blocked")
+                if runtime::should_enforce_reconciliation_gate_block(app_config, &decision) {
+                    bail!("reconciliation gate blocked")
+                }
+                eprintln!("reconciliation gate warn-only policy allowed");
             }
         }
     }
@@ -5343,6 +5478,17 @@ fn validate_feature_manifest_build_contract(
         },
     )?;
     Ok(())
+}
+
+fn gate_failure_values(fields: &serde_json::Value, key: &str) -> Vec<String> {
+    fields
+        .get("failures")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|failure| failure.get(key).and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

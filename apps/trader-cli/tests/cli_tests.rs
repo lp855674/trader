@@ -152,12 +152,14 @@ fn live_worker_reconciliation_gate_allows_recent_clean_audit() {
 
 #[test]
 fn live_worker_reconciliation_gate_blocks_missing_audit() {
-    let (launch_path, db_path) = write_live_worker_gate_launch(
+    let alert_path = temp_output("trader-live-worker-gate-missing-alerts", "jsonl");
+    let (launch_path, db_path) = write_live_worker_gate_launch_with_alert_file(
         "trader-live-worker-gate-missing",
         "paper",
         true,
         &["simulated:paper"],
         300_000,
+        Some(&alert_path),
     );
 
     let mut command = Command::cargo_bin("trader").unwrap();
@@ -181,6 +183,22 @@ fn live_worker_reconciliation_gate_blocks_missing_audit() {
     assert_eq!(fields["failures"][0]["reason"], "missing_required_audit");
     assert_eq!(fields["failures"][0]["broker"], "simulated");
     assert_eq!(fields["failures"][0]["account_id"], "paper");
+
+    let alerts = live_worker_alert_system_logs(&db_path, "trader-live-worker-gate-missing");
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].level, "ERROR");
+    assert_eq!(alerts[0].message, "reconciliation_gate.block.alert");
+    let alert_fields = system_log_fields(&alerts[0]);
+    assert_eq!(alert_fields["status"], "block");
+    assert_eq!(alert_fields["reason"], "reconciliation_gate_block");
+    assert_eq!(
+        alert_fields["failures"][0]["reason"],
+        "missing_required_audit"
+    );
+
+    let alert_file = std::fs::read_to_string(alert_path).unwrap();
+    assert!(alert_file.contains("\"message\":\"reconciliation_gate.block.alert\""));
+    assert!(alert_file.contains("\"dedup_key\":\"reconciliation_gate.block.alert|trader-live-worker-gate-missing|||reconciliation_gate_block\""));
 }
 
 #[test]
@@ -203,6 +221,44 @@ fn live_worker_reconciliation_gate_blocks_stale_audit() {
         .assert()
         .failure()
         .stderr(contains("audit_too_old"));
+}
+
+#[test]
+fn live_worker_reconciliation_gate_warn_only_stale_audit_continues_in_paper_mode() {
+    let (launch_path, db_path) = write_live_worker_gate_launch_with_options(
+        "trader-live-worker-gate-stale-warn-only",
+        "paper",
+        true,
+        &["simulated:paper"],
+        1,
+        None,
+        r#"
+        insufficient_clean_recent_audits = "warn_only"
+        audit_too_old = "warn_only"
+        "#,
+    );
+    seed_live_worker_gate_audits(&db_path, &[("audit-stale-warn", "simulated", "paper", 1)]);
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .write_stdin("{\"type\":\"shutdown\",\"request_id\":\"stop-1\",\"reason\":\"test\"}\n")
+        .assert()
+        .success()
+        .stdout(contains("\"type\":\"runtime_started\""))
+        .stderr(contains("audit_too_old"))
+        .stderr(contains("reconciliation gate warn-only policy allowed"));
+
+    let logs = live_worker_gate_system_logs(&db_path, "trader-live-worker-gate-stale-warn-only");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].message, "reconciliation_gate.block");
+    let fields = system_log_fields(&logs[0]);
+    assert_eq!(fields["status"], "block");
+    assert_eq!(fields["enforcement_action"], "warn_only");
+    assert_eq!(fields["policy"]["audit_too_old"], "warn_only");
 }
 
 #[test]
@@ -258,12 +314,14 @@ fn live_worker_reconciliation_gate_allows_multiple_broker_requirements() {
 
 #[test]
 fn live_worker_real_money_mode_requires_reconciliation_gate_accounts() {
-    let (launch_path, _db_path) = write_live_worker_gate_launch(
+    let (launch_path, _db_path) = write_live_worker_gate_launch_with_options(
         "trader-live-worker-gate-real-money",
         "live",
         false,
         &[],
         300_000,
+        None,
+        r#"missing_required_accounts = "warn_only""#,
     );
 
     let mut command = Command::cargo_bin("trader").unwrap();
@@ -3596,6 +3654,50 @@ fn reconciliation_alerts_summary_reports_runtime_alert_aggregate() {
 }
 
 #[test]
+fn reconciliation_gate_alerts_summary_reports_block_alert_aggregate() {
+    let config = seed_reconciliation_gate_alerts_cli_storage();
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-gate-alerts-summary",
+            "--config",
+            config.to_str().unwrap(),
+            "--account-id",
+            "paper",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("reconciliation_gate_alert_summary: run_id=*"))
+        .stdout(contains("block_count=2"))
+        .stdout(contains("latest_block_ts_ms=200"))
+        .stdout(contains("runs=cli-gate-alert-a,cli-gate-alert-b"))
+        .stdout(contains("accounts=paper"))
+        .stdout(contains("brokers=simulated"))
+        .stdout(contains("reasons=audit_too_old,missing_required_audit"));
+
+    let mut run_command = Command::cargo_bin("trader").unwrap();
+    run_command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-gate-alerts-summary",
+            "--config",
+            config.to_str().unwrap(),
+            "--run-id",
+            "cli-gate-alert-b",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("run_id=cli-gate-alert-b"))
+        .stdout(contains("block_count=1"))
+        .stdout(contains("latest_block_ts_ms=200"))
+        .stdout(contains("reasons=audit_too_old"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn reconciliation_alert_delivery_summary_reports_delivery_aggregate() {
     let config = seed_reconciliation_alert_delivery_cli_storage();
     let export = temp_output("trader-cli-reconciliation-alert-deliveries-export", "jsonl");
@@ -3618,6 +3720,24 @@ fn reconciliation_alert_delivery_summary_reports_delivery_aggregate() {
         .stdout(contains("failed_count=1"))
         .stdout(contains("sinks=file,webhook"))
         .stdout(contains("statuses=failed,sent"));
+
+    let mut gate_command = Command::cargo_bin("trader").unwrap();
+    gate_command
+        .current_dir(workspace_root())
+        .args([
+            "reconciliation-alert-deliveries-summary",
+            "--config",
+            config.to_str().unwrap(),
+            "--alert-message",
+            "reconciliation_gate.block.alert",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("alert_message=reconciliation_gate.block.alert"))
+        .stdout(contains("delivery_count=1"))
+        .stdout(contains("failed_count=1"))
+        .stdout(contains("sinks=webhook"))
+        .stdout(contains("alert_messages=reconciliation_gate.block.alert"));
 
     let mut export_command = Command::cargo_bin("trader").unwrap();
     export_command
@@ -3762,6 +3882,44 @@ fn write_live_worker_gate_launch(
     required_accounts: &[&str],
     max_audit_age_ms: i64,
 ) -> (PathBuf, PathBuf) {
+    write_live_worker_gate_launch_with_alert_file(
+        prefix,
+        broker_mode,
+        gate_enabled,
+        required_accounts,
+        max_audit_age_ms,
+        None,
+    )
+}
+
+fn write_live_worker_gate_launch_with_alert_file(
+    prefix: &str,
+    broker_mode: &str,
+    gate_enabled: bool,
+    required_accounts: &[&str],
+    max_audit_age_ms: i64,
+    alert_file: Option<&std::path::Path>,
+) -> (PathBuf, PathBuf) {
+    write_live_worker_gate_launch_with_options(
+        prefix,
+        broker_mode,
+        gate_enabled,
+        required_accounts,
+        max_audit_age_ms,
+        alert_file,
+        "",
+    )
+}
+
+fn write_live_worker_gate_launch_with_options(
+    prefix: &str,
+    broker_mode: &str,
+    gate_enabled: bool,
+    required_accounts: &[&str],
+    max_audit_age_ms: i64,
+    alert_file: Option<&std::path::Path>,
+    extra_gate_config: &str,
+) -> (PathBuf, PathBuf) {
     let db_path = temp_output(prefix, "sqlite");
     let launch_path = temp_output(prefix, "json");
     let db_url = format!("sqlite://{}", toml_path(&db_path));
@@ -3770,6 +3928,23 @@ fn write_live_worker_gate_launch(
         .map(|account| format!(r#""{account}""#))
         .collect::<Vec<_>>()
         .join(", ");
+    let alert_config = alert_file
+        .map(|path| {
+            format!(
+                r#"
+        [live.alerts]
+        enabled = true
+        cooldown_ms = 0
+
+        [[live.alerts.sinks]]
+        sink = "file"
+        file_path = "{}"
+        cooldown_ms = 0
+        "#,
+                toml_path(path)
+            )
+        })
+        .unwrap_or_default();
     let config_content = format!(
         r#"
         [runtime]
@@ -3821,6 +3996,8 @@ fn write_live_worker_gate_launch(
         min_successful_audits = 1
         max_audit_age_ms = {max_audit_age_ms}
         required_accounts = [{required_accounts}]
+        {extra_gate_config}
+        {alert_config}
         "#
     );
     let launch = serde_json::json!({
@@ -3878,6 +4055,21 @@ fn live_worker_gate_system_logs(
     db_path: &std::path::Path,
     run_id: &str,
 ) -> Vec<storage::StoredSystemLog> {
+    live_worker_system_logs(db_path, run_id, "runtime.reconciliation_gate")
+}
+
+fn live_worker_alert_system_logs(
+    db_path: &std::path::Path,
+    run_id: &str,
+) -> Vec<storage::StoredSystemLog> {
+    live_worker_system_logs(db_path, run_id, "runtime.alert")
+}
+
+fn live_worker_system_logs(
+    db_path: &std::path::Path,
+    run_id: &str,
+    target: &str,
+) -> Vec<storage::StoredSystemLog> {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let db = storage::Db::connect(&format!("sqlite://{}", toml_path(db_path)))
@@ -3885,7 +4077,7 @@ fn live_worker_gate_system_logs(
             .unwrap();
         db.list_system_logs_filtered(storage::SystemLogFilter {
             run_id: Some(run_id.to_string()),
-            target: Some("runtime.reconciliation_gate".to_string()),
+            target: Some(target.to_string()),
             ..storage::SystemLogFilter::default()
         })
         .await
@@ -4416,6 +4608,90 @@ fn seed_reconciliation_alerts_cli_storage() -> PathBuf {
     config
 }
 
+fn seed_reconciliation_gate_alerts_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-reconciliation-gate-alerts-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        for (run_id, ts_ms, message, level, fields) in [
+            (
+                Some("cli-gate-alert-a"),
+                100,
+                "reconciliation_gate.block.alert",
+                "ERROR",
+                serde_json::json!({
+                    "reason": "reconciliation_gate_block",
+                    "failure_count": 1,
+                    "failures": [{
+                        "broker": "simulated",
+                        "account_id": "paper",
+                        "reason": "missing_required_audit",
+                        "detail": "missing required clean reconciliation audit"
+                    }]
+                }),
+            ),
+            (
+                Some("cli-gate-alert-b"),
+                200,
+                "reconciliation_gate.block.alert",
+                "ERROR",
+                serde_json::json!({
+                    "reason": "reconciliation_gate_block",
+                    "failure_count": 1,
+                    "failures": [{
+                        "broker": "simulated",
+                        "account_id": "paper",
+                        "reason": "audit_too_old",
+                        "detail": "latest clean reconciliation audit is stale"
+                    }]
+                }),
+            ),
+            (
+                Some("cli-gate-alert-c"),
+                300,
+                "reconciliation_gate.block.alert",
+                "WARN",
+                serde_json::json!({
+                    "reason": "reconciliation_gate_block",
+                    "failures": [{
+                        "broker": "simulated",
+                        "account_id": "ignored",
+                        "reason": "warn_only"
+                    }]
+                }),
+            ),
+            (
+                Some("cli-gate-alert-d"),
+                400,
+                "reconciliation_drift.alert",
+                "ERROR",
+                serde_json::json!({
+                    "account_id": "paper",
+                    "reason": "cash_total_drift"
+                }),
+            ),
+        ] {
+            db.record_system_log(storage::SystemLogCommand {
+                run_id: run_id.map(str::to_string),
+                ts_ms,
+                level: level.to_string(),
+                target: "runtime.alert".to_string(),
+                message: message.to_string(),
+                fields: Some(fields),
+            })
+            .await
+            .unwrap();
+        }
+    });
+
+    config
+}
+
 fn seed_reconciliation_alert_delivery_cli_storage() -> PathBuf {
     let db_path = temp_output("trader-cli-reconciliation-alert-delivery-storage", "sqlite");
     let config = write_contract_cli_config(&db_path);
@@ -4466,6 +4742,7 @@ fn seed_reconciliation_alert_delivery_cli_storage() -> PathBuf {
                 serde_json::json!({
                     "account_id": "paper",
                     "symbol": "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP",
+                    "message": "reconciliation_drift.alert",
                     "sink": "webhook",
                     "status": "failed",
                     "http_status": 500,
@@ -4479,10 +4756,23 @@ fn seed_reconciliation_alert_delivery_cli_storage() -> PathBuf {
                 serde_json::json!({
                     "account_id": "paper",
                     "symbol": "CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP",
+                    "message": "reconciliation_drift.alert",
                     "sink": "file",
                     "status": "sent",
                     "attempts": 1,
                     "dedup_key": "reconciliation_drift.alert|cli-delivery-b|paper|CRYPTO:BINANCE:ETHUSDT_PERP:CRYPTO_PERP|cash_total_drift"
+                }),
+            ),
+            (
+                Some("cli-gate-delivery"),
+                300,
+                serde_json::json!({
+                    "message": "reconciliation_gate.block.alert",
+                    "sink": "webhook",
+                    "status": "failed",
+                    "http_status": 500,
+                    "attempts": 2,
+                    "dedup_key": "reconciliation_gate.block.alert|cli-gate-delivery|||reconciliation_gate_block"
                 }),
             ),
         ] {
