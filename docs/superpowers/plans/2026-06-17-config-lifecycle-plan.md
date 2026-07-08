@@ -12,6 +12,8 @@
 
 The local lifecycle MVP is implemented. Managed configs now support immutable version creation, target environment and rollout metadata, draft/pending_review/approved/published/archived state transitions, production independent-approver enforcement, lightweight production role policy, pending approval queue readback, latest/published/specific queries, structured JSON diff, rollback-to-new-draft, API routes, CLI commands, release/audit readback, and event-store logging for state changes. Remaining work is full production governance: authenticated RBAC, multi-environment permission matrices, and multi-person approval queues.
 
+Run config binding is implemented through `RUN` snapshots in `configs` plus `run_config_versions` bindings. This avoided adding a `strategy_runs.config_version` column while still giving API/CLI readback for the config version used by local run entrypoints.
+
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Run config snapshots | Done for API-launched and CLI-launched runs | `record_run_config_snapshot` writes `configs`, `config_releases` and `run_config_versions`; Backtest, Paper, Replay and Live API starts bind run config versions; Backtest, Paper, and Replay CLI starts bind run config versions | None for current local run entrypoints |
@@ -399,9 +401,9 @@ git commit -m "feat: config management CLI commands"
 - Modify: `crates/backtest/src/backtest.rs`
 - Modify: `crates/runtime/src/runtime.rs`
 
-- [ ] **Step 1: Add config_version field to strategy_runs**
+- [x] **Step 1: Add config_version field to strategy_runs**
 
-Either add a new column or use existing `config_json` to embed version reference:
+Implemented through `RUN` snapshots in `configs` plus `run_config_versions` bindings rather than a new `strategy_runs.config_version` column:
 
 ```rust
 // In the run creation:
@@ -434,7 +436,7 @@ async fn run_records_config_version() {
 }
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add crates/storage crates/paper crates/backtest crates/runtime
