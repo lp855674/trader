@@ -8,11 +8,13 @@
 
 **Tech Stack:** Rust workspace, tracing, tracing-subscriber, SQLx SQLite, Axum, tokio, serde, PowerShell CLI.
 
-## Current Status (2026-06-22 Update)
+## Current Status (2026-07-08 Sync)
 
 This plan is now implemented for the local DB-backed tracing path. The repository has the `system_logs` storage/query surface, a generic async tracing writer, a SQLite-backed sink adapter, CLI/API log query access, tracing capture for algorithm decision points, paper, backtest, API request completion logs, and live runtime lifecycle/snapshot/reconciliation events, plus loadable `[logging]` config defaults/examples. `[logging]` now controls runtime writer enablement, level/category filtering, buffer size, flush interval, and retention cleanup for CLI/API-launched backtest, paper, and live runs plus server background cleanup. The async writer exposes dropped-log metrics for channel backpressure through API/CLI ops readback. CLI `logs ship` can POST filtered `system_logs` as NDJSON to an external collector with optional bearer auth, HMAC signature headers, and configurable retry/backoff for transient failures. Live runtime still keeps explicit `record_system_log` calls for compatibility with reconciliation alert and delivery summaries; managed production collector deployment remains follow-up work.
 
 Task checkboxes below have been synchronized to this implementation status. The remaining gap is operational deployment of a managed external production collector, not the local logging/query/shipper implementation.
+
+2026-07-08 sync: targeted local verification reconfirmed storage/API/CLI/events coverage for `system_logs` filtering/count/search/pagination, retention purge and server retention cleanup, async tracing writer batching and drop metrics, logging config defaults/overrides, API request log capture, CLI log list/count/tail/export/purge/metrics, HTTP NDJSON shipper with bearer/HMAC/retry behavior, reconciliation alert and alert-delivery summaries/exports, and `ops-smoke.ps1` readback of runtime logs plus alert exports. This is still a local DB-backed logging and collector-handoff MVP; managed external collector deployment, production collector operations, per-field log access control, and real streaming remain follow-up work.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
