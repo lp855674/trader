@@ -8,6 +8,15 @@
 
 **Tech Stack:** Rust workspace crates (`broker`, `config`, `storage`, `trader-cli`), SQLite-backed reconciliation audit storage, PowerShell verification scripts, Markdown result docs.
 
+## Completion Status
+
+- Implementation completed for pure gate evaluation, config parsing, storage latest-audit lookup, CLI evaluation, operator script, and runbook.
+- Local fixture validation completed and recorded in `docs/live-reconciliation-gate-results-local-2026-07-07.md`.
+- Archival real-broker replay validation completed and recorded in `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md`.
+- Fresh read-only broker/testnet evidence validation completed and recorded in `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`.
+- Long fresh read-only multi-broker gate validation completed and recorded in `docs/live-reconciliation-gate-results-long-readonly-2026-07-08.md`; the gate allowed with `MinSuccessfulAudits=10`.
+- No live-money support is claimed by this plan, and no live orders are part of the accepted evidence.
+
 ## Global Constraints
 
 - Do not submit live orders while implementing or testing this gate.
@@ -55,7 +64,7 @@
 - Produces: `ReconciliationGateRequirement`, `ReconciliationGateAudit`, `ReconciliationGateStatus`, `ReconciliationGateFailure`
 - Consumes: no storage or network code.
 
-- [ ] **Step 1: Write failing broker tests**
+- [x] **Step 1: Write failing broker tests**
 
 Append this test module to `crates/broker/src/reconciliation_gate.rs` after creating the file:
 
@@ -135,13 +144,13 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `cargo test -p broker reconciliation_gate`
 
 Expected: FAIL because the module types and `evaluate_reconciliation_gate` are not implemented.
 
-- [ ] **Step 3: Implement the gate model**
+- [x] **Step 3: Implement the gate model**
 
 Replace `crates/broker/src/reconciliation_gate.rs` with:
 
@@ -283,7 +292,7 @@ fn failure(
 }
 ```
 
-- [ ] **Step 4: Export the module**
+- [x] **Step 4: Export the module**
 
 Add this near the top of `crates/broker/src/broker.rs`:
 
@@ -301,7 +310,7 @@ pub use reconciliation_gate::{
 };
 ```
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `cargo test -p broker reconciliation_gate`
 
@@ -326,7 +335,7 @@ git commit -m "feat: add reconciliation gate decision model"
 - Consumes: `LiveConfig`
 - Produces: `LiveReconciliationGateConfig` with fields `enabled`, `min_successful_audits`, `max_audit_age_ms`, and `required_accounts`.
 
-- [ ] **Step 1: Write failing config tests**
+- [x] **Step 1: Write failing config tests**
 
 Append to `crates/config/tests/config_tests.rs`:
 
@@ -413,13 +422,13 @@ fn defaults_live_reconciliation_gate_to_disabled() {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run: `cargo test -p config live_reconciliation_gate`
 
 Expected: FAIL because `LiveConfig` has no `reconciliation_gate` field.
 
-- [ ] **Step 3: Add config structs**
+- [x] **Step 3: Add config structs**
 
 In `crates/config/src/config.rs`, add this field to `LiveConfig`:
 
@@ -463,7 +472,7 @@ fn default_reconciliation_gate_max_audit_age_ms() -> i64 {
 }
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `cargo test -p config live_reconciliation_gate`
 
@@ -490,7 +499,7 @@ git commit -m "feat: parse live reconciliation gate config"
 - Produces: CLI command `trader reconciliation-gate --config <path> --account ibkr:DU****91 --account binance:paper`
 - Produces: exit code `0` when gate allows and non-zero when it blocks.
 
-- [ ] **Step 1: Write failing storage test**
+- [x] **Step 1: Write failing storage test**
 
 Add a test to `crates/storage/tests/runtime_repository_tests.rs`:
 
@@ -542,13 +551,13 @@ async fn lists_latest_reconciliation_audits_for_gate() {
 }
 ```
 
-- [ ] **Step 2: Run storage test and verify it fails**
+- [x] **Step 2: Run storage test and verify it fails**
 
 Run: `cargo test -p storage lists_latest_reconciliation_audits_for_gate`
 
 Expected: FAIL because `list_latest_reconciliation_audits_for_gate` does not exist.
 
-- [ ] **Step 3: Implement storage helper**
+- [x] **Step 3: Implement storage helper**
 
 Add this method next to `list_reconciliation_audits` in `crates/storage/src/repositories.rs`:
 
@@ -579,7 +588,7 @@ pub async fn list_latest_reconciliation_audits_for_gate(
 }
 ```
 
-- [ ] **Step 4: Write failing CLI tests**
+- [x] **Step 4: Write failing CLI tests**
 
 Add focused tests in `apps/trader-cli/src/main.rs` near existing `ibkr_reconcile` tests:
 
@@ -604,7 +613,7 @@ Run: `cargo test -p trader-cli gate_account_requirement`
 
 Expected: FAIL because `parse_gate_account_requirement` does not exist.
 
-- [ ] **Step 5: Add CLI command parser**
+- [x] **Step 5: Add CLI command parser**
 
 Add this command variant to `Command` in `apps/trader-cli/src/main.rs`:
 
@@ -640,7 +649,7 @@ fn parse_gate_account_requirement(value: &str) -> Result<broker::ReconciliationG
 }
 ```
 
-- [ ] **Step 6: Implement CLI evaluation**
+- [x] **Step 6: Implement CLI evaluation**
 
 Add a match arm in `run_command`:
 
@@ -735,7 +744,7 @@ async fn run_reconciliation_gate(
 }
 ```
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 Run:
 
@@ -767,7 +776,7 @@ git commit -m "feat: add reconciliation gate cli"
 - Consumes: `trader reconciliation-gate`
 - Produces: repeatable operator command for single-broker and multi-broker checks.
 
-- [ ] **Step 1: Create wrapper script**
+- [x] **Step 1: Create wrapper script**
 
 Create `scripts/live-reconciliation-gate.ps1`:
 
@@ -797,7 +806,7 @@ cargo @args
 exit $LASTEXITCODE
 ```
 
-- [ ] **Step 2: Create script test**
+- [x] **Step 2: Create script test**
 
 Create `scripts/live-reconciliation-gate-tests.ps1`:
 
@@ -823,7 +832,7 @@ if ($content -notmatch "MaxAuditAgeMs") {
 Write-Host "live reconciliation gate script tests ok"
 ```
 
-- [ ] **Step 3: Create runbook**
+- [x] **Step 3: Create runbook**
 
 Create `docs/live-reconciliation-gate-runbook.md`:
 
@@ -871,7 +880,7 @@ Expected: exits `0` only when both broker/account requirements have enough clean
 This command reads stored audit evidence only. It does not submit orders.
 ```
 
-- [ ] **Step 4: Run script test and commit**
+- [x] **Step 4: Run script test and commit**
 
 Run:
 
@@ -900,7 +909,7 @@ git commit -m "docs: add live reconciliation gate runbook"
 - Consumes: completed Tasks 1-4.
 - Produces: committed acceptance evidence for local fixture behavior and optional real broker read-only evidence.
 
-- [ ] **Step 1: Run full local verification**
+- [x] **Step 1: Run full local verification**
 
 Run:
 
@@ -915,7 +924,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate-test
 
 Expected: all commands PASS.
 
-- [ ] **Step 2: Run optional real-evidence gate only after fresh read-only soak**
+- [x] **Step 2: Run optional real-evidence gate only after fresh read-only soak**
 
 Use this only after a fresh read-only production reconciliation run records clean audits:
 
@@ -925,7 +934,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soa
   -Iterations 3 `
   -DelaySeconds 10 `
   -ReadOnly `
-  -AccountId DUQ645291 `
+  -AccountId DU****91 `
   -GatewayHost 127.0.0.1 `
   -Port 4002 `
   -ClientId 1
@@ -933,7 +942,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soa
 
 Expected: production reconciliation summary has `status = completed`, `failure_class = ok`, and all drift counters are `0`.
 
-- [ ] **Step 3: Record results document**
+- [x] **Step 3: Record results document**
 
 Create `docs/live-reconciliation-gate-results-local-2026-07-07.md`:
 
@@ -963,7 +972,7 @@ Create `docs/live-reconciliation-gate-results-local-2026-07-07.md`:
 The reconciliation gate is acceptable for blocking live-account promotion from stored audit evidence. Real broker readiness still depends on fresh read-only reconciliation evidence for every required broker/account before live enablement.
 ```
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 Run:
 
