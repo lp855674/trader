@@ -8,6 +8,16 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite migrations, rust_decimal, serde JSON payloads, tokio runtime, PowerShell broker soak scripts, IBKR Gateway paper adapter, existing CLI/API read models.
 
+## Current Status (2026-07-08 Sync)
+
+Implementation, unit/boundary verification, runbook updates, and broker-connected IBKR paper-account evidence are complete for the current production reconciliation hardening scope. Accepted evidence is summarized in `docs/production-reconciliation-acceptance-summary.md` and the committed result documents:
+
+- `docs/production-reconciliation-results-production-reconciliation-ibkr-7b95d49938eb.md`
+- `docs/production-reconciliation-results-production-reconciliation-ibkr-5c6291757824.md`
+- `docs/production-reconciliation-results-production-reconciliation-ibkr-83c4db22f6a9.md`
+
+Across those accepted runs, the IBKR paper-account gate records 39 reconciliation audits with cash, position, open-order, execution, and stale-input counters all zero. This closes the planned paper-account production reconciliation evidence loop, including read-only and protected paper order-submit modes. It does not prove live-account trading behavior, filled paper orders, multi-symbol order bursts, IBKR Gateway restart recovery, overnight soak behavior, or real-money readiness.
+
 ## Global Constraints
 
 - Do not use floating point for money, quantity, margin, PnL, funding, or liquidation calculations; use `rust_decimal::Decimal`.
