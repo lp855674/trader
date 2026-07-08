@@ -8,9 +8,11 @@
 
 **Tech Stack:** Rust workspace, SQLx SQLite, Axum, serde, rust_decimal, Binance API, IBKR API, PowerShell smoke scripts.
 
-## Current Status (2026-06-19 Audit)
+## Current Status (2026-07-08 Sync)
 
 This plan file has now been backfilled for the audited local MVP. Checked items below are confirmed implemented; unchecked items remain original production scope or exact plan steps that have not landed.
+
+2026-07-08 sync note: targeted local verification reconfirmed the current broker-boundary evidence in `crates/broker`: Binance position-risk parsing and reconciliation drift tests, IBKR paper Gateway account/position snapshot adapter tests, and local production reconciliation/gate tests. The original Task 3 external-network testnet/Gateway steps remain unchecked because no fresh broker network action was run in this sync.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
@@ -18,8 +20,8 @@ This plan file has now been backfilled for the audited local MVP. Checked items 
 | Simulated contract accounting | Done for local MVP | `SimulatedContractAccounting`, `ContractAccountingBook`, paper runtime persistence, paper tests for crypto perp position and funding PnL | None for simulated paper |
 | Contract risk checks | Done for current scope | `market_rules::ContractRiskLimits` and algorithm tests for leverage, margin and funding bounds | Production liquidation/open-interest data still not wired |
 | CLI/API readback | Done for local MVP | `trader positions list`, `trader funding list`, `GET /api/v1/runs/{run_id}/crypto-positions`, `GET /api/v1/funding-rates` | None for read-only local surface |
-| Binance reconciliation | Partially done | Binance position parsing and reconciliation drift tests exist in `crates/broker` | Scheduled real broker reconciliation remains follow-up |
-| IBKR contract reconciliation | Partially done | IBKR paper adapter can now stream broker account/position snapshots through the broker boundary, and API-launched live runtime can inject the IBKR paper Gateway adapter from config instead of hard-coded fake snapshots | Add real Gateway reconciliation verification and fuller contract-position coverage |
+| Binance reconciliation | Partially done | Binance position parsing and reconciliation drift tests exist in `crates/broker`; Binance paper run/soak and fresh read-only gate evidence are documented outside this original plan | Scheduled real broker contract-position reconciliation remains follow-up |
+| IBKR contract reconciliation | Partially done | IBKR paper adapter can now stream broker account/position snapshots through the broker boundary, API-launched live runtime can inject the IBKR paper Gateway adapter from config instead of hard-coded fake snapshots, and IBKR paper production reconciliation has accepted 39-audit evidence outside this original plan | Add real Gateway contract-position/fill reconciliation verification and fuller multi-asset coverage |
 | Production readiness | Not done | `docs/分析.md` still classifies this as not full production accounting | Real Gateway long-run verification, production alerts, exchange metadata such as liquidation/open-interest |
 
 ---
@@ -297,6 +299,8 @@ git commit -m "feat: implement simulated contract accounting"
 - Modify: `crates/binance/tests/binance_tests.rs`
 - Modify: `crates/ibkr/src/ibkr.rs`
 - Modify: `crates/ibkr/tests/ibkr_tests.rs`
+
+2026-07-08 status: the current implementation lives under the unified `crates/broker` boundary rather than separate `crates/binance` / `crates/ibkr` crates. Local tests cover Binance response mapping and reconciliation drift plus IBKR paper Gateway account/position snapshot adapter behavior; the original network-dependent testnet/Gateway steps below remain unchecked.
 
 - [x] **Step 1: Add Binance position fetch**
 
