@@ -4,7 +4,9 @@
 
 **Goal:** Run API-started Live runtimes in supervised child processes while preserving the current Live HTTP API, SQLite audit trail, startup recovery semantics, reconciliation snapshots, and alert delivery behavior.
 
-**Status:** Completed. The implementation includes the JSONL worker protocol, `trader live-worker`, `LiveProcessSupervisor`, Live API routing through the supervisor, crash/startup-recovery failure coverage, documentation, and live recovery verification coverage.
+**Status (2026-07-08 Sync):** Completed. The implementation includes the JSONL worker protocol, `trader live-worker`, `LiveProcessSupervisor`, Live API routing through the supervisor, crash/startup-recovery failure coverage, documentation, and live recovery verification coverage. The design record `docs/superpowers/specs/2026-06-30-live-process-isolation-design.md` starts from the accepted `live-recovery-df3cec2a63f1` long-run result: 20 local fake/injected broker iterations, 320 targeted runtime test invocations, and zero non-zero exits.
+
+This plan covers local child-process isolation for API-started Live runs and deterministic fake/injected broker recovery behavior. It does not claim live-money readiness, automatic process restart, distributed worker orchestration, or broker adapter recovery beyond the separately documented paper/testnet evidence trail.
 
 **Architecture:** Keep the API server as the public control plane and add a focused `LiveProcessSupervisor` for Live runs only. The supervisor writes a non-secret launch file, starts `trader live-worker --launch-file ...`, exchanges JSONL commands/events over stdin/stdout, captures stderr into bounded diagnostics, and uses SQLite as the source of truth for business state.
 
