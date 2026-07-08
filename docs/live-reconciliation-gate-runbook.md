@@ -19,15 +19,26 @@ Expected: exits `0` and prints `reconciliation gate ok`.
 ## Multi Broker
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate.ps1 `
-  -Config configs/paper/ibkr_aapl_1d_parquet.toml `
-  -Account ibkr:DU****91 `
-  -Account binance:paper `
-  -MinSuccessfulAudits 3 `
-  -MaxAuditAgeMs 300000
+powershell -ExecutionPolicy Bypass -Command "& .\scripts\live-reconciliation-gate.ps1 -Config 'configs/paper/ibkr_aapl_1d_parquet.toml' -Account @('ibkr:DU****91','binance:paper') -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000"
 ```
 
 Expected: exits `0` only when both broker/account requirements have enough clean recent audits.
+
+## Archival Replay Evidence
+
+The 2026-07-08 archival replay check fed real-broker-derived clean audit rows for IBKR paper and Binance Testnet into the same operator script:
+
+- Result document: `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md`
+- Scope: stored audit replay only; no broker connection and no order submission.
+- Decision: gate allowed both required accounts with 3 clean recent replay rows each.
+
+## Fresh Read-Only Evidence
+
+The 2026-07-08 fresh read-only check ran IBKR paper Gateway read-only reconciliation and Binance paper/Testnet no-submit soak before feeding generated clean rows into the same multi-broker gate:
+
+- Result document: `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`
+- Scope: fresh broker/testnet checks with order submission disabled, followed by local gate-readable aggregation.
+- Decision: gate allowed both required accounts with 3 clean recent rows each.
 
 ## Blocking Conditions
 
