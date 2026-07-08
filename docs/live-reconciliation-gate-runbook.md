@@ -37,8 +37,27 @@ The 2026-07-08 archival replay check fed real-broker-derived clean audit rows fo
 The 2026-07-08 fresh read-only check ran IBKR paper Gateway read-only reconciliation and Binance paper/Testnet no-submit soak before feeding generated clean rows into the same multi-broker gate:
 
 - Result document: `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`
-- Scope: fresh broker/testnet checks with order submission disabled, followed by local gate-readable aggregation.
+- Scope: fresh broker/testnet checks with order submission disabled, followed by script-generated gate-readable aggregation.
 - Decision: gate allowed both required accounts with 3 clean recent rows each.
+
+Aggregate fresh summaries into a gate-readable SQLite/TOML pair:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate-evidence-aggregate.ps1 `
+  -IbkrSummary data\production-reconciliation\<IBKR_SOAK_ID>\summary.json `
+  -IbkrAccount DU****91 `
+  -BinanceSummary data\binance-paper-soak\<BINANCE_SOAK_ID>\summary.json `
+  -BinanceAccount binance-testnet `
+  -EvidenceId gate-evidence-fresh-readonly-<DATE> `
+  -MinSuccessfulAudits 3 `
+  -MaxAuditAgeMs 300000
+```
+
+Then run the gate against the generated config:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "& .\scripts\live-reconciliation-gate.ps1 -Config 'data/live-reconciliation-gate-replay/gate-evidence-fresh-readonly-<DATE>.toml' -Account @('ibkr:DU****91','binance:binance-testnet') -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000"
+```
 
 ## Blocking Conditions
 

@@ -3,7 +3,7 @@
 ## Summary
 
 - Date: 2026-07-08
-- Scope: fresh IBKR paper Gateway read-only reconciliation, fresh Binance paper/Testnet no-submit soak, and multi-broker gate evaluation from generated local evidence
+- Scope: fresh IBKR paper Gateway read-only reconciliation, fresh Binance paper/Testnet no-submit soak, scripted aggregation, and multi-broker gate evaluation from generated local evidence
 - Status: completed
 - Failure class: ok
 - Decision: allow
@@ -17,10 +17,18 @@
 
 ## Gate Input
 
-Generated local operator evidence was stored under `data/live-reconciliation-gate-replay/`:
+Generated local operator evidence was stored under `data/live-reconciliation-gate-replay/`.
 
-- `fresh-real-broker-readonly-2026-07-08.sqlite`
-- `fresh-real-broker-readonly-2026-07-08.toml`
+The reusable aggregation script was verified with these fresh summaries:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate-evidence-aggregate.ps1 -IbkrSummary data\production-reconciliation\production-reconciliation-ibkr-d7003dfd4f98\summary.json -IbkrAccount DU****91 -BinanceSummary data\binance-paper-soak\binance-paper-soak-0997bf7ea21d\summary.json -BinanceAccount binance-testnet -EvidenceId gate-evidence-fresh-readonly-2026-07-08 -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000
+```
+
+Generated files:
+
+- `gate-evidence-fresh-readonly-2026-07-08.sqlite`
+- `gate-evidence-fresh-readonly-2026-07-08.toml`
 
 The gate input used 3 clean rows for each required account:
 
@@ -48,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Itera
 Gate command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "& .\scripts\live-reconciliation-gate.ps1 -Config 'data/live-reconciliation-gate-replay/fresh-real-broker-readonly-2026-07-08.toml' -Account @('ibkr:DU****91','binance:binance-testnet') -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000"
+powershell -ExecutionPolicy Bypass -Command "& .\scripts\live-reconciliation-gate.ps1 -Config 'data/live-reconciliation-gate-replay/gate-evidence-fresh-readonly-2026-07-08.toml' -Account @('ibkr:DU****91','binance:binance-testnet') -MinSuccessfulAudits 3 -MaxAuditAgeMs 300000"
 ```
 
 Observed gate output:
@@ -63,4 +71,4 @@ Exit code: `0`
 
 This check exercised fresh IBKR paper Gateway read-only reconciliation and fresh Binance paper/Testnet no-submit soak evidence before running the live reconciliation gate across both required accounts.
 
-It did not submit IBKR paper orders, Binance Testnet orders, or live-money orders. The gate still consumed a generated local SQLite aggregation of the fresh evidence because the source runs write separate evidence databases.
+It did not submit IBKR paper orders, Binance Testnet orders, or live-money orders. The gate still consumed a generated local SQLite aggregation of the fresh evidence because the source runs write separate evidence databases; that aggregation is now produced by `scripts/live-reconciliation-gate-evidence-aggregate.ps1`.
