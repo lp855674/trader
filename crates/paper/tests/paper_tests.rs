@@ -2161,7 +2161,11 @@ impl IbkrPaperOrderClient for UnfilledIbkrCancelDisappearsClient {
         Err(BrokerError::OrderNotFound(order_id.to_string()))
     }
 
-    async fn cancel_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
         Ok(IbkrOrderAck {
             order_id,
             client_order_id: "trader-paper-run-1".to_string(),
