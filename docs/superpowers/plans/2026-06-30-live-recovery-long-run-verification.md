@@ -4,7 +4,9 @@
 
 **Goal:** Build a repeatable long-run verification loop for Live startup recovery, broker snapshots, reconciliation drift detection, and alert delivery before starting Live process isolation design.
 
-**Status:** Completed for the default local verification path. Optional adapter read-only passes remain explicitly deferred until an operator provides Binance testnet credentials or an IBKR paper account with Gateway.
+**Status (2026-07-08 Sync):** Completed for the default local verification path. The committed result document `docs/live-recovery-long-run-results-live-recovery-df3cec2a63f1.md` records 20 local fake/injected broker iterations and 320 runtime test invocations with zero non-zero exits. The optional adapter read-only passes remain skipped in that runner because `verify-live-recovery.ps1` was not rerun with Binance testnet credentials or an IBKR paper Gateway account.
+
+Follow-up broker evidence now exists outside this runner: IBKR paper Gateway ReadOnly/AutoRun/Soak evidence, Binance paper/Testnet soak evidence, and 2026-07-08 multi-broker live-reconciliation gate evidence are documented in their dedicated result files. Those artifacts strengthen the broader paper/testnet readiness trail, but they do not change this plan's direct acceptance record: the live recovery long-run gate is local-first, and adapter recovery remains opt-in for this script.
 
 **Architecture:** Keep verification local-first and credential-free by default. Use existing `crates/runtime/tests/live_runtime_tests.rs` fake/injected broker coverage as the deterministic core, wrap it in a PowerShell runner that records per-iteration logs and JSON summaries, and make real adapter read-only recovery checks opt-in.
 
