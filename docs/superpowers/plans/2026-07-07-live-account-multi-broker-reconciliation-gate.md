@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust workspace crates (`broker`, `config`, `storage`, `trader-cli`), SQLite-backed reconciliation audit storage, PowerShell verification scripts, Markdown result docs.
 
-## Completion Status
+## Current Status (2026-07-08 Sync)
 
 - Implementation completed for pure gate evaluation, config parsing, storage latest-audit lookup, CLI evaluation, operator script, and runbook.
 - Local fixture validation completed and recorded in `docs/live-reconciliation-gate-results-local-2026-07-07.md`.
@@ -16,6 +16,8 @@
 - Fresh read-only broker/testnet evidence validation completed and recorded in `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`.
 - Long fresh read-only multi-broker gate validation completed and recorded in `docs/live-reconciliation-gate-results-long-readonly-2026-07-08.md`; the gate allowed with `MinSuccessfulAudits=10`.
 - No live-money support is claimed by this plan, and no live orders are part of the accepted evidence.
+
+The accepted operator evidence now covers local fixtures, archival replay from accepted real-broker-derived paper/testnet evidence, fresh read-only IBKR paper Gateway plus Binance paper/Testnet no-submit evidence, and a longer fresh read-only gate with 10 clean rows per required account. This closes the planned multi-broker reconciliation-gate evidence loop for paper/testnet readiness; live-money promotion still requires separate operator approval, production controls, and real-account evidence beyond this plan.
 
 ## Global Constraints
 
