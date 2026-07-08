@@ -8,16 +8,18 @@
 
 **Tech Stack:** Rust workspace, reqwest/ureq for HTTP, SQLx SQLite, serde, serde_json, chrono, PowerShell CLI.
 
-## Current Status (2026-06-19 Audit)
+## Current Status (2026-07-08 Sync)
 
 This plan is backfilled and the local MVP scope is complete. The remaining work is production hardening beyond the original local verification surface.
+
+2026-07-08 sync note: targeted local verification reconfirmed the reference-data ingestion boundary in `crates/data`, `crates/storage`, `crates/api`, and `apps/trader-cli`: Binance market metadata parsing, Binance funding-rate parsing/incremental filtering, Yahoo corporate-action parsing, ingestion status readback, HTTP retry/backoff behavior, scheduled-ingestion disabled behavior, and stale reference-data alert logging. No external provider network ingestion was run in this sync.
 
 | Area | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Binance market metadata ingestion | Done for local MVP | `ingest_binance_market_meta`, idempotent storage upsert and parser tests exist | Network-backed production tests remain gated by connectivity |
-| Binance funding-rate ingestion | Done for local MVP | Incremental latest-time fetch, parser tests and `funding_rates` storage readback exist | Production backoff/rate-limit policy is not implemented |
+| Binance funding-rate ingestion | Done for local MVP | Incremental latest-time fetch, parser tests, `funding_rates` storage readback, and local HTTP retry/backoff tests for rate-limit/server-error/timeout/closed-connection responses exist | Provider-specific production rate-limit tuning and live-provider soak remain future work |
 | Yahoo corporate actions ingestion | Done for local MVP | `ingest_yahoo_corporate_actions`, parser tests and idempotent storage upsert exist | Provider hardening and broader action coverage remain future work |
-| Scheduled ingestion/status | Done for local MVP | `[ingestion]` config, `run_scheduled_ingestion`, `ingest status` and `/api/v1/ingestion/status` exist | Stale-data alerting and production retry strategy remain future work |
+| Scheduled ingestion/status | Done for local MVP | `[ingestion]` config, `run_scheduled_ingestion`, `ingest status`, `/api/v1/ingestion/status`, stale status fields, and `reference_data_stale.alert` system-log coverage exist | Production alert routing/SLA policy and live-provider scheduler soak remain future work |
 
 ---
 
