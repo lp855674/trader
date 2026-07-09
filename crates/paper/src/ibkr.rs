@@ -4,9 +4,13 @@ use broker::{
     IbkrTrade,
 };
 use rust_decimal::Decimal;
+use std::time::Duration;
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
 use crate::{ExecutedPaperOrder, PaperOrderExecutor};
+
+const DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS: usize = 6;
+const DEFAULT_IBKR_SETTLEMENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[async_trait]
 pub trait IbkrPaperOrderClient: Send + Sync {
@@ -114,6 +118,10 @@ impl IbkrPaperOrderClient for IbkrPaperGatewayOrderClient {
 pub struct IbkrPaperOrderExecutor<Client> {
     client: Client,
     client_order_prefix: String,
+    route_exchange: Option<String>,
+    override_percentage_constraints: bool,
+    settlement_poll_attempts: usize,
+    settlement_poll_interval: Duration,
 }
 
 impl<Client> IbkrPaperOrderExecutor<Client> {
@@ -125,10 +133,45 @@ impl<Client> IbkrPaperOrderExecutor<Client> {
         client: Client,
         client_order_prefix: impl Into<String>,
     ) -> Self {
+        Self::new_with_settlement_polling(
+            client,
+            client_order_prefix,
+            DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS,
+            DEFAULT_IBKR_SETTLEMENT_POLL_INTERVAL,
+        )
+    }
+
+    pub fn new_with_settlement_polling(
+        client: Client,
+        client_order_prefix: impl Into<String>,
+        settlement_poll_attempts: usize,
+        settlement_poll_interval: Duration,
+    ) -> Self {
         Self {
             client,
             client_order_prefix: client_order_prefix.into(),
+            route_exchange: None,
+            override_percentage_constraints: false,
+            settlement_poll_attempts: settlement_poll_attempts.max(1),
+            settlement_poll_interval,
         }
+    }
+
+    pub fn with_route_exchange(mut self, route_exchange: Option<String>) -> Self {
+        self.route_exchange = route_exchange.and_then(|exchange| {
+            let trimmed = exchange.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        self
+    }
+
+    pub fn with_override_percentage_constraints(mut self, enabled: bool) -> Self {
+        self.override_percentage_constraints = enabled;
+        self
     }
 }
 
@@ -167,6 +210,9 @@ where
                     side: ibkr_order_side(order.side),
                     quantity: order.qty,
                     price: mark_price,
+                    outside_rth: true,
+                    route_exchange: self.route_exchange.clone(),
+                    override_percentage_constraints: self.override_percentage_constraints,
                     client_order_id: client_order_id.clone(),
                 };
                 self.client.place_limit_order(&request).await?
@@ -181,14 +227,19 @@ where
                 Err(error) => return Err(error.into()),
             }
         };
-        let mut status = queried.status.clone();
-        let mut trades = self.client.executions(&symbol, placed.order_id).await?;
-        if trades.is_empty() && ibkr_order_is_open(&queried.status) {
-            status = self
-                .client
-                .cancel_order(&symbol, placed.order_id)
-                .await?
-                .status;
+        let (mut status, mut trades) = self
+            .wait_for_ibkr_settlement(&symbol, placed.order_id, queried.status.clone())
+            .await?;
+        if trades.is_empty() && ibkr_order_is_open(&status) {
+            status = match self.client.cancel_order(&symbol, placed.order_id).await {
+                Ok(cancelled) => cancelled.status,
+                Err(BrokerError::Connection(message))
+                    if ibkr_cancel_already_cancelled_message(&message) =>
+                {
+                    "Cancelled".to_string()
+                }
+                Err(error) => return Err(error.into()),
+            };
             if ibkr_order_is_open(&status) {
                 status = match self.client.query_order(&symbol, placed.order_id).await {
                     Ok(order) => order.status,
@@ -220,6 +271,43 @@ where
             qty,
             fee,
         })
+    }
+}
+
+impl<Client> IbkrPaperOrderExecutor<Client>
+where
+    Client: IbkrPaperOrderClient,
+{
+    async fn wait_for_ibkr_settlement(
+        &self,
+        symbol: &str,
+        order_id: i64,
+        initial_status: String,
+    ) -> Result<(String, Vec<IbkrTrade>), BrokerError> {
+        let mut status = initial_status;
+        let mut trades = self.client.executions(symbol, order_id).await?;
+        if !trades.is_empty() || !ibkr_order_is_open(&status) {
+            return Ok((status, trades));
+        }
+
+        for _ in 1..self.settlement_poll_attempts {
+            if !self.settlement_poll_interval.is_zero() {
+                tokio::time::sleep(self.settlement_poll_interval).await;
+            }
+            match self.client.query_order(symbol, order_id).await {
+                Ok(order) => {
+                    status = order.status;
+                }
+                Err(BrokerError::OrderNotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+            trades = self.client.executions(symbol, order_id).await?;
+            if !trades.is_empty() || !ibkr_order_is_open(&status) {
+                break;
+            }
+        }
+
+        Ok((status, trades))
     }
 }
 
@@ -267,6 +355,14 @@ fn ibkr_order_is_terminal(status: &str) -> bool {
         status,
         "Filled" | "Cancelled" | "Canceled" | "ApiCancelled" | "Inactive"
     )
+}
+
+fn ibkr_cancel_already_cancelled_message(message: &str) -> bool {
+    message.contains("[10148]")
+        && (message.contains("Cancelled")
+            || message.contains("Canceled")
+            || message.contains("状态：Cancelled")
+            || message.contains("状态：Canceled"))
 }
 
 fn aggregate_ibkr_trades(trades: &[IbkrTrade]) -> anyhow::Result<(Decimal, Decimal, Decimal)> {

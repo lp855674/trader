@@ -9,6 +9,8 @@ param(
     [string]$GatewayHost = "",
     [int]$Port = 0,
     [int]$ClientId = 0,
+    [string]$IbkrRouteExchange = "",
+    [switch]$IbkrOverridePercentageConstraints,
     [int]$OpenOrdersSettleSeconds = 30,
     [int]$OpenOrdersPollSeconds = 2
 )
@@ -439,6 +441,22 @@ try {
     }
     if ($ClientId -gt 0) {
         $configText = $configText -replace 'client_id = \d+', "client_id = $ClientId"
+    }
+    if ($IbkrRouteExchange.Trim().Length -gt 0) {
+        $routeLine = "ibkr_route_exchange = `"$($IbkrRouteExchange.Trim())`""
+        if ($configText -match 'ibkr_route_exchange = "[^"]*"') {
+            $configText = $configText -replace 'ibkr_route_exchange = "[^"]*"', $routeLine
+        } else {
+            $configText = $configText -replace '(order_submit_enabled = (?:true|false))', "`$1`r`n$routeLine"
+        }
+    }
+    if ($IbkrOverridePercentageConstraints) {
+        $overrideLine = "ibkr_override_percentage_constraints = true"
+        if ($configText -match 'ibkr_override_percentage_constraints = (?:true|false)') {
+            $configText = $configText -replace 'ibkr_override_percentage_constraints = (?:true|false)', $overrideLine
+        } else {
+            $configText = $configText -replace '(order_submit_enabled = (?:true|false))', "`$1`r`n$overrideLine"
+        }
     }
 
     $effectiveAccountId = Get-IbkrAccountId $configText

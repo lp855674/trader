@@ -233,7 +233,13 @@ mod production_reconciliation_tests {
                     liquidation_price: None,
                     open_interest: None,
                 }],
-                runtime_open_order_ids: vec!["local-order-1".to_string()],
+                runtime_open_orders: vec![RuntimeOpenOrder {
+                    account_id: "DU123".to_string(),
+                    symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                    order_id: "local-order-1".to_string(),
+                    client_order_id: "local-order-1".to_string(),
+                    broker_order_id: None,
+                }],
                 broker_open_orders: vec![BrokerOpenOrder {
                     broker_order_id: "remote-order-1".to_string(),
                     client_order_id: "missing-client".to_string(),
@@ -246,7 +252,7 @@ mod production_reconciliation_tests {
                     filled_qty: dec!(0),
                     status: "Submitted".to_string(),
                 }],
-                runtime_execution_ids: vec![],
+                runtime_executions: vec![],
                 broker_executions: vec![BrokerExecution {
                     trade_id: "exec-1".to_string(),
                     broker_order_id: "remote-order-1".to_string(),
@@ -384,6 +390,23 @@ pub struct BrokerReconciliationDrift {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeOpenOrder {
+    pub account_id: String,
+    pub symbol: String,
+    pub order_id: String,
+    pub client_order_id: String,
+    pub broker_order_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeExecution {
+    pub fill_id: String,
+    pub order_id: String,
+    pub client_order_id: Option<String>,
+    pub broker_order_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BrokerReconciliationAudit {
     pub account_id: String,
     pub broker_kind: BrokerKind,
@@ -405,9 +428,9 @@ pub struct BrokerReconciliationInput {
     pub broker_cash: Vec<BrokerCashBalance>,
     pub runtime_positions: Vec<RuntimePositionSnapshot>,
     pub broker_positions: Vec<BrokerPositionSnapshot>,
-    pub runtime_open_order_ids: Vec<String>,
+    pub runtime_open_orders: Vec<RuntimeOpenOrder>,
     pub broker_open_orders: Vec<BrokerOpenOrder>,
-    pub runtime_execution_ids: Vec<String>,
+    pub runtime_executions: Vec<RuntimeExecution>,
     pub broker_executions: Vec<BrokerExecution>,
 }
 
@@ -463,6 +486,22 @@ pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconci
         }
     }
 
+    for runtime_cash in &input.runtime_cash {
+        if !input.broker_cash.iter().any(|broker_cash| {
+            broker_cash.account_id == runtime_cash.account_id
+                && broker_cash.currency == runtime_cash.currency
+        }) {
+            audit.cash_drifts.push(BrokerReconciliationDrift {
+                account_id: runtime_cash.account_id.clone(),
+                reason: "cash_missing_broker".to_string(),
+                symbol: None,
+                currency: Some(runtime_cash.currency.clone()),
+                local_value: Some(runtime_cash.cash.to_string()),
+                broker_value: None,
+            });
+        }
+    }
+
     for position in &input.broker_positions {
         match input.runtime_positions.iter().find(|runtime_position| {
             runtime_position.account_id == position.account_id
@@ -513,7 +552,10 @@ pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconci
     }
 
     for order in &input.broker_open_orders {
-        if !input.runtime_open_order_ids.iter().any(|id| id == &order.client_order_id || id == &order.broker_order_id) {
+        if !input.runtime_open_orders.iter().any(|runtime_order| {
+            runtime_order.client_order_id == order.client_order_id
+                || runtime_order.broker_order_id.as_deref() == Some(&order.broker_order_id)
+        }) {
             audit.open_order_drifts.push(BrokerReconciliationDrift {
                 account_id: order.account_id.clone(),
                 reason: "open_order_missing_runtime".to_string(),
@@ -525,8 +567,40 @@ pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconci
         }
     }
 
+    for runtime_order in &input.runtime_open_orders {
+        if !input.broker_open_orders.iter().any(|order| {
+            runtime_order.client_order_id == order.client_order_id
+                || runtime_order.broker_order_id.as_deref() == Some(&order.broker_order_id)
+        }) {
+            audit.open_order_drifts.push(BrokerReconciliationDrift {
+                account_id: runtime_order.account_id.clone(),
+                reason: "open_order_missing_broker".to_string(),
+                symbol: Some(runtime_order.symbol.clone()),
+                currency: None,
+                local_value: Some(
+                    runtime_order
+                        .broker_order_id
+                        .as_deref()
+                        .unwrap_or(&runtime_order.order_id)
+                        .to_string(),
+                ),
+                broker_value: None,
+            });
+        }
+    }
+
     for execution in &input.broker_executions {
-        if !input.runtime_execution_ids.iter().any(|id| id == &execution.trade_id) {
+        if !input.runtime_executions.iter().any(|runtime_execution| {
+            runtime_execution.fill_id == execution.trade_id
+                || runtime_execution.order_id == execution.broker_order_id
+                || runtime_execution.broker_order_id.as_deref() == Some(&execution.broker_order_id)
+                || execution
+                    .client_order_id
+                    .as_deref()
+                    .is_some_and(|client_order_id| {
+                        Some(client_order_id) == runtime_execution.client_order_id.as_deref()
+                    })
+        }) {
             audit.execution_drifts.push(BrokerReconciliationDrift {
                 account_id: execution.account_id.clone(),
                 reason: "execution_missing_runtime".to_string(),
@@ -1600,3 +1674,14 @@ The project is materially closer to pre-production when:
 - Reconciliation alerts contain structured payloads that identify reason, account, currency, symbol, order, or execution.
 - IBKR Gateway fake-client tests cover metadata mapping.
 - A read-only IBKR paper production reconciliation soak can produce a committed results document with `failure_class=ok` and zero drift counters.
+
+## 2026-07-09 Filled-Execution Follow-Up
+
+- Paper submit plus cleanup evidence is closed for the current scope: wrapper `production-reconciliation-ibkr-d7e9c0474e72`, run `ibkr-aapl-1d-95105a74805e`, `failure_class=ok`, reconciliation audit `1`, and cash/position/open-order/execution/stale-input drift all `0`.
+- Filled-order reconciliation remains open. High-limit AAPL paper attempts with bounded settlement polling still produced local fills `0` and remote executions `0`.
+- Added explicit IBKR `outside_rth` support and optional `[broker] ibkr_route_exchange = "OVERNIGHT"` routing. The direct `OVERNIGHT` test run `ibkr-aapl-1d-dcd4e0bb0605` reached IBKR but was rejected with API error `10329` due to Gateway/TWS API precautionary settings for direct `OVERNIGHT` routing.
+- Added optional `[broker] ibkr_override_percentage_constraints = true` support and reran direct `OVERNIGHT` as `ibkr-aapl-1d-a4759b7284cc`; IBKR still rejected with API error `10329`, with no broker order id, no open order, and no execution. This points to explicit `exchange=OVERNIGHT` as the trigger; the acceptance path should prefer the default SMART stock contract plus `outside_rth=true`, not direct `OVERNIGHT`, unless diagnosing route-specific IBKR behavior.
+- SMART follow-up `ibkr-aapl-1d-5d5c51ae6e66` avoided `10329` but did not reach clean submit because Gateway open-orders preflight timed out; read-only retry `ibkr-aapl-1d-eb03d46a1e5b` with client id `2` also timed out on open-orders.
+- Client id `9` restored Gateway checks in `ibkr-aapl-1d-1235746d1e37`, then SMART submit run `ibkr-aapl-1d-1910a169d3ee` completed without `10329` but still produced local fills `0` and remote executions `0`; a direct SMART tiny-order probe at limit `900` remained `Submitted` for about 60 seconds, then was cancelled and verified with open orders `0` and executions `0`.
+- Do not mark this plan as filled-order acceptance or live-money readiness until a broker execution is observed and reconciled to local fills with zero drift.
+- Runtime-to-broker `execution_missing_broker` remains intentionally deferred until the broker execution query window is authoritative for the audit interval. Current broker execution snapshots can be windowed or symbol-scoped, so treating absence as broker drift would create false positives during long reconciliation runs.

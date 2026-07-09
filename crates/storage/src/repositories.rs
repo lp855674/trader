@@ -3867,6 +3867,50 @@ impl Db {
             .collect()
     }
 
+    pub async fn list_reconciliation_audits_for_gate_since(
+        &self,
+        broker_kind: &str,
+        account_id: &str,
+        from_ts_ms: i64,
+    ) -> StorageResult<Vec<StoredReconciliationAudit>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, run_id, account_id, broker_kind, ts AS ts_ms, severity,
+                   cash_drift_count, position_drift_count, open_order_drift_count,
+                   execution_drift_count, stale_input_count, payload_json,
+                   created_at AS created_at_ms
+            FROM broker_reconciliation_audits
+            WHERE broker_kind = ? AND account_id = ? AND ts >= ?
+            ORDER BY ts DESC, id DESC
+            "#,
+        )
+        .bind(broker_kind)
+        .bind(account_id)
+        .bind(from_ts_ms)
+        .fetch_all(self.pool())
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(StoredReconciliationAudit {
+                    id: row.try_get("id")?,
+                    run_id: row.try_get("run_id")?,
+                    account_id: row.try_get("account_id")?,
+                    broker_kind: row.try_get("broker_kind")?,
+                    ts_ms: row.try_get("ts_ms")?,
+                    severity: row.try_get("severity")?,
+                    cash_drift_count: row.try_get("cash_drift_count")?,
+                    position_drift_count: row.try_get("position_drift_count")?,
+                    open_order_drift_count: row.try_get("open_order_drift_count")?,
+                    execution_drift_count: row.try_get("execution_drift_count")?,
+                    stale_input_count: row.try_get("stale_input_count")?,
+                    payload_json: row.try_get("payload_json")?,
+                    created_at_ms: row.try_get("created_at_ms")?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn get_latest_position_snapshot(
         &self,
         run_id: &str,

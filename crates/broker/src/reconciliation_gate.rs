@@ -69,9 +69,27 @@ pub fn evaluate_reconciliation_gate(input: ReconciliationGateInput) -> Reconcili
             continue;
         }
 
-        let clean_recent = matching
+        let recent = matching
             .iter()
             .filter(|audit| input.now_ms - audit.ts_ms <= requirement.max_audit_age_ms)
+            .copied()
+            .collect::<Vec<_>>();
+
+        if recent.is_empty() {
+            let latest_ts_ms = matching
+                .iter()
+                .map(|audit| audit.ts_ms)
+                .max()
+                .unwrap_or_default();
+            failures.push(failure(
+                requirement,
+                "audit_too_old",
+                &latest_ts_ms.to_string(),
+            ));
+        }
+
+        let clean_recent = recent
+            .iter()
             .filter(|audit| {
                 audit.cash_drifts == 0
                     && audit.position_drifts == 0
@@ -92,14 +110,7 @@ pub fn evaluate_reconciliation_gate(input: ReconciliationGateInput) -> Reconcili
             ));
         }
 
-        for audit in matching {
-            if input.now_ms - audit.ts_ms > requirement.max_audit_age_ms {
-                failures.push(failure(
-                    requirement,
-                    "audit_too_old",
-                    &audit.ts_ms.to_string(),
-                ));
-            }
+        for audit in recent {
             if audit.cash_drifts
                 + audit.position_drifts
                 + audit.open_order_drifts
@@ -256,5 +267,25 @@ mod tests {
                 .iter()
                 .any(|failure| failure.reason == "audit_has_stale_inputs")
         );
+    }
+
+    #[test]
+    fn gate_ignores_old_drift_when_required_recent_clean_audits_exist() {
+        let mut old_bad = audit("ibkr", "DU****91", 10_000);
+        old_bad.open_order_drifts = 1;
+        old_bad.stale_inputs = 1;
+
+        let decision = evaluate_reconciliation_gate(ReconciliationGateInput {
+            now_ms: 100_000,
+            requirements: vec![requirement("ibkr", "DU****91")],
+            audits: vec![
+                old_bad,
+                audit("ibkr", "DU****91", 95_000),
+                audit("ibkr", "DU****91", 96_000),
+            ],
+        });
+
+        assert_eq!(decision.status, ReconciliationGateStatus::Allow);
+        assert!(decision.failures.is_empty());
     }
 }

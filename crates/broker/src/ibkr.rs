@@ -34,6 +34,9 @@ pub struct IbkrLimitOrderRequest {
     pub side: IbkrOrderSide,
     pub quantity: Decimal,
     pub price: Decimal,
+    pub outside_rth: bool,
+    pub route_exchange: Option<String>,
+    pub override_percentage_constraints: bool,
     pub client_order_id: String,
 }
 
@@ -502,7 +505,7 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
             .await
             .map_err(|_| self.timeout_error("next order id"))?
             .map_err(map_ibapi_error)?;
-        let contract = ibkr_stock_contract(&order.symbol);
+        let contract = ibkr_stock_contract(&order.symbol, order.route_exchange.as_deref());
         let ib_order = ibkr_limit_order(account_id, order)?;
         let mut subscription = timeout(
             self.settings.connect_timeout,
@@ -901,8 +904,13 @@ fn non_empty_decimal(value: String, name: &str) -> Result<Option<Decimal>, Broke
         .map_err(|error| BrokerError::Config(format!("invalid {name}: {error}")))
 }
 
-fn ibkr_stock_contract(symbol: &str) -> Contract {
-    Contract::stock(symbol).build()
+fn ibkr_stock_contract(symbol: &str, route_exchange: Option<&str>) -> Contract {
+    match route_exchange {
+        Some(exchange) if !exchange.trim().is_empty() => {
+            Contract::stock(symbol).on_exchange(exchange.trim()).build()
+        }
+        _ => Contract::stock(symbol).build(),
+    }
 }
 
 fn ibkr_limit_order(
@@ -919,6 +927,8 @@ fn ibkr_limit_order(
         order_type: "LMT".to_string(),
         limit_price: Some(decimal_to_f64(request.price, "IBKR limit price")?),
         tif: TimeInForce::Day,
+        outside_rth: request.outside_rth,
+        override_percentage_constraints: request.override_percentage_constraints,
         order_ref: request.client_order_id.clone(),
         transmit: true,
         ..Default::default()

@@ -261,6 +261,9 @@ pub struct BrokerConfig {
     pub port: Option<u16>,
     pub client_id: Option<u32>,
     pub connect_timeout_ms: Option<u64>,
+    pub ibkr_route_exchange: Option<String>,
+    #[serde(default)]
+    pub ibkr_override_percentage_constraints: bool,
     pub api_key_env: Option<String>,
     pub secret_key_env: Option<String>,
     pub recv_window_ms: Option<u64>,

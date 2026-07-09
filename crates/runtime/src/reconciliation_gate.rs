@@ -118,15 +118,26 @@ pub async fn evaluate_reconciliation_gate_from_storage(
         });
     }
 
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut audits = Vec::new();
     for requirement in &requirements {
-        let rows = db
-            .list_latest_reconciliation_audits_for_gate(
+        let from_ts_ms = now_ms - requirement.max_audit_age_ms;
+        let mut rows = db
+            .list_reconciliation_audits_for_gate_since(
                 &requirement.broker,
                 &requirement.account_id,
-                requirement.min_successful_audits as i64,
+                from_ts_ms,
             )
             .await?;
+        if rows.is_empty() {
+            rows = db
+                .list_latest_reconciliation_audits_for_gate(
+                    &requirement.broker,
+                    &requirement.account_id,
+                    1,
+                )
+                .await?;
+        }
         audits.extend(rows.into_iter().map(|row| broker::ReconciliationGateAudit {
             broker: row.broker_kind,
             account_id: row.account_id,
@@ -141,7 +152,7 @@ pub async fn evaluate_reconciliation_gate_from_storage(
 
     Ok(broker::evaluate_reconciliation_gate(
         broker::ReconciliationGateInput {
-            now_ms: chrono::Utc::now().timestamp_millis(),
+            now_ms,
             requirements,
             audits,
         },
@@ -321,4 +332,166 @@ pub fn format_reconciliation_gate_failures(
         .map(format_reconciliation_gate_failure)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use storage::{NewStrategyRun, ReconciliationAuditCommand};
+
+    fn test_config() -> config::AppConfig {
+        config::AppConfig::from_toml_str(
+            r#"
+            [runtime]
+            mode = "paper"
+            run_id = "reconciliation-gate-test"
+
+            [database]
+            url = "sqlite::memory:"
+
+            [data]
+            source = "csv"
+            path = "datasets/sample/aapl_1d.csv"
+
+            [strategy]
+            name = "moving_average_cross"
+            symbols = ["US:NASDAQ:AAPL:EQUITY"]
+            fast_window = 20
+            slow_window = 60
+
+            [portfolio]
+            initial_cash = "100000"
+            base_currency = "USD"
+            order_qty = "1"
+            max_abs_qty = "100"
+
+            [risk]
+            max_order_notional = "1000000"
+            min_cash_after_order = "0"
+            max_exposure = "1000000"
+            max_drawdown = "1"
+            max_leverage = "10"
+            max_margin_used = "0"
+            trading_halted = false
+
+            [broker]
+            kind = "simulated"
+            mode = "paper"
+
+            [paper]
+            account_id = "paper"
+            slippage_bps = "0"
+            fee_bps = "0"
+
+            [live]
+            enabled = true
+
+            [live.reconciliation_gate]
+            enabled = true
+            required_accounts = ["simulated:paper"]
+            "#,
+        )
+        .unwrap()
+    }
+
+    async fn test_db() -> storage::Db {
+        let db = storage::Db::connect("sqlite::memory:").await.unwrap();
+        db.migrate().await.unwrap();
+        db.insert_strategy_run(NewStrategyRun {
+            id: "reconciliation-gate-test".to_string(),
+            name: "moving_average_cross".to_string(),
+            mode: "paper".to_string(),
+            status: "running".to_string(),
+            started_at_ms: 1,
+            ended_at_ms: None,
+            error: None,
+            config_json: "{}".to_string(),
+        })
+        .await
+        .unwrap();
+        db
+    }
+
+    async fn record_audit(
+        db: &storage::Db,
+        id: &str,
+        ts_ms: i64,
+        open_order_drift_count: i64,
+        stale_input_count: i64,
+    ) {
+        db.record_reconciliation_audit(ReconciliationAuditCommand {
+            id: id.to_string(),
+            run_id: "reconciliation-gate-test".to_string(),
+            account_id: "paper".to_string(),
+            broker_kind: "simulated".to_string(),
+            ts_ms,
+            severity: "info".to_string(),
+            cash_drift_count: 0,
+            position_drift_count: 0,
+            open_order_drift_count,
+            execution_drift_count: 0,
+            stale_input_count,
+            payload_json: "{}".to_string(),
+        })
+        .await
+        .unwrap();
+    }
+
+    fn has_failure(decision: &broker::ReconciliationGateDecision, reason: &str) -> bool {
+        decision
+            .failures
+            .iter()
+            .any(|failure| failure.reason == reason)
+    }
+
+    #[tokio::test]
+    async fn storage_gate_blocks_recent_drift_before_latest_clean_audit() {
+        let db = test_db().await;
+        let config = test_config();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        record_audit(&db, "recent-drift", now_ms - 1_000, 1, 0).await;
+        record_audit(&db, "recent-clean", now_ms - 10, 0, 0).await;
+
+        let decision =
+            evaluate_reconciliation_gate_from_storage(&config, &db, &[], Some(1), Some(60_000))
+                .await
+                .unwrap();
+
+        assert_eq!(decision.status, broker::ReconciliationGateStatus::Block);
+        assert!(has_failure(&decision, "audit_has_drift"));
+    }
+
+    #[tokio::test]
+    async fn storage_gate_ignores_old_drift_when_recent_clean_audit_exists() {
+        let db = test_db().await;
+        let config = test_config();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        record_audit(&db, "old-drift", now_ms - 5_000, 1, 1).await;
+        record_audit(&db, "recent-clean", now_ms - 10, 0, 0).await;
+
+        let decision =
+            evaluate_reconciliation_gate_from_storage(&config, &db, &[], Some(1), Some(1_000))
+                .await
+                .unwrap();
+
+        assert_eq!(decision.status, broker::ReconciliationGateStatus::Allow);
+        assert!(decision.failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn storage_gate_reports_too_old_when_only_old_audit_exists() {
+        let db = test_db().await;
+        let config = test_config();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        record_audit(&db, "old-clean", now_ms - 5_000, 0, 0).await;
+
+        let decision =
+            evaluate_reconciliation_gate_from_storage(&config, &db, &[], Some(1), Some(1_000))
+                .await
+                .unwrap();
+
+        assert_eq!(decision.status, broker::ReconciliationGateStatus::Block);
+        assert!(has_failure(&decision, "audit_too_old"));
+        assert!(!has_failure(&decision, "missing_required_audit"));
+    }
 }

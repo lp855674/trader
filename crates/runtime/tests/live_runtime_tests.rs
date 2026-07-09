@@ -155,6 +155,359 @@ async fn live_runtime_records_production_reconciliation_audit_and_broker_balance
 }
 
 #[tokio::test]
+async fn live_runtime_reconciliation_audit_detects_runtime_position_missing_from_broker() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: "live-runtime-position-missing-broker".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(EmptyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_status(&db, "live-runtime-position-missing-broker", "running").await;
+    db.record_runtime_position_snapshot(RuntimePositionSnapshotCommand {
+        run_id: "live-runtime-position-missing-broker".to_string(),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+        position_side: "long".to_string(),
+        qty: dec("2"),
+        available_qty: dec("2"),
+        avg_price: dec("180"),
+        mark_price: Some(dec("180")),
+        currency: "USD".to_string(),
+    })
+    .await
+    .unwrap();
+    wait_for_reconciliation_position_drift(&db, "live-runtime-position-missing-broker").await;
+    wait_for_system_log_message_contains(
+        &db,
+        "live-runtime-position-missing-broker",
+        "runtime.reconciliation",
+        "reconciliation.drift",
+        "position_missing_broker",
+    )
+    .await;
+    wait_for_system_log_message_contains(
+        &db,
+        "live-runtime-position-missing-broker",
+        "runtime.alert",
+        "reconciliation_drift.alert",
+        "position_missing_broker",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db
+        .list_reconciliation_audits("live-runtime-position-missing-broker")
+        .await
+        .unwrap();
+    let audit = audits
+        .iter()
+        .find(|audit| audit.position_drift_count == 1)
+        .unwrap();
+    assert_eq!(audit.severity, "error");
+    assert_eq!(audit.cash_drift_count, 0);
+    let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+    assert_eq!(
+        payload["position_drifts"][0]["reason"].as_str(),
+        Some("position_missing_broker")
+    );
+    assert_eq!(
+        payload["position_drifts"][0]["local_value"].as_str(),
+        Some("2")
+    );
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_detects_runtime_open_order_missing_from_broker() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-open-order-missing-broker";
+    seed_external_order(
+        &db,
+        run_id,
+        "local-order-1",
+        "client-order-1",
+        "broker-order-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(EmptyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_open_order_drift(&db, run_id).await;
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.reconciliation",
+        "reconciliation.drift",
+        "open_order_missing_broker",
+    )
+    .await;
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.alert",
+        "reconciliation_drift.alert",
+        "open_order_missing_broker",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db.list_reconciliation_audits(run_id).await.unwrap();
+    let audit = audits
+        .iter()
+        .find(|audit| audit.open_order_drift_count == 1)
+        .unwrap();
+    assert_eq!(audit.severity, "error");
+    let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+    assert_eq!(
+        payload["open_order_drifts"][0]["reason"].as_str(),
+        Some("open_order_missing_broker")
+    );
+    assert_eq!(
+        payload["open_order_drifts"][0]["local_value"].as_str(),
+        Some("broker-order-1")
+    );
+    let risk_events = db.list_risk_events(run_id).await.unwrap();
+    assert!(
+        risk_events
+            .iter()
+            .all(|event| event.reason.as_deref() != Some("open_order_missing_broker")),
+        "audit-only open-order drift must not create risk events"
+    );
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_deduplicates_open_order_missing_broker_alerts() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-open-order-drift-dedup";
+    seed_external_order(
+        &db,
+        run_id,
+        "local-order-1",
+        "client-order-1",
+        "broker-order-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "0",
+        "SUBMITTED",
+    )
+    .await;
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(EmptyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_open_order_drift_count(&db, run_id, 2).await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let reconciliation_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.reconciliation".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let drift_log_count = reconciliation_logs
+        .iter()
+        .filter(|log| {
+            log.message == "reconciliation.drift"
+                && log
+                    .fields_json
+                    .as_deref()
+                    .is_some_and(|fields| fields.contains("open_order_missing_broker"))
+        })
+        .count();
+    assert_eq!(drift_log_count, 1);
+
+    let alert_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.alert".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let alert_log_count = alert_logs
+        .iter()
+        .filter(|log| {
+            log.message == "reconciliation_drift.alert"
+                && log
+                    .fields_json
+                    .as_deref()
+                    .is_some_and(|fields| fields.contains("open_order_missing_broker"))
+        })
+        .count();
+    assert_eq!(alert_log_count, 1);
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_ignores_closed_local_orders_missing_from_broker() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-closed-order-not-missing-broker";
+    seed_external_order(
+        &db,
+        run_id,
+        "local-order-1",
+        "client-order-1",
+        "broker-order-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "1",
+        "FILLED",
+    )
+    .await;
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(EmptyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_audit(&db, run_id).await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db.list_reconciliation_audits(run_id).await.unwrap();
+    assert!(!audits.is_empty());
+    assert!(audits.iter().all(|audit| audit.open_order_drift_count == 0));
+    assert!(audits.iter().all(|audit| {
+        let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+        payload["open_order_drifts"].as_array().unwrap().is_empty()
+    }));
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_matches_broker_execution_by_order_metadata() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-execution-matches-order-metadata";
+    seed_external_order(
+        &db,
+        run_id,
+        "local-order-1",
+        "client-order-1",
+        "broker-order-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "1",
+        "FILLED",
+    )
+    .await;
+    seed_external_fill(
+        &db,
+        run_id,
+        "local-order-1",
+        "local-fill-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "180",
+        "1",
+        "1",
+    )
+    .await;
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(MatchingExecutionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_audit(&db, run_id).await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db.list_reconciliation_audits(run_id).await.unwrap();
+    assert!(!audits.is_empty());
+    assert!(audits.iter().all(|audit| audit.execution_drift_count == 0));
+    assert!(audits.iter().all(|audit| {
+        let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+        payload["execution_drifts"].as_array().unwrap().is_empty()
+    }));
+}
+
+#[tokio::test]
 async fn live_runtime_periodically_records_broker_reported_position_snapshot() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -313,6 +666,49 @@ async fn live_runtime_recovers_open_orders_and_executions_on_startup() {
     assert_eq!(
         recovered_event.message.as_deref(),
         Some("startup recovery matched broker order state")
+    );
+    let recovered_payload: serde_json::Value =
+        serde_json::from_str(&recovered_event.payload_json).unwrap();
+    assert_eq!(recovered_payload["recovery_source"], "startup");
+    assert_eq!(recovered_payload["executions"], 1);
+    assert_eq!(recovered_payload["filled_qty"], "2");
+    assert_eq!(
+        recovered_payload["message"],
+        "startup recovery matched broker order state"
+    );
+
+    let recovery_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some("live-startup-recovery".to_string()),
+            target: Some("runtime.startup_recovery".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let recovery_log = recovery_logs
+        .iter()
+        .find(|log| log.message == "startup_recovery.orders")
+        .unwrap();
+    assert_eq!(recovery_log.level, "INFO");
+    let recovery_fields: serde_json::Value =
+        serde_json::from_str(recovery_log.fields_json.as_deref().unwrap()).unwrap();
+    assert_eq!(recovery_fields["scanned"], 1);
+    assert_eq!(recovery_fields["recovered"], 1);
+    assert_eq!(recovery_fields["remaining"], 0);
+    assert_eq!(recovery_fields["executions"], 1);
+    assert_eq!(recovery_fields["unmatched_open_orders"], 0);
+    assert_eq!(recovery_fields["unmatched_executions"], 0);
+    assert!(
+        recovery_fields["unmatched_open_order_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        recovery_fields["unmatched_execution_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
 }
 
@@ -882,6 +1278,138 @@ impl Broker for StaticSnapshotBroker {
             contract: None,
             liquidation_price: None,
             open_interest: None,
+        }])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct EmptyPositionSnapshotBroker;
+
+#[async_trait]
+impl Broker for EmptyPositionSnapshotBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct MatchingExecutionSnapshotBroker;
+
+#[async_trait]
+impl Broker for MatchingExecutionSnapshotBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        if symbol != Some("US:NASDAQ:AAPL:EQUITY") {
+            return Ok(Vec::new());
+        }
+        Ok(vec![BrokerExecution {
+            trade_id: "broker-trade-1".to_string(),
+            broker_order_id: "broker-order-1".to_string(),
+            client_order_id: Some("client-order-1".to_string()),
+            account_id: "live-account".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: OrderSide::Buy,
+            price: dec("180"),
+            qty: dec("1"),
+            fee: dec("1"),
+            ts_ms: 2,
         }])
     }
 
@@ -2287,6 +2815,38 @@ async fn wait_for_system_log(db: &Db, run_id: &str, target: &str) {
     panic!("{run_id} did not emit system log target {target}");
 }
 
+async fn wait_for_system_log_message_contains(
+    db: &Db,
+    run_id: &str,
+    target: &str,
+    message: &str,
+    expected_field: &str,
+) {
+    for _ in 0..50 {
+        if db
+            .list_system_logs_filtered(SystemLogFilter {
+                run_id: Some(run_id.to_string()),
+                target: Some(target.to_string()),
+                ..SystemLogFilter::default()
+            })
+            .await
+            .unwrap()
+            .iter()
+            .any(|log| {
+                log.message == message
+                    && log
+                        .fields_json
+                        .as_deref()
+                        .is_some_and(|fields| fields.contains(expected_field))
+            })
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not emit system log {target} {message} containing {expected_field}");
+}
+
 async fn wait_for_reconciliation_audit(db: &Db, run_id: &str) {
     for _ in 0..50 {
         if !db
@@ -2300,6 +2860,55 @@ async fn wait_for_reconciliation_audit(db: &Db, run_id: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{run_id} did not record reconciliation audit");
+}
+
+async fn wait_for_reconciliation_position_drift(db: &Db, run_id: &str) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.position_drift_count > 0)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record reconciliation position drift");
+}
+
+async fn wait_for_reconciliation_open_order_drift(db: &Db, run_id: &str) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.open_order_drift_count > 0)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record reconciliation open order drift");
+}
+
+async fn wait_for_reconciliation_open_order_drift_count(db: &Db, run_id: &str, min_count: usize) {
+    for _ in 0..100 {
+        let count = db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|audit| audit.open_order_drift_count > 0)
+            .count();
+        if count >= min_count {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record {min_count} reconciliation open order drift audits");
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

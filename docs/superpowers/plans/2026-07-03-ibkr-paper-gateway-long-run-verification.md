@@ -336,6 +336,19 @@ git commit -m "docs: record ibkr paper soak verification"
 | `iteration_failed` | Stop. Inspect `first_failed_log` in the soak summary, then open the referenced iteration runner summary. |
 | `open_orders_remaining` | Stop. Inspect remote open orders and cancel only with an explicit paper cancel confirmation command. |
 
+## 2026-07-09 Filled-Execution Follow-Up
+
+- Submit and cleanup are verified, but filled paper execution evidence is not complete.
+- Bounded polling before cancellation is implemented for IBKR paper orders.
+- `outside_rth=true` alone did not produce executions in run `ibkr-aapl-1d-df57e75f1237`; the order ended `Cancelled`, filled quantity `0`, with no remote executions.
+- Explicit `OVERNIGHT` routing is now configurable via `[broker] ibkr_route_exchange = "OVERNIGHT"` and `scripts/ibkr-paper-run.ps1 -IbkrRouteExchange OVERNIGHT`.
+- Direct `OVERNIGHT` routing run `ibkr-aapl-1d-dcd4e0bb0605` was rejected by IBKR API error `10329`, pointing to Gateway/TWS API precautionary settings. No open orders or executions remained after the failure checks.
+- Order-level percentage-constraint override is now configurable via `[broker] ibkr_override_percentage_constraints = true` and `scripts/ibkr-paper-run.ps1 -IbkrOverridePercentageConstraints`.
+- Direct `OVERNIGHT` routing run `ibkr-aapl-1d-a4759b7284cc` with the override enabled was still rejected by IBKR API error `10329`; the local DB shows status `FAILED`, no broker order id, filled quantity `0`, and post-failure Gateway checks showed open orders `0` and executions `0`.
+- Treat direct `OVERNIGHT` as a diagnostic route parameter, not the preferred filled-order acceptance path. The next acceptance attempt should use the default SMART stock contract with `outside_rth=true`.
+- SMART follow-up `ibkr-aapl-1d-5d5c51ae6e66` avoided `10329` but failed before a clean submit because Gateway open-orders preflight timed out; read-only retry `ibkr-aapl-1d-eb03d46a1e5b` with client id `2` also timed out on open-orders.
+- Client id `9` restored clean read-only checks in `ibkr-aapl-1d-1235746d1e37`; SMART submit run `ibkr-aapl-1d-1910a169d3ee` completed without `10329` but produced no fills or executions. A direct SMART tiny-order probe at limit `900` stayed `Submitted` for about 60 seconds, then was manually cancelled and verified with open orders `0` and executions `0`.
+
 ## Self-Review
 
 - Spec coverage: The plan covers local readiness, ReadOnly, AutoRun, Soak, evidence paths, failure classes, generated data hygiene, and commit boundaries.

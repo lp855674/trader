@@ -1382,6 +1382,11 @@ async fn run_command(command: Command) -> Result<()> {
                 side: ibkr_order_side(&side)?,
                 quantity: Decimal::from_str(&qty)?,
                 price: Decimal::from_str(&price)?,
+                outside_rth: true,
+                route_exchange: app_config.broker.ibkr_route_exchange.clone(),
+                override_percentage_constraints: app_config
+                    .broker
+                    .ibkr_override_percentage_constraints,
                 client_order_id,
             };
             let ack = adapter
@@ -3456,10 +3461,19 @@ async fn paper_runtime(
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings,
-                Box::new(IbkrPaperOrderExecutor::new_with_client_order_prefix(
-                    IbkrPaperGatewayOrderClient::new(adapter, app_config.paper.account_id.clone()),
-                    app_config.runtime.run_id.clone(),
-                )),
+                Box::new(
+                    IbkrPaperOrderExecutor::new_with_client_order_prefix(
+                        IbkrPaperGatewayOrderClient::new(
+                            adapter,
+                            app_config.paper.account_id.clone(),
+                        ),
+                        app_config.runtime.run_id.clone(),
+                    )
+                    .with_route_exchange(app_config.broker.ibkr_route_exchange.clone())
+                    .with_override_percentage_constraints(
+                        app_config.broker.ibkr_override_percentage_constraints,
+                    ),
+                ),
             ))
         }
         config::BrokerKind::Simulated | config::BrokerKind::Futu | config::BrokerKind::Okx => {

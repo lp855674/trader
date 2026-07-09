@@ -151,6 +151,50 @@ fn live_worker_reconciliation_gate_allows_recent_clean_audit() {
 }
 
 #[test]
+fn live_worker_reconciliation_gate_blocks_recent_drift_before_latest_clean_audit() {
+    let (launch_path, db_path) = write_live_worker_gate_launch(
+        "trader-live-worker-gate-recent-drift",
+        "paper",
+        true,
+        &["simulated:paper"],
+        300_000,
+    );
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    seed_live_worker_gate_audits_with_drift(
+        &db_path,
+        &[
+            ("audit-recent-drift", "simulated", "paper", now_ms - 1000, 1),
+            ("audit-latest-clean", "simulated", "paper", now_ms, 0),
+        ],
+    );
+
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .arg("live-worker")
+        .arg("--launch-file")
+        .arg(&launch_path)
+        .assert()
+        .failure()
+        .stderr(contains("audit_has_drift"))
+        .stderr(contains("reconciliation gate blocked"));
+
+    let logs = live_worker_gate_system_logs(&db_path, "trader-live-worker-gate-recent-drift");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].level, "WARN");
+    assert_eq!(logs[0].message, "reconciliation_gate.block");
+    let fields = system_log_fields(&logs[0]);
+    assert_eq!(fields["status"], "block");
+    assert!(
+        fields["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure["reason"] == "audit_has_drift")
+    );
+}
+
+#[test]
 fn live_worker_reconciliation_gate_blocks_missing_audit() {
     let alert_path = temp_output("trader-live-worker-gate-missing-alerts", "jsonl");
     let (launch_path, db_path) = write_live_worker_gate_launch_with_alert_file(
@@ -4015,6 +4059,17 @@ fn write_live_worker_gate_launch_with_options(
 }
 
 fn seed_live_worker_gate_audits(db_path: &std::path::Path, audits: &[(&str, &str, &str, i64)]) {
+    let audits = audits
+        .iter()
+        .map(|(id, broker_kind, account_id, ts_ms)| (*id, *broker_kind, *account_id, *ts_ms, 0))
+        .collect::<Vec<_>>();
+    seed_live_worker_gate_audits_with_drift(db_path, &audits);
+}
+
+fn seed_live_worker_gate_audits_with_drift(
+    db_path: &std::path::Path,
+    audits: &[(&str, &str, &str, i64, i64)],
+) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let db = storage::Db::connect(&format!("sqlite://{}", toml_path(db_path)))
@@ -4030,7 +4085,7 @@ fn seed_live_worker_gate_audits(db_path: &std::path::Path, audits: &[(&str, &str
         })
         .await
         .unwrap();
-        for (id, broker_kind, account_id, ts_ms) in audits {
+        for (id, broker_kind, account_id, ts_ms, open_order_drift_count) in audits {
             db.record_reconciliation_audit(storage::ReconciliationAuditCommand {
                 id: (*id).to_string(),
                 run_id: "live-worker-gate-seed".to_string(),
@@ -4040,7 +4095,7 @@ fn seed_live_worker_gate_audits(db_path: &std::path::Path, audits: &[(&str, &str
                 severity: "info".to_string(),
                 cash_drift_count: 0,
                 position_drift_count: 0,
-                open_order_drift_count: 0,
+                open_order_drift_count: *open_order_drift_count,
                 execution_drift_count: 0,
                 stale_input_count: 0,
                 payload_json: "{}".to_string(),

@@ -189,6 +189,9 @@ enum FakeIbkrGatewayCall {
     PlaceLimitOrder {
         account_id: String,
         symbol: String,
+        outside_rth: bool,
+        route_exchange: Option<String>,
+        override_percentage_constraints: bool,
         client_order_id: String,
     },
 }
@@ -390,6 +393,9 @@ impl IbkrGatewayClient for FakeIbkrGatewayClient {
             .push(FakeIbkrGatewayCall::PlaceLimitOrder {
                 account_id: account_id.to_string(),
                 symbol: order.symbol.clone(),
+                outside_rth: order.outside_rth,
+                route_exchange: order.route_exchange.clone(),
+                override_percentage_constraints: order.override_percentage_constraints,
                 client_order_id: order.client_order_id.clone(),
             });
         Ok(IbkrOrderAck {
@@ -1090,6 +1096,9 @@ async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_bo
         side: IbkrOrderSide::Buy,
         quantity: dec!(1),
         price: dec!(185.25),
+        outside_rth: true,
+        route_exchange: Some("OVERNIGHT".to_string()),
+        override_percentage_constraints: true,
         client_order_id: "client-42".to_string(),
     };
 
@@ -1105,6 +1114,9 @@ async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_bo
             FakeIbkrGatewayCall::PlaceLimitOrder {
                 account_id: "DU12345".to_string(),
                 symbol: "AAPL".to_string(),
+                outside_rth: true,
+                route_exchange: Some("OVERNIGHT".to_string()),
+                override_percentage_constraints: true,
                 client_order_id: "client-42".to_string(),
             },
             FakeIbkrGatewayCall::CancelOrder { order_id: 42 },

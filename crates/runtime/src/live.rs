@@ -1,8 +1,9 @@
 use crate::CancellationFlag;
 use broker::{
     Broker, BrokerCashBalance, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerPositionSide,
-    BrokerReconciliationInput, BrokerReconciliationSeverity, BrokerReconciliationThresholds,
-    BrokerStatus, FakeBrokerAdapter, RuntimeCashBalance, RuntimePositionSnapshot,
+    BrokerReconciliationAudit, BrokerReconciliationDrift, BrokerReconciliationInput,
+    BrokerReconciliationSeverity, BrokerReconciliationThresholds, BrokerStatus, FakeBrokerAdapter,
+    RuntimeCashBalance, RuntimeExecution, RuntimeOpenOrder, RuntimePositionSnapshot,
     reconcile_broker_audit,
 };
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use storage::{
     BrokerAccountBalanceCommand, BrokerPositionSnapshotCommand, Db, DbSystemLogSink,
     ExternalFillCommand, LiveRunCommand, PaperPortfolioSnapshotCommand, ReconciliationAuditCommand,
-    RuntimeEventCommand, StoredOrder, SystemLogCommand,
+    RuntimeEventCommand, StoredOrder, SystemLogCommand, SystemLogFilter,
 };
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -664,23 +665,33 @@ impl LiveRuntime {
             })
             .collect::<Vec<_>>();
         let local_orders = self.db.list_orders(&self.settings.run_id).await?;
-        let runtime_open_order_ids = local_orders
+        let runtime_open_orders = local_orders
             .iter()
-            .flat_map(|order| {
-                [
-                    order.id.clone(),
-                    order.client_order_id.clone(),
-                    order.broker_order_id.clone().unwrap_or_default(),
-                ]
+            .filter(|order| is_open_order_status(&order.status))
+            .map(|order| RuntimeOpenOrder {
+                account_id: order.account_id.clone(),
+                symbol: order.symbol.clone(),
+                order_id: order.id.clone(),
+                client_order_id: order.client_order_id.clone(),
+                broker_order_id: order.broker_order_id.clone(),
             })
-            .filter(|id| !id.is_empty())
             .collect::<Vec<_>>();
-        let runtime_execution_ids = self
+        let runtime_executions = self
             .db
             .list_fills(&self.settings.run_id)
             .await?
             .into_iter()
-            .map(|fill| fill.id)
+            .map(|fill| {
+                let order = local_orders.iter().find(|order| order.id == fill.order_id);
+                RuntimeExecution {
+                    fill_id: fill.id,
+                    order_id: fill.order_id,
+                    account_id: order.map(|order| order.account_id.clone()),
+                    symbol: Some(fill.symbol),
+                    client_order_id: order.map(|order| order.client_order_id.clone()),
+                    broker_order_id: order.and_then(|order| order.broker_order_id.clone()),
+                }
+            })
             .collect::<Vec<_>>();
         let broker_open_orders = self.broker.open_orders(&self.settings.account_id).await?;
         let mut symbols = BTreeSet::new();
@@ -714,9 +725,9 @@ impl LiveRuntime {
             broker_cash,
             runtime_positions,
             broker_positions,
-            runtime_open_order_ids,
+            runtime_open_orders,
             broker_open_orders,
-            runtime_execution_ids,
+            runtime_executions,
             broker_executions,
         });
         let severity = reconciliation_severity_slug(audit.severity);
@@ -758,8 +769,115 @@ impl LiveRuntime {
                 }),
             )
             .await?;
+            self.record_reconciliation_audit_alerts(&audit).await?;
         }
         Ok(())
+    }
+
+    async fn record_reconciliation_audit_alerts(
+        &self,
+        audit: &BrokerReconciliationAudit,
+    ) -> anyhow::Result<()> {
+        for drift in audit.cash_drifts.iter().chain(&audit.position_drifts) {
+            if !should_alert_for_audit_drift(&drift.reason) {
+                continue;
+            }
+            self.record_reconciliation_audit_drift_alert(drift).await?;
+        }
+        for drift in audit
+            .open_order_drifts
+            .iter()
+            .chain(&audit.execution_drifts)
+        {
+            self.record_reconciliation_audit_drift_alert(drift).await?;
+        }
+        Ok(())
+    }
+
+    async fn record_reconciliation_audit_drift_alert(
+        &self,
+        drift: &BrokerReconciliationDrift,
+    ) -> anyhow::Result<()> {
+        if self
+            .db
+            .list_risk_events(&self.settings.run_id)
+            .await?
+            .iter()
+            .any(|event| {
+                event.risk_type == "reconciliation_drift"
+                    && event.reason.as_deref() == Some(drift.reason.as_str())
+                    && event.symbol == drift.symbol
+                    && event.account_id.as_deref() == Some(drift.account_id.as_str())
+            })
+        {
+            return Ok(());
+        }
+        if self
+            .has_existing_reconciliation_audit_drift_alert(drift)
+            .await?
+        {
+            return Ok(());
+        }
+
+        let observed_value = drift
+            .local_value
+            .as_deref()
+            .or(drift.broker_value.as_deref())
+            .unwrap_or_default()
+            .to_string();
+        let payload = serde_json::json!({
+            "run_id": &self.settings.run_id,
+            "account_id": &drift.account_id,
+            "symbol": &drift.symbol,
+            "currency": &drift.currency,
+            "risk_type": "reconciliation_drift",
+            "decision": "rejected",
+            "reason": &drift.reason,
+            "threshold": "0",
+            "observed_value": observed_value,
+            "local_value": &drift.local_value,
+            "broker_value": &drift.broker_value,
+            "source": "reconciliation_audit",
+        });
+        self.record_system_log(
+            "WARN",
+            "runtime.reconciliation",
+            "reconciliation.drift",
+            payload.clone(),
+        )
+        .await?;
+        self.record_alert_log("reconciliation_drift.alert", payload)
+            .await?;
+        Ok(())
+    }
+
+    async fn has_existing_reconciliation_audit_drift_alert(
+        &self,
+        drift: &BrokerReconciliationDrift,
+    ) -> storage::StorageResult<bool> {
+        let logs = self
+            .db
+            .list_system_logs_filtered(SystemLogFilter {
+                run_id: Some(self.settings.run_id.clone()),
+                target: Some("runtime.reconciliation".to_string()),
+                ..SystemLogFilter::default()
+            })
+            .await?;
+        Ok(logs.iter().any(|log| {
+            if log.message != "reconciliation.drift" {
+                return false;
+            }
+            let Some(fields_json) = log.fields_json.as_deref() else {
+                return false;
+            };
+            let Ok(fields) = serde_json::from_str::<serde_json::Value>(fields_json) else {
+                return false;
+            };
+            fields["source"].as_str() == Some("reconciliation_audit")
+                && fields["reason"].as_str() == Some(drift.reason.as_str())
+                && fields["account_id"].as_str() == Some(drift.account_id.as_str())
+                && fields["symbol"].as_str() == drift.symbol.as_deref()
+        }))
     }
 
     async fn record_cash_snapshot(&self, ts_ms: i64, cash: Decimal) -> storage::StorageResult<()> {
@@ -1297,23 +1415,43 @@ fn reconciliation_severity_slug(severity: BrokerReconciliationSeverity) -> &'sta
     }
 }
 
+fn should_alert_for_audit_drift(reason: &str) -> bool {
+    matches!(reason, "cash_missing_broker" | "position_missing_broker")
+}
+
+fn is_open_order_status(status: &str) -> bool {
+    matches!(status, "SUBMITTED" | "NEW" | "PARTIALLY_FILLED")
+}
+
 fn broker_order_matches_local(open_order: &BrokerOpenOrder, local: &StoredOrder) -> bool {
-    open_order.client_order_id == local.client_order_id
-        || local
-            .broker_order_id
-            .as_deref()
-            .is_some_and(|broker_order_id| broker_order_id == open_order.broker_order_id)
+    open_order.account_id == local.account_id
+        && (non_empty_id_eq(&open_order.client_order_id, &local.client_order_id)
+            || local
+                .broker_order_id
+                .as_deref()
+                .is_some_and(|broker_order_id| {
+                    non_empty_id_eq(broker_order_id, &open_order.broker_order_id)
+                }))
 }
 
 fn broker_execution_matches_local(execution: &BrokerExecution, local: &StoredOrder) -> bool {
-    execution
-        .client_order_id
-        .as_deref()
-        .is_some_and(|client_order_id| client_order_id == local.client_order_id)
-        || local
-            .broker_order_id
+    execution.account_id == local.account_id
+        && (execution
+            .client_order_id
             .as_deref()
-            .is_some_and(|broker_order_id| broker_order_id == execution.broker_order_id)
+            .is_some_and(|client_order_id| {
+                non_empty_id_eq(client_order_id, &local.client_order_id)
+            })
+            || local
+                .broker_order_id
+                .as_deref()
+                .is_some_and(|broker_order_id| {
+                    non_empty_id_eq(broker_order_id, &execution.broker_order_id)
+                }))
+}
+
+fn non_empty_id_eq(left: &str, right: &str) -> bool {
+    !left.trim().is_empty() && !right.trim().is_empty() && left == right
 }
 
 fn recovered_order_status(
@@ -1422,4 +1560,136 @@ struct StartupRecoverySummary {
     executions: usize,
     unmatched_open_orders: Vec<String>,
     unmatched_executions: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stored_order() -> StoredOrder {
+        StoredOrder {
+            id: "local-order-1".to_string(),
+            run_id: "run-1".to_string(),
+            client_order_id: "client-order-1".to_string(),
+            broker_order_id: Some("broker-order-1".to_string()),
+            account_id: "DU123".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: "BUY".to_string(),
+            order_type: "LIMIT".to_string(),
+            price: Some("180".to_string()),
+            qty: "1".to_string(),
+            filled_qty: "0".to_string(),
+            status: "SUBMITTED".to_string(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn broker_open_order() -> BrokerOpenOrder {
+        BrokerOpenOrder {
+            broker_order_id: "broker-order-1".to_string(),
+            client_order_id: "client-order-1".to_string(),
+            account_id: "DU123".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: trader_core::OrderSide::Buy,
+            order_type: trader_core::OrderType::Limit,
+            price: Some(dec("180")),
+            qty: dec("1"),
+            filled_qty: Decimal::ZERO,
+            status: "Submitted".to_string(),
+        }
+    }
+
+    fn broker_execution() -> BrokerExecution {
+        BrokerExecution {
+            trade_id: "trade-1".to_string(),
+            broker_order_id: "broker-order-1".to_string(),
+            client_order_id: Some("client-order-1".to_string()),
+            account_id: "DU123".to_string(),
+            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+            side: trader_core::OrderSide::Buy,
+            price: dec("180"),
+            qty: dec("1"),
+            fee: dec("1"),
+            ts_ms: 2,
+        }
+    }
+
+    fn dec(value: &str) -> Decimal {
+        value.parse().unwrap()
+    }
+
+    #[test]
+    fn startup_recovery_matches_open_order_by_scoped_non_empty_ids() {
+        let local = stored_order();
+        let open_order = broker_open_order();
+
+        assert!(broker_order_matches_local(&open_order, &local));
+    }
+
+    #[test]
+    fn startup_recovery_does_not_match_open_order_with_empty_ids() {
+        let mut local = stored_order();
+        local.client_order_id = "".to_string();
+        local.broker_order_id = None;
+        let mut open_order = broker_open_order();
+        open_order.client_order_id = "".to_string();
+
+        assert!(!broker_order_matches_local(&open_order, &local));
+    }
+
+    #[test]
+    fn startup_recovery_does_not_match_open_order_across_accounts() {
+        let local = stored_order();
+        let mut account_mismatch = broker_open_order();
+        account_mismatch.account_id = "DU999".to_string();
+
+        assert!(!broker_order_matches_local(&account_mismatch, &local));
+    }
+
+    #[test]
+    fn startup_recovery_matches_open_order_with_native_broker_symbol() {
+        let local = stored_order();
+        let mut native_symbol = broker_open_order();
+        native_symbol.symbol = "AAPL".to_string();
+
+        assert!(broker_order_matches_local(&native_symbol, &local));
+    }
+
+    #[test]
+    fn startup_recovery_matches_execution_by_scoped_non_empty_ids() {
+        let local = stored_order();
+        let execution = broker_execution();
+
+        assert!(broker_execution_matches_local(&execution, &local));
+    }
+
+    #[test]
+    fn startup_recovery_does_not_match_execution_with_empty_ids() {
+        let mut local = stored_order();
+        local.client_order_id = "".to_string();
+        local.broker_order_id = None;
+        let mut execution = broker_execution();
+        execution.client_order_id = Some("".to_string());
+
+        assert!(!broker_execution_matches_local(&execution, &local));
+    }
+
+    #[test]
+    fn startup_recovery_does_not_match_execution_across_accounts() {
+        let local = stored_order();
+        let mut account_mismatch = broker_execution();
+        account_mismatch.account_id = "DU999".to_string();
+
+        assert!(!broker_execution_matches_local(&account_mismatch, &local));
+    }
+
+    #[test]
+    fn startup_recovery_matches_execution_with_native_broker_symbol() {
+        let local = stored_order();
+        let mut native_symbol = broker_execution();
+        native_symbol.symbol = "AAPL".to_string();
+
+        assert!(broker_execution_matches_local(&native_symbol, &local));
+    }
 }

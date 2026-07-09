@@ -2838,6 +2838,59 @@ async fn lists_latest_reconciliation_audits_for_gate() {
 }
 
 #[tokio::test]
+async fn lists_reconciliation_audits_for_gate_since_window_start() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    db.insert_strategy_run(NewStrategyRun {
+        id: "run-a".to_string(),
+        name: "moving_average_cross".to_string(),
+        mode: "live".to_string(),
+        status: "running".to_string(),
+        started_at_ms: 1,
+        ended_at_ms: None,
+        error: None,
+        config_json: "{}".to_string(),
+    })
+    .await
+    .unwrap();
+
+    for (id, broker_kind, account_id, ts_ms, open_order_drift_count) in [
+        ("old-drift", "ibkr", "DU****91", 1000, 1),
+        ("recent-drift", "ibkr", "DU****91", 2000, 1),
+        ("recent-clean", "ibkr", "DU****91", 3000, 0),
+        ("other-account", "ibkr", "paper", 4000, 1),
+    ] {
+        db.record_reconciliation_audit(ReconciliationAuditCommand {
+            id: id.to_string(),
+            run_id: "run-a".to_string(),
+            account_id: account_id.to_string(),
+            broker_kind: broker_kind.to_string(),
+            ts_ms,
+            severity: "info".to_string(),
+            cash_drift_count: 0,
+            position_drift_count: 0,
+            open_order_drift_count,
+            execution_drift_count: 0,
+            stale_input_count: 0,
+            payload_json: "{}".to_string(),
+        })
+        .await
+        .unwrap();
+    }
+
+    let audits = db
+        .list_reconciliation_audits_for_gate_since("ibkr", "DU****91", 2000)
+        .await
+        .unwrap();
+
+    assert_eq!(audits.len(), 2);
+    assert_eq!(audits[0].id, "recent-clean");
+    assert_eq!(audits[1].id, "recent-drift");
+    assert_eq!(audits[1].open_order_drift_count, 1);
+}
+
+#[tokio::test]
 async fn system_log_batch_insert_count_search_and_offset_filters() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
