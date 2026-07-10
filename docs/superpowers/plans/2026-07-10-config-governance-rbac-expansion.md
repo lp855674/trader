@@ -117,10 +117,10 @@ New focused gates:
 - A storage-level `ConfigGovernancePolicy` readback surface that API/CLI can share.
 - Tests proving current staging/production role rules are represented as explicit policy, not only embedded errors.
 
-- [ ] Add failing storage tests for `config_governance_policy_returns_environment_rules`.
-- [ ] Define policy structs with environment, transition, required role, required approval count, and independent-actor requirement.
-- [ ] Implement a storage readback helper that returns rules for local, staging, and production.
-- [ ] Verify focused storage governance tests pass.
+- [x] Add failing storage tests for `config_governance_policy_returns_environment_rules`.
+- [x] Define policy structs with environment, transition, required role, required approval count, and independent-actor requirement.
+- [x] Implement a storage readback helper that returns rules for local, staging, and production.
+- [x] Verify focused storage governance tests pass.
 
 ## Task 2: Add Multi-Approver Queue Semantics
 
@@ -133,12 +133,12 @@ New focused gates:
 - Production config publish can require a deterministic local approval quorum.
 - Pending approvals can show how many approvals are present and how many are still required.
 
-- [ ] Add failing storage tests for production publish blocked with one approval when policy requires two approvers.
-- [ ] Add failing storage tests for publish success after two independent approvers.
-- [ ] Add migration support for per-approval records if current `approved_by` cannot represent the quorum without ambiguity.
-- [ ] Implement quorum-aware approval recording and publish enforcement.
-- [ ] Preserve existing single independent-approver behavior for environments whose policy requires only one approval.
-- [ ] Verify storage tests and migration boundary checks.
+- [x] Add failing storage tests for production publish blocked with one approval when policy requires two approvers.
+- [x] Add failing storage tests for publish success after two independent approvers.
+- [x] Add migration support for per-approval records if current `approved_by` cannot represent the quorum without ambiguity.
+- [x] Implement quorum-aware approval recording and publish enforcement.
+- [x] Preserve existing single independent-approver behavior for environments whose policy requires only one approval.
+- [x] Verify storage tests and migration boundary checks.
 
 ## Task 3: Expose Governance Policy And Queue Through API
 
@@ -151,11 +151,11 @@ New focused gates:
 - Pending approval responses include required role/count evidence.
 - State transitions return clear blocking errors when quorum is incomplete.
 
-- [ ] Add failing API tests for `GET /api/v1/config-governance/policy`.
-- [ ] Add failing API tests for pending approval queue fields `required_role`, `required_approvals`, and `approval_count`.
-- [ ] Add failing API tests for production publish blocked until quorum is met.
-- [ ] Implement API response structs and route wiring using storage policy helpers.
-- [ ] Verify focused API governance tests pass.
+- [x] Add failing API tests for `GET /api/v1/config-governance/policy`.
+- [x] Add failing API tests for pending approval queue fields `required_role`, `required_approvals`, and `approval_count`.
+- [x] Add failing API tests for production publish blocked until quorum is met.
+- [x] Implement API response structs and route wiring using storage policy helpers.
+- [x] Verify focused API governance tests pass.
 
 ## Task 4: Expose Governance Policy And Queue Through CLI
 
@@ -167,11 +167,11 @@ New focused gates:
 - Operators can inspect local governance policy from the CLI.
 - Pending approval CLI output includes enough information to act without checking source code.
 
-- [ ] Add failing CLI tests for `configs governance-policy`.
-- [ ] Add failing CLI tests for pending approval queue required role/count output.
-- [ ] Add failing CLI tests for quorum-blocked production publish and successful publish after independent approvals.
-- [ ] Implement CLI command and formatting using storage readback helpers.
-- [ ] Verify focused CLI config management tests pass.
+- [x] Add failing CLI tests for `configs governance-policy`.
+- [x] Add failing CLI tests for pending approval queue required role/count output.
+- [x] Add failing CLI tests for quorum-blocked production publish and successful publish after independent approvals.
+- [x] Implement CLI command and formatting using storage readback helpers.
+- [x] Verify focused CLI config management tests pass.
 
 ## Task 5: Update Operator Smoke And Docs
 
@@ -186,11 +186,11 @@ New focused gates:
 - Credential-free local smoke covers governance policy and queue readback.
 - Docs distinguish local RBAC/quorum governance from real authenticated production authorization.
 
-- [ ] Extend `ops-smoke.ps1` to call policy readback and assert queue fields.
-- [ ] Update roadmap and analysis docs with completed local governance scope and remaining identity limits.
-- [ ] Add results template for local governance verification.
-- [ ] Mark completed plan tasks with verification evidence.
-- [ ] Verify `ops-smoke.ps1` and docs-related boundary scripts.
+- [x] Extend `ops-smoke.ps1` to call policy readback and assert queue fields.
+- [x] Update roadmap and analysis docs with completed local governance scope and remaining identity limits.
+- [x] Add results template for local governance verification.
+- [x] Mark completed plan tasks with verification evidence.
+- [x] Verify `ops-smoke.ps1` and docs-related boundary scripts.
 
 ## Task 6: Full Verification And Commit
 
@@ -200,13 +200,13 @@ New focused gates:
 **Produces:**
 - Clean local verification and a focused commit that lands the config governance expansion.
 
-- [ ] Run `cargo fmt`.
-- [ ] Run focused storage/API/CLI governance tests.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`.
-- [ ] Run the three boundary scripts.
-- [ ] Commit only files related to this plan.
+- [x] Run `cargo fmt`.
+- [x] Run focused storage/API/CLI governance tests.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`.
+- [x] Run the three boundary scripts.
+- [x] Commit only files related to this plan.
 
 ---
 

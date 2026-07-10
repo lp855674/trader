@@ -1351,6 +1351,35 @@ async fn config_governance_routes_enforce_independent_production_approval() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(approved["approved_by"], "risk-owner");
 
+    let (status, _) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-risk/1/state",
+        serde_json::json!({
+            "new_state": "published",
+            "changed_by": "release",
+            "reason": "publish",
+            "ts_ms": 550
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, approved) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-risk/1/state",
+        serde_json::json!({
+            "new_state": "approved",
+            "changed_by": "compliance-owner",
+            "reason": "compliance approval",
+            "ts_ms": 575
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(approved["approved_by"], "compliance-owner");
+
     let (status, published) = request_json(
         app.clone(),
         "PUT",
@@ -1365,7 +1394,7 @@ async fn config_governance_routes_enforce_independent_production_approval() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(published["state"], "published");
-    assert_eq!(published["approved_by"], "risk-owner");
+    assert_eq!(published["approved_by"], "compliance-owner");
     assert_eq!(published["published_by"], "release");
 }
 
@@ -1393,6 +1422,17 @@ async fn config_governance_routes_enforce_roles_and_list_pending_approvals() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+
+    let policy = get_json(app.clone(), "/api/v1/config-governance/policy").await;
+    let production_publish_rule = policy["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["target_env"] == "production" && rule["transition_to"] == "published")
+        .unwrap();
+    assert_eq!(production_publish_rule["required_role"], "release_manager");
+    assert_eq!(production_publish_rule["required_approvals"], 2);
+    assert_eq!(production_publish_rule["requires_independent_actor"], true);
 
     let (status, _) = request_json(
         app.clone(),
@@ -1433,6 +1473,10 @@ async fn config_governance_routes_enforce_roles_and_list_pending_approvals() {
     assert_eq!(queue.as_array().unwrap().len(), 1);
     assert_eq!(queue[0]["name"], "prod-queue");
     assert_eq!(queue[0]["target_env"], "production");
+    assert_eq!(queue[0]["required_role"], "approver");
+    assert_eq!(queue[0]["required_approvals"], 2);
+    assert_eq!(queue[0]["approval_count"], 0);
+    assert_eq!(queue[0]["remaining_approvals"], 2);
 
     let (status, _) = request_json(
         app.clone(),
@@ -1464,6 +1508,54 @@ async fn config_governance_routes_enforce_roles_and_list_pending_approvals() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(approved["approved_by"], "risk-owner");
+
+    let queue = get_json(
+        app.clone(),
+        "/api/v1/config-approvals/pending?target_env=production",
+    )
+    .await;
+    assert_eq!(queue.as_array().unwrap().len(), 1);
+    assert_eq!(queue[0]["state"], "approved");
+    assert_eq!(queue[0]["approval_count"], 1);
+    assert_eq!(queue[0]["remaining_approvals"], 1);
+
+    let (status, _) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-queue/1/state",
+        serde_json::json!({
+            "new_state": "published",
+            "changed_by": "release",
+            "actor_role": "release_manager",
+            "reason": "publish",
+            "ts_ms": 550
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, approved) = request_json(
+        app.clone(),
+        "PUT",
+        "/api/v1/configs/prod-queue/1/state",
+        serde_json::json!({
+            "new_state": "approved",
+            "changed_by": "compliance-owner",
+            "actor_role": "approver",
+            "reason": "compliance approval",
+            "ts_ms": 575
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(approved["approved_by"], "compliance-owner");
+
+    let queue = get_json(
+        app.clone(),
+        "/api/v1/config-approvals/pending?target_env=production",
+    )
+    .await;
+    assert!(queue.as_array().unwrap().is_empty());
 
     let (status, _) = request_json(
         app.clone(),

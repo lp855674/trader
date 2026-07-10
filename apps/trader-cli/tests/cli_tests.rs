@@ -2881,7 +2881,7 @@ fn config_management_commands_enforce_production_governance() {
         .assert()
         .failure()
         .stderr(contains(
-            "production config publish requires independent approver",
+            "production config publish requires 2 approvals; found 0",
         ));
 
     let mut independent_approve = Command::cargo_bin("trader").unwrap();
@@ -2907,6 +2907,54 @@ fn config_management_commands_enforce_production_governance() {
         .success()
         .stdout(contains("approved_by=risk-owner"));
 
+    let mut missing_quorum_publish = Command::cargo_bin("trader").unwrap();
+    missing_quorum_publish
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "publish",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--reason",
+            "publish",
+            "--ts-ms",
+            "550",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "production config publish requires 2 approvals; found 1",
+        ));
+
+    let mut compliance_approve = Command::cargo_bin("trader").unwrap();
+    compliance_approve
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "approve",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-risk",
+            "--version",
+            "1",
+            "--changed-by",
+            "compliance-owner",
+            "--reason",
+            "compliance",
+            "--ts-ms",
+            "575",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("approved_by=compliance-owner"));
+
     let mut publish = Command::cargo_bin("trader").unwrap();
     publish
         .current_dir(workspace_root())
@@ -2929,7 +2977,7 @@ fn config_management_commands_enforce_production_governance() {
         .assert()
         .success()
         .stdout(contains("state=published"))
-        .stdout(contains("approved_by=risk-owner"))
+        .stdout(contains("approved_by=compliance-owner"))
         .stdout(contains("published_by=release"));
 
     std::fs::remove_file(config).unwrap();
@@ -2993,6 +3041,24 @@ fn config_management_commands_enforce_roles_and_print_pending_approvals() {
             "production config pending_review requires role release_manager",
         ));
 
+    let mut policy = Command::cargo_bin("trader").unwrap();
+    policy
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "governance-policy",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            "config_governance_policy: target_env=production transition_to=published",
+        ))
+        .stdout(contains("required_role=release_manager"))
+        .stdout(contains("required_approvals=2"))
+        .stdout(contains("requires_independent_actor=true"));
+
     let mut submit = Command::cargo_bin("trader").unwrap();
     submit
         .current_dir(workspace_root())
@@ -3033,7 +3099,11 @@ fn config_management_commands_enforce_roles_and_print_pending_approvals() {
         .success()
         .stdout(contains("config_approval: name=prod-queue version=1"))
         .stdout(contains("target_env=production"))
-        .stdout(contains("state=pending_review"));
+        .stdout(contains("state=pending_review"))
+        .stdout(contains("required_role=approver"))
+        .stdout(contains("required_approvals=2"))
+        .stdout(contains("approval_count=0"))
+        .stdout(contains("remaining_approvals=2"));
 
     let mut unauthorized_approve = Command::cargo_bin("trader").unwrap();
     unauthorized_approve
@@ -3086,6 +3156,75 @@ fn config_management_commands_enforce_roles_and_print_pending_approvals() {
         .assert()
         .success()
         .stdout(contains("approved_by=risk-owner"));
+
+    let mut pending = Command::cargo_bin("trader").unwrap();
+    pending
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "pending-approvals",
+            "--config",
+            config.to_str().unwrap(),
+            "--target-env",
+            "production",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("state=approved"))
+        .stdout(contains("approval_count=1"))
+        .stdout(contains("remaining_approvals=1"));
+
+    let mut missing_quorum_publish = Command::cargo_bin("trader").unwrap();
+    missing_quorum_publish
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "publish",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "release",
+            "--actor-role",
+            "release_manager",
+            "--reason",
+            "publish",
+            "--ts-ms",
+            "550",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "production config publish requires 2 approvals; found 1",
+        ));
+
+    let mut approve = Command::cargo_bin("trader").unwrap();
+    approve
+        .current_dir(workspace_root())
+        .args([
+            "configs",
+            "approve",
+            "--config",
+            config.to_str().unwrap(),
+            "--name",
+            "prod-queue",
+            "--version",
+            "1",
+            "--changed-by",
+            "compliance-owner",
+            "--actor-role",
+            "approver",
+            "--reason",
+            "compliance approval",
+            "--ts-ms",
+            "575",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("approved_by=compliance-owner"));
 
     let mut publish = Command::cargo_bin("trader").unwrap();
     publish

@@ -14,6 +14,7 @@ $stderrPath = Join-Path $env:TEMP "trader-ops-server-$id.err.log"
 $databaseUrl = "sqlite://$($databasePath.Replace('\', '/'))"
 $runId = "ops-live-$id"
 $approvalConfigName = "ops-approval-$id"
+$productionApprovalConfigName = "ops-production-approval-$id"
 $targetDir = $env:TRADER_SMOKE_TARGET_DIR
 $targetRoot = if ($targetDir) { $targetDir } else { Join-Path $repoRoot "target" }
 $traderExe = Join-Path $targetRoot "debug/trader.exe"
@@ -194,6 +195,13 @@ try {
     Assert-True ($apiAlertDeliverySummary.delivery_count -ge 1) "expected API reconciliation alert delivery summary"
     Assert-True ($apiConfigVersion.run_id -eq $runId) "expected API config version run id"
 
+    $apiGovernancePolicy = Invoke-RestMethod "$baseUrl/api/v1/config-governance/policy"
+    $productionPublishRule = @($apiGovernancePolicy.rules | Where-Object { $_.target_env -eq "production" -and $_.transition_to -eq "published" })
+    Assert-True (@($productionPublishRule).Count -eq 1) "expected API production publish governance policy"
+    Assert-True ($productionPublishRule[0].required_role -eq "release_manager") "expected API production publish role"
+    Assert-True ($productionPublishRule[0].required_approvals -eq 2) "expected API production publish approval quorum"
+    Assert-True ($productionPublishRule[0].requires_independent_actor -eq $true) "expected API production publish independent actor requirement"
+
     $cliCash = Invoke-CheckedTrader @("snapshots", "cash", "--config", $configPath, "--run-id", $runId, "--currency", "USD") 2>&1 | Out-String
     $cliPositions = Invoke-CheckedTrader @("snapshots", "positions", "--config", $configPath, "--run-id", $runId, "--symbol", "CRYPTO:BINANCE:BTCUSDT_PERP:CRYPTO_PERP", "--position-side", "long") 2>&1 | Out-String
     $cliReconciliation = Invoke-CheckedTrader @("reconciliation", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
@@ -201,6 +209,7 @@ try {
     $cliAlertDeliverySummary = Invoke-CheckedTrader @("reconciliation-alert-deliveries-summary", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
     $cliLogs = Invoke-CheckedTrader @("logs", "list", "--config", $configPath, "--run-id", $runId, "--target", "runtime.broker_snapshot") 2>&1 | Out-String
     $cliConfigVersion = Invoke-CheckedTrader @("runs", "config-version", "--config", $configPath, "--run-id", $runId) 2>&1 | Out-String
+    $cliGovernancePolicy = Invoke-CheckedTrader @("configs", "governance-policy", "--config", $configPath) 2>&1 | Out-String
 
     Assert-True ($cliCash.Contains("cash_snapshot: run_id=$runId")) "expected CLI cash snapshot"
     Assert-True ($cliPositions.Contains("position_snapshot: run_id=$runId")) "expected CLI position snapshot"
@@ -212,6 +221,9 @@ try {
     Assert-True ($cliLogs.Contains("system_log: run_id=$runId")) "expected CLI system log"
     Assert-True ($cliConfigVersion.Contains("run_config_version: run_id=$runId")) "expected CLI config version binding"
     Assert-True (-not $cliConfigVersion.Contains("status=missing")) "expected bound CLI config version"
+    Assert-True ($cliGovernancePolicy.Contains("config_governance_policy: target_env=production transition_to=published")) "expected CLI production governance policy"
+    Assert-True ($cliGovernancePolicy.Contains("required_approvals=2")) "expected CLI production governance quorum"
+    Assert-True ($cliGovernancePolicy.Contains("requires_independent_actor=true")) "expected CLI production independent actor policy"
 
     $createdApprovalConfig = Invoke-RestMethod `
         -Method Post `
@@ -249,10 +261,18 @@ try {
     $apiPendingApprovals = Wait-ApiArray "$baseUrl/api/v1/config-approvals/pending?target_env=staging" "API pending approvals"
     $matchingApiApprovals = @($apiPendingApprovals | Where-Object { $_.name -eq $approvalConfigName })
     Assert-True (@($matchingApiApprovals).Count -eq 1) "expected API pending approval queue entry"
+    Assert-True ($matchingApiApprovals[0].required_role -eq "approver") "expected API staging approval role"
+    Assert-True ($matchingApiApprovals[0].required_approvals -eq 1) "expected API staging approval count"
+    Assert-True ($matchingApiApprovals[0].approval_count -eq 0) "expected API staging approval count before approval"
+    Assert-True ($matchingApiApprovals[0].remaining_approvals -eq 1) "expected API staging remaining approval count"
 
     $cliPendingApprovals = Invoke-CheckedTrader @("configs", "pending-approvals", "--config", $configPath, "--target-env", "staging") 2>&1 | Out-String
     Assert-True ($cliPendingApprovals.Contains("config_approval: name=$approvalConfigName version=1")) "expected CLI pending approval entry"
     Assert-True ($cliPendingApprovals.Contains("target_env=staging")) "expected CLI pending approval target env"
+    Assert-True ($cliPendingApprovals.Contains("required_role=approver")) "expected CLI pending approval role"
+    Assert-True ($cliPendingApprovals.Contains("required_approvals=1")) "expected CLI pending approval required count"
+    Assert-True ($cliPendingApprovals.Contains("approval_count=0")) "expected CLI pending approval count"
+    Assert-True ($cliPendingApprovals.Contains("remaining_approvals=1")) "expected CLI pending remaining count"
 
     $approvedApprovalConfig = Invoke-RestMethod `
         -Method Put `
@@ -311,6 +331,109 @@ try {
     Assert-True ($cliReleases.Contains("config_release: config_id=$approvalConfigId version=1 status=published")) "expected CLI published release"
     Assert-True ($cliAudits.Contains("config_audit: config_id=$approvalConfigId version=1 action=state_changed")) "expected CLI config audit"
 
+    $createdProductionConfig = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$baseUrl/api/v1/configs" `
+        -ContentType "application/json" `
+        -Body (@{
+            name = $productionApprovalConfigName
+            content = @{
+                risk = @{
+                    max_order_notional = "2000"
+                }
+            }
+            created_by = "release"
+            target_env = "production"
+            rollout = "ops-smoke-production"
+            ts_ms = 1200
+        } | ConvertTo-Json -Depth 5)
+    Assert-True ($createdProductionConfig.name -eq $productionApprovalConfigName) "expected production approval config"
+
+    $productionPendingConfig = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$productionApprovalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "pending_review"
+            changed_by = "release"
+            actor_role = "release_manager"
+            reason = "ops smoke production approval queue"
+            ts_ms = 1300
+        } | ConvertTo-Json)
+    Assert-True ($productionPendingConfig.state -eq "pending_review") "expected production pending state"
+
+    $productionApprovalOne = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$productionApprovalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "approved"
+            changed_by = "risk-owner"
+            actor_role = "approver"
+            reason = "ops smoke production first approval"
+            ts_ms = 1400
+        } | ConvertTo-Json)
+    Assert-True ($productionApprovalOne.state -eq "approved") "expected production approved state after first approval"
+
+    $productionPendingApprovals = Wait-ApiArray "$baseUrl/api/v1/config-approvals/pending?target_env=production" "API production pending approvals"
+    $matchingProductionApprovals = @($productionPendingApprovals | Where-Object { $_.name -eq $productionApprovalConfigName })
+    Assert-True (@($matchingProductionApprovals).Count -eq 1) "expected production approval queue entry after first approval"
+    Assert-True ($matchingProductionApprovals[0].required_role -eq "approver") "expected production approval role"
+    Assert-True ($matchingProductionApprovals[0].required_approvals -eq 2) "expected production approval quorum"
+    Assert-True ($matchingProductionApprovals[0].approval_count -eq 1) "expected one production approval"
+    Assert-True ($matchingProductionApprovals[0].remaining_approvals -eq 1) "expected one remaining production approval"
+
+    $cliProductionApprovals = Invoke-CheckedTrader @("configs", "pending-approvals", "--config", $configPath, "--target-env", "production") 2>&1 | Out-String
+    Assert-True ($cliProductionApprovals.Contains("config_approval: name=$productionApprovalConfigName version=1")) "expected CLI production approval entry"
+    Assert-True ($cliProductionApprovals.Contains("required_approvals=2")) "expected CLI production approval quorum"
+    Assert-True ($cliProductionApprovals.Contains("approval_count=1")) "expected CLI production approval count"
+    Assert-True ($cliProductionApprovals.Contains("remaining_approvals=1")) "expected CLI production remaining count"
+
+    $publishBlocked = $false
+    try {
+        Invoke-RestMethod `
+            -Method Put `
+            -Uri "$baseUrl/api/v1/configs/$productionApprovalConfigName/1/state" `
+            -ContentType "application/json" `
+            -Body (@{
+                new_state = "published"
+                changed_by = "release"
+                actor_role = "release_manager"
+                reason = "ops smoke production blocked publish"
+                ts_ms = 1500
+            } | ConvertTo-Json) | Out-Null
+    } catch {
+        $publishError = "$($_.Exception.Message) $($_.ErrorDetails.Message)"
+        $publishBlocked = $publishError.Contains("production config publish requires 2 approvals")
+    }
+    Assert-True ($publishBlocked) "expected production publish to block until approval quorum"
+
+    $productionApprovalTwo = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$productionApprovalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "approved"
+            changed_by = "compliance-owner"
+            actor_role = "approver"
+            reason = "ops smoke production second approval"
+            ts_ms = 1600
+        } | ConvertTo-Json)
+    Assert-True ($productionApprovalTwo.state -eq "approved") "expected production approved state after second approval"
+
+    $productionPublishedConfig = Invoke-RestMethod `
+        -Method Put `
+        -Uri "$baseUrl/api/v1/configs/$productionApprovalConfigName/1/state" `
+        -ContentType "application/json" `
+        -Body (@{
+            new_state = "published"
+            changed_by = "release"
+            actor_role = "release_manager"
+            reason = "ops smoke production publish"
+            ts_ms = 1700
+        } | ConvertTo-Json)
+    Assert-True ($productionPublishedConfig.state -eq "published") "expected production publish after approval quorum"
+
     $stopped = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs/$runId/stop"
     Assert-True ($stopped.status -eq "stopped") "expected live stopped"
     Assert-True (Test-Path $alertFilePath) "expected alert sink file"
@@ -363,6 +486,11 @@ try {
         approval_config = $approvalConfigName
         api_pending_approvals = @($matchingApiApprovals).Count
         approval_state = $publishedApprovalConfig.state
+        production_approval_config = $productionApprovalConfigName
+        production_required_approvals = $matchingProductionApprovals[0].required_approvals
+        production_approval_count_after_first_approval = $matchingProductionApprovals[0].approval_count
+        production_publish_blocked_before_quorum = $publishBlocked
+        production_approval_state = $productionPublishedConfig.state
         api_config_releases = @($apiConfigReleases).Count
         api_config_audits = @($apiConfigAudits).Count
         broker_agnostic_snapshot_smoke = "passed"

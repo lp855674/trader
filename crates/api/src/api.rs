@@ -756,6 +756,16 @@ struct ConfigVersionResponse {
 }
 
 #[derive(Serialize)]
+struct ConfigApprovalQueueEntryResponse {
+    #[serde(flatten)]
+    config: ConfigVersionResponse,
+    required_role: String,
+    required_approvals: u32,
+    approval_count: u32,
+    remaining_approvals: u32,
+}
+
+#[derive(Serialize)]
 struct SystemLogResponse {
     id: String,
     run_id: Option<String>,
@@ -876,6 +886,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/config-approvals/pending",
             get(list_pending_config_approvals),
+        )
+        .route(
+            "/api/v1/config-governance/policy",
+            get(get_config_governance_policy),
         )
         .route("/api/v1/logs", get(list_logs))
         .route("/api/v1/system-logs", get(list_system_logs))
@@ -2697,15 +2711,21 @@ async fn update_config_state(
 async fn list_pending_config_approvals(
     State(state): State<AppState>,
     Query(query): Query<PendingConfigApprovalsQuery>,
-) -> Result<Json<Vec<ConfigVersionResponse>>, ApiError> {
+) -> Result<Json<Vec<ConfigApprovalQueueEntryResponse>>, ApiError> {
     let approvals = state
         .db
-        .list_pending_config_approvals(query.target_env.as_deref())
+        .list_config_approval_queue(query.target_env.as_deref())
         .await?
         .into_iter()
-        .map(config_version_response)
+        .map(config_approval_queue_entry_response)
         .collect();
     Ok(Json(approvals))
+}
+
+async fn get_config_governance_policy(
+    State(state): State<AppState>,
+) -> Json<storage::ConfigGovernancePolicy> {
+    Json(state.db.list_config_governance_policy())
 }
 
 async fn diff_config_versions(
@@ -3606,6 +3626,18 @@ fn config_version_response(config: storage::ConfigVersion) -> ConfigVersionRespo
         approved_at_ms: config.approved_at_ms,
         published_by: config.published_by,
         published_at_ms: config.published_at_ms,
+    }
+}
+
+fn config_approval_queue_entry_response(
+    entry: storage::ConfigApprovalQueueEntry,
+) -> ConfigApprovalQueueEntryResponse {
+    ConfigApprovalQueueEntryResponse {
+        config: config_version_response(entry.config),
+        required_role: entry.required_role,
+        required_approvals: entry.required_approvals,
+        approval_count: entry.approval_count,
+        remaining_approvals: entry.remaining_approvals,
     }
 }
 

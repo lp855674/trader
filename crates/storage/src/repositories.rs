@@ -687,14 +687,17 @@ pub enum ConfigActorRole {
 }
 
 impl ConfigActorRole {
-    fn can_transition_governed_env(self, next: ConfigState) -> bool {
-        match next {
-            ConfigState::PendingReview | ConfigState::Published | ConfigState::Archived => {
-                self == Self::ReleaseManager
-            }
-            ConfigState::Approved => self == Self::Approver,
-            ConfigState::Draft => false,
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ReleaseManager => "release_manager",
+            Self::Approver => "approver",
+            Self::Viewer => "viewer",
+            Self::Unknown => "unknown",
         }
+    }
+
+    fn can_satisfy(self, required_role: &str) -> bool {
+        self.as_str() == required_role
     }
 }
 
@@ -750,6 +753,20 @@ impl FromStr for ConfigState {
             ))),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigGovernanceRule {
+    pub target_env: String,
+    pub transition_to: ConfigState,
+    pub required_role: String,
+    pub required_approvals: u32,
+    pub requires_independent_actor: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigGovernancePolicy {
+    pub rules: Vec<ConfigGovernanceRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -847,6 +864,27 @@ pub struct StoredConfigAudit {
     pub actor: Option<String>,
     pub reason: Option<String>,
     pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigApprovalRecord {
+    pub id: String,
+    pub config_id: String,
+    pub version: String,
+    pub target_env: Option<String>,
+    pub approved_by: String,
+    pub approved_at_ms: i64,
+    pub actor_role: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConfigApprovalQueueEntry {
+    pub config: ConfigVersion,
+    pub required_role: String,
+    pub required_approvals: u32,
+    pub approval_count: u32,
+    pub remaining_approvals: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -4298,6 +4336,81 @@ impl Db {
         rows.into_iter().map(config_version_from_row).collect()
     }
 
+    pub fn list_config_governance_policy(&self) -> ConfigGovernancePolicy {
+        ConfigGovernancePolicy {
+            rules: config_governance_policy_rules(),
+        }
+    }
+
+    pub async fn list_config_approval_queue(
+        &self,
+        target_env: Option<&str>,
+    ) -> StorageResult<Vec<ConfigApprovalQueueEntry>> {
+        let mut query_builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT
+                id, name, lifecycle_version, content, state, parent_version,
+                created_by, created_at, state_changed_at, state_changed_by,
+                state_change_reason, target_env, rollout, approved_by, approved_at,
+                published_by, published_at
+            FROM configs
+            WHERE lifecycle_version IS NOT NULL
+                AND state IN (
+            "#,
+        );
+        query_builder.push_bind(ConfigState::PendingReview.as_str());
+        query_builder.push(", ");
+        query_builder.push_bind(ConfigState::Approved.as_str());
+        query_builder.push(")");
+        if let Some(target_env) = target_env {
+            query_builder.push(" AND target_env = ");
+            query_builder.push_bind(target_env);
+        }
+        query_builder.push(" ORDER BY state_changed_at ASC, lifecycle_version ASC");
+
+        let rows = query_builder
+            .build_query_as::<ConfigVersionRow>()
+            .fetch_all(self.pool())
+            .await?;
+        let configs = rows
+            .into_iter()
+            .map(config_version_from_row)
+            .collect::<StorageResult<Vec<_>>>()?;
+        let mut entries = Vec::new();
+        for config in configs {
+            let Some(target_env) = config_policy_environment(config.target_env.as_deref()) else {
+                continue;
+            };
+            let Some(approval_rule) = config_governance_rule(target_env, ConfigState::Approved)
+            else {
+                continue;
+            };
+            let Some(publish_rule) = config_governance_rule(target_env, ConfigState::Published)
+            else {
+                continue;
+            };
+            let approval_count = self
+                .count_config_approvals(&config.id, &config.version.to_string(), None)
+                .await?;
+            if config.state == ConfigState::Approved
+                && approval_count >= publish_rule.required_approvals
+            {
+                continue;
+            }
+            entries.push(ConfigApprovalQueueEntry {
+                config,
+                required_role: approval_rule.required_role,
+                required_approvals: publish_rule.required_approvals,
+                approval_count,
+                remaining_approvals: publish_rule
+                    .required_approvals
+                    .saturating_sub(approval_count),
+            });
+        }
+
+        Ok(entries)
+    }
+
     pub async fn update_config_state_with_policy(
         &self,
         name: &str,
@@ -4315,16 +4428,30 @@ impl Db {
         };
         let role = ConfigActorRole::from_str(actor_role)?;
         if let Some(target_env) = config_policy_environment(current.target_env.as_deref()) {
-            if !role.can_transition_governed_env(new_state) {
+            let Some(rule) = config_governance_rule(target_env, new_state) else {
+                return Err(StorageError::Protocol(format!(
+                    "{target_env} config {} is not governed by policy",
+                    new_state.as_str()
+                )));
+            };
+            if !role.can_satisfy(&rule.required_role) {
                 return Err(StorageError::Protocol(format!(
                     "{target_env} config {} requires role {}",
                     new_state.as_str(),
-                    required_config_role(new_state)
+                    rule.required_role
                 )));
             }
         }
-        self.update_config_state(name, version, new_state, changed_by, reason, ts_ms)
-            .await
+        self.update_config_state_inner(
+            name,
+            version,
+            new_state,
+            changed_by,
+            Some(role.as_str()),
+            reason,
+            ts_ms,
+        )
+        .await
     }
 
     pub async fn update_config_state(
@@ -4333,6 +4460,20 @@ impl Db {
         version: u32,
         new_state: ConfigState,
         changed_by: &str,
+        reason: Option<&str>,
+        ts_ms: i64,
+    ) -> StorageResult<()> {
+        self.update_config_state_inner(name, version, new_state, changed_by, None, reason, ts_ms)
+            .await
+    }
+
+    async fn update_config_state_inner(
+        &self,
+        name: &str,
+        version: u32,
+        new_state: ConfigState,
+        changed_by: &str,
+        actor_role: Option<&str>,
         reason: Option<&str>,
         ts_ms: i64,
     ) -> StorageResult<()> {
@@ -4356,15 +4497,26 @@ impl Db {
         if new_state == ConfigState::Published
             && current.target_env.as_deref() == Some("production")
         {
-            let Some(approved_by) = current.approved_by.as_deref() else {
-                return Err(StorageError::Protocol(
-                    "production config publish requires approval".to_string(),
-                ));
-            };
-            if approved_by == changed_by {
-                return Err(StorageError::Protocol(
-                    "production config publish requires independent approver".to_string(),
-                ));
+            let publish_rule = config_governance_rule("production", ConfigState::Published)
+                .ok_or_else(|| {
+                    StorageError::Protocol(
+                        "production config publish policy is missing".to_string(),
+                    )
+                })?;
+            let approval_count = self
+                .count_config_approvals(
+                    &current.id,
+                    &version.to_string(),
+                    publish_rule
+                        .requires_independent_actor
+                        .then_some(changed_by),
+                )
+                .await?;
+            if approval_count < publish_rule.required_approvals {
+                return Err(StorageError::Protocol(format!(
+                    "production config publish requires {} approvals; found {}",
+                    publish_rule.required_approvals, approval_count
+                )));
             }
         }
 
@@ -4398,6 +4550,18 @@ impl Db {
         .bind(i64::from(version))
         .execute(self.pool())
         .await?;
+
+        if new_state == ConfigState::Approved {
+            self.record_config_approval(
+                &current,
+                version,
+                changed_by,
+                actor_role.unwrap_or("approver"),
+                reason,
+                ts_ms,
+            )
+            .await?;
+        }
 
         self.record_config_release(ConfigReleaseCommand {
             config_id: current.id.clone(),
@@ -4744,6 +4908,141 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    async fn record_config_approval(
+        &self,
+        config: &ConfigVersion,
+        version: u32,
+        approved_by: &str,
+        actor_role: &str,
+        reason: Option<&str>,
+        ts_ms: i64,
+    ) -> StorageResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO config_approvals (
+                id, config_id, version, target_env, approved_by,
+                approved_at, actor_role, reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(config_id, version, approved_by) DO UPDATE SET
+                target_env = excluded.target_env,
+                approved_at = excluded.approved_at,
+                actor_role = excluded.actor_role,
+                reason = excluded.reason
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&config.id)
+        .bind(version.to_string())
+        .bind(config.target_env.as_deref())
+        .bind(approved_by)
+        .bind(ts_ms)
+        .bind(actor_role)
+        .bind(reason)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn count_config_approvals(
+        &self,
+        config_id: &str,
+        version: &str,
+        excluding_actor: Option<&str>,
+    ) -> StorageResult<u32> {
+        let count = if let Some(excluding_actor) = excluding_actor {
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*)
+                FROM config_approvals
+                WHERE config_id = ? AND version = ? AND approved_by != ?
+                "#,
+            )
+            .bind(config_id)
+            .bind(version)
+            .bind(excluding_actor)
+            .fetch_one(self.pool())
+            .await?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*)
+                FROM config_approvals
+                WHERE config_id = ? AND version = ?
+                "#,
+            )
+            .bind(config_id)
+            .bind(version)
+            .fetch_one(self.pool())
+            .await?
+        };
+
+        u32::try_from(count)
+            .map_err(|error| StorageError::Protocol(format!("invalid approval count: {error}")))
+    }
+
+    pub async fn list_config_approvals(
+        &self,
+        name: &str,
+        version: u32,
+    ) -> StorageResult<Vec<ConfigApprovalRecord>> {
+        let Some(config) = self.get_config(name, version).await? else {
+            return Err(StorageError::Protocol(format!(
+                "config version {name}:{version} does not exist"
+            )));
+        };
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                i64,
+                String,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT id, config_id, version, target_env, approved_by,
+                approved_at, actor_role, reason
+            FROM config_approvals
+            WHERE config_id = ? AND version = ?
+            ORDER BY approved_at ASC, approved_by ASC
+            "#,
+        )
+        .bind(config.id)
+        .bind(version.to_string())
+        .fetch_all(self.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    config_id,
+                    version,
+                    target_env,
+                    approved_by,
+                    approved_at_ms,
+                    actor_role,
+                    reason,
+                )| ConfigApprovalRecord {
+                    id,
+                    config_id,
+                    version,
+                    target_env,
+                    approved_by,
+                    approved_at_ms,
+                    actor_role,
+                    reason,
+                },
+            )
+            .collect())
     }
 
     pub async fn list_config_audits(
@@ -6947,22 +7246,60 @@ fn config_version_id(name: &str, version: u32) -> String {
     format!("config:{name}:v{version}")
 }
 
-fn required_config_role(state: ConfigState) -> &'static str {
-    match state {
-        ConfigState::PendingReview | ConfigState::Published | ConfigState::Archived => {
-            "release_manager"
-        }
-        ConfigState::Approved => "approver",
-        ConfigState::Draft => "none",
-    }
-}
-
 fn config_policy_environment(target_env: Option<&str>) -> Option<&str> {
     match target_env {
         Some("staging") => Some("staging"),
         Some("production") => Some("production"),
         _ => None,
     }
+}
+
+fn config_governance_policy_rules() -> Vec<ConfigGovernanceRule> {
+    ["staging", "production"]
+        .into_iter()
+        .flat_map(|target_env| {
+            let publish_requires_independent_actor = target_env == "production";
+            [
+                ConfigGovernanceRule {
+                    target_env: target_env.to_string(),
+                    transition_to: ConfigState::PendingReview,
+                    required_role: "release_manager".to_string(),
+                    required_approvals: 0,
+                    requires_independent_actor: false,
+                },
+                ConfigGovernanceRule {
+                    target_env: target_env.to_string(),
+                    transition_to: ConfigState::Approved,
+                    required_role: "approver".to_string(),
+                    required_approvals: 1,
+                    requires_independent_actor: false,
+                },
+                ConfigGovernanceRule {
+                    target_env: target_env.to_string(),
+                    transition_to: ConfigState::Published,
+                    required_role: "release_manager".to_string(),
+                    required_approvals: if target_env == "production" { 2 } else { 1 },
+                    requires_independent_actor: publish_requires_independent_actor,
+                },
+                ConfigGovernanceRule {
+                    target_env: target_env.to_string(),
+                    transition_to: ConfigState::Archived,
+                    required_role: "release_manager".to_string(),
+                    required_approvals: 0,
+                    requires_independent_actor: false,
+                },
+            ]
+        })
+        .collect()
+}
+
+fn config_governance_rule(
+    target_env: &str,
+    transition_to: ConfigState,
+) -> Option<ConfigGovernanceRule> {
+    config_governance_policy_rules()
+        .into_iter()
+        .find(|rule| rule.target_env == target_env && rule.transition_to == transition_to)
 }
 
 fn config_version_from_row(row: ConfigVersionRow) -> StorageResult<ConfigVersion> {

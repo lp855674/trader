@@ -629,6 +629,28 @@ async fn production_config_publish_requires_independent_approval() {
     )
     .await
     .unwrap();
+    let single_approval_publish = db
+        .update_config_state(
+            "prod-risk",
+            1,
+            ConfigState::Published,
+            "release",
+            Some("publish production"),
+            550,
+        )
+        .await;
+    assert!(single_approval_publish.is_err());
+
+    db.update_config_state(
+        "prod-risk",
+        1,
+        ConfigState::Approved,
+        "compliance-owner",
+        Some("compliance approval"),
+        575,
+    )
+    .await
+    .unwrap();
     db.update_config_state(
         "prod-risk",
         1,
@@ -644,8 +666,17 @@ async fn production_config_publish_requires_independent_approval() {
     assert_eq!(config.state, ConfigState::Published);
     assert_eq!(config.target_env.as_deref(), Some("production"));
     assert_eq!(config.rollout.as_deref(), Some("canary"));
-    assert_eq!(config.approved_by.as_deref(), Some("risk-owner"));
+    assert_eq!(config.approved_by.as_deref(), Some("compliance-owner"));
     assert_eq!(config.published_by.as_deref(), Some("release"));
+
+    let approvals = db.list_config_approvals("prod-risk", 1).await.unwrap();
+    assert_eq!(
+        approvals
+            .iter()
+            .map(|approval| approval.approved_by.as_str())
+            .collect::<Vec<_>>(),
+        vec!["release", "risk-owner", "compliance-owner"]
+    );
 
     let events = db.list_events_by_source(&config.id).await.unwrap();
     let publish_event = events
@@ -655,8 +686,61 @@ async fn production_config_publish_requires_independent_approval() {
     let payload: serde_json::Value = serde_json::from_str(&publish_event.payload_json).unwrap();
     assert_eq!(payload["target_env"], "production");
     assert_eq!(payload["rollout"], "canary");
-    assert_eq!(payload["approved_by"], "risk-owner");
+    assert_eq!(payload["approved_by"], "compliance-owner");
     assert_eq!(payload["published_by"], "release");
+}
+
+#[tokio::test]
+async fn config_governance_policy_returns_environment_rules() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+
+    let policy = db.list_config_governance_policy();
+    let rules = policy
+        .rules
+        .iter()
+        .map(|rule| {
+            (
+                rule.target_env.as_str(),
+                rule.transition_to,
+                rule.required_role.as_str(),
+                rule.required_approvals,
+                rule.requires_independent_actor,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(rules.len(), 8);
+    assert!(rules.contains(&(
+        "staging",
+        ConfigState::PendingReview,
+        "release_manager",
+        0,
+        false
+    )));
+    assert!(rules.contains(&("staging", ConfigState::Approved, "approver", 1, false)));
+    assert!(rules.contains(&(
+        "staging",
+        ConfigState::Published,
+        "release_manager",
+        1,
+        false
+    )));
+    assert!(rules.contains(&(
+        "production",
+        ConfigState::PendingReview,
+        "release_manager",
+        0,
+        false
+    )));
+    assert!(rules.contains(&("production", ConfigState::Approved, "approver", 1, false)));
+    assert!(rules.contains(&(
+        "production",
+        ConfigState::Published,
+        "release_manager",
+        2,
+        true
+    )));
 }
 
 #[tokio::test]
@@ -710,6 +794,17 @@ async fn production_config_policy_requires_roles_and_lists_pending_queue() {
     assert_eq!(pending[0].state, ConfigState::PendingReview);
     assert_eq!(pending[0].target_env.as_deref(), Some("production"));
 
+    let approval_queue = db
+        .list_config_approval_queue(Some("production"))
+        .await
+        .unwrap();
+    assert_eq!(approval_queue.len(), 1);
+    assert_eq!(approval_queue[0].config.name, "prod-queue");
+    assert_eq!(approval_queue[0].required_role, "approver");
+    assert_eq!(approval_queue[0].required_approvals, 2);
+    assert_eq!(approval_queue[0].approval_count, 0);
+    assert_eq!(approval_queue[0].remaining_approvals, 2);
+
     let unauthorized_approve = db
         .update_config_state_with_policy(
             "prod-queue",
@@ -734,6 +829,47 @@ async fn production_config_policy_requires_roles_and_lists_pending_queue() {
     )
     .await
     .unwrap();
+
+    let approval_queue = db
+        .list_config_approval_queue(Some("production"))
+        .await
+        .unwrap();
+    assert_eq!(approval_queue.len(), 1);
+    assert_eq!(approval_queue[0].config.state, ConfigState::Approved);
+    assert_eq!(approval_queue[0].approval_count, 1);
+    assert_eq!(approval_queue[0].remaining_approvals, 1);
+
+    let missing_quorum_publish = db
+        .update_config_state_with_policy(
+            "prod-queue",
+            1,
+            ConfigState::Published,
+            "release",
+            "release_manager",
+            Some("publish"),
+            550,
+        )
+        .await;
+    assert!(missing_quorum_publish.is_err());
+
+    db.update_config_state_with_policy(
+        "prod-queue",
+        1,
+        ConfigState::Approved,
+        "compliance-owner",
+        "approver",
+        Some("compliance approval"),
+        575,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        db.list_config_approval_queue(Some("production"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     let unauthorized_publish = db
         .update_config_state_with_policy(
@@ -762,8 +898,13 @@ async fn production_config_policy_requires_roles_and_lists_pending_queue() {
 
     let published = db.get_config("prod-queue", 1).await.unwrap().unwrap();
     assert_eq!(published.state, ConfigState::Published);
-    assert_eq!(published.approved_by.as_deref(), Some("risk-owner"));
+    assert_eq!(published.approved_by.as_deref(), Some("compliance-owner"));
     assert_eq!(published.published_by.as_deref(), Some("release"));
+
+    let approvals = db.list_config_approvals("prod-queue", 1).await.unwrap();
+    assert_eq!(approvals.len(), 2);
+    assert_eq!(approvals[0].approved_by, "risk-owner");
+    assert_eq!(approvals[1].approved_by, "compliance-owner");
 }
 
 #[tokio::test]

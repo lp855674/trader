@@ -640,6 +640,10 @@ enum ConfigsCommand {
         #[arg(long)]
         target_env: Option<String>,
     },
+    GovernancePolicy {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+    },
     Releases {
         #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
         config: String,
@@ -2151,19 +2155,33 @@ async fn run_command(command: Command) -> Result<()> {
             }
             ConfigsCommand::PendingApprovals { config, target_env } => {
                 let (_, db) = load_db(&config).await?;
-                for approval in db
-                    .list_pending_config_approvals(target_env.as_deref())
-                    .await?
-                {
+                for approval in db.list_config_approval_queue(target_env.as_deref()).await? {
                     println!(
-                        "config_approval: name={} version={} state={} target_env={} rollout={} changed_by={} changed_at_ms={}",
-                        approval.name,
-                        approval.version,
-                        approval.state.as_str(),
-                        approval.target_env.as_deref().unwrap_or(""),
-                        approval.rollout.as_deref().unwrap_or(""),
-                        approval.state_changed_by,
-                        approval.state_changed_at_ms
+                        "config_approval: name={} version={} state={} target_env={} rollout={} required_role={} required_approvals={} approval_count={} remaining_approvals={} changed_by={} changed_at_ms={}",
+                        approval.config.name,
+                        approval.config.version,
+                        approval.config.state.as_str(),
+                        approval.config.target_env.as_deref().unwrap_or(""),
+                        approval.config.rollout.as_deref().unwrap_or(""),
+                        approval.required_role,
+                        approval.required_approvals,
+                        approval.approval_count,
+                        approval.remaining_approvals,
+                        approval.config.state_changed_by,
+                        approval.config.state_changed_at_ms
+                    );
+                }
+            }
+            ConfigsCommand::GovernancePolicy { config } => {
+                let (_, db) = load_db(&config).await?;
+                for rule in db.list_config_governance_policy().rules {
+                    println!(
+                        "config_governance_policy: target_env={} transition_to={} required_role={} required_approvals={} requires_independent_actor={}",
+                        rule.target_env,
+                        rule.transition_to.as_str(),
+                        rule.required_role,
+                        rule.required_approvals,
+                        rule.requires_independent_actor
                     );
                 }
             }

@@ -117,6 +117,7 @@ impl Db {
         self.ensure_fee_rule_columns().await?;
         self.ensure_strategy_runs_error_column().await?;
         self.ensure_production_reconciliation_columns().await?;
+        self.ensure_config_approvals_table().await?;
         Ok(())
     }
 
@@ -189,6 +190,15 @@ impl Db {
         {
             return Err(error.into());
         }
+        Ok(())
+    }
+
+    async fn ensure_config_approvals_table(&self) -> StorageResult<()> {
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0013_config_approvals.sql"
+        ))
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
