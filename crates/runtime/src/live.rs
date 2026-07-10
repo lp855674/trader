@@ -9,7 +9,7 @@ use broker::{
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
     BrokerAccountBalanceCommand, BrokerPositionSnapshotCommand, Db, DbSystemLogSink,
@@ -561,6 +561,7 @@ impl LiveRuntime {
             let symbol = position.symbol.clone();
             let position_side = position_side_slug(position.position_side);
             let qty = position.qty;
+            let currency = broker_position_currency(position, &self.settings.base_currency);
             let contract_metadata_json = position
                 .contract
                 .as_ref()
@@ -577,7 +578,7 @@ impl LiveRuntime {
                 symbol = %symbol,
                 position_side = %position_side,
                 qty = %qty,
-                currency = %self.settings.base_currency,
+                currency = %currency,
                 category = "broker",
                 "live broker position snapshot captured"
             );
@@ -595,7 +596,7 @@ impl LiveRuntime {
                     margin_used: position.margin_used,
                     unrealized_pnl: position.unrealized_pnl,
                     realized_pnl: Decimal::ZERO,
-                    currency: self.settings.base_currency.clone(),
+                    currency: currency.clone(),
                     contract_metadata_json,
                     liquidation_price,
                     open_interest,
@@ -611,7 +612,7 @@ impl LiveRuntime {
                     "symbol": symbol,
                     "position_side": position_side,
                     "qty": qty.to_string(),
-                    "currency": &self.settings.base_currency,
+                    "currency": currency,
                 }),
             )
             .await?;
@@ -625,19 +626,21 @@ impl LiveRuntime {
         broker_cash: Vec<BrokerCashBalance>,
         broker_positions: Vec<broker::BrokerPositionSnapshot>,
     ) -> anyhow::Result<()> {
-        let latest_cash = self
-            .db
-            .get_latest_cash_snapshot(&self.settings.run_id, Some(&self.settings.base_currency))
-            .await?;
-        let runtime_cash = match latest_cash {
-            Some(snapshot) => vec![RuntimeCashBalance {
-                account_id: self.settings.account_id.clone(),
-                currency: snapshot.currency,
-                cash: snapshot.cash.parse::<Decimal>()?,
-                ts_ms: snapshot.ts_ms,
-            }],
-            None => Vec::new(),
-        };
+        let mut latest_cash_by_currency = BTreeMap::new();
+        for snapshot in self.db.list_cash_snapshots(&self.settings.run_id).await? {
+            latest_cash_by_currency.insert(snapshot.currency.clone(), snapshot);
+        }
+        let runtime_cash = latest_cash_by_currency
+            .into_values()
+            .map(|snapshot| {
+                Ok(RuntimeCashBalance {
+                    account_id: self.settings.account_id.clone(),
+                    currency: snapshot.currency,
+                    cash: snapshot.cash.parse::<Decimal>()?,
+                    ts_ms: snapshot.ts_ms,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let runtime_positions = self
             .db
             .list_position_snapshots(&self.settings.run_id)
@@ -661,6 +664,12 @@ impl LiveRuntime {
                         .parse::<Decimal>()
                         .ok()?,
                     margin_used: Decimal::ZERO,
+                    contract: position
+                        .contract_metadata_json
+                        .as_deref()
+                        .and_then(|metadata| {
+                            serde_json::from_str::<broker::BrokerContractMetadata>(metadata).ok()
+                        }),
                 })
             })
             .collect::<Vec<_>>();
@@ -803,12 +812,7 @@ impl LiveRuntime {
             .list_risk_events(&self.settings.run_id)
             .await?
             .iter()
-            .any(|event| {
-                event.risk_type == "reconciliation_drift"
-                    && event.reason.as_deref() == Some(drift.reason.as_str())
-                    && event.symbol == drift.symbol
-                    && event.account_id.as_deref() == Some(drift.account_id.as_str())
-            })
+            .any(|event| risk_event_matches_reconciliation_drift(event, drift))
         {
             return Ok(());
         }
@@ -829,6 +833,7 @@ impl LiveRuntime {
             "run_id": &self.settings.run_id,
             "account_id": &drift.account_id,
             "symbol": &drift.symbol,
+            "position_side": drift.position_side.map(position_side_slug),
             "currency": &drift.currency,
             "risk_type": "reconciliation_drift",
             "decision": "rejected",
@@ -877,6 +882,8 @@ impl LiveRuntime {
                 && fields["reason"].as_str() == Some(drift.reason.as_str())
                 && fields["account_id"].as_str() == Some(drift.account_id.as_str())
                 && fields["symbol"].as_str() == drift.symbol.as_deref()
+                && fields["position_side"].as_str() == drift.position_side.map(position_side_slug)
+                && fields["currency"].as_str() == drift.currency.as_deref()
         }))
     }
 
@@ -1015,6 +1022,7 @@ impl LiveRuntime {
                 event.risk_type == "reconciliation_drift"
                     && event.symbol.as_deref() == Some(symbol)
                     && event.reason.as_deref() == Some(reason)
+                    && risk_event_position_side(event).as_deref() == Some(position_side)
             })
         {
             return Ok(());
@@ -1407,6 +1415,19 @@ fn broker_kind_slug(kind: BrokerKind) -> &'static str {
     }
 }
 
+fn broker_position_currency(
+    position: &broker::BrokerPositionSnapshot,
+    base_currency: &str,
+) -> String {
+    position
+        .contract
+        .as_ref()
+        .and_then(|contract| contract.currency.as_deref())
+        .filter(|currency| !currency.trim().is_empty())
+        .unwrap_or(base_currency)
+        .to_string()
+}
+
 fn reconciliation_severity_slug(severity: BrokerReconciliationSeverity) -> &'static str {
     match severity {
         BrokerReconciliationSeverity::Info => "info",
@@ -1526,11 +1547,62 @@ fn alert_dedup_key(message: &str, run_id: &str, fields: &serde_json::Value) -> S
         .get("symbol")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    let currency = fields
+        .get("currency")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let position_side = fields
+        .get("position_side")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
     let reason = fields
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    format!("{message}|{run_id}|{account_id}|{symbol}|{reason}")
+    if position_side.is_empty() {
+        format!("{message}|{run_id}|{account_id}|{symbol}|{currency}|{reason}")
+    } else {
+        format!("{message}|{run_id}|{account_id}|{symbol}|{position_side}|{currency}|{reason}")
+    }
+}
+
+fn risk_event_matches_reconciliation_drift(
+    event: &storage::StoredRiskEvent,
+    drift: &BrokerReconciliationDrift,
+) -> bool {
+    if event.risk_type != "reconciliation_drift"
+        || event.reason.as_deref() != Some(drift.reason.as_str())
+        || event.symbol != drift.symbol
+        || event.account_id.as_deref() != Some(drift.account_id.as_str())
+    {
+        return false;
+    }
+    let event_payload = serde_json::from_str::<serde_json::Value>(&event.payload_json).ok();
+    let event_currency = event_payload.as_ref().and_then(|payload| {
+        payload
+            .get("currency")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    });
+    let event_position_side = event_payload.as_ref().and_then(|payload| {
+        payload
+            .get("position_side")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    });
+    event_position_side.as_deref() == drift.position_side.map(position_side_slug)
+        && event_currency.as_deref() == drift.currency.as_deref()
+}
+
+fn risk_event_position_side(event: &storage::StoredRiskEvent) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&event.payload_json)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get("position_side")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
 }
 
 fn alert_sink_cooldown_ms(sink: &AlertSinkSettings) -> u64 {

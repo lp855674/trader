@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use broker::{
-    Broker, BrokerAccountSnapshot, BrokerError, BrokerExecution, BrokerKind, BrokerOpenOrder,
-    BrokerOrder, BrokerPositionSide, BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
+    Broker, BrokerAccountSnapshot, BrokerCashBalance, BrokerContractMetadata, BrokerError,
+    BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerPositionSide,
+    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
 };
 use runtime::{
     AlertSinkSettings, CancellationFlag, LiveRuntime, LiveRuntimeSettings,
@@ -10,7 +11,8 @@ use runtime::{
 use rust_decimal::Decimal;
 use std::sync::Arc;
 use storage::{
-    Db, ExternalFillCommand, ExternalOrderCommand, RuntimePositionSnapshotCommand, SystemLogFilter,
+    Db, ExternalFillCommand, ExternalOrderCommand, PaperPortfolioSnapshotCommand,
+    RuntimePositionSnapshotCommand, SystemLogFilter,
 };
 use trader_core::{OrderRequest, OrderSide, OrderType};
 
@@ -55,8 +57,7 @@ async fn live_runtime_starts_reports_broker_status_and_stops_without_orders() {
     assert!(status.connected);
     assert!(db.list_orders("live-1").await.unwrap().is_empty());
 
-    let events = db.list_events_by_source("live-1").await.unwrap();
-    assert!(events.iter().any(|event| event.category == "live.started"));
+    wait_for_runtime_event_category(&db, "live-1", "live.started").await;
     wait_for_latest_cash(&db, "live-1", "USD", "25000").await;
     let cash_snapshot = db
         .get_latest_cash_snapshot("live-1", Some("USD"))
@@ -187,6 +188,7 @@ async fn live_runtime_reconciliation_audit_detects_runtime_position_missing_from
         avg_price: dec("180"),
         mark_price: Some(dec("180")),
         currency: "USD".to_string(),
+        contract_metadata_json: None,
     })
     .await
     .unwrap();
@@ -393,6 +395,108 @@ async fn live_runtime_reconciliation_audit_deduplicates_open_order_missing_broke
         })
         .count();
     assert_eq!(alert_log_count, 1);
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_keeps_multi_currency_cash_alerts_distinct() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-multi-currency-cash-drift";
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("25000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(MultiCurrencyCashSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_status(&db, run_id, "running").await;
+    db.record_paper_portfolio_snapshot(PaperPortfolioSnapshotCommand {
+        run_id: run_id.to_string(),
+        account_id: "live-account".to_string(),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        base_currency: "HKD".to_string(),
+        cash: dec("500"),
+        market_value: Decimal::ZERO,
+        equity: dec("500"),
+        realized_pnl: Decimal::ZERO,
+        unrealized_pnl: Decimal::ZERO,
+        positions: Vec::new(),
+    })
+    .await
+    .unwrap();
+    wait_for_reconciliation_cash_drift_count(&db, run_id, 3).await;
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.alert",
+        "reconciliation_drift.alert",
+        "HKD",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let reconciliation_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.reconciliation".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let drift_currencies = reconciliation_logs
+        .iter()
+        .filter_map(|log| {
+            if log.message != "reconciliation.drift" {
+                return None;
+            }
+            let fields = log.fields_json.as_deref()?;
+            let fields = serde_json::from_str::<serde_json::Value>(fields).ok()?;
+            (fields["reason"].as_str() == Some("cash_missing_broker"))
+                .then(|| fields["currency"].as_str().map(str::to_string))?
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        drift_currencies,
+        ["HKD".to_string(), "USD".to_string()].into_iter().collect()
+    );
+
+    let alert_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.alert".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let alert_currencies = alert_logs
+        .iter()
+        .filter_map(|log| {
+            if log.message != "reconciliation_drift.alert" {
+                return None;
+            }
+            let fields = log.fields_json.as_deref()?;
+            let fields = serde_json::from_str::<serde_json::Value>(fields).ok()?;
+            (fields["reason"].as_str() == Some("cash_missing_broker"))
+                .then(|| fields["currency"].as_str().map(str::to_string))?
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        alert_currencies,
+        ["HKD".to_string(), "USD".to_string()].into_iter().collect()
+    );
 }
 
 #[tokio::test]
@@ -1192,6 +1296,115 @@ async fn live_runtime_marks_run_failed_when_startup_recovery_fails() {
 }
 
 #[tokio::test]
+async fn live_runtime_records_broker_position_currency_from_contract_metadata() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-broker-position-contract-currency";
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(ContractCurrencyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.broker_snapshot",
+        "broker.snapshot.position",
+        "HKD",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let snapshots = db.list_position_snapshots(run_id).await.unwrap();
+    let snapshot = snapshots
+        .iter()
+        .find(|snapshot| snapshot.symbol == "HK:SEHK:0700:EQUITY")
+        .unwrap();
+    assert_eq!(snapshot.currency, "HKD");
+    let contract_metadata: serde_json::Value =
+        serde_json::from_str(snapshot.contract_metadata_json.as_deref().unwrap()).unwrap();
+    assert_eq!(contract_metadata["currency"].as_str(), Some("HKD"));
+    assert_eq!(contract_metadata["primary_exchange"].as_str(), Some("SEHK"));
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_matches_position_by_stored_contract_conid() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-position-conid-match";
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(ContractCurrencyPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_status(&db, run_id, "running").await;
+    db.record_runtime_position_snapshot(RuntimePositionSnapshotCommand {
+        run_id: run_id.to_string(),
+        ts_ms: chrono::Utc::now().timestamp_millis(),
+        symbol: "HK:SEHK:700:EQUITY".to_string(),
+        position_side: "long".to_string(),
+        qty: dec("100"),
+        available_qty: dec("100"),
+        avg_price: dec("320"),
+        mark_price: Some(dec("320")),
+        currency: "HKD".to_string(),
+        contract_metadata_json: Some(
+            serde_json::to_string(&BrokerContractMetadata {
+                conid: Some(8068578),
+                currency: Some("HKD".to_string()),
+                primary_exchange: Some("SEHK".to_string()),
+                local_symbol: Some("700".to_string()),
+                ..BrokerContractMetadata::default()
+            })
+            .unwrap(),
+        ),
+    })
+    .await
+    .unwrap();
+    wait_for_reconciliation_position_clean(&db, run_id).await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db.list_reconciliation_audits(run_id).await.unwrap();
+    let audit = audits
+        .iter()
+        .find(|audit| audit.position_drift_count == 0)
+        .unwrap();
+    assert_eq!(audit.position_drift_count, 0);
+    let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+    assert_eq!(payload["position_drifts"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn live_runtime_emits_reconciliation_drift_when_broker_cash_differs_from_runtime_cash() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -1279,6 +1492,243 @@ impl Broker for StaticSnapshotBroker {
             liquidation_price: None,
             open_interest: None,
         }])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct MultiCurrencyCashSnapshotBroker;
+
+#[async_trait]
+impl Broker for MultiCurrencyCashSnapshotBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+            cash_balances: vec![BrokerCashBalance {
+                account_id: account_id.to_string(),
+                currency: "EUR".to_string(),
+                cash: dec("100000"),
+                available_cash: dec("100000"),
+                frozen_cash: Decimal::ZERO,
+                equity: Some(dec("100000")),
+                buying_power: Some(dec("100000")),
+                margin_used: Some(Decimal::ZERO),
+                source_ts_ms: 1_700_000_000_000,
+            }],
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        _account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(Vec::new())
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct ContractCurrencyPositionSnapshotBroker;
+
+#[async_trait]
+impl Broker for ContractCurrencyPositionSnapshotBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(vec![BrokerPositionSnapshot {
+            account_id: account_id.to_string(),
+            exchange: "IBKR".to_string(),
+            symbol: "HK:SEHK:0700:EQUITY".to_string(),
+            position_side: BrokerPositionSide::Long,
+            qty: dec("100"),
+            avg_price: dec("320"),
+            margin_used: Decimal::ZERO,
+            unrealized_pnl: dec("10"),
+            ts_ms: 1_700_000_000_000,
+            contract: Some(BrokerContractMetadata {
+                conid: Some(8068578),
+                sec_type: Some("STK".to_string()),
+                currency: Some("HKD".to_string()),
+                exchange: Some("SMART".to_string()),
+                primary_exchange: Some("SEHK".to_string()),
+                multiplier: Some(dec("1")),
+                expiry: None,
+                right: None,
+                strike: None,
+                local_symbol: Some("0700".to_string()),
+                trading_class: Some("700".to_string()),
+            }),
+            liquidation_price: None,
+            open_interest: None,
+        }])
+    }
+
+    async fn status(&self) -> Result<BrokerStatus, BrokerError> {
+        Ok(BrokerStatus {
+            kind: BrokerKind::InteractiveBrokers,
+            connected: true,
+            trading_enabled: false,
+            capabilities: broker::BrokerCapabilities {
+                market_data: true,
+                order_submit: false,
+                order_cancel: true,
+                paper_trading: true,
+                live_trading: false,
+            },
+        })
+    }
+}
+
+struct TwoSidedPositionSnapshotBroker;
+
+#[async_trait]
+impl Broker for TwoSidedPositionSnapshotBroker {
+    async fn place_order(&self, _request: OrderRequest) -> Result<PlaceOrderResponse, BrokerError> {
+        Err(BrokerError::Rejected(
+            "test broker does not place orders".to_string(),
+        ))
+    }
+
+    async fn cancel_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn query_order(&self, broker_order_id: &str) -> Result<BrokerOrder, BrokerError> {
+        Err(BrokerError::OrderNotFound(broker_order_id.to_string()))
+    }
+
+    async fn account_snapshot(
+        &self,
+        account_id: &str,
+    ) -> Result<BrokerAccountSnapshot, BrokerError> {
+        Ok(BrokerAccountSnapshot {
+            account_id: account_id.to_string(),
+            cash: dec("100000"),
+            equity: dec("100000"),
+            buying_power: dec("100000"),
+            margin_used: Decimal::ZERO,
+            cash_balances: Vec::new(),
+        })
+    }
+
+    async fn position_snapshots(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
+        Ok(vec![
+            BrokerPositionSnapshot {
+                account_id: account_id.to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Long,
+                qty: dec("1"),
+                avg_price: dec("400"),
+                margin_used: Decimal::ZERO,
+                unrealized_pnl: Decimal::ZERO,
+                ts_ms: 1_700_000_000_000,
+                contract: Some(BrokerContractMetadata {
+                    currency: Some("USD".to_string()),
+                    primary_exchange: Some("NASDAQ".to_string()),
+                    ..BrokerContractMetadata::default()
+                }),
+                liquidation_price: None,
+                open_interest: None,
+            },
+            BrokerPositionSnapshot {
+                account_id: account_id.to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Short,
+                qty: dec("1"),
+                avg_price: dec("400"),
+                margin_used: Decimal::ZERO,
+                unrealized_pnl: Decimal::ZERO,
+                ts_ms: 1_700_000_000_000,
+                contract: Some(BrokerContractMetadata {
+                    currency: Some("USD".to_string()),
+                    primary_exchange: Some("NASDAQ".to_string()),
+                    ..BrokerContractMetadata::default()
+                }),
+                liquidation_price: None,
+                open_interest: None,
+            },
+        ])
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
@@ -2075,6 +2525,89 @@ async fn live_runtime_emits_reconciliation_drift_when_broker_position_is_missing
 }
 
 #[tokio::test]
+async fn live_runtime_keeps_position_reconciliation_alerts_distinct_by_side() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-position-side-drift";
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(TwoSidedPositionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_position_drift_count(&db, run_id, 2).await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let reconciliation_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.reconciliation".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let drift_sides = reconciliation_logs
+        .iter()
+        .filter_map(|log| {
+            if log.message != "reconciliation.drift" {
+                return None;
+            }
+            let fields = log.fields_json.as_deref()?;
+            let fields = serde_json::from_str::<serde_json::Value>(fields).ok()?;
+            (fields["reason"].as_str() == Some("position_missing_runtime"))
+                .then(|| fields["position_side"].as_str().map(str::to_string))?
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        drift_sides,
+        ["long".to_string(), "short".to_string()]
+            .into_iter()
+            .collect()
+    );
+
+    let alert_logs = db
+        .list_system_logs_filtered(SystemLogFilter {
+            run_id: Some(run_id.to_string()),
+            target: Some("runtime.alert".to_string()),
+            ..SystemLogFilter::default()
+        })
+        .await
+        .unwrap();
+    let alert_sides = alert_logs
+        .iter()
+        .filter_map(|log| {
+            if log.message != "reconciliation_drift.alert" {
+                return None;
+            }
+            let fields = log.fields_json.as_deref()?;
+            let fields = serde_json::from_str::<serde_json::Value>(fields).ok()?;
+            (fields["reason"].as_str() == Some("position_missing_runtime"))
+                .then(|| fields["position_side"].as_str().map(str::to_string))?
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        alert_sides,
+        ["long".to_string(), "short".to_string()]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[tokio::test]
 async fn live_runtime_emits_reconciliation_drift_when_runtime_position_qty_differs_from_broker() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -2109,6 +2642,7 @@ async fn live_runtime_emits_reconciliation_drift_when_runtime_position_qty_diffe
         avg_price: dec("65000"),
         mark_price: Some(dec("65000")),
         currency: "USDT".to_string(),
+        contract_metadata_json: None,
     })
     .await
     .unwrap();
@@ -2265,7 +2799,7 @@ async fn live_runtime_writes_reconciliation_alert_to_file_sink_when_configured()
     let content = std::fs::read_to_string(&alert_file).unwrap();
     assert!(content.contains("\"target\":\"runtime.alert\""));
     assert!(content.contains("\"message\":\"reconciliation_drift.alert\""));
-    assert!(content.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-file|live-account||cash_total_drift\""));
+    assert!(content.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-file|live-account||USDT|cash_total_drift\""));
     assert!(content.contains("\"run_id\":\"live-alert-file\""));
 
     let _ = std::fs::remove_file(alert_file);
@@ -2319,7 +2853,7 @@ async fn live_runtime_posts_reconciliation_alert_to_webhook_sink_when_configured
     assert!(request.starts_with("POST /alerts HTTP/1.1"));
     assert!(request.contains("\"target\":\"runtime.alert\""));
     assert!(request.contains("\"message\":\"reconciliation_drift.alert\""));
-    assert!(request.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-webhook|live-account||cash_total_drift\""));
+    assert!(request.contains("\"dedup_key\":\"reconciliation_drift.alert|live-alert-webhook|live-account||USDT|cash_total_drift\""));
     let delivery_logs = db
         .list_system_logs_filtered(SystemLogFilter {
             run_id: Some("live-alert-webhook".to_string()),
@@ -2764,6 +3298,22 @@ async fn wait_for_latest_position(
     panic!("{run_id} latest {symbol} {position_side} position did not reach {expected_qty}");
 }
 
+async fn wait_for_runtime_event_category(db: &Db, run_id: &str, category: &str) {
+    for _ in 0..50 {
+        if db
+            .list_events_by_source(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.category == category)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record runtime event {category}");
+}
+
 async fn wait_for_risk_event(db: &Db, run_id: &str, risk_type: &str) {
     for _ in 0..50 {
         if db
@@ -2876,6 +3426,54 @@ async fn wait_for_reconciliation_position_drift(db: &Db, run_id: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{run_id} did not record reconciliation position drift");
+}
+
+async fn wait_for_reconciliation_position_drift_count(db: &Db, run_id: &str, min_count: usize) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.position_drift_count as usize >= min_count)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record {min_count} reconciliation position drifts");
+}
+
+async fn wait_for_reconciliation_position_clean(db: &Db, run_id: &str) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.position_drift_count == 0)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record clean reconciliation position audit");
+}
+
+async fn wait_for_reconciliation_cash_drift_count(db: &Db, run_id: &str, min_count: usize) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.cash_drift_count as usize >= min_count)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record {min_count} reconciliation cash drifts");
 }
 
 async fn wait_for_reconciliation_open_order_drift(db: &Db, run_id: &str) {

@@ -3028,7 +3028,8 @@ async fn system_log_retention_policy_purges_logs_older_than_days() {
 }
 
 #[tokio::test]
-async fn runtime_position_snapshot_command_preserves_side_for_reconciliation() {
+async fn runtime_position_snapshot_command_preserves_side_and_contract_metadata_for_reconciliation()
+{
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     db.insert_strategy_run(NewStrategyRun {
@@ -3054,6 +3055,14 @@ async fn runtime_position_snapshot_command_preserves_side_for_reconciliation() {
         avg_price: dec("65000"),
         mark_price: Some(dec("65010")),
         currency: "USDT".to_string(),
+        contract_metadata_json: Some(
+            serde_json::json!({
+                "conid": 123456,
+                "currency": "USDT",
+                "local_symbol": "BTCUSDT"
+            })
+            .to_string(),
+        ),
     })
     .await
     .unwrap();
@@ -3072,6 +3081,10 @@ async fn runtime_position_snapshot_command_preserves_side_for_reconciliation() {
     assert_eq!(snapshot.available_qty, "0.25");
     assert_eq!(snapshot.avg_price.as_deref(), Some("65000"));
     assert_eq!(snapshot.mark_price.as_deref(), Some("65010"));
+    let contract_metadata: serde_json::Value =
+        serde_json::from_str(snapshot.contract_metadata_json.as_deref().unwrap()).unwrap();
+    assert_eq!(contract_metadata["conid"].as_i64(), Some(123456));
+    assert_eq!(contract_metadata["currency"].as_str(), Some("USDT"));
 }
 
 #[tokio::test]

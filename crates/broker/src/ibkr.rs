@@ -846,13 +846,39 @@ fn ibkr_position_symbol(contract: &Contract) -> String {
         contract.primary_exchange.to_string()
     };
     match contract.security_type {
-        SecurityType::Stock => format!("US:{exchange}:{}:EQUITY", contract.symbol),
+        SecurityType::Stock => {
+            let market = ibkr_stock_market(contract, &exchange);
+            format!("{market}:{exchange}:{}:EQUITY", contract.symbol)
+        }
         SecurityType::Crypto => format!("CRYPTO:{exchange}:{}:CRYPTO_SPOT", contract.symbol),
         _ => format!(
             "IBKR:{exchange}:{}:{}",
             contract.symbol, contract.security_type
         ),
     }
+}
+
+fn ibkr_stock_market(contract: &Contract, exchange: &str) -> &'static str {
+    let currency = contract.currency.to_string();
+    let currency = currency.trim();
+    let exchange = exchange.trim();
+    if exchange.eq_ignore_ascii_case("SEHK")
+        || exchange.eq_ignore_ascii_case("HKEX")
+        || currency.eq_ignore_ascii_case("HKD")
+    {
+        return "HK";
+    }
+    if exchange.eq_ignore_ascii_case("SSE")
+        || exchange.eq_ignore_ascii_case("SZSE")
+        || currency.eq_ignore_ascii_case("CNY")
+        || currency.eq_ignore_ascii_case("CNH")
+    {
+        return "CN";
+    }
+    if currency.eq_ignore_ascii_case("USD") {
+        return "US";
+    }
+    "IBKR"
 }
 
 fn broker_contract_metadata_from_ibkr_contract(
@@ -1037,5 +1063,46 @@ mod ibkr_contract_metadata_tests {
         assert_eq!(snapshot.symbol, "US:NASDAQ:AAPL:EQUITY");
         assert_eq!(snapshot.contract.unwrap().conid, Some(265598));
         assert_eq!(snapshot.qty, dec!(2));
+    }
+
+    #[test]
+    fn ibkr_position_symbol_maps_hong_kong_stock_market_from_contract_metadata() {
+        let mut contract = Contract::stock("0700").build();
+        contract.contract_id = 8068578;
+        contract.exchange = "SMART".into();
+        contract.primary_exchange = "SEHK".into();
+        contract.currency = "HKD".into();
+        contract.local_symbol = "0700".into();
+
+        let position = ibapi::accounts::Position {
+            account: "DU123".to_string(),
+            contract,
+            position: 100.0,
+            average_cost: 320.0,
+        };
+
+        let snapshot = map_position_snapshot(position).unwrap().unwrap();
+        assert_eq!(snapshot.symbol, "HK:SEHK:0700:EQUITY");
+        let contract = snapshot.contract.unwrap();
+        assert_eq!(contract.currency.as_deref(), Some("HKD"));
+        assert_eq!(contract.primary_exchange.as_deref(), Some("SEHK"));
+    }
+
+    #[test]
+    fn ibkr_position_symbol_does_not_default_unknown_stock_market_to_us() {
+        let mut contract = Contract::stock("SAP").build();
+        contract.exchange = "SMART".into();
+        contract.primary_exchange = "IBIS".into();
+        contract.currency = "EUR".into();
+
+        let position = ibapi::accounts::Position {
+            account: "DU123".to_string(),
+            contract,
+            position: 10.0,
+            average_cost: 120.0,
+        };
+
+        let snapshot = map_position_snapshot(position).unwrap().unwrap();
+        assert_eq!(snapshot.symbol, "IBKR:IBIS:SAP:EQUITY");
     }
 }

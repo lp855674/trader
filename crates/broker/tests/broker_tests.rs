@@ -900,6 +900,7 @@ fn binance_reconciliation_detects_drift() {
         qty: dec!(0.4),
         avg_price: dec!(65000),
         margin_used: dec!(2600),
+        contract: None,
     }];
     let broker = vec![broker::BrokerPositionSnapshot {
         account_id: "paper".to_string(),
@@ -931,6 +932,77 @@ fn binance_reconciliation_detects_drift() {
             .iter()
             .any(|drift| drift.reason.contains("margin mismatch"))
     );
+}
+
+#[test]
+fn position_reconciliation_conid_match_still_requires_account_and_side() {
+    let runtime = vec![
+        RuntimePositionSnapshot {
+            account_id: "other".to_string(),
+            exchange: "IBKR".to_string(),
+            symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+            position_side: BrokerPositionSide::Long,
+            qty: dec!(1),
+            avg_price: dec!(400),
+            margin_used: dec!(0),
+            contract: Some(broker::BrokerContractMetadata {
+                conid: Some(272093),
+                currency: Some("USD".to_string()),
+                ..broker::BrokerContractMetadata::default()
+            }),
+        },
+        RuntimePositionSnapshot {
+            account_id: "paper".to_string(),
+            exchange: "IBKR".to_string(),
+            symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+            position_side: BrokerPositionSide::Short,
+            qty: dec!(1),
+            avg_price: dec!(400),
+            margin_used: dec!(0),
+            contract: Some(broker::BrokerContractMetadata {
+                conid: Some(272093),
+                currency: Some("USD".to_string()),
+                ..broker::BrokerContractMetadata::default()
+            }),
+        },
+    ];
+    let broker = vec![broker::BrokerPositionSnapshot {
+        account_id: "paper".to_string(),
+        exchange: "IBKR".to_string(),
+        symbol: "US:NASDAQ:MSFT:EQUITY".to_string(),
+        position_side: BrokerPositionSide::Long,
+        qty: dec!(1),
+        avg_price: dec!(400),
+        margin_used: dec!(0),
+        unrealized_pnl: dec!(0),
+        ts_ms: 1_700_000_000_000,
+        contract: Some(broker::BrokerContractMetadata {
+            conid: Some(272093),
+            currency: Some("USD".to_string()),
+            ..broker::BrokerContractMetadata::default()
+        }),
+        liquidation_price: None,
+        open_interest: None,
+    }];
+
+    let report = reconcile_positions(&runtime, &broker);
+
+    assert_eq!(report.drift_count(), 3);
+    assert!(report.drifts.iter().any(|drift| {
+        drift.account_id == "paper"
+            && drift.position_side == BrokerPositionSide::Long
+            && drift.reason == "missing runtime position"
+    }));
+    assert!(report.drifts.iter().any(|drift| {
+        drift.account_id == "other"
+            && drift.position_side == BrokerPositionSide::Long
+            && drift.reason == "missing broker position"
+    }));
+    assert!(report.drifts.iter().any(|drift| {
+        drift.account_id == "paper"
+            && drift.position_side == BrokerPositionSide::Short
+            && drift.reason == "missing broker position"
+    }));
 }
 
 #[test]

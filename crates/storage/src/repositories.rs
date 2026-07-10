@@ -1436,6 +1436,7 @@ pub struct RuntimePositionSnapshotCommand {
     pub avg_price: Decimal,
     pub mark_price: Option<Decimal>,
     pub currency: String,
+    pub contract_metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1740,7 +1741,7 @@ fn runtime_position_snapshot_from_command(
         unrealized_pnl: Some(Decimal::ZERO.to_string()),
         realized_pnl: Some(Decimal::ZERO.to_string()),
         currency: command.currency,
-        contract_metadata_json: None,
+        contract_metadata_json: command.contract_metadata_json,
         liquidation_price: None,
         open_interest: None,
         created_at_ms: command.ts_ms,
