@@ -4,9 +4,10 @@ use broker::{
     BinanceSpotTestnetSettings, Broker, BrokerError, BrokerKind, BrokerOrderStatus,
     BrokerPositionSide, FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest,
     IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
-    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, RuntimePositionSnapshot,
-    SimulatedBrokerSettings, cancel_open_orders_for_account_symbol, reconcile_positions,
-    simulate_market_fill,
+    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, RecoveryOrderKey,
+    RuntimePositionSnapshot, SimulatedBrokerSettings, broker_execution_matches_recovery_order,
+    broker_open_order_matches_recovery_order, cancel_open_orders_for_account_symbol,
+    reconcile_positions, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::collections::VecDeque;
@@ -1152,6 +1153,36 @@ async fn ibkr_paper_gateway_adapter_returns_gateway_account_snapshot() {
 }
 
 #[tokio::test]
+async fn ibkr_paper_gateway_adapter_snapshot_bundle_routes_through_gateway_client_boundary() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client.clone(),
+    );
+
+    let snapshot = adapter.snapshot_bundle("DU12345").await.unwrap();
+
+    assert_eq!(snapshot.account.account_id, "DU12345");
+    assert_eq!(snapshot.positions.len(), 1);
+    assert_eq!(
+        client.calls(),
+        vec![
+            FakeIbkrGatewayCall::AccountSnapshot {
+                account_id: "DU12345".to_string(),
+            },
+            FakeIbkrGatewayCall::PositionSnapshots {
+                account_id: "DU12345".to_string(),
+            },
+        ]
+    );
+}
+
+#[tokio::test]
 async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_boundary() {
     let client = Arc::new(FakeIbkrGatewayClient::new());
     let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
@@ -1252,4 +1283,144 @@ fn order() -> OrderRequest {
         price: None,
         account_id: "paper".to_string(),
     }
+}
+
+fn recovery_order_key() -> RecoveryOrderKey {
+    RecoveryOrderKey {
+        account_id: "DU123".to_string(),
+        client_order_id: "client-order-1".to_string(),
+        broker_order_id: Some("broker-order-1".to_string()),
+    }
+}
+
+fn recovery_open_order() -> broker::BrokerOpenOrder {
+    broker::BrokerOpenOrder {
+        broker_order_id: "broker-order-1".to_string(),
+        client_order_id: "client-order-1".to_string(),
+        account_id: "DU123".to_string(),
+        symbol: "AAPL".to_string(),
+        side: OrderSide::Buy,
+        order_type: OrderType::Limit,
+        price: Some(dec!(180)),
+        qty: dec!(1),
+        filled_qty: dec!(0),
+        status: "Submitted".to_string(),
+    }
+}
+
+fn recovery_execution() -> broker::BrokerExecution {
+    broker::BrokerExecution {
+        trade_id: "trade-1".to_string(),
+        broker_order_id: "broker-order-1".to_string(),
+        client_order_id: Some("client-order-1".to_string()),
+        account_id: "DU123".to_string(),
+        symbol: "AAPL".to_string(),
+        side: OrderSide::Buy,
+        price: dec!(180),
+        qty: dec!(1),
+        fee: dec!(1),
+        ts_ms: 2,
+    }
+}
+
+#[test]
+fn startup_recovery_matches_open_order_by_client_order_id() {
+    let recovery_order = recovery_order_key();
+    let open_order = recovery_open_order();
+
+    assert!(broker_open_order_matches_recovery_order(
+        &open_order,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_matches_open_order_by_broker_order_id() {
+    let mut recovery_order = recovery_order_key();
+    recovery_order.client_order_id = "different-client".to_string();
+    let open_order = recovery_open_order();
+
+    assert!(broker_open_order_matches_recovery_order(
+        &open_order,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_does_not_match_open_order_with_empty_ids() {
+    let recovery_order = RecoveryOrderKey {
+        account_id: "DU123".to_string(),
+        client_order_id: "".to_string(),
+        broker_order_id: None,
+    };
+    let mut open_order = recovery_open_order();
+    open_order.client_order_id.clear();
+
+    assert!(!broker_open_order_matches_recovery_order(
+        &open_order,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_does_not_match_open_order_across_accounts() {
+    let recovery_order = recovery_order_key();
+    let mut open_order = recovery_open_order();
+    open_order.account_id = "DU999".to_string();
+
+    assert!(!broker_open_order_matches_recovery_order(
+        &open_order,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_matches_execution_by_client_order_id() {
+    let recovery_order = recovery_order_key();
+    let execution = recovery_execution();
+
+    assert!(broker_execution_matches_recovery_order(
+        &execution,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_matches_execution_by_broker_order_id() {
+    let mut recovery_order = recovery_order_key();
+    recovery_order.client_order_id = "different-client".to_string();
+    let execution = recovery_execution();
+
+    assert!(broker_execution_matches_recovery_order(
+        &execution,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_does_not_match_execution_with_empty_ids() {
+    let recovery_order = RecoveryOrderKey {
+        account_id: "DU123".to_string(),
+        client_order_id: "".to_string(),
+        broker_order_id: None,
+    };
+    let mut execution = recovery_execution();
+    execution.client_order_id = Some("".to_string());
+
+    assert!(!broker_execution_matches_recovery_order(
+        &execution,
+        &recovery_order
+    ));
+}
+
+#[test]
+fn startup_recovery_does_not_match_execution_across_accounts() {
+    let recovery_order = recovery_order_key();
+    let mut execution = recovery_execution();
+    execution.account_id = "DU999".to_string();
+
+    assert!(!broker_execution_matches_recovery_order(
+        &execution,
+        &recovery_order
+    ));
 }

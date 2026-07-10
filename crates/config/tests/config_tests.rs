@@ -1522,6 +1522,7 @@ fn parses_binance_paper_connection_config_without_secrets() {
 
         [live]
         enabled = false
+        broker_snapshot_interval_ms = 1000
         "#,
     )
     .unwrap();
@@ -1542,6 +1543,7 @@ fn parses_binance_paper_connection_config_without_secrets() {
     );
     assert_eq!(config.broker.recv_window_ms, Some(5000));
     assert!(config.broker.order_submit_enabled);
+    assert_eq!(config.live.broker_snapshot_interval_ms, Some(1000));
 }
 
 #[test]

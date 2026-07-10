@@ -57,6 +57,13 @@ function Invoke-StartupRecoverySmoke {
     }
 }
 
+function Invoke-BrokerAgnosticSnapshotSmoke {
+    Invoke-CheckedCargo @("test", "-p", "broker", "broker_snapshot_bundle")
+    Invoke-CheckedCargo @("test", "-p", "runtime", "live_runtime_records_production_reconciliation_audit_and_broker_balances")
+    Invoke-CheckedCargo @("test", "-p", "config", "parses_binance_paper_connection_config_without_secrets")
+    Invoke-CheckedCargo @("test", "-p", "storage", "reconciliation_audits")
+}
+
 function Wait-RunStatus {
     param([string]$BaseUrl, [string]$RunId, [string]$Expected)
 
@@ -127,6 +134,7 @@ try {
 
     Invoke-CheckedCargo @("build", "-p", "trader-cli", "-p", "trader-server")
     Invoke-StartupRecoverySmoke
+    Invoke-BrokerAgnosticSnapshotSmoke
 
     $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
@@ -164,7 +172,8 @@ try {
         throw "trader-server did not become ready"
     }
 
-    $liveBody = @{ config_toml = (Get-Content $configPath -Raw); mode = "live" } | ConvertTo-Json -Compress
+    $liveConfigToml = [string](Get-Content $configPath -Raw)
+    $liveBody = @{ config_toml = $liveConfigToml; mode = "live" } | ConvertTo-Json -Compress
     $live = Invoke-RestMethod -Method Post "$baseUrl/api/v1/live-runs" -ContentType "application/json" -Body $liveBody
     Assert-True ($live.run_id -eq $runId) "expected live run id $runId"
     Wait-RunStatus $baseUrl $runId "running" | Out-Null
@@ -356,6 +365,7 @@ try {
         approval_state = $publishedApprovalConfig.state
         api_config_releases = @($apiConfigReleases).Count
         api_config_audits = @($apiConfigAudits).Count
+        broker_agnostic_snapshot_smoke = "passed"
     }
 } finally {
     Set-Location $repoRoot

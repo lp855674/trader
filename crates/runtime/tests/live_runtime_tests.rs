@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use broker::{
     Broker, BrokerAccountSnapshot, BrokerCashBalance, BrokerContractMetadata, BrokerError,
     BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerOrder, BrokerPositionSide,
-    BrokerPositionSnapshot, BrokerStatus, PlaceOrderResponse,
+    BrokerPositionSnapshot, BrokerSnapshotBundle, BrokerStatus, PlaceOrderResponse,
 };
 use runtime::{
     AlertSinkSettings, CancellationFlag, LiveRuntime, LiveRuntimeSettings,
@@ -1462,36 +1462,47 @@ impl Broker for StaticSnapshotBroker {
 
     async fn account_snapshot(
         &self,
-        account_id: &str,
+        _account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
-        Ok(BrokerAccountSnapshot {
-            account_id: account_id.to_string(),
-            cash: dec("123456"),
-            equity: dec("123456"),
-            buying_power: dec("123456"),
-            margin_used: Decimal::ZERO,
-            cash_balances: Vec::new(),
-        })
+        Err(BrokerError::Rejected(
+            "runtime should use snapshot_bundle".to_string(),
+        ))
     }
 
     async fn position_snapshots(
         &self,
-        account_id: &str,
+        _account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
-        Ok(vec![BrokerPositionSnapshot {
-            account_id: account_id.to_string(),
-            exchange: "IBKR".to_string(),
-            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-            position_side: BrokerPositionSide::Long,
-            qty: dec("2"),
-            avg_price: dec("185.25"),
-            margin_used: Decimal::ZERO,
-            unrealized_pnl: Decimal::ZERO,
-            ts_ms: 1_700_000_000_000,
-            contract: None,
-            liquidation_price: None,
-            open_interest: None,
-        }])
+        Err(BrokerError::Rejected(
+            "runtime should use snapshot_bundle".to_string(),
+        ))
+    }
+
+    async fn snapshot_bundle(&self, account_id: &str) -> Result<BrokerSnapshotBundle, BrokerError> {
+        Ok(BrokerSnapshotBundle {
+            account: BrokerAccountSnapshot {
+                account_id: account_id.to_string(),
+                cash: dec("123456"),
+                equity: dec("123456"),
+                buying_power: dec("123456"),
+                margin_used: Decimal::ZERO,
+                cash_balances: Vec::new(),
+            },
+            positions: vec![BrokerPositionSnapshot {
+                account_id: account_id.to_string(),
+                exchange: "IBKR".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                position_side: BrokerPositionSide::Long,
+                qty: dec("2"),
+                avg_price: dec("185.25"),
+                margin_used: Decimal::ZERO,
+                unrealized_pnl: Decimal::ZERO,
+                ts_ms: 1_700_000_000_000,
+                contract: None,
+                liquidation_price: None,
+                open_interest: None,
+            }],
+        })
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {

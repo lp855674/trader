@@ -116,6 +116,52 @@ pub struct BrokerAccountSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokerSnapshotBundle {
+    pub account: BrokerAccountSnapshot,
+    pub positions: Vec<BrokerPositionSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecoveryOrderKey {
+    pub account_id: String,
+    pub client_order_id: String,
+    pub broker_order_id: Option<String>,
+}
+
+pub fn broker_open_order_matches_recovery_order(
+    open_order: &BrokerOpenOrder,
+    recovery_order: &RecoveryOrderKey,
+) -> bool {
+    open_order.account_id == recovery_order.account_id
+        && (non_empty_id_eq(&open_order.client_order_id, &recovery_order.client_order_id)
+            || recovery_order
+                .broker_order_id
+                .as_deref()
+                .is_some_and(|broker_order_id| {
+                    non_empty_id_eq(broker_order_id, &open_order.broker_order_id)
+                }))
+}
+
+pub fn broker_execution_matches_recovery_order(
+    execution: &BrokerExecution,
+    recovery_order: &RecoveryOrderKey,
+) -> bool {
+    execution.account_id == recovery_order.account_id
+        && (execution
+            .client_order_id
+            .as_deref()
+            .is_some_and(|client_order_id| {
+                non_empty_id_eq(client_order_id, &recovery_order.client_order_id)
+            })
+            || recovery_order
+                .broker_order_id
+                .as_deref()
+                .is_some_and(|broker_order_id| {
+                    non_empty_id_eq(broker_order_id, &execution.broker_order_id)
+                }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BrokerCashBalance {
     pub account_id: String,
     pub currency: String,
@@ -595,11 +641,11 @@ fn execution_scope_matches(
     runtime_execution
         .account_id
         .as_deref()
-        .map_or(true, |account_id| account_id == broker_execution.account_id)
+        .is_none_or(|account_id| account_id == broker_execution.account_id)
         && runtime_execution
             .symbol
             .as_deref()
-            .map_or(true, |symbol| symbol == broker_execution.symbol)
+            .is_none_or(|symbol| symbol == broker_execution.symbol)
 }
 
 pub fn reconcile_positions(
@@ -744,6 +790,12 @@ pub trait Broker: Send + Sync {
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>;
+    async fn snapshot_bundle(&self, account_id: &str) -> Result<BrokerSnapshotBundle, BrokerError> {
+        Ok(BrokerSnapshotBundle {
+            account: self.account_snapshot(account_id).await?,
+            positions: self.position_snapshots(account_id).await?,
+        })
+    }
     async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
         Ok(Vec::new())
     }

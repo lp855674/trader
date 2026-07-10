@@ -1,10 +1,11 @@
 use crate::CancellationFlag;
 use broker::{
-    Broker, BrokerCashBalance, BrokerExecution, BrokerKind, BrokerOpenOrder, BrokerPositionSide,
+    Broker, BrokerCashBalance, BrokerKind, BrokerOpenOrder, BrokerPositionSide,
     BrokerReconciliationAudit, BrokerReconciliationDrift, BrokerReconciliationInput,
     BrokerReconciliationSeverity, BrokerReconciliationThresholds, BrokerStatus, FakeBrokerAdapter,
-    RuntimeCashBalance, RuntimeExecution, RuntimeOpenOrder, RuntimePositionSnapshot,
-    reconcile_broker_audit,
+    RecoveryOrderKey, RuntimeCashBalance, RuntimeExecution, RuntimeOpenOrder,
+    RuntimePositionSnapshot, broker_execution_matches_recovery_order,
+    broker_open_order_matches_recovery_order, reconcile_broker_audit,
 };
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
@@ -269,12 +270,15 @@ impl LiveRuntime {
         let mut matched_open_order_ids = HashSet::new();
         let mut matched_execution_ids = HashSet::new();
         for order in &recoverable {
-            let open_order = open_orders
-                .iter()
-                .find(|open_order| broker_order_matches_local(open_order, order));
+            let recovery_order = recovery_order_key(order);
+            let open_order = open_orders.iter().find(|open_order| {
+                broker_open_order_matches_recovery_order(open_order, &recovery_order)
+            });
             let matched_executions = executions
                 .iter()
-                .filter(|execution| broker_execution_matches_local(execution, order))
+                .filter(|execution| {
+                    broker_execution_matches_recovery_order(execution, &recovery_order)
+                })
                 .collect::<Vec<_>>();
             if open_order.is_none() && matched_executions.is_empty() {
                 continue;
@@ -494,22 +498,23 @@ impl LiveRuntime {
         let ts_ms = chrono::Utc::now().timestamp_millis();
         let snapshot = self
             .broker
-            .account_snapshot(&self.settings.account_id)
+            .snapshot_bundle(&self.settings.account_id)
             .await?;
-        let broker_cash = if snapshot.cash_balances.is_empty() {
+        let account_snapshot = snapshot.account;
+        let broker_cash = if account_snapshot.cash_balances.is_empty() {
             vec![BrokerCashBalance {
-                account_id: snapshot.account_id.clone(),
+                account_id: account_snapshot.account_id.clone(),
                 currency: self.settings.base_currency.clone(),
-                cash: snapshot.cash,
-                available_cash: snapshot.cash,
+                cash: account_snapshot.cash,
+                available_cash: account_snapshot.cash,
                 frozen_cash: Decimal::ZERO,
-                equity: Some(snapshot.equity),
-                buying_power: Some(snapshot.buying_power),
-                margin_used: Some(snapshot.margin_used),
+                equity: Some(account_snapshot.equity),
+                buying_power: Some(account_snapshot.buying_power),
+                margin_used: Some(account_snapshot.margin_used),
                 source_ts_ms: ts_ms,
             }]
         } else {
-            snapshot.cash_balances.clone()
+            account_snapshot.cash_balances.clone()
         };
         for balance in &broker_cash {
             self.db
@@ -529,12 +534,13 @@ impl LiveRuntime {
                 })
                 .await?;
         }
-        self.record_cash_drift_if_needed(snapshot.cash).await?;
+        self.record_cash_drift_if_needed(account_snapshot.cash)
+            .await?;
         tracing::info!(
             run_id = %self.settings.run_id,
             account_id = %self.settings.account_id,
             currency = %self.settings.base_currency,
-            cash = %snapshot.cash,
+            cash = %account_snapshot.cash,
             category = "broker",
             "live broker cash snapshot captured"
         );
@@ -546,17 +552,15 @@ impl LiveRuntime {
                 "run_id": &self.settings.run_id,
                 "account_id": &self.settings.account_id,
                 "currency": &self.settings.base_currency,
-                "cash": snapshot.cash.to_string(),
+                "cash": account_snapshot.cash.to_string(),
             }),
         )
         .await?;
-        let broker_positions = self
-            .broker
-            .position_snapshots(&self.settings.account_id)
-            .await?;
+        let broker_positions = snapshot.positions;
         self.record_reconciliation_audit(ts_ms, broker_cash, broker_positions.clone())
             .await?;
-        self.record_cash_snapshot(ts_ms, snapshot.cash).await?;
+        self.record_cash_snapshot(ts_ms, account_snapshot.cash)
+            .await?;
         for position in &broker_positions {
             let symbol = position.symbol.clone();
             let position_side = position_side_slug(position.position_side);
@@ -1444,35 +1448,12 @@ fn is_open_order_status(status: &str) -> bool {
     matches!(status, "SUBMITTED" | "NEW" | "PARTIALLY_FILLED")
 }
 
-fn broker_order_matches_local(open_order: &BrokerOpenOrder, local: &StoredOrder) -> bool {
-    open_order.account_id == local.account_id
-        && (non_empty_id_eq(&open_order.client_order_id, &local.client_order_id)
-            || local
-                .broker_order_id
-                .as_deref()
-                .is_some_and(|broker_order_id| {
-                    non_empty_id_eq(broker_order_id, &open_order.broker_order_id)
-                }))
-}
-
-fn broker_execution_matches_local(execution: &BrokerExecution, local: &StoredOrder) -> bool {
-    execution.account_id == local.account_id
-        && (execution
-            .client_order_id
-            .as_deref()
-            .is_some_and(|client_order_id| {
-                non_empty_id_eq(client_order_id, &local.client_order_id)
-            })
-            || local
-                .broker_order_id
-                .as_deref()
-                .is_some_and(|broker_order_id| {
-                    non_empty_id_eq(broker_order_id, &execution.broker_order_id)
-                }))
-}
-
-fn non_empty_id_eq(left: &str, right: &str) -> bool {
-    !left.trim().is_empty() && !right.trim().is_empty() && left == right
+fn recovery_order_key(order: &StoredOrder) -> RecoveryOrderKey {
+    RecoveryOrderKey {
+        account_id: order.account_id.clone(),
+        client_order_id: order.client_order_id.clone(),
+        broker_order_id: order.broker_order_id.clone(),
+    }
 }
 
 fn recovered_order_status(
@@ -1657,111 +1638,17 @@ mod tests {
         }
     }
 
-    fn broker_open_order() -> BrokerOpenOrder {
-        BrokerOpenOrder {
-            broker_order_id: "broker-order-1".to_string(),
-            client_order_id: "client-order-1".to_string(),
-            account_id: "DU123".to_string(),
-            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-            side: trader_core::OrderSide::Buy,
-            order_type: trader_core::OrderType::Limit,
-            price: Some(dec("180")),
-            qty: dec("1"),
-            filled_qty: Decimal::ZERO,
-            status: "Submitted".to_string(),
-        }
-    }
-
-    fn broker_execution() -> BrokerExecution {
-        BrokerExecution {
-            trade_id: "trade-1".to_string(),
-            broker_order_id: "broker-order-1".to_string(),
-            client_order_id: Some("client-order-1".to_string()),
-            account_id: "DU123".to_string(),
-            symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
-            side: trader_core::OrderSide::Buy,
-            price: dec("180"),
-            qty: dec("1"),
-            fee: dec("1"),
-            ts_ms: 2,
-        }
-    }
-
-    fn dec(value: &str) -> Decimal {
-        value.parse().unwrap()
-    }
-
     #[test]
-    fn startup_recovery_matches_open_order_by_scoped_non_empty_ids() {
+    fn startup_recovery_builds_storage_agnostic_recovery_key() {
         let local = stored_order();
-        let open_order = broker_open_order();
 
-        assert!(broker_order_matches_local(&open_order, &local));
-    }
-
-    #[test]
-    fn startup_recovery_does_not_match_open_order_with_empty_ids() {
-        let mut local = stored_order();
-        local.client_order_id = "".to_string();
-        local.broker_order_id = None;
-        let mut open_order = broker_open_order();
-        open_order.client_order_id = "".to_string();
-
-        assert!(!broker_order_matches_local(&open_order, &local));
-    }
-
-    #[test]
-    fn startup_recovery_does_not_match_open_order_across_accounts() {
-        let local = stored_order();
-        let mut account_mismatch = broker_open_order();
-        account_mismatch.account_id = "DU999".to_string();
-
-        assert!(!broker_order_matches_local(&account_mismatch, &local));
-    }
-
-    #[test]
-    fn startup_recovery_matches_open_order_with_native_broker_symbol() {
-        let local = stored_order();
-        let mut native_symbol = broker_open_order();
-        native_symbol.symbol = "AAPL".to_string();
-
-        assert!(broker_order_matches_local(&native_symbol, &local));
-    }
-
-    #[test]
-    fn startup_recovery_matches_execution_by_scoped_non_empty_ids() {
-        let local = stored_order();
-        let execution = broker_execution();
-
-        assert!(broker_execution_matches_local(&execution, &local));
-    }
-
-    #[test]
-    fn startup_recovery_does_not_match_execution_with_empty_ids() {
-        let mut local = stored_order();
-        local.client_order_id = "".to_string();
-        local.broker_order_id = None;
-        let mut execution = broker_execution();
-        execution.client_order_id = Some("".to_string());
-
-        assert!(!broker_execution_matches_local(&execution, &local));
-    }
-
-    #[test]
-    fn startup_recovery_does_not_match_execution_across_accounts() {
-        let local = stored_order();
-        let mut account_mismatch = broker_execution();
-        account_mismatch.account_id = "DU999".to_string();
-
-        assert!(!broker_execution_matches_local(&account_mismatch, &local));
-    }
-
-    #[test]
-    fn startup_recovery_matches_execution_with_native_broker_symbol() {
-        let local = stored_order();
-        let mut native_symbol = broker_execution();
-        native_symbol.symbol = "AAPL".to_string();
-
-        assert!(broker_execution_matches_local(&native_symbol, &local));
+        assert_eq!(
+            recovery_order_key(&local),
+            RecoveryOrderKey {
+                account_id: "DU123".to_string(),
+                client_order_id: "client-order-1".to_string(),
+                broker_order_id: Some("broker-order-1".to_string()),
+            }
+        );
     }
 }
