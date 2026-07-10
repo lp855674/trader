@@ -242,7 +242,7 @@ fn live_worker_reconciliation_gate_blocks_missing_audit() {
 
     let alert_file = std::fs::read_to_string(alert_path).unwrap();
     assert!(alert_file.contains("\"message\":\"reconciliation_gate.block.alert\""));
-    assert!(alert_file.contains("\"dedup_key\":\"reconciliation_gate.block.alert|trader-live-worker-gate-missing|||reconciliation_gate_block\""));
+    assert!(alert_file.contains("\"dedup_key\":\"reconciliation_gate.block.alert|trader-live-worker-gate-missing||||reconciliation_gate_block\""));
 }
 
 #[test]
