@@ -10,7 +10,7 @@ use broker::{
 use events::{LogWriter, LogWriterSettings, SystemLogLayer};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use storage::{
     BrokerAccountBalanceCommand, BrokerPositionSnapshotCommand, Db, DbSystemLogSink,
@@ -238,19 +238,16 @@ impl LiveRuntime {
             return Ok(());
         }
 
-        let open_orders = self.broker.open_orders(&self.settings.account_id).await?;
         let symbols = recoverable
             .iter()
             .map(|order| order.symbol.clone())
-            .collect::<BTreeSet<_>>();
-        let mut executions = Vec::new();
-        for symbol in symbols {
-            executions.extend(
-                self.broker
-                    .executions(&self.settings.account_id, Some(&symbol))
-                    .await?,
-            );
-        }
+            .collect::<Vec<_>>();
+        let broker_snapshot = self
+            .broker
+            .snapshot_bundle(&self.settings.account_id, &symbols)
+            .await?;
+        let open_orders = broker_snapshot.open_orders;
+        let executions = broker_snapshot.executions;
         let existing_fills = self.db.list_fills(&self.settings.run_id).await?;
         let mut existing_fill_ids_by_order = HashMap::<String, HashSet<String>>::new();
         let mut existing_filled_qty_by_order = HashMap::<String, Decimal>::new();
@@ -496,9 +493,16 @@ impl LiveRuntime {
 
     async fn record_broker_snapshot(&self) -> anyhow::Result<()> {
         let ts_ms = chrono::Utc::now().timestamp_millis();
+        let local_order_symbols = self
+            .db
+            .list_orders(&self.settings.run_id)
+            .await?
+            .into_iter()
+            .map(|order| order.symbol)
+            .collect::<Vec<_>>();
         let snapshot = self
             .broker
-            .snapshot_bundle(&self.settings.account_id)
+            .snapshot_bundle(&self.settings.account_id, &local_order_symbols)
             .await?;
         let account_snapshot = snapshot.account;
         let broker_cash = if account_snapshot.cash_balances.is_empty() {
@@ -557,8 +561,14 @@ impl LiveRuntime {
         )
         .await?;
         let broker_positions = snapshot.positions;
-        self.record_reconciliation_audit(ts_ms, broker_cash, broker_positions.clone())
-            .await?;
+        self.record_reconciliation_audit(
+            ts_ms,
+            broker_cash,
+            broker_positions.clone(),
+            snapshot.open_orders,
+            snapshot.executions,
+        )
+        .await?;
         self.record_cash_snapshot(ts_ms, account_snapshot.cash)
             .await?;
         for position in &broker_positions {
@@ -629,6 +639,8 @@ impl LiveRuntime {
         ts_ms: i64,
         broker_cash: Vec<BrokerCashBalance>,
         broker_positions: Vec<broker::BrokerPositionSnapshot>,
+        broker_open_orders: Vec<BrokerOpenOrder>,
+        broker_executions: Vec<broker::BrokerExecution>,
     ) -> anyhow::Result<()> {
         let mut latest_cash_by_currency = BTreeMap::new();
         for snapshot in self.db.list_cash_snapshots(&self.settings.run_id).await? {
@@ -706,24 +718,6 @@ impl LiveRuntime {
                 }
             })
             .collect::<Vec<_>>();
-        let broker_open_orders = self.broker.open_orders(&self.settings.account_id).await?;
-        let mut symbols = BTreeSet::new();
-        symbols.extend(local_orders.iter().map(|order| order.symbol.clone()));
-        symbols.extend(
-            broker_positions
-                .iter()
-                .map(|position| position.symbol.clone()),
-        );
-        symbols.extend(broker_open_orders.iter().map(|order| order.symbol.clone()));
-        let mut broker_executions = Vec::new();
-        for symbol in symbols {
-            broker_executions.extend(
-                self.broker
-                    .executions(&self.settings.account_id, Some(&symbol))
-                    .await?,
-            );
-        }
-
         let audit = reconcile_broker_audit(BrokerReconciliationInput {
             account_id: self.settings.account_id.clone(),
             broker_kind: self.settings.broker_kind,

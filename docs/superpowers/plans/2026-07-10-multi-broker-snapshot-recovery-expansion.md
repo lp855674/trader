@@ -26,6 +26,12 @@ The next engineering gap is no longer the generic reconciliation audit model. Th
 
 This plan intentionally excludes RBAC, multi-person approval, and live-money trading controls. It also does not claim filled-order or real-money acceptance.
 
+## 2026-07-11 Task 1 Follow-Up
+
+- `Broker::snapshot_bundle` now carries account, positions, open orders, and executions behind one broker boundary.
+- Live startup recovery and periodic reconciliation consume broker open orders/executions from the bundle instead of issuing separate runtime-side broker calls.
+- Runtime supplies local order symbols as execution hints so broker adapters can include executions for recoverable/reconcilable local orders even when no remote open order or position exists.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.

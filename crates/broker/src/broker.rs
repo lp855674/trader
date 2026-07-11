@@ -25,7 +25,10 @@ pub use reconciliation_gate::{
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use trader_core::{OrderRequest, OrderSide, OrderType};
@@ -119,6 +122,8 @@ pub struct BrokerAccountSnapshot {
 pub struct BrokerSnapshotBundle {
     pub account: BrokerAccountSnapshot,
     pub positions: Vec<BrokerPositionSnapshot>,
+    pub open_orders: Vec<BrokerOpenOrder>,
+    pub executions: Vec<BrokerExecution>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -790,10 +795,26 @@ pub trait Broker: Send + Sync {
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError>;
-    async fn snapshot_bundle(&self, account_id: &str) -> Result<BrokerSnapshotBundle, BrokerError> {
+    async fn snapshot_bundle(
+        &self,
+        account_id: &str,
+        execution_symbols: &[String],
+    ) -> Result<BrokerSnapshotBundle, BrokerError> {
+        let account = self.account_snapshot(account_id).await?;
+        let positions = self.position_snapshots(account_id).await?;
+        let open_orders = self.open_orders(account_id).await?;
+        let mut symbols = execution_symbols.iter().cloned().collect::<BTreeSet<_>>();
+        symbols.extend(positions.iter().map(|position| position.symbol.clone()));
+        symbols.extend(open_orders.iter().map(|order| order.symbol.clone()));
+        let mut executions = Vec::new();
+        for symbol in symbols {
+            executions.extend(self.executions(account_id, Some(&symbol)).await?);
+        }
         Ok(BrokerSnapshotBundle {
-            account: self.account_snapshot(account_id).await?,
-            positions: self.position_snapshots(account_id).await?,
+            account,
+            positions,
+            open_orders,
+            executions,
         })
     }
     async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {

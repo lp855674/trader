@@ -1478,7 +1478,11 @@ impl Broker for StaticSnapshotBroker {
         ))
     }
 
-    async fn snapshot_bundle(&self, account_id: &str) -> Result<BrokerSnapshotBundle, BrokerError> {
+    async fn snapshot_bundle(
+        &self,
+        account_id: &str,
+        _execution_symbols: &[String],
+    ) -> Result<BrokerSnapshotBundle, BrokerError> {
         Ok(BrokerSnapshotBundle {
             account: BrokerAccountSnapshot {
                 account_id: account_id.to_string(),
@@ -1502,7 +1506,47 @@ impl Broker for StaticSnapshotBroker {
                 liquidation_price: None,
                 open_interest: None,
             }],
+            open_orders: vec![BrokerOpenOrder {
+                broker_order_id: "static-open-order".to_string(),
+                client_order_id: "static-client-order".to_string(),
+                account_id: account_id.to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Limit,
+                price: Some(dec("185.25")),
+                qty: dec("1"),
+                filled_qty: Decimal::ZERO,
+                status: "SUBMITTED".to_string(),
+            }],
+            executions: vec![BrokerExecution {
+                trade_id: "static-execution".to_string(),
+                broker_order_id: "static-open-order".to_string(),
+                client_order_id: Some("static-client-order".to_string()),
+                account_id: account_id.to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: OrderSide::Buy,
+                price: dec("185.25"),
+                qty: dec("1"),
+                fee: Decimal::ZERO,
+                ts_ms: 1_700_000_000_001,
+            }],
         })
+    }
+
+    async fn open_orders(&self, _account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
+        Err(BrokerError::Rejected(
+            "runtime should use snapshot_bundle open orders".to_string(),
+        ))
+    }
+
+    async fn executions(
+        &self,
+        _account_id: &str,
+        _symbol: Option<&str>,
+    ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        Err(BrokerError::Rejected(
+            "runtime should use snapshot_bundle executions".to_string(),
+        ))
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {
@@ -2284,9 +2328,9 @@ impl Broker for UnmatchedStartupRecoveryBroker {
     async fn executions(
         &self,
         _account_id: &str,
-        _symbol: Option<&str>,
+        symbol: Option<&str>,
     ) -> Result<Vec<BrokerExecution>, BrokerError> {
-        Ok(vec![
+        let executions = vec![
             BrokerExecution {
                 trade_id: "broker-exec-known".to_string(),
                 broker_order_id: "broker-known".to_string(),
@@ -2311,7 +2355,11 @@ impl Broker for UnmatchedStartupRecoveryBroker {
                 fee: dec("1.25"),
                 ts_ms: 3,
             },
-        ])
+        ];
+        Ok(executions
+            .into_iter()
+            .filter(|execution| symbol.is_none_or(|symbol| symbol == execution.symbol))
+            .collect())
     }
 
     async fn status(&self) -> Result<BrokerStatus, BrokerError> {

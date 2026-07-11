@@ -1165,21 +1165,41 @@ async fn ibkr_paper_gateway_adapter_snapshot_bundle_routes_through_gateway_clien
         client.clone(),
     );
 
-    let snapshot = adapter.snapshot_bundle("DU12345").await.unwrap();
+    let snapshot = adapter.snapshot_bundle("DU12345", &[]).await.unwrap();
 
     assert_eq!(snapshot.account.account_id, "DU12345");
     assert_eq!(snapshot.positions.len(), 1);
+    assert_eq!(snapshot.open_orders.len(), 1);
+    assert_eq!(snapshot.executions.len(), 2);
+    let calls = client.calls();
     assert_eq!(
-        client.calls(),
-        vec![
+        &calls[..3],
+        [
             FakeIbkrGatewayCall::AccountSnapshot {
                 account_id: "DU12345".to_string(),
             },
             FakeIbkrGatewayCall::PositionSnapshots {
                 account_id: "DU12345".to_string(),
             },
+            FakeIbkrGatewayCall::OpenOrders,
         ]
     );
+    assert!(matches!(
+        &calls[3],
+        FakeIbkrGatewayCall::Executions {
+            account_id,
+            symbol,
+            ..
+        } if account_id == "DU12345" && symbol == "AAPL"
+    ));
+    assert!(matches!(
+        &calls[4],
+        FakeIbkrGatewayCall::Executions {
+            account_id,
+            symbol,
+            ..
+        } if account_id == "DU12345" && symbol == "US:NASDAQ:AAPL:EQUITY"
+    ));
 }
 
 #[tokio::test]
