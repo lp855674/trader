@@ -73,6 +73,11 @@ function Invoke-MarketRuleGovernanceSmoke {
     Invoke-CheckedCargo @("test", "-p", "trader-cli", "market_rules_commands_print_effective_state_and_audit_events", "--test", "cli_tests")
 }
 
+function Invoke-ReferenceDataIngestionSmoke {
+    Invoke-CheckedCargo @("test", "-p", "data", "ingestion_tracker_marks_stale_reference_data_and_logs_alert")
+    Invoke-CheckedCargo @("test", "-p", "data", "ingestion_http_retry")
+}
+
 function Wait-RunStatus {
     param([string]$BaseUrl, [string]$RunId, [string]$Expected)
 
@@ -145,6 +150,7 @@ try {
     Invoke-StartupRecoverySmoke
     Invoke-BrokerAgnosticSnapshotSmoke
     Invoke-MarketRuleGovernanceSmoke
+    Invoke-ReferenceDataIngestionSmoke
 
     $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
@@ -504,6 +510,7 @@ try {
         api_config_audits = @($apiConfigAudits).Count
         broker_agnostic_snapshot_smoke = "passed"
         market_rules_governance_smoke = "passed"
+        reference_data_ingestion_smoke = "passed"
     }
 } finally {
     Set-Location $repoRoot
