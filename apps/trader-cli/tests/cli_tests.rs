@@ -3257,6 +3257,62 @@ fn config_management_commands_enforce_roles_and_print_pending_approvals() {
 }
 
 #[test]
+fn market_rules_commands_print_effective_state_and_audit_events() {
+    let config = seed_market_rules_cli_storage();
+
+    let mut effective = Command::cargo_bin("trader").unwrap();
+    effective
+        .current_dir(workspace_root())
+        .args([
+            "market-rules",
+            "effective",
+            "--config",
+            config.to_str().unwrap(),
+            "--market",
+            "US",
+            "--exchange",
+            "NASDAQ",
+            "--asset-class",
+            "EQUITY",
+            "--symbol",
+            "US:NASDAQ:AAPL:EQUITY",
+            "--trading-day",
+            "2026-07-03",
+            "--at-ms",
+            "10",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("market_rule_effective: market=US exchange=NASDAQ"))
+        .stdout(contains("market_rule_lot_size: id=lot-aapl"))
+        .stdout(contains("market_rule_price_limit: id=price-aapl"))
+        .stdout(contains("market_rule_fee: id=fee-aapl"))
+        .stdout(contains("market_rule_fee_tier: id=fee-aapl-tier"))
+        .stdout(contains("market_rule_calendar: id=us-open"))
+        .stdout(contains("market_rule_trading_session: id=us-regular"));
+
+    let mut audits = Command::cargo_bin("trader").unwrap();
+    audits
+        .current_dir(workspace_root())
+        .args([
+            "market-rules",
+            "audits",
+            "--config",
+            config.to_str().unwrap(),
+            "--rule-type",
+            "fee",
+            "--rule-id",
+            "fee-aapl",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("market_rule_audit: source=fee-aapl"))
+        .stdout(contains("category=market_rule.fee.changed"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn config_management_commands_enforce_staging_roles_and_print_pending_approvals() {
     let config = seed_config_management_cli_storage();
     let version_one = temp_output("trader-cli-staging-queue-config-v1", "json");
@@ -4646,6 +4702,96 @@ fn seed_config_management_cli_storage() -> PathBuf {
             .await
             .unwrap();
         db.migrate().await.unwrap();
+    });
+
+    config
+}
+
+fn seed_market_rules_cli_storage() -> PathBuf {
+    let db_path = temp_output("trader-cli-market-rules-storage", "sqlite");
+    let config = write_contract_cli_config(&db_path);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let db = storage::Db::connect(&format!("sqlite://{}", toml_path(&db_path)))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        db.configure_lot_size_rule(storage::LotSizeRuleCommand {
+            id: "lot-aapl".to_string(),
+            market: "US".to_string(),
+            exchange: "NASDAQ".to_string(),
+            asset_class: "EQUITY".to_string(),
+            symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+            lot_size: "1".to_string(),
+            min_qty: "1".to_string(),
+            min_notional: "0".to_string(),
+            effective_from_ms: 10,
+            effective_to_ms: None,
+        })
+        .await
+        .unwrap();
+        db.configure_price_limit_rule(storage::PriceLimitRuleCommand {
+            id: "price-aapl".to_string(),
+            market: "US".to_string(),
+            exchange: "NASDAQ".to_string(),
+            asset_class: "EQUITY".to_string(),
+            symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+            tick_size: "0.01".to_string(),
+            limit_up_bps: Some("1000".to_string()),
+            limit_down_bps: Some("900".to_string()),
+            effective_from_ms: 10,
+            effective_to_ms: None,
+        })
+        .await
+        .unwrap();
+        db.create_fee_rule_with_tiers(storage::NewFeeRuleWithTiers {
+            rule: storage::NewFeeRule {
+                id: "fee-aapl".to_string(),
+                market: "US".to_string(),
+                exchange: "NASDAQ".to_string(),
+                asset_class: "EQUITY".to_string(),
+                symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+                volume_window: "rolling_30d".to_string(),
+                maker_bps: "1".to_string(),
+                taker_bps: "2".to_string(),
+                minimum_fee: Some("0.01".to_string()),
+                tax_bps: None,
+                exchange_fee_bps: None,
+                effective_from_ms: 10,
+                effective_to_ms: None,
+            },
+            tiers: vec![storage::NewFeeRuleTier {
+                id: "fee-aapl-tier".to_string(),
+                fee_rule_id: "fee-aapl".to_string(),
+                volume_from: "0".to_string(),
+                volume_to: None,
+                maker_bps: "1".to_string(),
+                taker_bps: "2".to_string(),
+            }],
+        })
+        .await
+        .unwrap();
+        db.upsert_market_calendar(storage::NewMarketCalendar {
+            id: "us-open".to_string(),
+            market: "US".to_string(),
+            trading_day: "2026-07-03".to_string(),
+            is_open: true,
+            session_template: Some("regular".to_string()),
+        })
+        .await
+        .unwrap();
+        db.insert_trading_session_rule(storage::NewTradingSessionRule {
+            id: "us-regular".to_string(),
+            market: "US".to_string(),
+            trading_day: "2026-07-03".to_string(),
+            session_name: "regular".to_string(),
+            open_time: "09:30".to_string(),
+            close_time: "16:00".to_string(),
+            timezone: "America/New_York".to_string(),
+        })
+        .await
+        .unwrap();
     });
 
     config

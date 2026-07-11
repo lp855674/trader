@@ -110,6 +110,20 @@ pub struct StoredPriceLimitRule {
     pub effective_to_ms: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceLimitRuleCommand {
+    pub id: String,
+    pub market: String,
+    pub exchange: String,
+    pub asset_class: String,
+    pub symbol: Option<String>,
+    pub tick_size: String,
+    pub limit_up_bps: Option<String>,
+    pub limit_down_bps: Option<String>,
+    pub effective_from_ms: i64,
+    pub effective_to_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewFeeRule {
     pub id: String,
@@ -1189,6 +1203,15 @@ pub struct EventRecord {
     pub payload_json: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarketRuleAuditFilter {
+    pub rule_type: Option<String>,
+    pub rule_id: Option<String>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewOrderEvent {
     pub id: String,
@@ -2220,6 +2243,25 @@ impl Db {
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn configure_price_limit_rule(
+        &self,
+        command: PriceLimitRuleCommand,
+    ) -> StorageResult<()> {
+        self.insert_price_limit_rule(NewPriceLimitRule {
+            id: command.id,
+            market: command.market,
+            exchange: command.exchange,
+            asset_class: command.asset_class,
+            symbol: command.symbol,
+            tick_size: command.tick_size,
+            limit_up_bps: command.limit_up_bps,
+            limit_down_bps: command.limit_down_bps,
+            effective_from_ms: command.effective_from_ms,
+            effective_to_ms: command.effective_to_ms,
+        })
+        .await
     }
 
     pub async fn update_price_limit_rule_effective_to(
@@ -6906,6 +6948,56 @@ impl Db {
         .bind(source)
         .fetch_all(self.pool())
         .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(event_id, ts_ms, source, category, payload_json)| EventRecord {
+                    event_id,
+                    ts_ms,
+                    source,
+                    category,
+                    payload_json,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_market_rule_audit_events(
+        &self,
+        filter: MarketRuleAuditFilter,
+    ) -> StorageResult<Vec<EventRecord>> {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT event_id, ts_ms, source, category, payload_json FROM event_store WHERE category LIKE 'market_rule.%'",
+        );
+
+        if let Some(rule_type) = filter.rule_type.as_deref() {
+            query.push(" AND category = ");
+            query.push_bind(format!("market_rule.{rule_type}.changed"));
+        }
+        if let Some(rule_id) = filter.rule_id.as_deref() {
+            query.push(" AND source = ");
+            query.push_bind(rule_id);
+        }
+        if let Some(from_ms) = filter.from_ms {
+            query.push(" AND ts_ms >= ");
+            query.push_bind(from_ms);
+        }
+        if let Some(to_ms) = filter.to_ms {
+            query.push(" AND ts_ms <= ");
+            query.push_bind(to_ms);
+        }
+
+        query.push(" ORDER BY ts_ms, event_id");
+        if let Some(limit) = filter.limit {
+            query.push(" LIMIT ");
+            query.push_bind(limit);
+        }
+
+        let rows = query
+            .build_query_as::<(String, i64, String, String, String)>()
+            .fetch_all(self.pool())
+            .await?;
 
         Ok(rows
             .into_iter()

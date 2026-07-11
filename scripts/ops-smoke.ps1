@@ -65,6 +65,14 @@ function Invoke-BrokerAgnosticSnapshotSmoke {
     Invoke-CheckedCargo @("test", "-p", "storage", "reconciliation_audits")
 }
 
+function Invoke-MarketRuleGovernanceSmoke {
+    Invoke-CheckedCargo @("test", "-p", "storage", "market_rule_reference_writes_change_audit_events", "--test", "runtime_repository_tests")
+    Invoke-CheckedCargo @("test", "-p", "paper", "market_rules")
+    Invoke-CheckedCargo @("test", "-p", "paper", "trading_session")
+    Invoke-CheckedCargo @("test", "-p", "api", "market_rules_effective_route_returns_runtime_state_and_audits", "--test", "api_tests")
+    Invoke-CheckedCargo @("test", "-p", "trader-cli", "market_rules_commands_print_effective_state_and_audit_events", "--test", "cli_tests")
+}
+
 function Wait-RunStatus {
     param([string]$BaseUrl, [string]$RunId, [string]$Expected)
 
@@ -136,6 +144,7 @@ try {
     Invoke-CheckedCargo @("build", "-p", "trader-cli", "-p", "trader-server")
     Invoke-StartupRecoverySmoke
     Invoke-BrokerAgnosticSnapshotSmoke
+    Invoke-MarketRuleGovernanceSmoke
 
     $env:TRADER_CONFIG = $serverConfigPath
     $env:TRADER_DATABASE_URL = $databaseUrl
@@ -494,6 +503,7 @@ try {
         api_config_releases = @($apiConfigReleases).Count
         api_config_audits = @($apiConfigAudits).Count
         broker_agnostic_snapshot_smoke = "passed"
+        market_rules_governance_smoke = "passed"
     }
 } finally {
     Set-Location $repoRoot

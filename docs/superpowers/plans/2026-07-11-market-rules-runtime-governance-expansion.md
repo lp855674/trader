@@ -187,11 +187,18 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 - Read-only effective-state queries for configured market rules by market/exchange/symbol/time.
 - Local governance/audit readback that lets operators inspect market-rule changes and publication evidence without claiming production RBAC.
 
-- [ ] Add failing storage/API tests for missing effective-state readback.
-- [ ] Add failing storage/API tests for market-rule audit/governance evidence readback.
-- [ ] Add or extend CLI inspection only where current CLI cannot reach the new readback.
-- [ ] Preserve existing fee-rule route compatibility.
-- [ ] Verify focused `storage`, `api`, and `trader-cli` gates.
+- [x] Add failing storage/API tests for missing effective-state readback.
+- [x] Add failing storage/API tests for market-rule audit/governance evidence readback.
+- [x] Add or extend CLI inspection only where current CLI cannot reach the new readback.
+- [x] Preserve existing fee-rule route compatibility.
+- [x] Verify focused `storage`, `api`, and `trader-cli` gates.
+
+### Task 3 Implementation Notes
+
+- Added `storage::MarketRuleAuditFilter` and `Db::list_market_rule_audit_events` for filtered local audit readback over `market_rule.*.changed` event-store records.
+- Added `GET /api/v1/market-rules/effective` to return effective lot-size, price-limit, fee-with-tiers, calendar, sessions, and matching audit events for a market/exchange/asset-class/symbol/trading-day/as-of query.
+- Added `trader market-rules effective` and `trader market-rules audits` for credential-free operator readback.
+- Preserved existing `/api/v1/fee-rules` behavior and compatibility.
 
 ## Task 4: Extend Operator Smoke And Documentation
 
@@ -207,11 +214,19 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 - Credential-free operator smoke that proves configured market-rule setup, effective readback, runtime enforcement, and local governance/audit evidence.
 - Updated docs that distinguish local deterministic evidence from remaining production hardening.
 
-- [ ] Add local market-rule smoke setup with deterministic SQLite state.
-- [ ] Add smoke assertions for effective readback and runtime enforcement.
-- [ ] Add smoke assertions for local governance/audit evidence.
-- [ ] Update docs and evidence template.
-- [ ] Verify `scripts/ops-smoke.ps1`.
+- [x] Add local market-rule smoke setup with deterministic SQLite state.
+- [x] Add smoke assertions for effective readback and runtime enforcement.
+- [x] Add smoke assertions for local governance/audit evidence.
+- [x] Update docs and evidence template.
+- [x] Verify `scripts/ops-smoke.ps1`.
+
+### Task 4 Implementation Notes
+
+- Extended `scripts/ops-smoke.ps1` with `Invoke-MarketRuleGovernanceSmoke`, covering deterministic storage audit setup, paper market-rule/trading-session runtime gates, API effective readback, and CLI effective/audit readback.
+- Added `market_rules_governance_smoke = "passed"` to the ops-smoke summary output.
+- Updated market-rule technical docs, roadmap, and analysis docs to distinguish local deterministic evidence from remaining real-broker, live-money, production RBAC, and hosted approval gaps.
+- Added `docs/market-rules-runtime-governance-results-template.md` for local evidence capture.
+- Verified `scripts/ops-smoke.ps1` with run id `ops-live-92d55838ea48490498690394d84c9f75`; summary included `market_rules_governance_smoke = "passed"`.
 
 ## Task 5: Full Local Verification And Commit
 
@@ -223,10 +238,10 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 - Completed checklist with exact verification commands and results.
 - One focused commit for the implemented market-rule runtime/governance expansion.
 
-- [ ] Run `cargo fmt`.
-- [ ] Run focused market-rule/storage/paper/API/CLI gates.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
-- [ ] Run boundary scripts if storage/API read models changed.
-- [ ] Update status, docs, and evidence summary.
-- [ ] Commit the scoped changes.
+- [x] Run `cargo fmt`.
+- [x] Run focused market-rule/storage/paper/API/CLI gates.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
+- [x] Run boundary scripts if storage/API read models changed.
+- [x] Update status, docs, and evidence summary.
+- [x] Commit the scoped changes.

@@ -1999,6 +1999,115 @@ async fn fee_rules_route_prefers_symbol_specific_then_exchange_default() {
 }
 
 #[tokio::test]
+async fn market_rules_effective_route_returns_runtime_state_and_audits() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.configure_lot_size_rule(storage::LotSizeRuleCommand {
+        id: "lot-aapl".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        lot_size: "1".to_string(),
+        min_qty: "1".to_string(),
+        min_notional: "0".to_string(),
+        effective_from_ms: 10,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.configure_price_limit_rule(storage::PriceLimitRuleCommand {
+        id: "price-aapl".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        tick_size: "0.01".to_string(),
+        limit_up_bps: Some("1000".to_string()),
+        limit_down_bps: Some("900".to_string()),
+        effective_from_ms: 10,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.create_fee_rule_with_tiers(storage::NewFeeRuleWithTiers {
+        rule: storage::NewFeeRule {
+            id: "fee-aapl".to_string(),
+            market: "US".to_string(),
+            exchange: "NASDAQ".to_string(),
+            asset_class: "EQUITY".to_string(),
+            symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+            volume_window: "rolling_30d".to_string(),
+            maker_bps: "1".to_string(),
+            taker_bps: "2".to_string(),
+            minimum_fee: Some("0.01".to_string()),
+            tax_bps: None,
+            exchange_fee_bps: None,
+            effective_from_ms: 10,
+            effective_to_ms: None,
+        },
+        tiers: vec![storage::NewFeeRuleTier {
+            id: "fee-aapl-tier".to_string(),
+            fee_rule_id: "fee-aapl".to_string(),
+            volume_from: "0".to_string(),
+            volume_to: None,
+            maker_bps: "1".to_string(),
+            taker_bps: "2".to_string(),
+        }],
+    })
+    .await
+    .unwrap();
+    db.upsert_market_calendar(storage::NewMarketCalendar {
+        id: "us-open".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: true,
+        session_template: Some("regular".to_string()),
+    })
+    .await
+    .unwrap();
+    db.insert_trading_session_rule(storage::NewTradingSessionRule {
+        id: "us-regular".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        session_name: "regular".to_string(),
+        open_time: "09:30".to_string(),
+        close_time: "16:00".to_string(),
+        timezone: "America/New_York".to_string(),
+    })
+    .await
+    .unwrap();
+
+    let app = api::router_with_state(api::AppState::with_default_run_config(
+        db,
+        "configs/backtest/ma_cross.toml".into(),
+    ));
+    let found = get_json(
+        app,
+        "/api/v1/market-rules/effective?market=US&exchange=NASDAQ&asset_class=EQUITY&symbol=US:NASDAQ:AAPL:EQUITY&trading_day=2026-07-03&at_ms=10",
+    )
+    .await;
+
+    assert_eq!(found["market"], "US");
+    assert_eq!(found["symbol"], "US:NASDAQ:AAPL:EQUITY");
+    assert_eq!(found["lot_size_rule"]["id"], "lot-aapl");
+    assert_eq!(found["price_limit_rule"]["tick_size"], "0.01");
+    assert_eq!(found["fee_rule"]["rule"]["volume_window"], "rolling_30d");
+    assert_eq!(found["fee_rule"]["tiers"][0]["id"], "fee-aapl-tier");
+    assert_eq!(found["market_calendar"]["session_template"], "regular");
+    assert_eq!(found["trading_sessions"][0]["session_name"], "regular");
+    let audit_sources = found["audit_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["source"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(audit_sources.contains(&"lot-aapl"), "{found}");
+    assert!(audit_sources.contains(&"price-aapl"), "{found}");
+    assert!(audit_sources.contains(&"fee-aapl"), "{found}");
+}
+
+#[tokio::test]
 async fn crypto_market_meta_route_returns_filtered_decimal_metadata() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();

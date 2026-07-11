@@ -1801,6 +1801,38 @@ async fn market_rule_reference_writes_change_audit_events() {
     let updated_fee: serde_json::Value = serde_json::from_str(&fee_events[1].payload_json).unwrap();
     assert_eq!(updated_fee["action"], "updated");
     assert_eq!(updated_fee["rule"]["effective_to_ms"], 60);
+
+    let market_rule_events = db
+        .list_market_rule_audit_events(storage::MarketRuleAuditFilter {
+            rule_type: Some("fee".to_string()),
+            from_ms: Some(50),
+            to_ms: Some(60),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(market_rule_events.len(), 2);
+    assert!(
+        market_rule_events
+            .iter()
+            .all(|event| event.source == "fee-v1")
+    );
+    assert!(
+        market_rule_events
+            .iter()
+            .all(|event| event.category == "market_rule.fee.changed")
+    );
+
+    let limited_lot_events = db
+        .list_market_rule_audit_events(storage::MarketRuleAuditFilter {
+            rule_id: Some("lot-v1".to_string()),
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(limited_lot_events.len(), 1);
+    assert_eq!(limited_lot_events[0].source, "lot-v1");
 }
 
 #[tokio::test]

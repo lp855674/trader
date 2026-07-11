@@ -258,6 +258,10 @@ enum Command {
         #[command(subcommand)]
         command: ConfigsCommand,
     },
+    MarketRules {
+        #[command(subcommand)]
+        command: MarketRulesCommand,
+    },
     Runs {
         #[command(subcommand)]
         command: RunsCommand,
@@ -655,6 +659,40 @@ enum ConfigsCommand {
         config: String,
         #[arg(long)]
         config_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MarketRulesCommand {
+    Effective {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        market: String,
+        #[arg(long)]
+        exchange: String,
+        #[arg(long)]
+        asset_class: String,
+        #[arg(long)]
+        symbol: String,
+        #[arg(long)]
+        trading_day: String,
+        #[arg(long)]
+        at_ms: Option<i64>,
+    },
+    Audits {
+        #[arg(long, default_value = "configs/backtest/ma_cross.toml")]
+        config: String,
+        #[arg(long)]
+        rule_type: Option<String>,
+        #[arg(long)]
+        rule_id: Option<String>,
+        #[arg(long = "from")]
+        from_ms: Option<i64>,
+        #[arg(long = "to")]
+        to_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
     },
 }
 
@@ -2213,6 +2251,148 @@ async fn run_command(command: Command) -> Result<()> {
                         audit.actor.as_deref().unwrap_or(""),
                         audit.reason.as_deref().unwrap_or(""),
                         audit.ts_ms
+                    );
+                }
+            }
+        },
+        Command::MarketRules { command } => match command {
+            MarketRulesCommand::Effective {
+                config,
+                market,
+                exchange,
+                asset_class,
+                symbol,
+                trading_day,
+                at_ms,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let at_ms = at_ms.unwrap_or_else(now_ms);
+                println!(
+                    "market_rule_effective: market={} exchange={} asset_class={} symbol={} trading_day={} at_ms={}",
+                    market, exchange, asset_class, symbol, trading_day, at_ms
+                );
+                if let Some(rule) = db
+                    .find_lot_size_rule(&market, &exchange, &asset_class, &symbol, at_ms)
+                    .await?
+                {
+                    println!(
+                        "market_rule_lot_size: id={} symbol={} lot_size={} min_qty={} min_notional={} effective_from_ms={} effective_to_ms={}",
+                        rule.id,
+                        rule.symbol.as_deref().unwrap_or(""),
+                        rule.lot_size,
+                        rule.min_qty,
+                        rule.min_notional,
+                        rule.effective_from_ms,
+                        rule.effective_to_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_default()
+                    );
+                }
+                if let Some(rule) = db
+                    .find_price_limit_rule(&market, &exchange, &asset_class, &symbol, at_ms)
+                    .await?
+                {
+                    println!(
+                        "market_rule_price_limit: id={} symbol={} tick_size={} limit_up_bps={} limit_down_bps={} effective_from_ms={} effective_to_ms={}",
+                        rule.id,
+                        rule.symbol.as_deref().unwrap_or(""),
+                        rule.tick_size,
+                        rule.limit_up_bps.as_deref().unwrap_or(""),
+                        rule.limit_down_bps.as_deref().unwrap_or(""),
+                        rule.effective_from_ms,
+                        rule.effective_to_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_default()
+                    );
+                }
+                if let Some(rule) = db
+                    .find_fee_rule_with_tiers(
+                        &market,
+                        &exchange,
+                        &asset_class,
+                        Some(&symbol),
+                        at_ms,
+                    )
+                    .await?
+                {
+                    println!(
+                        "market_rule_fee: id={} symbol={} volume_window={} maker_bps={} taker_bps={} minimum_fee={} tax_bps={} exchange_fee_bps={} tiers={} effective_from_ms={} effective_to_ms={}",
+                        rule.rule.id,
+                        rule.rule.symbol.as_deref().unwrap_or(""),
+                        rule.rule.volume_window,
+                        rule.rule.maker_bps,
+                        rule.rule.taker_bps,
+                        rule.rule.minimum_fee.as_deref().unwrap_or(""),
+                        rule.rule.tax_bps.as_deref().unwrap_or(""),
+                        rule.rule.exchange_fee_bps.as_deref().unwrap_or(""),
+                        rule.tiers.len(),
+                        rule.rule.effective_from_ms,
+                        rule.rule
+                            .effective_to_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_default()
+                    );
+                    for tier in rule.tiers {
+                        println!(
+                            "market_rule_fee_tier: id={} fee_rule_id={} volume_from={} volume_to={} maker_bps={} taker_bps={}",
+                            tier.id,
+                            tier.fee_rule_id,
+                            tier.volume_from,
+                            tier.volume_to.as_deref().unwrap_or(""),
+                            tier.maker_bps,
+                            tier.taker_bps
+                        );
+                    }
+                }
+                if let Some(calendar) = db.find_market_calendar(&market, &trading_day).await? {
+                    println!(
+                        "market_rule_calendar: id={} market={} trading_day={} is_open={} session_template={}",
+                        calendar.id,
+                        calendar.market,
+                        calendar.trading_day,
+                        calendar.is_open,
+                        calendar.session_template.as_deref().unwrap_or("")
+                    );
+                }
+                for session in db.list_trading_session_rules(&market, &trading_day).await? {
+                    println!(
+                        "market_rule_trading_session: id={} market={} trading_day={} session_name={} open_time={} close_time={} timezone={}",
+                        session.id,
+                        session.market,
+                        session.trading_day,
+                        session.session_name,
+                        session.open_time,
+                        session.close_time,
+                        session.timezone
+                    );
+                }
+            }
+            MarketRulesCommand::Audits {
+                config,
+                rule_type,
+                rule_id,
+                from_ms,
+                to_ms,
+                limit,
+            } => {
+                let (_, db) = load_db(&config).await?;
+                let events = db
+                    .list_market_rule_audit_events(storage::MarketRuleAuditFilter {
+                        rule_type,
+                        rule_id,
+                        from_ms,
+                        to_ms,
+                        limit,
+                    })
+                    .await?;
+                for event in events {
+                    println!(
+                        "market_rule_audit: source={} category={} ts_ms={} event_id={} payload={}",
+                        event.source,
+                        event.category,
+                        event.ts_ms,
+                        event.event_id,
+                        event.payload_json
                     );
                 }
             }

@@ -275,6 +275,16 @@ struct FeeRulesQuery {
 }
 
 #[derive(Deserialize)]
+struct MarketRulesEffectiveQuery {
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: String,
+    trading_day: String,
+    at_ms: Option<i64>,
+}
+
+#[derive(Deserialize)]
 struct CreateFeeRuleRequest {
     id: String,
     market: String,
@@ -333,6 +343,70 @@ struct FeeRuleTierResponse {
 struct FeeRuleWithTiersResponse {
     rule: FeeRuleResponse,
     tiers: Vec<FeeRuleTierResponse>,
+}
+
+#[derive(Serialize)]
+struct LotSizeRuleResponse {
+    id: String,
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: Option<String>,
+    lot_size: String,
+    min_qty: String,
+    min_notional: String,
+    effective_from_ms: i64,
+    effective_to_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct PriceLimitRuleResponse {
+    id: String,
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: Option<String>,
+    tick_size: String,
+    limit_up_bps: Option<String>,
+    limit_down_bps: Option<String>,
+    effective_from_ms: i64,
+    effective_to_ms: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct MarketCalendarResponse {
+    id: String,
+    market: String,
+    trading_day: String,
+    is_open: bool,
+    session_template: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TradingSessionRuleResponse {
+    id: String,
+    market: String,
+    trading_day: String,
+    session_name: String,
+    open_time: String,
+    close_time: String,
+    timezone: String,
+}
+
+#[derive(Serialize)]
+struct MarketRulesEffectiveResponse {
+    market: String,
+    exchange: String,
+    asset_class: String,
+    symbol: String,
+    trading_day: String,
+    at_ms: i64,
+    lot_size_rule: Option<LotSizeRuleResponse>,
+    price_limit_rule: Option<PriceLimitRuleResponse>,
+    fee_rule: Option<FeeRuleWithTiersResponse>,
+    market_calendar: Option<MarketCalendarResponse>,
+    trading_sessions: Vec<TradingSessionRuleResponse>,
+    audit_events: Vec<EventResponse>,
 }
 
 #[derive(Deserialize)]
@@ -839,6 +913,10 @@ pub fn router_with_state(state: AppState) -> Router {
         .route("/api/v1/runs/{run_id}/positions", get(list_run_positions))
         .route("/api/v1/funding-rates", get(list_funding_rates))
         .route("/api/v1/fee-rules", get(get_fee_rule).post(create_fee_rule))
+        .route(
+            "/api/v1/market-rules/effective",
+            get(get_market_rules_effective),
+        )
         .route("/api/v1/crypto-market-meta", get(list_crypto_market_meta))
         .route("/api/v1/corporate-actions", get(list_corporate_actions))
         .route("/api/v1/ingestion/status", get(ingestion_status))
@@ -2259,6 +2337,93 @@ async fn get_fee_rule(
         .await?
         .ok_or_else(|| not_found("fee rule not found"))?;
     Ok(Json(fee_rule_with_tiers_response(rule)))
+}
+
+async fn get_market_rules_effective(
+    State(state): State<AppState>,
+    Query(query): Query<MarketRulesEffectiveQuery>,
+) -> Result<Json<MarketRulesEffectiveResponse>, ApiError> {
+    let at_ms = query.at_ms.unwrap_or_else(now_ms);
+    let lot_size_rule = state
+        .db
+        .find_lot_size_rule(
+            &query.market,
+            &query.exchange,
+            &query.asset_class,
+            &query.symbol,
+            at_ms,
+        )
+        .await?
+        .map(lot_size_rule_response);
+    let price_limit_rule = state
+        .db
+        .find_price_limit_rule(
+            &query.market,
+            &query.exchange,
+            &query.asset_class,
+            &query.symbol,
+            at_ms,
+        )
+        .await?
+        .map(price_limit_rule_response);
+    let fee_rule = state
+        .db
+        .find_fee_rule_with_tiers(
+            &query.market,
+            &query.exchange,
+            &query.asset_class,
+            Some(&query.symbol),
+            at_ms,
+        )
+        .await?
+        .map(fee_rule_with_tiers_response);
+    let market_calendar = state
+        .db
+        .find_market_calendar(&query.market, &query.trading_day)
+        .await?
+        .map(market_calendar_response);
+    let trading_sessions = state
+        .db
+        .list_trading_session_rules(&query.market, &query.trading_day)
+        .await?
+        .into_iter()
+        .map(trading_session_rule_response)
+        .collect();
+    let effective_rule_ids: BTreeSet<String> = [
+        lot_size_rule.as_ref().map(|rule| rule.id.clone()),
+        price_limit_rule.as_ref().map(|rule| rule.id.clone()),
+        fee_rule.as_ref().map(|rule| rule.rule.id.clone()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let audit_events = state
+        .db
+        .list_market_rule_audit_events(storage::MarketRuleAuditFilter {
+            to_ms: Some(at_ms),
+            limit: Some(100),
+            ..Default::default()
+        })
+        .await?
+        .into_iter()
+        .filter(|event| effective_rule_ids.contains(&event.source))
+        .map(event_response)
+        .collect();
+
+    Ok(Json(MarketRulesEffectiveResponse {
+        market: query.market,
+        exchange: query.exchange,
+        asset_class: query.asset_class,
+        symbol: query.symbol,
+        trading_day: query.trading_day,
+        at_ms,
+        lot_size_rule,
+        price_limit_rule,
+        fee_rule,
+        market_calendar,
+        trading_sessions,
+        audit_events,
+    }))
 }
 
 async fn list_crypto_market_meta(
@@ -3738,6 +3903,60 @@ fn fee_rule_with_tiers_response(rule: storage::StoredFeeRuleWithTiers) -> FeeRul
                 taker_bps: tier.taker_bps,
             })
             .collect(),
+    }
+}
+
+fn lot_size_rule_response(rule: storage::StoredLotSizeRule) -> LotSizeRuleResponse {
+    LotSizeRuleResponse {
+        id: rule.id,
+        market: rule.market,
+        exchange: rule.exchange,
+        asset_class: rule.asset_class,
+        symbol: rule.symbol,
+        lot_size: rule.lot_size,
+        min_qty: rule.min_qty,
+        min_notional: rule.min_notional,
+        effective_from_ms: rule.effective_from_ms,
+        effective_to_ms: rule.effective_to_ms,
+    }
+}
+
+fn price_limit_rule_response(rule: storage::StoredPriceLimitRule) -> PriceLimitRuleResponse {
+    PriceLimitRuleResponse {
+        id: rule.id,
+        market: rule.market,
+        exchange: rule.exchange,
+        asset_class: rule.asset_class,
+        symbol: rule.symbol,
+        tick_size: rule.tick_size,
+        limit_up_bps: rule.limit_up_bps,
+        limit_down_bps: rule.limit_down_bps,
+        effective_from_ms: rule.effective_from_ms,
+        effective_to_ms: rule.effective_to_ms,
+    }
+}
+
+fn market_calendar_response(calendar: storage::StoredMarketCalendar) -> MarketCalendarResponse {
+    MarketCalendarResponse {
+        id: calendar.id,
+        market: calendar.market,
+        trading_day: calendar.trading_day,
+        is_open: calendar.is_open,
+        session_template: calendar.session_template,
+    }
+}
+
+fn trading_session_rule_response(
+    session: storage::StoredTradingSessionRule,
+) -> TradingSessionRuleResponse {
+    TradingSessionRuleResponse {
+        id: session.id,
+        market: session.market,
+        trading_day: session.trading_day,
+        session_name: session.session_name,
+        open_time: session.open_time,
+        close_time: session.close_time,
+        timezone: session.timezone,
     }
 }
 
