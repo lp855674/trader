@@ -32,6 +32,11 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - Live startup recovery and periodic reconciliation consume broker open orders/executions from the bundle instead of issuing separate runtime-side broker calls.
 - Runtime supplies local order symbols as execution hints so broker adapters can include executions for recoverable/reconcilable local orders even when no remote open order or position exists.
 
+## 2026-07-11 Task 2 Follow-Up
+
+- Binance startup recovery coverage now verifies that local canonical order symbols are passed through the shared snapshot bundle as execution hints.
+- The non-IBKR recovery test only returns a broker execution when the runtime supplies the expected Binance symbol hint, protecting recovery from regressing to IBKR-only open-order/position-derived execution discovery.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.

@@ -2071,8 +2071,11 @@ impl Broker for NativeSymbolExecutionRecoveryBroker {
     async fn executions(
         &self,
         _account_id: &str,
-        _symbol: Option<&str>,
+        symbol: Option<&str>,
     ) -> Result<Vec<BrokerExecution>, BrokerError> {
+        if symbol != Some("CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT") {
+            return Ok(Vec::new());
+        }
         Ok(vec![BrokerExecution {
             trade_id: "broker-native-exec".to_string(),
             broker_order_id: "broker-native-symbol".to_string(),
