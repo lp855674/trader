@@ -167,11 +167,18 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 - Runtime tests proving configured effective rules are selected and applied by time, symbol/default precedence, and market-day/session state.
 - Runtime evidence for fee-tier volume windows where simulated fills depend on account volume.
 
-- [ ] Add failing runtime tests for effective lot/price rule selection at order validation time where coverage is missing.
-- [ ] Add failing runtime tests for fee-tier/account-volume window selection where coverage is missing.
-- [ ] Add failing runtime tests for calendar/session boundaries and stream refresh gaps where coverage is missing.
-- [ ] Implement the smallest runtime assembly/readback changes needed for those tests.
-- [ ] Verify focused `paper` and `market_rules` gates.
+- [x] Add failing runtime tests for effective lot/price rule selection at order validation time where coverage is missing.
+- [x] Add failing runtime tests for fee-tier/account-volume window selection where coverage is missing.
+- [x] Add failing runtime tests for calendar/session boundaries and stream refresh gaps where coverage is missing.
+- [x] Implement the smallest runtime assembly/readback changes needed for those tests.
+- [x] Verify focused `paper` and `market_rules` gates.
+
+### Task 2 Implementation Notes
+
+- Added `paper_runtime_market_rules_select_effective_lot_rule_at_run_start` to prove batch paper selects the effective storage-backed lot rule by run-start `as_of_ms`, ignoring expired and future versions at order validation time.
+- Added `paper_runtime_trading_session_applies_configured_calendar_only_to_matching_trading_day` to prove batch paper applies configured calendar closures only to the matching trading day and allows later unconfigured days to use the default open schedule.
+- Existing runtime coverage already proves storage-backed fee rules, symbol-specific fee precedence, run-window fee tiers, non-seeded run windows, seeded rolling account-volume tiers, rolling-window movement, static calendar closures, static session closures, and stream calendar/session refresh.
+- No production code change was required for this slice. Current paper sample orders are market orders, so price tick-size validation is still covered at the `market_rules` engine boundary rather than as a paper runtime price-limit rejection.
 
 ## Task 3: Add Local Governance And Effective-State Readback
 

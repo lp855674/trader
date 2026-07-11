@@ -184,6 +184,78 @@ async fn paper_runtime_uses_storage_backed_market_rules() {
 }
 
 #[tokio::test]
+async fn paper_runtime_market_rules_select_effective_lot_rule_at_run_start() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.configure_lot_size_rule(LotSizeRuleCommand {
+        id: "lot-aapl-runtime-expired".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        lot_size: "1".to_string(),
+        min_qty: "1".to_string(),
+        min_notional: "0".to_string(),
+        effective_from_ms: 0,
+        effective_to_ms: Some(999),
+    })
+    .await
+    .unwrap();
+    db.configure_lot_size_rule(LotSizeRuleCommand {
+        id: "lot-aapl-runtime-current".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        lot_size: "10".to_string(),
+        min_qty: "10".to_string(),
+        min_notional: "0".to_string(),
+        effective_from_ms: 1_000,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    db.configure_lot_size_rule(LotSizeRuleCommand {
+        id: "lot-aapl-runtime-future".to_string(),
+        market: "US".to_string(),
+        exchange: "NASDAQ".to_string(),
+        asset_class: "EQUITY".to_string(),
+        symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+        lot_size: "25".to_string(),
+        min_qty: "25".to_string(),
+        min_notional: "0".to_string(),
+        effective_from_ms: 10_000,
+        effective_to_ms: None,
+    })
+    .await
+    .unwrap();
+    let bars = vec![
+        Bar::new(1_000, dec!(1), dec!(1), dec!(1), dec!(10), dec!(1)),
+        Bar::new(1_001, dec!(1), dec!(1), dec!(1), dec!(11), dec!(1)),
+        Bar::new(1_002, dec!(1), dec!(1), dec!(1), dec!(20), dec!(1)),
+    ];
+
+    let settings = PaperSettings::sample();
+    let summary = PaperRuntime::new(db.clone(), settings.clone())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.signals, 1);
+    assert_eq!(summary.orders, 0);
+    assert!(db.list_orders(&settings.run_id).await.unwrap().is_empty());
+    let risk_events = db.list_risk_events(&settings.run_id).await.unwrap();
+    assert_eq!(risk_events.len(), 1);
+    assert_eq!(risk_events[0].risk_type, "invalid_lot_size");
+    assert!(
+        risk_events[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("quantity is not a multiple of lot size"))
+    );
+}
+
+#[tokio::test]
 async fn paper_runtime_uses_storage_backed_fee_rules_for_simulated_fills() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
@@ -771,6 +843,62 @@ async fn paper_runtime_uses_storage_backed_trading_sessions() {
             && event
                 .payload_json
                 .contains("outside configured trading sessions")
+    }));
+}
+
+#[tokio::test]
+async fn paper_runtime_trading_session_applies_configured_calendar_only_to_matching_trading_day() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    db.upsert_market_calendar(NewMarketCalendar {
+        id: "us-july-3-closed-only".to_string(),
+        market: "US".to_string(),
+        trading_day: "2026-07-03".to_string(),
+        is_open: false,
+        session_template: Some("holiday".to_string()),
+    })
+    .await
+    .unwrap();
+    let bars = vec![
+        Bar::new(
+            1_783_036_800_000,
+            dec!(1),
+            dec!(1),
+            dec!(1),
+            dec!(10),
+            dec!(1),
+        ),
+        Bar::new(
+            1_783_040_400_000,
+            dec!(1),
+            dec!(1),
+            dec!(1),
+            dec!(11),
+            dec!(1),
+        ),
+        Bar::new(
+            1_783_296_000_000,
+            dec!(1),
+            dec!(1),
+            dec!(1),
+            dec!(20),
+            dec!(1),
+        ),
+    ];
+
+    let summary = PaperRuntime::new(db.clone(), PaperSettings::sample())
+        .run_bars(bars)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.orders, 1);
+    let fills = db.list_fills("sample-ma-cross").await.unwrap();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].ts_ms, 1_783_296_000_000);
+    let events = db.list_events_by_source("sample-ma-cross").await.unwrap();
+    assert!(!events.iter().any(|event| {
+        event.category == "algorithm.risk.rejected"
+            && event.payload_json.contains("\"trading_session_closed\"")
     }));
 }
 
