@@ -683,6 +683,50 @@ async fn binance_testnet_adapter_maps_trade_side_to_broker_executions() {
 }
 
 #[tokio::test]
+async fn binance_spot_testnet_account_snapshot_reports_base_cash_only() {
+    let client = Arc::new(FakeBinanceHttpClient::new([
+        r#"{"serverTime":1700000000000}"#,
+        r#"{"balances":[{"asset":"BTC","free":"1","locked":"0"},{"asset":"USDT","free":"100.5","locked":"2"},{"asset":"ETH","free":"3","locked":"0"}]}"#,
+    ]));
+    let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client,
+    );
+
+    let snapshot = adapter.account_snapshot("paper").await.unwrap();
+
+    assert_eq!(snapshot.cash, dec!(100.5));
+    assert_eq!(snapshot.cash_balances.len(), 1);
+    assert_eq!(snapshot.cash_balances[0].currency, "USDT");
+    assert_eq!(snapshot.cash_balances[0].cash, dec!(102.5));
+    assert!(snapshot.cash_balances[0].source_ts_ms > 0);
+}
+
+#[tokio::test]
+async fn binance_spot_testnet_adapter_returns_empty_position_snapshots_without_futures_call() {
+    let client = Arc::new(FakeBinanceHttpClient::new([]));
+    let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
+        BinanceSpotTestnetSettings {
+            base_url: "https://testnet.binance.vision/api".to_string(),
+            api_key: "test-key".to_string(),
+            secret_key: "test-secret".to_string(),
+            recv_window_ms: 5000,
+        },
+        client.clone(),
+    );
+
+    let positions = adapter.position_snapshots("paper").await.unwrap();
+
+    assert!(positions.is_empty());
+    assert!(client.calls().is_empty());
+}
+
+#[tokio::test]
 async fn binance_testnet_adapter_routes_order_submit_through_http_client_boundary() {
     let client = Arc::new(FakeBinanceHttpClient::new([
         r#"{"serverTime":1700000000000}"#,

@@ -4905,6 +4905,14 @@ fn live_worker_broker_for_config(app_config: &config::AppConfig) -> Result<Arc<d
                 IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(app_config)?)?;
             Ok(Arc::new(adapter))
         }
+        config::BrokerKind::Binance => {
+            if app_config.broker.mode != config::BrokerMode::Paper {
+                bail!("live runtime Binance adapter requires broker.mode = paper in this phase");
+            }
+            let adapter =
+                BinanceSpotTestnetAdapter::try_new(binance_testnet_settings(app_config)?)?;
+            Ok(Arc::new(adapter))
+        }
         kind => Ok(Arc::new(
             FakeBrokerAdapter::new(live_worker_broker_kind(kind))
                 .with_startup_unmatched_open_order(
@@ -6044,6 +6052,22 @@ mod tests {
         config.broker.order_submit_enabled = true;
 
         let error = binance_testnet_settings(&config).unwrap_err();
+
+        assert!(error.to_string().contains("BINANCE_TESTNET_API_KEY"));
+    }
+
+    #[test]
+    fn live_worker_binance_paper_requires_testnet_credentials() {
+        unsafe {
+            std::env::remove_var("BINANCE_TESTNET_API_KEY");
+            std::env::remove_var("BINANCE_TESTNET_SECRET_KEY");
+        }
+        let config = sample_app_config();
+
+        let error = match super::live_worker_broker_for_config(&config) {
+            Ok(_) => panic!("expected Binance live-worker broker to require testnet credentials"),
+            Err(error) => error,
+        };
 
         assert!(error.to_string().contains("BINANCE_TESTNET_API_KEY"));
     }

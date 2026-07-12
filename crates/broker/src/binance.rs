@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::Utc;
 use hmac::{Hmac, Mac};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -767,9 +768,11 @@ impl Broker for BinanceSpotTestnetAdapter {
             .find(|balance| balance.asset == "USDT")
             .and_then(|balance| balance.free.parse::<Decimal>().ok())
             .unwrap_or(Decimal::ZERO);
+        let source_ts_ms = Utc::now().timestamp_millis();
         let cash_balances = response
             .balances
             .iter()
+            .filter(|balance| balance.asset == "USDT")
             .filter_map(|balance| {
                 let available_cash = balance.free.parse::<Decimal>().ok()?;
                 let frozen_cash = balance.locked.parse::<Decimal>().ok()?;
@@ -782,7 +785,7 @@ impl Broker for BinanceSpotTestnetAdapter {
                     equity: None,
                     buying_power: None,
                     margin_used: None,
-                    source_ts_ms: 0,
+                    source_ts_ms,
                 })
             })
             .collect();
@@ -800,19 +803,8 @@ impl Broker for BinanceSpotTestnetAdapter {
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
-        let request = self.signed_request(
-            "/fapi/v2/positionRisk",
-            &format!(
-                "timestamp={}&recvWindow={}",
-                self.server_time_ms().await?,
-                self.settings.recv_window_ms
-            ),
-        );
-        let body = self
-            .client
-            .get(&request.url, Some(&request.api_key))
-            .await?;
-        Self::parse_position_risk_json(account_id, &body)
+        let _ = account_id;
+        Ok(Vec::new())
     }
 
     async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
