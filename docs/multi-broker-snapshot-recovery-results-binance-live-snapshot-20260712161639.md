@@ -75,4 +75,8 @@ Position snapshots are `0` for this evidence account because the run did not rep
 
 This run closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. It proves the broker-connected live-worker path persisted broker snapshots and `broker_reconciliation_audits` with no drift, no stale inputs, and no order submission.
 
-This does not claim filled-order recovery, live-money trading readiness, or priced multi-asset spot portfolio valuation. Those remain separate production validation scopes.
+This does not claim filled-order recovery, live-money trading readiness, or production spot cost-basis/valuation SLA readiness. Those remain separate production validation scopes.
+
+## Follow-Up
+
+After this evidence run, the Binance spot adapter was extended to mark non-USDT spot balance position snapshots with `/v3/ticker/price` when available. The evidence above still reflects the original run, where the account had no non-USDT spot position snapshots.

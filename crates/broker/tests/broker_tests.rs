@@ -260,6 +260,7 @@ impl FakeIbkrGatewayClient {
                 position_side: BrokerPositionSide::Long,
                 qty: dec!(2),
                 avg_price: dec!(185.25),
+                mark_price: None,
                 margin_used: dec!(0),
                 unrealized_pnl: dec!(0),
                 ts_ms: 1_700_000_000_000,
@@ -712,6 +713,8 @@ async fn binance_spot_testnet_adapter_returns_spot_balance_positions_without_fut
     let client = Arc::new(FakeBinanceHttpClient::new([
         r#"{"serverTime":1700000000000}"#,
         r#"{"balances":[{"asset":"BTC","free":"1","locked":"0.25"},{"asset":"USDT","free":"100.5","locked":"2"},{"asset":"ETH","free":"0","locked":"3"},{"asset":"BNB","free":"0","locked":"0"}]}"#,
+        r#"{"symbol":"BTCUSDT","price":"65000.5"}"#,
+        r#"{"symbol":"ETHUSDT","price":"3100.25"}"#,
     ]));
     let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
         BinanceSpotTestnetSettings {
@@ -732,6 +735,7 @@ async fn binance_spot_testnet_adapter_returns_spot_balance_positions_without_fut
     assert_eq!(positions[0].position_side, BrokerPositionSide::Long);
     assert_eq!(positions[0].qty, dec!(1.25));
     assert_eq!(positions[0].avg_price, dec!(0));
+    assert_eq!(positions[0].mark_price, Some(dec!(65000.5)));
     assert_eq!(positions[0].margin_used, dec!(0));
     assert_eq!(
         positions[0].contract.as_ref().unwrap().sec_type.as_deref(),
@@ -743,9 +747,12 @@ async fn binance_spot_testnet_adapter_returns_spot_balance_positions_without_fut
     );
     assert_eq!(positions[1].symbol, "CRYPTO:BINANCE:ETHUSDT:CRYPTO_SPOT");
     assert_eq!(positions[1].qty, dec!(3));
+    assert_eq!(positions[1].mark_price, Some(dec!(3100.25)));
     let calls = client.calls();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 4);
     assert!(calls[1].url.contains("/v3/account"));
+    assert!(calls[2].url.contains("/v3/ticker/price?symbol=BTCUSDT"));
+    assert!(calls[3].url.contains("/v3/ticker/price?symbol=ETHUSDT"));
     assert!(!calls.iter().any(|call| call.url.contains("/fapi/")));
 }
 
@@ -977,6 +984,7 @@ fn binance_reconciliation_detects_drift() {
         position_side: BrokerPositionSide::Long,
         qty: dec!(0.5),
         avg_price: dec!(65000),
+        mark_price: None,
         margin_used: dec!(3250),
         unrealized_pnl: dec!(12.5),
         ts_ms: 1_700_000_000_000,
@@ -1041,6 +1049,7 @@ fn position_reconciliation_conid_match_still_requires_account_and_side() {
         position_side: BrokerPositionSide::Long,
         qty: dec!(1),
         avg_price: dec!(400),
+        mark_price: None,
         margin_used: dec!(0),
         unrealized_pnl: dec!(0),
         ts_ms: 1_700_000_000_000,

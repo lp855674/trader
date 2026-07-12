@@ -789,6 +789,7 @@ fn map_position_snapshot(
         position_side,
         qty,
         avg_price,
+        mark_price: None,
         margin_used: Decimal::ZERO,
         unrealized_pnl: Decimal::ZERO,
         ts_ms: Utc::now().timestamp_millis(),

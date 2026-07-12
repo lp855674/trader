@@ -70,7 +70,14 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - CLI reconciliation readback reported `status=ok`, `cash_snapshots=5`, `position_snapshots=0`, `reconciliation_audits=4`, `latest_audit_broker=binance`, `latest_audit_account=binance-testnet`, `latest_audit_severity=info`, and `drift_events=0`.
 - Direct SQLite audit readback showed all 4 `broker_reconciliation_audits` rows were `info|0|0|0|0|0`, with no cash drift, position drift, open-order drift, execution drift, or stale inputs.
 - The committed result document is `docs/multi-broker-snapshot-recovery-results-binance-live-snapshot-20260712161639.md`.
-- This closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. Remaining validation gaps are filled-order proof, priced multi-asset spot valuation, and live-money controls, not persisted broker-connected snapshot/audit wiring.
+- This closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. Remaining validation gaps are filled-order proof, production spot cost-basis/valuation SLA evidence, and live-money controls, not persisted broker-connected snapshot/audit wiring.
+
+## 2026-07-12 Binance Spot Valuation Follow-Up
+
+- `BrokerPositionSnapshot` now carries an explicit `mark_price` separate from `avg_price`.
+- Binance Spot Testnet position snapshots still derive quantity from `/v3/account` non-USDT balances, and now enrich non-zero spot balances with `/v3/ticker/price` when available.
+- Runtime broker position persistence now writes broker-provided `mark_price` into `position_snapshots.mark_price` / `market_value` instead of assuming `avg_price` is a current mark.
+- Pricing lookup failure leaves the spot position snapshot unpriced rather than failing the whole broker account snapshot, preserving read-only snapshot continuity for assets without an `ASSETUSDT` ticker.
 
 ## Global Constraints
 

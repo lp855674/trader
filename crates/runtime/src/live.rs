@@ -606,7 +606,7 @@ impl LiveRuntime {
                     position_side: position_side.to_string(),
                     qty: position.qty,
                     avg_price: position.avg_price,
-                    mark_price: Some(position.avg_price),
+                    mark_price: position.mark_price,
                     margin_used: position.margin_used,
                     unrealized_pnl: position.unrealized_pnl,
                     realized_pnl: Decimal::ZERO,

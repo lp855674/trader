@@ -445,6 +445,26 @@ impl BinanceSpotTestnetAdapter {
             .map_err(|error| BrokerError::Config(error.to_string()))
     }
 
+    pub async fn ticker_price(&self, symbol: &str) -> Result<Decimal, BrokerError> {
+        let body = self
+            .client
+            .get(
+                &format!(
+                    "{}/v3/ticker/price?symbol={}",
+                    self.settings.base_url.trim_end_matches('/'),
+                    symbol
+                ),
+                None,
+            )
+            .await?;
+        let response = serde_json::from_str::<BinanceTickerPriceResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        response
+            .price
+            .parse::<Decimal>()
+            .map_err(|error| BrokerError::Config(error.to_string()))
+    }
+
     pub async fn klines(
         &self,
         symbol: &str,
@@ -700,6 +720,7 @@ impl BinancePositionRiskResponse {
             position_side,
             qty,
             avg_price,
+            mark_price: None,
             margin_used,
             unrealized_pnl,
             ts_ms: self.update_time,
@@ -809,11 +830,23 @@ impl Broker for BinanceSpotTestnetAdapter {
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
         let response = self.account_response().await?;
         let source_ts_ms = Utc::now().timestamp_millis();
-        Ok(response
-            .balances
-            .into_iter()
-            .filter_map(|balance| spot_balance_position_snapshot(account_id, balance, source_ts_ms))
-            .collect())
+        let mut snapshots = Vec::new();
+        for balance in response.balances {
+            if !spot_balance_has_position(&balance) {
+                continue;
+            }
+            let symbol = spot_balance_price_symbol(&balance);
+            let mark_price = match symbol {
+                Some(symbol) => self.ticker_price(&symbol).await.ok(),
+                None => None,
+            };
+            if let Some(snapshot) =
+                spot_balance_position_snapshot(account_id, balance, source_ts_ms, mark_price)
+            {
+                snapshots.push(snapshot);
+            }
+        }
+        Ok(snapshots)
     }
 
     async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
@@ -905,6 +938,11 @@ struct BinanceAccountResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct BinanceTickerPriceResponse {
+    price: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct BinanceBalance {
     asset: String,
     free: String,
@@ -931,6 +969,7 @@ fn spot_balance_position_snapshot(
     account_id: &str,
     balance: BinanceBalance,
     source_ts_ms: i64,
+    mark_price: Option<Decimal>,
 ) -> Option<BrokerPositionSnapshot> {
     if balance.asset == "USDT" {
         return None;
@@ -948,6 +987,7 @@ fn spot_balance_position_snapshot(
         position_side: BrokerPositionSide::Long,
         qty,
         avg_price: Decimal::ZERO,
+        mark_price,
         margin_used: Decimal::ZERO,
         unrealized_pnl: Decimal::ZERO,
         ts_ms: source_ts_ms,
@@ -960,6 +1000,27 @@ fn spot_balance_position_snapshot(
         liquidation_price: None,
         open_interest: None,
     })
+}
+
+fn spot_balance_has_position(balance: &BinanceBalance) -> bool {
+    if balance.asset == "USDT" {
+        return false;
+    }
+    let Some(free) = balance.free.parse::<Decimal>().ok() else {
+        return false;
+    };
+    let Some(locked) = balance.locked.parse::<Decimal>().ok() else {
+        return false;
+    };
+    free + locked > Decimal::ZERO
+}
+
+fn spot_balance_price_symbol(balance: &BinanceBalance) -> Option<String> {
+    if balance.asset == "USDT" {
+        None
+    } else {
+        Some(format!("{}USDT", balance.asset))
+    }
 }
 
 #[derive(Debug, Deserialize)]
