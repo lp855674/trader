@@ -54,6 +54,14 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - Broker-connected evidence was available for a Binance Testnet no-submit recovery/read-only path: `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork` completed as `live-recovery-83853c8d89b6`; the adapter log reported `order_submit = not_run` and `scanned=0 recovered=0 missing=0 remaining=0 trades=0`.
 - This broker-connected check is partial evidence for recovery connectivity, not full acceptance evidence for persisted snapshot/reconciliation-audit writes. The remaining gap is external broker-connected snapshot/reconciliation evidence, not local wiring or local code health.
 
+## 2026-07-12 Binance Paper Soak Follow-Up
+
+- A stronger Binance Testnet no-submit paper/read-only soak ran with `powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -DelaySeconds 0 -SkipRefresh`.
+- The soak completed as `binance-paper-soak-c38b82cd44ed` with 3 completed iterations, `failure_class=ok`, `order_submit=disabled`, `reconciliation_status=ok`, and zero remaining open orders in every iteration.
+- Run-scoped CLI reconciliation readback for each retained SQLite database reported `cash_snapshots=101`, `position_snapshots=98`, `drift_events=0`, and `reconciliation_audits=0`.
+- The committed result document is `docs/multi-broker-snapshot-recovery-results-binance-paper-soak-c38b82cd44ed.md`.
+- This improves Binance Testnet paper/no-submit snapshot evidence beyond the earlier recovery-only check, but it still does not close the full external broker-connected snapshot/reconciliation audit gap because the Binance paper path does not persist `broker_reconciliation_audits`. Full closure still requires a broker-connected runtime path that writes reconciliation audit rows, currently the IBKR paper Gateway production-reconciliation path.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.
