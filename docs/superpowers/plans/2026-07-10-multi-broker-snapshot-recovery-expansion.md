@@ -42,6 +42,11 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - CLI reconciliation readback now reports persisted broker reconciliation audit count plus the latest audit broker, account, and severity.
 - This keeps multi-broker snapshot evidence inspectable from the existing `reconciliation` command without adding new storage tables or changing audit payload semantics.
 
+## 2026-07-12 Task 4 Follow-Up
+
+- `scripts/ops-smoke.ps1` now asserts the CLI reconciliation audit evidence fields emitted by the broadened readback path.
+- The smoke remains credential-free and continues to exercise the fake broker live run while checking that broker/account/severity audit evidence is visible to operators.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.

@@ -6,7 +6,7 @@ Trader 采用渐进式开发路线。
 
 ## Current V1 Local Verification
 
-当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本先跑 broker-agnostic snapshot/recovery focused gates、market-rule governance/readback focused gates 和 reference-data stale-alert / retry-backoff focused gates，再启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、reconciliation alert summary、system logs、config-version binding，以及 config governance policy、staging pending-approval queue、production two-approval quorum、publish、release/audit readback。IBKR paper / Binance Testnet 的 fresh multi-broker read-only reconciliation evidence 已通过 live reconciliation gate。
+当前分支完成的是 V1 local-verifiable release：本地 SQLite、Parquet、CLI、REST、WebSocket、Backtest、Replay、Paper、Live surface、fake broker adapters、报告导出均可通过 `scripts/v1-smoke.ps1` 验证。运维查询链路可通过 `scripts/ops-smoke.ps1` 验证；该脚本先跑 broker-agnostic snapshot/recovery focused gates、market-rule governance/readback focused gates 和 reference-data stale-alert / retry-backoff focused gates，再启动一次 fake-broker live run，并用 API 和 CLI 串联检查 run-scoped cash/position snapshots、reconciliation、reconciliation audit broker/account/severity evidence、reconciliation alert summary、system logs、config-version binding，以及 config governance policy、staging pending-approval queue、production two-approval quorum、publish、release/audit readback。IBKR paper / Binance Testnet 的 fresh multi-broker read-only reconciliation evidence 已通过 live reconciliation gate。
 
 这不等于生产实盘完成。真实 Futu/Binance/OKX/IB 网络连接、凭证管理、真实资金下单、外部身份认证/SSO/IdP 驱动的生产级 RBAC、监控告警和分布式部署仍属于后续 production/live-real-money 阶段。
 
