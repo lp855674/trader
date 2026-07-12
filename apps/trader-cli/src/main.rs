@@ -2627,6 +2627,8 @@ async fn run_command(command: Command) -> Result<()> {
             let (_, db) = load_db(&config).await?;
             let cash_snapshots = db.list_cash_snapshots(&run_id).await?;
             let position_snapshots = db.list_position_snapshots(&run_id).await?;
+            let reconciliation_audits = db.list_reconciliation_audits(&run_id).await?;
+            let latest_audit = reconciliation_audits.last();
             let drift_events = db
                 .list_risk_events(&run_id)
                 .await?
@@ -2639,11 +2641,21 @@ async fn run_command(command: Command) -> Result<()> {
                 "drift"
             };
             println!(
-                "reconciliation: run_id={} status={} cash_snapshots={} position_snapshots={} drift_events={}",
+                "reconciliation: run_id={} status={} cash_snapshots={} position_snapshots={} reconciliation_audits={} latest_audit_broker={} latest_audit_account={} latest_audit_severity={} drift_events={}",
                 run_id,
                 status,
                 cash_snapshots.len(),
                 position_snapshots.len(),
+                reconciliation_audits.len(),
+                latest_audit
+                    .map(|audit| audit.broker_kind.as_str())
+                    .unwrap_or(""),
+                latest_audit
+                    .map(|audit| audit.account_id.as_str())
+                    .unwrap_or(""),
+                latest_audit
+                    .map(|audit| audit.severity.as_str())
+                    .unwrap_or(""),
                 drift_events.len()
             );
             for event in drift_events {

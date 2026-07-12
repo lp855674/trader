@@ -37,6 +37,11 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - Binance startup recovery coverage now verifies that local canonical order symbols are passed through the shared snapshot bundle as execution hints.
 - The non-IBKR recovery test only returns a broker execution when the runtime supplies the expected Binance symbol hint, protecting recovery from regressing to IBKR-only open-order/position-derived execution discovery.
 
+## 2026-07-12 Task 3 Follow-Up
+
+- CLI reconciliation readback now reports persisted broker reconciliation audit count plus the latest audit broker, account, and severity.
+- This keeps multi-broker snapshot evidence inspectable from the existing `reconciliation` command without adding new storage tables or changing audit payload semantics.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.
