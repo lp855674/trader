@@ -47,6 +47,13 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - `scripts/ops-smoke.ps1` now asserts the CLI reconciliation audit evidence fields emitted by the broadened readback path.
 - The smoke remains credential-free and continues to exercise the fake broker live run while checking that broker/account/severity audit evidence is visible to operators.
 
+## 2026-07-12 Task 5 Follow-Up
+
+- Fresh local verification passed with `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`, `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`, `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, and the three standalone boundary scripts.
+- `clippy.ps1` exited 0 with existing warnings; no new clippy failure blocked this slice.
+- Broker-connected evidence was available for a Binance Testnet no-submit recovery/read-only path: `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork` completed as `live-recovery-83853c8d89b6`; the adapter log reported `order_submit = not_run` and `scanned=0 recovered=0 missing=0 remaining=0 trades=0`.
+- This broker-connected check is partial evidence for recovery connectivity, not full acceptance evidence for persisted snapshot/reconciliation-audit writes. The remaining gap is external broker-connected snapshot/reconciliation evidence, not local wiring or local code health.
+
 ## Global Constraints
 
 - Do not submit live-money orders while implementing this plan.
