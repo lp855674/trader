@@ -427,12 +427,22 @@ impl BinanceSpotTestnetAdapter {
     }
 
     pub async fn account_balances(&self) -> Result<Vec<BinanceAssetBalance>, BrokerError> {
+        let response = self.account_response().await?;
+        response
+            .balances
+            .into_iter()
+            .map(BinanceBalance::try_into_asset_balance)
+            .collect()
+    }
+
+    async fn account_response(&self) -> Result<BinanceAccountResponse, BrokerError> {
         let request = self.signed_account_request(self.server_time_ms().await?);
         let body = self
             .client
             .get(&request.url, Some(&request.api_key))
             .await?;
-        Self::parse_account_balances_json(&body)
+        serde_json::from_str::<BinanceAccountResponse>(&body)
+            .map_err(|error| BrokerError::Config(error.to_string()))
     }
 
     pub async fn klines(
@@ -755,13 +765,7 @@ impl Broker for BinanceSpotTestnetAdapter {
         &self,
         account_id: &str,
     ) -> Result<BrokerAccountSnapshot, BrokerError> {
-        let request = self.signed_account_request(self.server_time_ms().await?);
-        let body = self
-            .client
-            .get(&request.url, Some(&request.api_key))
-            .await?;
-        let response = serde_json::from_str::<BinanceAccountResponse>(&body)
-            .map_err(|error| BrokerError::Config(error.to_string()))?;
+        let response = self.account_response().await?;
         let cash = response
             .balances
             .iter()
@@ -803,8 +807,13 @@ impl Broker for BinanceSpotTestnetAdapter {
         &self,
         account_id: &str,
     ) -> Result<Vec<BrokerPositionSnapshot>, BrokerError> {
-        let _ = account_id;
-        Ok(Vec::new())
+        let response = self.account_response().await?;
+        let source_ts_ms = Utc::now().timestamp_millis();
+        Ok(response
+            .balances
+            .into_iter()
+            .filter_map(|balance| spot_balance_position_snapshot(account_id, balance, source_ts_ms))
+            .collect())
     }
 
     async fn open_orders(&self, account_id: &str) -> Result<Vec<BrokerOpenOrder>, BrokerError> {
@@ -916,6 +925,41 @@ impl BinanceBalance {
                 .map_err(|error| BrokerError::Config(error.to_string()))?,
         })
     }
+}
+
+fn spot_balance_position_snapshot(
+    account_id: &str,
+    balance: BinanceBalance,
+    source_ts_ms: i64,
+) -> Option<BrokerPositionSnapshot> {
+    if balance.asset == "USDT" {
+        return None;
+    }
+    let free = balance.free.parse::<Decimal>().ok()?;
+    let locked = balance.locked.parse::<Decimal>().ok()?;
+    let qty = free + locked;
+    if qty <= Decimal::ZERO {
+        return None;
+    }
+    Some(BrokerPositionSnapshot {
+        account_id: account_id.to_string(),
+        exchange: "BINANCE".to_string(),
+        symbol: format!("CRYPTO:BINANCE:{}USDT:CRYPTO_SPOT", balance.asset),
+        position_side: BrokerPositionSide::Long,
+        qty,
+        avg_price: Decimal::ZERO,
+        margin_used: Decimal::ZERO,
+        unrealized_pnl: Decimal::ZERO,
+        ts_ms: source_ts_ms,
+        contract: Some(BrokerContractMetadata {
+            sec_type: Some("CRYPTO_SPOT".to_string()),
+            currency: Some(balance.asset),
+            exchange: Some("BINANCE".to_string()),
+            ..BrokerContractMetadata::default()
+        }),
+        liquidation_price: None,
+        open_interest: None,
+    })
 }
 
 #[derive(Debug, Deserialize)]

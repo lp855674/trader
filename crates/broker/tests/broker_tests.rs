@@ -708,8 +708,11 @@ async fn binance_spot_testnet_account_snapshot_reports_base_cash_only() {
 }
 
 #[tokio::test]
-async fn binance_spot_testnet_adapter_returns_empty_position_snapshots_without_futures_call() {
-    let client = Arc::new(FakeBinanceHttpClient::new([]));
+async fn binance_spot_testnet_adapter_returns_spot_balance_positions_without_futures_call() {
+    let client = Arc::new(FakeBinanceHttpClient::new([
+        r#"{"serverTime":1700000000000}"#,
+        r#"{"balances":[{"asset":"BTC","free":"1","locked":"0.25"},{"asset":"USDT","free":"100.5","locked":"2"},{"asset":"ETH","free":"0","locked":"3"},{"asset":"BNB","free":"0","locked":"0"}]}"#,
+    ]));
     let adapter = BinanceSpotTestnetAdapter::new_with_http_client(
         BinanceSpotTestnetSettings {
             base_url: "https://testnet.binance.vision/api".to_string(),
@@ -722,8 +725,28 @@ async fn binance_spot_testnet_adapter_returns_empty_position_snapshots_without_f
 
     let positions = adapter.position_snapshots("paper").await.unwrap();
 
-    assert!(positions.is_empty());
-    assert!(client.calls().is_empty());
+    assert_eq!(positions.len(), 2);
+    assert_eq!(positions[0].account_id, "paper");
+    assert_eq!(positions[0].exchange, "BINANCE");
+    assert_eq!(positions[0].symbol, "CRYPTO:BINANCE:BTCUSDT:CRYPTO_SPOT");
+    assert_eq!(positions[0].position_side, BrokerPositionSide::Long);
+    assert_eq!(positions[0].qty, dec!(1.25));
+    assert_eq!(positions[0].avg_price, dec!(0));
+    assert_eq!(positions[0].margin_used, dec!(0));
+    assert_eq!(
+        positions[0].contract.as_ref().unwrap().sec_type.as_deref(),
+        Some("CRYPTO_SPOT")
+    );
+    assert_eq!(
+        positions[0].contract.as_ref().unwrap().currency.as_deref(),
+        Some("BTC")
+    );
+    assert_eq!(positions[1].symbol, "CRYPTO:BINANCE:ETHUSDT:CRYPTO_SPOT");
+    assert_eq!(positions[1].qty, dec!(3));
+    let calls = client.calls();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[1].url.contains("/v3/account"));
+    assert!(!calls.iter().any(|call| call.url.contains("/fapi/")));
 }
 
 #[tokio::test]

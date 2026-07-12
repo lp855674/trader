@@ -63,16 +63,16 @@ Broker snapshot logs:
 | --- | --- | ---: | ---: |
 | `runtime.broker_snapshot` | `broker.snapshot.cash` | 4 | `9301.30375000 USDT` |
 
-Position snapshots are `0` because this run uses the Binance spot testnet adapter. Spot holdings are not modeled as futures positions in this runtime path.
+Position snapshots are `0` for this evidence account because the run did not report non-USDT spot holdings. The Binance spot testnet adapter keeps USDT as base cash and maps non-USDT spot balances, when present, to long `CRYPTO_SPOT` position snapshots without using futures endpoints.
 
 ## Implementation Notes
 
 - The CLI live-worker broker selection now routes Binance paper mode to `BinanceSpotTestnetAdapter` instead of the fake broker.
-- The Binance spot adapter no longer calls the futures `/fapi/v2/positionRisk` endpoint when asked for spot position snapshots; it returns an empty position set for this spot runtime path.
+- The Binance spot adapter no longer calls the futures `/fapi/v2/positionRisk` endpoint when asked for spot position snapshots; spot positions are derived from `/v3/account` non-USDT balances.
 - The Binance spot account snapshot exposes USDT base cash for runtime cash reconciliation and sets fresh `source_ts_ms`, avoiding false multi-asset cash and stale-input audit drift.
 
 ## Decision
 
 This run closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. It proves the broker-connected live-worker path persisted broker snapshots and `broker_reconciliation_audits` with no drift, no stale inputs, and no order submission.
 
-This does not claim filled-order recovery, live-money trading readiness, or multi-asset spot portfolio valuation. Those remain separate production validation scopes.
+This does not claim filled-order recovery, live-money trading readiness, or priced multi-asset spot portfolio valuation. Those remain separate production validation scopes.

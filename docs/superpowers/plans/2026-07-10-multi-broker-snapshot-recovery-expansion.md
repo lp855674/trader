@@ -65,12 +65,12 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 ## 2026-07-12 Binance Live-Worker Broker-Connected Follow-Up
 
 - The CLI live-worker Binance paper path now uses `BinanceSpotTestnetAdapter` instead of the fake broker, while still requiring testnet credentials and `broker.mode = "paper"`.
-- The Binance spot adapter now reports spot position snapshots as empty instead of calling the futures `/fapi/v2/positionRisk` endpoint, exposes USDT base cash for runtime cash reconciliation, and records fresh broker cash `source_ts_ms`.
+- The Binance spot adapter now derives spot position snapshots from `/v3/account` non-USDT balances instead of calling the futures `/fapi/v2/positionRisk` endpoint, exposes USDT base cash for runtime cash reconciliation, and records fresh broker cash `source_ts_ms`.
 - A broker-connected Binance Spot Testnet live-worker run completed as `binance-live-snapshot-20260712161639` with `order_submit_enabled=false`, `trading_halted=true`, exit code 0, and empty stderr.
 - CLI reconciliation readback reported `status=ok`, `cash_snapshots=5`, `position_snapshots=0`, `reconciliation_audits=4`, `latest_audit_broker=binance`, `latest_audit_account=binance-testnet`, `latest_audit_severity=info`, and `drift_events=0`.
 - Direct SQLite audit readback showed all 4 `broker_reconciliation_audits` rows were `info|0|0|0|0|0`, with no cash drift, position drift, open-order drift, execution drift, or stale inputs.
 - The committed result document is `docs/multi-broker-snapshot-recovery-results-binance-live-snapshot-20260712161639.md`.
-- This closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. Remaining validation gaps are filled-order proof, multi-asset spot portfolio valuation, and live-money controls, not persisted broker-connected snapshot/audit wiring.
+- This closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. Remaining validation gaps are filled-order proof, priced multi-asset spot valuation, and live-money controls, not persisted broker-connected snapshot/audit wiring.
 
 ## Global Constraints
 
