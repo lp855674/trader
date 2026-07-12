@@ -550,7 +550,7 @@ async fn live_runtime_reconciliation_audit_ignores_closed_local_orders_missing_f
 }
 
 #[tokio::test]
-async fn live_runtime_reconciliation_audit_matches_broker_execution_by_order_metadata() {
+async fn live_runtime_reconciliation_audit_matches_broker_execution_by_full_fill_fields() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let run_id = "live-runtime-execution-matches-order-metadata";
@@ -609,6 +609,104 @@ async fn live_runtime_reconciliation_audit_matches_broker_execution_by_order_met
         let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
         payload["execution_drifts"].as_array().unwrap().is_empty()
     }));
+}
+
+#[tokio::test]
+async fn live_runtime_reconciliation_audit_surfaces_broker_execution_field_drift() {
+    let db = Db::connect("sqlite::memory:").await.unwrap();
+    db.migrate().await.unwrap();
+    let run_id = "live-runtime-execution-field-drift";
+    seed_external_order(
+        &db,
+        run_id,
+        "local-order-1",
+        "client-order-1",
+        "broker-order-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "1",
+        "1",
+        "FILLED",
+    )
+    .await;
+    seed_external_fill(
+        &db,
+        run_id,
+        "local-order-1",
+        "local-fill-1",
+        "US:NASDAQ:AAPL:EQUITY",
+        "BUY",
+        "179",
+        "2",
+        "0.5",
+    )
+    .await;
+    let live = LiveRuntime::new_with_broker(
+        db.clone(),
+        LiveRuntimeSettings {
+            run_id: run_id.to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            account_id: "live-account".to_string(),
+            base_currency: "USD".to_string(),
+            initial_cash: dec("100000"),
+            broker_snapshot_interval_ms: Some(5),
+            alert_sink: AlertSinkSettings::Noop,
+            logging: Default::default(),
+        },
+        Arc::new(MatchingExecutionSnapshotBroker),
+    );
+    let cancel = CancellationFlag::default();
+    let task_cancel = cancel.clone();
+    let handle = tokio::spawn(async move { live.run(task_cancel).await.unwrap() });
+
+    wait_for_reconciliation_execution_drift(&db, run_id).await;
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.reconciliation",
+        "reconciliation.drift",
+        "execution_field_drift",
+    )
+    .await;
+    wait_for_system_log_message_contains(
+        &db,
+        run_id,
+        "runtime.alert",
+        "reconciliation_drift.alert",
+        "execution_field_drift",
+    )
+    .await;
+
+    cancel.cancel();
+    handle.await.unwrap();
+
+    let audits = db.list_reconciliation_audits(run_id).await.unwrap();
+    let audit = audits
+        .iter()
+        .find(|audit| audit.execution_drift_count == 1)
+        .unwrap();
+    assert_eq!(audit.severity, "error");
+    let payload: serde_json::Value = serde_json::from_str(&audit.payload_json).unwrap();
+    let drift = &payload["execution_drifts"][0];
+    assert_eq!(drift["reason"].as_str(), Some("execution_field_drift"));
+    assert!(
+        drift["local_value"]
+            .as_str()
+            .unwrap()
+            .contains("price:local=179:broker=180")
+    );
+    assert!(
+        drift["local_value"]
+            .as_str()
+            .unwrap()
+            .contains("qty:local=2:broker=1")
+    );
+    assert!(
+        drift["local_value"]
+            .as_str()
+            .unwrap()
+            .contains("fee:local=0.5:broker=1")
+    );
 }
 
 #[tokio::test]
@@ -3573,6 +3671,22 @@ async fn wait_for_reconciliation_open_order_drift_count(db: &Db, run_id: &str, m
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     panic!("{run_id} did not record {min_count} reconciliation open order drift audits");
+}
+
+async fn wait_for_reconciliation_execution_drift(db: &Db, run_id: &str) {
+    for _ in 0..50 {
+        if db
+            .list_reconciliation_audits(run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|audit| audit.execution_drift_count > 0)
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{run_id} did not record reconciliation execution drift");
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

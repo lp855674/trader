@@ -250,6 +250,10 @@ pub struct RuntimeExecution {
     pub symbol: Option<String>,
     pub client_order_id: Option<String>,
     pub broker_order_id: Option<String>,
+    pub side: Option<OrderSide>,
+    pub price: Option<Decimal>,
+    pub qty: Option<Decimal>,
+    pub fee: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -514,22 +518,25 @@ pub fn reconcile_broker_audit(input: BrokerReconciliationInput) -> BrokerReconci
     }
 
     for execution in &input.broker_executions {
-        if input
-            .runtime_executions
-            .iter()
-            .any(|runtime_execution| execution_matches_runtime(runtime_execution, execution))
-        {
-            continue;
-        }
-        audit.execution_drifts.push(BrokerReconciliationDrift {
-            account_id: execution.account_id.clone(),
-            reason: "execution_missing_runtime".to_string(),
-            symbol: Some(execution.symbol.clone()),
-            position_side: None,
-            currency: None,
-            local_value: None,
-            broker_value: Some(execution.trade_id.clone()),
+        let runtime_execution = input.runtime_executions.iter().find(|runtime_execution| {
+            execution_identity_matches_runtime(runtime_execution, execution)
         });
+        match runtime_execution {
+            Some(runtime_execution) => {
+                if let Some(drift) = execution_field_drift(runtime_execution, execution) {
+                    audit.execution_drifts.push(drift);
+                }
+            }
+            None => audit.execution_drifts.push(BrokerReconciliationDrift {
+                account_id: execution.account_id.clone(),
+                reason: "execution_missing_runtime".to_string(),
+                symbol: Some(execution.symbol.clone()),
+                position_side: None,
+                currency: None,
+                local_value: None,
+                broker_value: Some(execution.trade_id.clone()),
+            }),
+        }
     }
 
     audit.severity = if audit.cash_drifts.is_empty()
@@ -615,7 +622,7 @@ fn non_empty_id_eq(left: &str, right: &str) -> bool {
     !left.trim().is_empty() && !right.trim().is_empty() && left == right
 }
 
-fn execution_matches_runtime(
+fn execution_identity_matches_runtime(
     runtime_execution: &RuntimeExecution,
     broker_execution: &BrokerExecution,
 ) -> bool {
@@ -638,6 +645,85 @@ fn execution_matches_runtime(
                 .is_some_and(|(runtime_client_order_id, broker_client_order_id)| {
                     non_empty_id_eq(runtime_client_order_id, broker_client_order_id)
                 }))
+}
+
+fn execution_field_drift(
+    runtime_execution: &RuntimeExecution,
+    broker_execution: &BrokerExecution,
+) -> Option<BrokerReconciliationDrift> {
+    let mut field_drifts = Vec::new();
+    push_execution_field_drift(
+        &mut field_drifts,
+        "side",
+        runtime_execution.side.map(|side| format!("{side:?}")),
+        Some(format!("{:?}", broker_execution.side)),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "price",
+        runtime_execution.price.map(|value| value.to_string()),
+        Some(broker_execution.price.to_string()),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "qty",
+        runtime_execution.qty.map(|value| value.to_string()),
+        Some(broker_execution.qty.to_string()),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "fee",
+        runtime_execution.fee.map(|value| value.to_string()),
+        Some(broker_execution.fee.to_string()),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "account_id",
+        runtime_execution.account_id.clone(),
+        Some(broker_execution.account_id.clone()),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "symbol",
+        runtime_execution.symbol.clone(),
+        Some(broker_execution.symbol.clone()),
+    );
+    push_execution_field_drift(
+        &mut field_drifts,
+        "client_order_id",
+        runtime_execution.client_order_id.clone(),
+        broker_execution.client_order_id.clone(),
+    );
+
+    if field_drifts.is_empty() {
+        return None;
+    }
+
+    Some(BrokerReconciliationDrift {
+        account_id: broker_execution.account_id.clone(),
+        reason: "execution_field_drift".to_string(),
+        symbol: Some(broker_execution.symbol.clone()),
+        position_side: None,
+        currency: None,
+        local_value: Some(field_drifts.join(",")),
+        broker_value: Some(broker_execution.trade_id.clone()),
+    })
+}
+
+fn push_execution_field_drift(
+    field_drifts: &mut Vec<String>,
+    field: &str,
+    local_value: Option<String>,
+    broker_value: Option<String>,
+) {
+    if local_value == broker_value {
+        return;
+    }
+    field_drifts.push(format!(
+        "{field}:local={}:broker={}",
+        local_value.as_deref().unwrap_or("<missing>"),
+        broker_value.as_deref().unwrap_or("<missing>")
+    ));
 }
 
 fn execution_scope_matches(
@@ -1696,6 +1782,10 @@ mod production_reconciliation_tests {
                 symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
                 client_order_id: Some("client-order-1".to_string()),
                 broker_order_id: Some("broker-order-1".to_string()),
+                side: Some(trader_core::OrderSide::Buy),
+                price: Some(dec!(180)),
+                qty: Some(dec!(1)),
+                fee: Some(dec!(1)),
             }],
             broker_executions: vec![BrokerExecution {
                 trade_id: "broker-trade-1".to_string(),
@@ -1739,6 +1829,10 @@ mod production_reconciliation_tests {
                 symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
                 client_order_id: None,
                 broker_order_id: None,
+                side: Some(trader_core::OrderSide::Buy),
+                price: Some(dec!(180)),
+                qty: Some(dec!(1)),
+                fee: Some(dec!(1)),
             }],
             broker_executions: vec![BrokerExecution {
                 trade_id: "broker-trade-1".to_string(),
@@ -1786,6 +1880,10 @@ mod production_reconciliation_tests {
                 symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
                 client_order_id: Some("client-order-1".to_string()),
                 broker_order_id: Some("broker-order-1".to_string()),
+                side: Some(trader_core::OrderSide::Buy),
+                price: Some(dec!(180)),
+                qty: Some(dec!(1)),
+                fee: Some(dec!(1)),
             }],
             broker_executions: vec![BrokerExecution {
                 trade_id: "broker-trade-1".to_string(),
@@ -1834,6 +1932,10 @@ mod production_reconciliation_tests {
                 symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
                 client_order_id: Some("".to_string()),
                 broker_order_id: None,
+                side: Some(trader_core::OrderSide::Buy),
+                price: Some(dec!(180)),
+                qty: Some(dec!(1)),
+                fee: Some(dec!(1)),
             }],
             broker_executions: vec![BrokerExecution {
                 trade_id: "broker-trade-1".to_string(),
@@ -1854,6 +1956,58 @@ mod production_reconciliation_tests {
             audit.execution_drifts[0].reason,
             "execution_missing_runtime"
         );
+        assert_eq!(audit.severity, BrokerReconciliationSeverity::Error);
+    }
+
+    #[test]
+    fn reconciliation_report_detects_execution_field_drift_after_identity_match() {
+        let audit = reconcile_broker_audit(BrokerReconciliationInput {
+            account_id: "DU123".to_string(),
+            broker_kind: BrokerKind::InteractiveBrokers,
+            ts_ms: 1_700_000_000_000,
+            thresholds: BrokerReconciliationThresholds {
+                cash_abs: dec!(1),
+                position_qty_abs: dec!(0),
+                stale_after_ms: 60_000,
+            },
+            runtime_cash: Vec::new(),
+            broker_cash: Vec::new(),
+            runtime_positions: Vec::new(),
+            broker_positions: Vec::new(),
+            runtime_open_orders: Vec::new(),
+            broker_open_orders: Vec::new(),
+            runtime_executions: vec![RuntimeExecution {
+                fill_id: "broker-trade-1".to_string(),
+                order_id: "local-order-1".to_string(),
+                account_id: Some("DU123".to_string()),
+                symbol: Some("US:NASDAQ:AAPL:EQUITY".to_string()),
+                client_order_id: Some("client-order-1".to_string()),
+                broker_order_id: Some("broker-order-1".to_string()),
+                side: Some(trader_core::OrderSide::Buy),
+                price: Some(dec!(179)),
+                qty: Some(dec!(2)),
+                fee: Some(dec!(0.5)),
+            }],
+            broker_executions: vec![BrokerExecution {
+                trade_id: "broker-trade-1".to_string(),
+                broker_order_id: "broker-order-1".to_string(),
+                client_order_id: Some("client-order-1".to_string()),
+                account_id: "DU123".to_string(),
+                symbol: "US:NASDAQ:AAPL:EQUITY".to_string(),
+                side: trader_core::OrderSide::Buy,
+                price: dec!(180),
+                qty: dec!(1),
+                fee: dec!(1),
+                ts_ms: 1_700_000_000_000,
+            }],
+        });
+
+        assert_eq!(audit.execution_drifts.len(), 1);
+        assert_eq!(audit.execution_drifts[0].reason, "execution_field_drift");
+        let local_value = audit.execution_drifts[0].local_value.as_deref().unwrap();
+        assert!(local_value.contains("price:local=179:broker=180"));
+        assert!(local_value.contains("qty:local=2:broker=1"));
+        assert!(local_value.contains("fee:local=0.5:broker=1"));
         assert_eq!(audit.severity, BrokerReconciliationSeverity::Error);
     }
 }

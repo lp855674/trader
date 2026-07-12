@@ -715,6 +715,10 @@ impl LiveRuntime {
                     symbol: Some(fill.symbol),
                     client_order_id: order.map(|order| order.client_order_id.clone()),
                     broker_order_id: order.and_then(|order| order.broker_order_id.clone()),
+                    side: parse_order_side(&fill.side),
+                    price: fill.price.parse::<Decimal>().ok(),
+                    qty: fill.qty.parse::<Decimal>().ok(),
+                    fee: fill.fee.parse::<Decimal>().ok(),
                 }
             })
             .collect::<Vec<_>>();
@@ -1476,6 +1480,14 @@ fn order_side_slug(side: trader_core::OrderSide) -> &'static str {
     match side {
         trader_core::OrderSide::Buy => "BUY",
         trader_core::OrderSide::Sell => "SELL",
+    }
+}
+
+fn parse_order_side(side: &str) -> Option<trader_core::OrderSide> {
+    match side {
+        "BUY" => Some(trader_core::OrderSide::Buy),
+        "SELL" => Some(trader_core::OrderSide::Sell),
+        _ => None,
     }
 }
 
