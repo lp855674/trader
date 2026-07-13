@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use ibapi::{
-    Client,
+    Client, Notice, NoticeCategory,
     accounts::{AccountSummaryResult, AccountSummaryTags, PositionUpdate, types::AccountGroup},
     contracts::{Contract, SecurityType},
     orders::{
@@ -13,7 +13,7 @@ use ibapi::{
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use serde::Serialize;
 use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
-use tokio::time::timeout;
+use tokio::time::{Instant, sleep_until, timeout};
 use trader_core::OrderRequest;
 
 use crate::{
@@ -94,6 +94,62 @@ pub struct IbkrOrderStatus {
     pub avg_fill_price: Decimal,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrOrderDiagnosticReport {
+    pub order_id: i64,
+    pub client_order_id: String,
+    pub latest_status: Option<String>,
+    pub terminal_status: Option<String>,
+    pub filled_qty: Decimal,
+    pub completion_reason: String,
+    pub observed_for_ms: u64,
+    pub events: Vec<IbkrOrderDiagnosticEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrOrderDiagnosticEvent {
+    pub sequence: u64,
+    pub elapsed_ms: u64,
+    pub source: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filled_qty: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_qty: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_fill_price: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_qty: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_price: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commission: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commission_currency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice_category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advanced_order_reject_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reject_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_status: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct IbkrPaperGatewaySettings {
     pub host: String,
@@ -153,6 +209,12 @@ pub trait IbkrGatewayClient: Send + Sync {
         account_id: &str,
         order: &IbkrLimitOrderRequest,
     ) -> Result<IbkrOrderAck, BrokerError>;
+    async fn diagnose_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+        observation_timeout: Duration,
+    ) -> Result<IbkrOrderDiagnosticReport, BrokerError>;
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +292,23 @@ impl IbkrPaperGatewayAdapter {
     ) -> Result<IbkrOrderAck, BrokerError> {
         validate_limit_order(account_id, order)?;
         self.client.place_limit_order(account_id, order).await
+    }
+
+    pub async fn diagnose_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+        observation_timeout: Duration,
+    ) -> Result<IbkrOrderDiagnosticReport, BrokerError> {
+        validate_limit_order(account_id, order)?;
+        if observation_timeout.is_zero() {
+            return Err(BrokerError::Config(
+                "IBKR order diagnostic observation timeout must be positive".to_string(),
+            ));
+        }
+        self.client
+            .diagnose_limit_order(account_id, order, observation_timeout)
+            .await
     }
 
     pub async fn validate_paper_account(
@@ -556,6 +635,122 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
             "IBKR place order {order_id} returned no order status"
         )))
     }
+
+    async fn diagnose_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+        observation_timeout: Duration,
+    ) -> Result<IbkrOrderDiagnosticReport, BrokerError> {
+        validate_limit_order(account_id, order)?;
+        let client = self.connect_client().await?;
+        let mut notice_stream = client.notice_stream().map_err(map_ibapi_error)?;
+        let order_id = timeout(self.settings.connect_timeout, client.next_valid_order_id())
+            .await
+            .map_err(|_| self.timeout_error("next order id"))?
+            .map_err(map_ibapi_error)?;
+        let contract = ibkr_stock_contract(&order.symbol, order.route_exchange.as_deref());
+        let ib_order = ibkr_limit_order(account_id, order)?;
+        let mut subscription = timeout(
+            self.settings.connect_timeout,
+            client.place_order(order_id, &contract, &ib_order),
+        )
+        .await
+        .map_err(|_| self.timeout_error("place limit order diagnostic"))?
+        .map_err(map_ibapi_error)?;
+
+        let started = Instant::now();
+        let hard_deadline = started + observation_timeout;
+        let terminal_drain = Duration::from_secs(2).min(observation_timeout);
+        let mut terminal_deadline = None;
+        let mut notice_stream_open = true;
+        let mut report = IbkrOrderDiagnosticReport {
+            order_id: i64::from(order_id),
+            client_order_id: order.client_order_id.clone(),
+            latest_status: None,
+            terminal_status: None,
+            filled_qty: Decimal::ZERO,
+            completion_reason: "observation_timeout".to_string(),
+            observed_for_ms: 0,
+            events: Vec::new(),
+        };
+
+        loop {
+            let deadline = terminal_deadline
+                .map(|deadline: Instant| deadline.min(hard_deadline))
+                .unwrap_or(hard_deadline);
+            tokio::select! {
+                update = subscription.next() => {
+                    match update {
+                        Some(Ok(SubscriptionItem::Data(update))) => {
+                            if record_diagnostic_order_update(
+                                &mut report,
+                                started,
+                                order_id,
+                                update,
+                            )? && terminal_deadline.is_none() {
+                                terminal_deadline = Some(Instant::now() + terminal_drain);
+                            }
+                        }
+                        Some(Ok(SubscriptionItem::Notice(notice))) => {
+                            push_diagnostic_notice(
+                                &mut report,
+                                started,
+                                "order_subscription",
+                                notice,
+                            );
+                        }
+                        Some(Err(ibapi::Error::Notice(notice))) => {
+                            push_diagnostic_notice(
+                                &mut report,
+                                started,
+                                "order_subscription_error",
+                                notice,
+                            );
+                            report.completion_reason = "subscription_error".to_string();
+                            break;
+                        }
+                        Some(Err(error)) => {
+                            push_diagnostic_stream_error(&mut report, started, error.to_string());
+                            report.completion_reason = "subscription_error".to_string();
+                            break;
+                        }
+                        None => {
+                            report.completion_reason = "subscription_ended".to_string();
+                            break;
+                        }
+                    }
+                }
+                notice = notice_stream.next(), if notice_stream_open => {
+                    match notice {
+                        Some(notice) => {
+                            push_diagnostic_notice(
+                                &mut report,
+                                started,
+                                "global_notice_stream",
+                                notice,
+                            );
+                        }
+                        None => {
+                            notice_stream_open = false;
+                        }
+                    }
+                }
+                _ = sleep_until(deadline) => {
+                    report.completion_reason = if report.terminal_status.is_some() {
+                        "terminal_status".to_string()
+                    } else {
+                        "observation_timeout".to_string()
+                    };
+                    break;
+                }
+            }
+        }
+
+        report.observed_for_ms = duration_ms(started.elapsed());
+        client.disconnect().await;
+        Ok(report)
+    }
 }
 
 #[async_trait]
@@ -717,6 +912,166 @@ fn parse_broker_order_type(order_type: &str) -> trader_core::OrderType {
         "STP LMT" | "STOP_LIMIT" | "STOPLIMIT" => trader_core::OrderType::StopLimit,
         _ => trader_core::OrderType::Limit,
     }
+}
+
+fn record_diagnostic_order_update(
+    report: &mut IbkrOrderDiagnosticReport,
+    started: Instant,
+    expected_order_id: i32,
+    update: PlaceOrder,
+) -> Result<bool, BrokerError> {
+    let mut event = diagnostic_event(report, started, "order_subscription", "");
+    let terminal = match update {
+        PlaceOrder::OpenOrder(order_data) => {
+            let status = order_data.order_state.status;
+            let matches_order = order_data.order_id == expected_order_id;
+            event.kind = "open_order".to_string();
+            event.order_id = Some(i64::from(order_data.order_id));
+            event.status = Some(status.to_string());
+            event.warning_text = non_empty_string(order_data.order_state.warning_text);
+            event.reject_reason = non_empty_string(order_data.order_state.reject_reason);
+            event.completed_status = non_empty_string(order_data.order_state.completed_status);
+            if matches_order {
+                report.latest_status = Some(status.to_string());
+                if status.is_terminal() {
+                    report.terminal_status = Some(status.to_string());
+                }
+            }
+            matches_order && status.is_terminal()
+        }
+        PlaceOrder::OrderStatus(status) => {
+            let status_kind = status.status;
+            let matches_order = status.order_id == expected_order_id;
+            let filled_qty = decimal_from_f64(status.filled, "IBKR filled quantity")?;
+            event.kind = "order_status".to_string();
+            event.order_id = Some(i64::from(status.order_id));
+            event.status = Some(status_kind.to_string());
+            event.filled_qty = Some(filled_qty);
+            event.remaining_qty = Some(decimal_from_f64(
+                status.remaining,
+                "IBKR remaining quantity",
+            )?);
+            event.avg_fill_price = status
+                .average_fill_price
+                .map(|price| decimal_from_f64(price, "IBKR average fill price"))
+                .transpose()?;
+            if matches_order {
+                report.latest_status = Some(status_kind.to_string());
+                if filled_qty > report.filled_qty {
+                    report.filled_qty = filled_qty;
+                }
+                if status_kind.is_terminal() {
+                    report.terminal_status = Some(status_kind.to_string());
+                }
+            }
+            matches_order && status_kind.is_terminal()
+        }
+        PlaceOrder::ExecutionData(execution_data) => {
+            let execution = execution_data.execution;
+            let matches_order = execution.order_id == expected_order_id;
+            let cumulative_qty = decimal_from_f64(
+                execution.cumulative_quantity,
+                "IBKR cumulative execution quantity",
+            )?;
+            event.kind = "execution".to_string();
+            event.order_id = Some(i64::from(execution.order_id));
+            event.execution_id = Some(execution.execution_id);
+            event.execution_qty = Some(decimal_from_f64(
+                execution.shares,
+                "IBKR execution quantity",
+            )?);
+            event.execution_price =
+                Some(decimal_from_f64(execution.price, "IBKR execution price")?);
+            if matches_order && cumulative_qty > report.filled_qty {
+                report.filled_qty = cumulative_qty;
+            }
+            false
+        }
+        PlaceOrder::CommissionReport(commission_report) => {
+            event.kind = "commission".to_string();
+            event.execution_id = Some(commission_report.execution_id);
+            event.commission = Some(decimal_from_f64(
+                commission_report.commission,
+                "IBKR commission",
+            )?);
+            event.commission_currency = non_empty_string(commission_report.currency);
+            false
+        }
+    };
+    report.events.push(event);
+    Ok(terminal)
+}
+
+fn push_diagnostic_notice(
+    report: &mut IbkrOrderDiagnosticReport,
+    started: Instant,
+    source: &str,
+    notice: Notice,
+) {
+    let mut event = diagnostic_event(report, started, source, "notice");
+    event.notice_code = Some(notice.code);
+    event.notice_category = Some(notice_category_slug(notice.category()).to_string());
+    event.message = Some(notice.message);
+    event.error_time = notice.error_time.map(|value| value.to_string());
+    event.advanced_order_reject_json = non_empty_string(notice.advanced_order_reject_json);
+    report.events.push(event);
+}
+
+fn push_diagnostic_stream_error(
+    report: &mut IbkrOrderDiagnosticReport,
+    started: Instant,
+    message: String,
+) {
+    let mut event = diagnostic_event(report, started, "order_subscription_error", "stream_error");
+    event.message = Some(message);
+    report.events.push(event);
+}
+
+fn diagnostic_event(
+    report: &IbkrOrderDiagnosticReport,
+    started: Instant,
+    source: &str,
+    kind: &str,
+) -> IbkrOrderDiagnosticEvent {
+    IbkrOrderDiagnosticEvent {
+        sequence: report.events.len() as u64 + 1,
+        elapsed_ms: duration_ms(started.elapsed()),
+        source: source.to_string(),
+        kind: kind.to_string(),
+        order_id: None,
+        status: None,
+        filled_qty: None,
+        remaining_qty: None,
+        avg_fill_price: None,
+        execution_id: None,
+        execution_qty: None,
+        execution_price: None,
+        commission: None,
+        commission_currency: None,
+        notice_code: None,
+        notice_category: None,
+        message: None,
+        error_time: None,
+        advanced_order_reject_json: None,
+        warning_text: None,
+        reject_reason: None,
+        completed_status: None,
+    }
+}
+
+fn notice_category_slug(category: NoticeCategory) -> &'static str {
+    match category {
+        NoticeCategory::Cancellation => "cancellation",
+        NoticeCategory::Warning => "warning",
+        NoticeCategory::SystemMessage => "system_message",
+        NoticeCategory::OrderRejection => "order_rejection",
+        NoticeCategory::Error => "error",
+        _ => "unknown",
+    }
+}
+
+fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn map_open_order(order_data: ibapi::orders::OrderData) -> Result<IbkrOpenOrder, BrokerError> {
@@ -1023,7 +1378,92 @@ fn map_ibapi_connect_error(address: &str, error: ibapi::Error) -> BrokerError {
 #[cfg(test)]
 mod ibkr_contract_metadata_tests {
     use super::*;
+    use ibapi::orders::{OrderStatus, OrderStatusKind};
     use rust_decimal_macros::dec;
+
+    fn diagnostic_report() -> IbkrOrderDiagnosticReport {
+        IbkrOrderDiagnosticReport {
+            order_id: 42,
+            client_order_id: "client-42".to_string(),
+            latest_status: None,
+            terminal_status: None,
+            filled_qty: Decimal::ZERO,
+            completion_reason: "observation_timeout".to_string(),
+            observed_for_ms: 0,
+            events: vec![],
+        }
+    }
+
+    #[test]
+    fn diagnostic_keeps_pre_submitted_open_and_marks_cancelled_terminal() {
+        let started = Instant::now();
+        let mut report = diagnostic_report();
+
+        let terminal = record_diagnostic_order_update(
+            &mut report,
+            started,
+            42,
+            PlaceOrder::OrderStatus(OrderStatus {
+                order_id: 42,
+                status: OrderStatusKind::PreSubmitted,
+                filled: 0.0,
+                remaining: 1.0,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+
+        assert!(!terminal);
+        assert_eq!(report.latest_status.as_deref(), Some("PreSubmitted"));
+        assert_eq!(report.terminal_status, None);
+
+        let terminal = record_diagnostic_order_update(
+            &mut report,
+            started,
+            42,
+            PlaceOrder::OrderStatus(OrderStatus {
+                order_id: 42,
+                status: OrderStatusKind::Cancelled,
+                filled: 0.0,
+                remaining: 1.0,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+
+        assert!(terminal);
+        assert_eq!(report.terminal_status.as_deref(), Some("Cancelled"));
+        assert_eq!(report.events.len(), 2);
+        assert_eq!(report.events[0].kind, "order_status");
+        assert_eq!(report.events[1].sequence, 2);
+    }
+
+    #[test]
+    fn diagnostic_notice_preserves_rejection_payload() {
+        let mut report = diagnostic_report();
+
+        push_diagnostic_notice(
+            &mut report,
+            Instant::now(),
+            "order_subscription_error",
+            Notice {
+                code: 201,
+                message: "Order rejected".to_string(),
+                error_time: None,
+                advanced_order_reject_json: r#"{"errorCode":"XYZ"}"#.to_string(),
+            },
+        );
+
+        let event = &report.events[0];
+        assert_eq!(event.kind, "notice");
+        assert_eq!(event.notice_code, Some(201));
+        assert_eq!(event.notice_category.as_deref(), Some("order_rejection"));
+        assert_eq!(event.message.as_deref(), Some("Order rejected"));
+        assert_eq!(
+            event.advanced_order_reject_json.as_deref(),
+            Some(r#"{"errorCode":"XYZ"}"#)
+        );
+    }
 
     #[test]
     fn ibkr_contract_metadata_maps_stock_contract_fields() {

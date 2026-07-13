@@ -195,6 +195,12 @@ enum FakeIbkrGatewayCall {
         override_percentage_constraints: bool,
         client_order_id: String,
     },
+    DiagnoseLimitOrder {
+        account_id: String,
+        symbol: String,
+        observation_timeout_ms: u64,
+        client_order_id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -405,6 +411,33 @@ impl IbkrGatewayClient for FakeIbkrGatewayClient {
             client_order_id: order.client_order_id.clone(),
             status: "Submitted".to_string(),
             filled_qty: dec!(0),
+        })
+    }
+
+    async fn diagnose_limit_order(
+        &self,
+        account_id: &str,
+        order: &IbkrLimitOrderRequest,
+        observation_timeout: Duration,
+    ) -> Result<broker::IbkrOrderDiagnosticReport, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::DiagnoseLimitOrder {
+                account_id: account_id.to_string(),
+                symbol: order.symbol.clone(),
+                observation_timeout_ms: observation_timeout.as_millis() as u64,
+                client_order_id: order.client_order_id.clone(),
+            });
+        Ok(broker::IbkrOrderDiagnosticReport {
+            order_id: self.next_order_id,
+            client_order_id: order.client_order_id.clone(),
+            latest_status: Some("Submitted".to_string()),
+            terminal_status: None,
+            filled_qty: dec!(0),
+            completion_reason: "observation_timeout".to_string(),
+            observed_for_ms: observation_timeout.as_millis() as u64,
+            events: vec![],
         })
     }
 }
@@ -1302,10 +1335,16 @@ async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_bo
     };
 
     let ack = adapter.place_limit_order("DU12345", &order).await.unwrap();
+    let diagnostic = adapter
+        .diagnose_limit_order("DU12345", &order, Duration::from_secs(30))
+        .await
+        .unwrap();
     let cancelled = adapter.cancel_ibkr_order(42).await.unwrap();
 
     assert_eq!(ack.order_id, 43);
     assert_eq!(ack.client_order_id, "client-42");
+    assert_eq!(diagnostic.order_id, 43);
+    assert_eq!(diagnostic.completion_reason, "observation_timeout");
     assert_eq!(cancelled.status, "Cancelled");
     assert_eq!(
         client.calls(),
@@ -1316,6 +1355,12 @@ async fn ibkr_paper_gateway_adapter_routes_order_calls_through_gateway_client_bo
                 outside_rth: true,
                 route_exchange: Some("OVERNIGHT".to_string()),
                 override_percentage_constraints: true,
+                client_order_id: "client-42".to_string(),
+            },
+            FakeIbkrGatewayCall::DiagnoseLimitOrder {
+                account_id: "DU12345".to_string(),
+                symbol: "AAPL".to_string(),
+                observation_timeout_ms: 30_000,
                 client_order_id: "client-42".to_string(),
             },
             FakeIbkrGatewayCall::CancelOrder { order_id: 42 },

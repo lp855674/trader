@@ -66,10 +66,20 @@ switch ($command) {
             Write-Output "ibkr paper open orders ok: open_orders=0"
         }
     }
-    "ibkr-paper-executions" { Write-Output "ibkr paper executions ok: executions=0" }
+    "ibkr-paper-executions" {
+        if ($env:TRADER_FAKE_MODE -in @("filled_execution", "execution_field_drift")) {
+            Write-Output "ibkr paper executions ok: request_id=1 account=DU12345 symbol=AAPL executions=1 order_id=7 trade_id=T1"
+        } else {
+            Write-Output "ibkr paper executions ok: executions=0"
+        }
+    }
     "ibkr-paper-reconcile" {
         if ($env:TRADER_FAKE_MODE -eq "reconciliation_drift") {
             Write-Output "ibkr paper reconcile ok: local_orders=1 local_fills=0 matched_orders=0 local_only_orders=1 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=0 remote_execution_matched=0 remote_execution_unmatched=0 local_fill_qty=0 remote_execution_qty=0 qty_delta=0"
+        } elseif ($env:TRADER_FAKE_MODE -eq "filled_execution") {
+            Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=1 remote_execution_matched=1 remote_execution_unmatched=0 remote_execution_field_drifts=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
+        } elseif ($env:TRADER_FAKE_MODE -eq "execution_field_drift") {
+            Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=1 remote_execution_matched=1 remote_execution_unmatched=0 remote_execution_field_drifts=1 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
         } else {
             Write-Output "ibkr paper reconcile ok: local_orders=0 remote_open_orders=0 local_fills=0 remote_executions=0"
         }
@@ -150,6 +160,56 @@ Assert-True ($runSummary.open_orders_remaining -eq 0) "expected zero open orders
 Assert-True (-not [bool]$runSummary.cancel_all_attempted) "expected no cancel-all attempt on success"
 Assert-True ($runSummary.gateway_checks.status -eq "completed") "expected gateway checks completed status"
 Assert-True ($runSummary.gateway_checks.failure_class -eq "ok") "expected gateway checks ok failure class"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "ok"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $missingExecutionEvidenceOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected filled-order evidence failure without broker executions"
+$missingExecutionEvidenceSummaryPath = ($missingExecutionEvidenceOutput | Select-String -Pattern 'filled-order evidence summary:\s+(.+filled-order-evidence-summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($missingExecutionEvidenceSummaryPath)) "expected missing execution evidence summary path"
+$missingExecutionEvidenceSummary = Read-Json $missingExecutionEvidenceSummaryPath
+Assert-True ($missingExecutionEvidenceSummary.status -eq "failed") "expected missing execution evidence failed status"
+Assert-True ($missingExecutionEvidenceSummary.failure_class -eq "broker_execution_missing") "expected missing execution failure class"
+Assert-True ($missingExecutionEvidenceSummary.broker_executions -eq 0) "expected zero missing execution broker executions"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "filled_execution"
+$filledEvidenceOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+$filledEvidenceOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected filled-order evidence success with matched broker execution"
+$filledEvidenceSummaryPath = ($filledEvidenceOutput | Select-String -Pattern 'filled-order evidence summary:\s+(.+filled-order-evidence-summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($filledEvidenceSummaryPath)) "expected filled execution evidence summary path"
+$filledEvidenceSummary = Read-Json $filledEvidenceSummaryPath
+Assert-True ($filledEvidenceSummary.status -eq "completed") "expected filled execution evidence completed status"
+Assert-True ($filledEvidenceSummary.failure_class -eq "ok") "expected filled execution evidence ok failure class"
+Assert-True ($filledEvidenceSummary.broker_executions -eq 1) "expected one broker execution"
+Assert-True ($filledEvidenceSummary.matched_executions -eq 1) "expected one matched broker execution"
+Assert-True ($filledEvidenceSummary.execution_field_drifts -eq 0) "expected zero execution field drifts"
+Assert-True ($filledEvidenceSummary.local_fills -eq 1) "expected one local fill"
+Assert-True ($filledEvidenceSummary.qty_delta -eq 0) "expected zero filled execution qty delta"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "execution_field_drift"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $fieldDriftEvidenceOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected filled-order evidence failure on execution field drift"
+$fieldDriftEvidenceSummaryPath = ($fieldDriftEvidenceOutput | Select-String -Pattern 'filled-order evidence summary:\s+(.+filled-order-evidence-summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($fieldDriftEvidenceSummaryPath)) "expected field drift evidence summary path"
+$fieldDriftEvidenceSummary = Read-Json $fieldDriftEvidenceSummaryPath
+Assert-True ($fieldDriftEvidenceSummary.status -eq "failed") "expected field drift evidence failed status"
+Assert-True ($fieldDriftEvidenceSummary.failure_class -eq "execution_field_drift") "expected execution field drift failure class"
+Assert-True ($fieldDriftEvidenceSummary.execution_field_drifts -eq 1) "expected one execution field drift"
 
 Remove-Item -LiteralPath (Join-Path $testRoot "open-orders-seen.txt") -Force -ErrorAction SilentlyContinue
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"

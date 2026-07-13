@@ -1695,3 +1695,18 @@ The project is materially closer to pre-production when:
 - Broker pure-model proof: `reconciliation_report_detects_execution_field_drift_after_identity_match` verifies the broker reconciliation model distinguishes "execution exists but fields disagree" from "execution missing".
 - Local verification passed after the field-level reconciliation change: `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, `cargo test -p config`, `cargo check --workspace`, `bash ./scripts/check-db-boundary`, `bash ./scripts/check-storage-dto-boundary`, and `bash ./scripts/check-api-read-model-boundary`.
 - This closes the credential-free deterministic filled-order reconciliation gap. It does not close real broker filled execution evidence: a real IBKR/Binance/etc. broker execution still must be observed and reconciled to local fills with zero drift before claiming broker-connected filled-order acceptance.
+
+## 2026-07-13 IBKR Filled-Order Evidence Gate
+
+- Added `scripts/ibkr-filled-order-evidence.ps1` as the explicit external acceptance wrapper for real IBKR paper filled-order evidence. It requires `-ConfirmIbkrPaperOrder`, delegates to `scripts/ibkr-paper-run.ps1`, then fails unless the run has order submit enabled, zero open orders, reconciliation status `ok`, zero open-order/execution drift counters, at least one broker execution, at least one matched execution, at least one local fill, and `qty_delta=0`.
+- The wrapper writes `filled-order-evidence-summary.json` next to the child `summary.json` for both pass and fail outcomes. A normal paper-submit run with no broker execution is intentionally classified as `broker_execution_missing`, so paper order submission can no longer be confused with filled-order acceptance.
+- Local script-contract coverage was added to `scripts/ibkr-paper-script-tests.ps1`: fake `filled_execution` evidence passes with one broker execution matched to one local fill, while the existing no-execution fake path fails the wrapper.
+- The IBKR CLI reconciliation path now requires a remote execution to resolve to a local fill; a matching broker order id without a persisted local fill is no longer counted as execution matched. Because the IBKR paper executor persists one aggregate local fill for potentially multiple broker executions, remote executions are grouped by broker order id and compared to the corresponding local fill aggregate across normalized symbol, normalized side, weighted execution price, total quantity, and total fee.
+- `ibkr-paper-reconcile` now emits `remote_execution_field_drifts`, `ibkr-paper-run.ps1` includes that value in its execution drift total, and the filled-order wrapper classifies it explicitly as `execution_field_drift`. Account identity remains constrained by the account-scoped Gateway execution query, while client order identity is resolved through the persisted local order to broker order id mapping.
+- Operator command for the real evidence attempt:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -AccountId DU... -ConfirmIbkrPaperOrder
+```
+
+- This still does not create real broker filled execution evidence by itself. The acceptance claim remains open until that command is run against a real IBKR paper Gateway/session and its `filled-order-evidence-summary.json` records `status=completed`, `failure_class=ok`, `broker_executions >= 1`, `matched_executions >= 1`, `execution_field_drifts=0`, and zero aggregate drift counters.

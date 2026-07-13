@@ -18,7 +18,7 @@ use replay::ReplayRuntime;
 use rust_decimal::Decimal;
 use sha2::Sha256;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     io::Write,
     path::Path,
     str::FromStr,
@@ -159,6 +159,8 @@ enum Command {
         qty: String,
         #[arg(long)]
         price: String,
+        #[arg(long, default_value_t = 30)]
+        observe_seconds: u64,
         #[arg(long)]
         confirm_ibkr_paper_order: bool,
     },
@@ -962,6 +964,7 @@ struct IbkrPaperReconciliation {
     remote_executions: usize,
     remote_execution_matched: usize,
     remote_execution_unmatched: usize,
+    remote_execution_field_drifts: usize,
     local_fill_qty: Decimal,
     remote_execution_qty: Decimal,
     qty_delta: Decimal,
@@ -969,6 +972,7 @@ struct IbkrPaperReconciliation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalOrder {
+    id: String,
     client_order_id: String,
     broker_order_id: Option<String>,
     qty: String,
@@ -978,6 +982,7 @@ struct LocalOrder {
 impl From<storage::StoredOrder> for LocalOrder {
     fn from(order: storage::StoredOrder) -> Self {
         Self {
+            id: order.id,
             client_order_id: order.client_order_id,
             broker_order_id: order.broker_order_id,
             qty: order.qty,
@@ -989,20 +994,24 @@ impl From<storage::StoredOrder> for LocalOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalFill {
     id: String,
+    order_id: String,
     symbol: String,
     side: String,
     price: String,
     qty: String,
+    fee: String,
 }
 
 impl From<storage::StoredFill> for LocalFill {
     fn from(fill: storage::StoredFill) -> Self {
         Self {
             id: fill.id,
+            order_id: fill.order_id,
             symbol: fill.symbol,
             side: fill.side,
             price: fill.price,
             qty: fill.qty,
+            fee: fill.fee,
         }
     }
 }
@@ -1349,7 +1358,7 @@ async fn run_command(command: Command) -> Result<()> {
             let report =
                 reconcile_ibkr_paper(&app_config, &db, &adapter, request_id, &symbol).await?;
             println!(
-                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_unmatched={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
+                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_unmatched={} remote_execution_field_drifts={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
                 report.symbol,
                 report.local_orders,
                 report.local_fills,
@@ -1361,6 +1370,7 @@ async fn run_command(command: Command) -> Result<()> {
                 report.remote_executions,
                 report.remote_execution_matched,
                 report.remote_execution_unmatched,
+                report.remote_execution_field_drifts,
                 report.local_fill_qty,
                 report.remote_execution_qty,
                 report.qty_delta
@@ -1402,6 +1412,7 @@ async fn run_command(command: Command) -> Result<()> {
             side,
             qty,
             price,
+            observe_seconds,
             confirm_ibkr_paper_order,
         } => {
             if !confirm_ibkr_paper_order {
@@ -1431,12 +1442,27 @@ async fn run_command(command: Command) -> Result<()> {
                     .ibkr_override_percentage_constraints,
                 client_order_id,
             };
-            let ack = adapter
-                .place_limit_order(&app_config.paper.account_id, &order)
+            let diagnostic = adapter
+                .diagnose_limit_order(
+                    &app_config.paper.account_id,
+                    &order,
+                    Duration::from_secs(observe_seconds),
+                )
                 .await?;
+            for event in &diagnostic.events {
+                println!("ibkr paper order event: {}", serde_json::to_string(event)?);
+            }
             println!(
-                "ibkr paper tiny order ok: symbol={} order_id={} status={} filled_qty={} client_order_id={}",
-                order.symbol, ack.order_id, ack.status, ack.filled_qty, ack.client_order_id
+                "ibkr paper tiny order ok: symbol={} order_id={} status={} filled_qty={} client_order_id={} completion_reason={} terminal_status={} observed_for_ms={} events={}",
+                order.symbol,
+                diagnostic.order_id,
+                diagnostic.latest_status.as_deref().unwrap_or("none"),
+                diagnostic.filled_qty,
+                diagnostic.client_order_id,
+                diagnostic.completion_reason,
+                diagnostic.terminal_status.as_deref().unwrap_or("none"),
+                diagnostic.observed_for_ms,
+                diagnostic.events.len()
             );
         }
         Command::IbkrPaperRecover { config, request_id } => {
@@ -4178,10 +4204,8 @@ async fn reconcile_ibkr_paper(
             })
         })
         .count();
-    let remote_execution_matched = remote_executions
-        .iter()
-        .filter(|execution| ibkr_execution_matches_local(execution, &local_orders, &local_fills))
-        .count();
+    let (remote_execution_matched, remote_execution_field_drifts) =
+        ibkr_execution_match_summary(&remote_executions, &local_orders, &local_fills)?;
     let local_fill_qty = local_fills
         .iter()
         .filter(|fill| {
@@ -4209,6 +4233,7 @@ async fn reconcile_ibkr_paper(
         remote_executions: remote_executions.len(),
         remote_execution_matched,
         remote_execution_unmatched: remote_executions.len() - remote_execution_matched,
+        remote_execution_field_drifts,
         local_fill_qty,
         remote_execution_qty,
         qty_delta: remote_execution_qty - local_fill_qty,
@@ -4258,17 +4283,128 @@ fn ibkr_recovered_order_status(
     }
 }
 
-fn ibkr_execution_matches_local(
-    execution: &broker::IbkrExecution,
+fn ibkr_execution_match_summary(
+    executions: &[broker::IbkrExecution],
     local_orders: &[LocalOrder],
     local_fills: &[LocalFill],
-) -> bool {
-    local_orders
-        .iter()
-        .any(|local| local.broker_order_id.as_deref() == Some(&execution.order_id.to_string()))
-        || local_fills
+) -> Result<(usize, usize)> {
+    let mut executions_by_order = BTreeMap::<i64, Vec<&broker::IbkrExecution>>::new();
+    for execution in executions {
+        executions_by_order
+            .entry(execution.order_id)
+            .or_default()
+            .push(execution);
+    }
+
+    let mut matched = 0;
+    let mut field_drifts = 0;
+    for (broker_order_id, remote) in executions_by_order {
+        let broker_order_id = broker_order_id.to_string();
+        let local_order_id = local_orders
             .iter()
-            .any(|fill| fill.id.ends_with(&execution.trade_id))
+            .find(|order| order.broker_order_id.as_deref() == Some(broker_order_id.as_str()))
+            .map(|order| order.id.as_str())
+            .or_else(|| {
+                local_fills
+                    .iter()
+                    .find(|fill| {
+                        remote
+                            .iter()
+                            .any(|execution| fill.id.ends_with(&execution.trade_id))
+                    })
+                    .map(|fill| fill.order_id.as_str())
+            });
+        let Some(local_order_id) = local_order_id else {
+            continue;
+        };
+        let local = local_fills
+            .iter()
+            .filter(|fill| fill.order_id == local_order_id)
+            .collect::<Vec<_>>();
+        if local.is_empty() {
+            continue;
+        }
+
+        matched += remote.len();
+        if ibkr_execution_group_has_field_drift(&remote, &local)? {
+            field_drifts += 1;
+        }
+    }
+
+    Ok((matched, field_drifts))
+}
+
+fn ibkr_execution_group_has_field_drift(
+    remote: &[&broker::IbkrExecution],
+    local: &[&LocalFill],
+) -> Result<bool> {
+    let remote_qty = remote
+        .iter()
+        .fold(Decimal::ZERO, |total, execution| total + execution.qty);
+    let remote_notional = remote.iter().fold(Decimal::ZERO, |total, execution| {
+        total + execution.price * execution.qty
+    });
+    let remote_fee = remote
+        .iter()
+        .fold(Decimal::ZERO, |total, execution| total + execution.fee);
+    let local_qty = local.iter().try_fold(Decimal::ZERO, |total, fill| {
+        Decimal::from_str(&fill.qty).map(|qty| total + qty)
+    })?;
+    let local_notional = local.iter().try_fold(Decimal::ZERO, |total, fill| {
+        let price = Decimal::from_str(&fill.price)?;
+        let qty = Decimal::from_str(&fill.qty)?;
+        Ok::<Decimal, rust_decimal::Error>(total + price * qty)
+    })?;
+    let local_fee = local.iter().try_fold(Decimal::ZERO, |total, fill| {
+        Decimal::from_str(&fill.fee).map(|fee| total + fee)
+    })?;
+    let remote_price = weighted_execution_price(remote_notional, remote_qty);
+    let local_price = weighted_execution_price(local_notional, local_qty);
+    let remote_symbol = remote.first().map(|execution| execution.symbol.as_str());
+    let remote_side = remote
+        .first()
+        .and_then(|execution| normalized_ibkr_side(&execution.side));
+    let local_symbol = local
+        .first()
+        .map(|fill| paper::ibkr_stock_symbol(&fill.symbol))
+        .transpose()?;
+    let local_side = local
+        .first()
+        .and_then(|fill| normalized_ibkr_side(&fill.side));
+    let remote_fields_consistent = remote_side.is_some()
+        && remote.iter().all(|execution| {
+            Some(execution.symbol.as_str()) == remote_symbol
+                && normalized_ibkr_side(&execution.side) == remote_side
+        });
+    let local_fields_consistent = local_side.is_some()
+        && local.iter().all(|fill| {
+            paper::ibkr_stock_symbol(&fill.symbol).ok().as_deref() == local_symbol.as_deref()
+                && normalized_ibkr_side(&fill.side) == local_side
+        });
+
+    Ok(!remote_fields_consistent
+        || !local_fields_consistent
+        || remote_symbol != local_symbol.as_deref()
+        || remote_side != local_side
+        || remote_price != local_price
+        || remote_qty != local_qty
+        || remote_fee != local_fee)
+}
+
+fn weighted_execution_price(notional: Decimal, qty: Decimal) -> Decimal {
+    if qty == Decimal::ZERO {
+        Decimal::ZERO
+    } else {
+        notional / qty
+    }
+}
+
+fn normalized_ibkr_side(side: &str) -> Option<&'static str> {
+    match side.to_ascii_uppercase().as_str() {
+        "BUY" | "BOT" => Some("BUY"),
+        "SELL" | "SLD" => Some("SELL"),
+        _ => None,
+    }
 }
 
 fn binance_balance_total(remote_balances: &[BinanceAssetBalance], asset: &str) -> Decimal {
@@ -5731,7 +5867,7 @@ mod tests {
         LocalFill, LocalOrder, backtest_settings, binance_accounting_records_from_fills,
         binance_balance_total, binance_base_asset, binance_cancel_outcome,
         binance_local_order_matches_remote_open, binance_testnet_settings,
-        ibkr_execution_matches_local, ibkr_local_order_expects_remote_open,
+        ibkr_execution_match_summary, ibkr_local_order_expects_remote_open,
         ibkr_local_order_matches_remote_open, ibkr_recovered_order_status, paper_settings,
         settings_with_broker_initial_cash, sync_cancelled_open_orders, system_log_retention_policy,
     };
@@ -5766,10 +5902,12 @@ mod tests {
             dec!(9936.17961),
             &[LocalFill {
                 id: "fill-1".to_string(),
+                order_id: "order-1".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63820.39".to_string(),
                 qty: "0.001".to_string(),
+                fee: "0.01".to_string(),
             }],
             11,
         )
@@ -5789,17 +5927,21 @@ mod tests {
         let fills = vec![
             LocalFill {
                 id: "fill-1".to_string(),
+                order_id: "order-1".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63820.39".to_string(),
                 qty: "0.001".to_string(),
+                fee: "0.01".to_string(),
             },
             LocalFill {
                 id: "fill-2".to_string(),
+                order_id: "order-2".to_string(),
                 symbol: "BTCUSDT".to_string(),
                 side: "BUY".to_string(),
                 price: "63960".to_string(),
                 qty: "0.001".to_string(),
+                fee: "0.01".to_string(),
             },
         ];
 
@@ -5844,6 +5986,7 @@ mod tests {
             },
         ];
         let by_client = LocalOrder {
+            id: "order-client-42".to_string(),
             client_order_id: "client-42".to_string(),
             broker_order_id: None,
             qty: "0.001".to_string(),
@@ -5978,7 +6121,49 @@ mod tests {
     }
 
     #[test]
-    fn ibkr_reconcile_matches_execution_by_order_or_fill_id() {
+    fn ibkr_reconcile_matches_aggregated_execution_fields() {
+        let executions = [
+            IbkrExecution {
+                request_id: 1,
+                order_id: 42,
+                trade_id: "exec-42-a".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BOT".to_string(),
+                qty: dec!(0.4),
+                price: dec!(185),
+                fee: dec!(0.15),
+            },
+            IbkrExecution {
+                request_id: 1,
+                order_id: 42,
+                trade_id: "exec-42-b".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BUY".to_string(),
+                qty: dec!(0.6),
+                price: dec!(185.5),
+                fee: dec!(0.20),
+            },
+        ];
+        let order = sample_order("client-42", Some("42"));
+        let fill = LocalFill {
+            id: "fill-42".to_string(),
+            order_id: order.id.clone(),
+            symbol: "US:SMART:AAPL:EQUITY".to_string(),
+            side: "BUY".to_string(),
+            price: "185.3".to_string(),
+            qty: "1".to_string(),
+            fee: "0.35".to_string(),
+        };
+
+        let (matched, field_drifts) =
+            ibkr_execution_match_summary(&executions, &[order], &[fill]).unwrap();
+
+        assert_eq!(matched, 2);
+        assert_eq!(field_drifts, 0);
+    }
+
+    #[test]
+    fn ibkr_reconcile_detects_execution_field_drift() {
         let execution = IbkrExecution {
             request_id: 1,
             order_id: 42,
@@ -5989,25 +6174,46 @@ mod tests {
             price: dec!(185.25),
             fee: dec!(0.35),
         };
-        let by_broker_order = sample_order("client-42", Some("42"));
-        let by_fill = LocalFill {
-            id: "run-1-ibkr-trade-exec-42".to_string(),
-            symbol: "AAPL".to_string(),
-            side: "BUY".to_string(),
-            price: "185.25".to_string(),
-            qty: "1".to_string(),
+        let order = sample_order("client-42", Some("42"));
+        let fill = LocalFill {
+            id: "fill-42".to_string(),
+            order_id: order.id.clone(),
+            symbol: "US:SMART:MSFT:EQUITY".to_string(),
+            side: "SELL".to_string(),
+            price: "186".to_string(),
+            qty: "2".to_string(),
+            fee: "0.70".to_string(),
         };
 
-        assert!(ibkr_execution_matches_local(
-            &execution,
-            &[by_broker_order],
-            &[]
-        ));
-        assert!(ibkr_execution_matches_local(
-            &execution,
-            &[sample_order("other-client", None)],
-            &[by_fill]
-        ));
+        let (matched, field_drifts) =
+            ibkr_execution_match_summary(&[execution], &[order], &[fill]).unwrap();
+
+        assert_eq!(matched, 1);
+        assert_eq!(field_drifts, 1);
+    }
+
+    #[test]
+    fn ibkr_reconcile_does_not_match_execution_without_local_fill() {
+        let execution = IbkrExecution {
+            request_id: 1,
+            order_id: 42,
+            trade_id: "exec-42".to_string(),
+            symbol: "AAPL".to_string(),
+            side: "BUY".to_string(),
+            qty: dec!(1),
+            price: dec!(185.25),
+            fee: dec!(0.35),
+        };
+
+        let (matched, field_drifts) = ibkr_execution_match_summary(
+            &[execution],
+            &[sample_order("client-42", Some("42"))],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(matched, 0);
+        assert_eq!(field_drifts, 0);
     }
 
     #[test]
@@ -6227,6 +6433,7 @@ mod tests {
 
     fn sample_order(client_order_id: &str, broker_order_id: Option<&str>) -> LocalOrder {
         LocalOrder {
+            id: format!("order-{client_order_id}"),
             client_order_id: client_order_id.to_string(),
             broker_order_id: broker_order_id.map(str::to_string),
             qty: "1".to_string(),

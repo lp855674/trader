@@ -1884,6 +1884,37 @@ fn ibkr_paper_tiny_order_reports_connection_failure_without_gateway_after_confir
 }
 
 #[test]
+fn ibkr_paper_tiny_order_rejects_zero_observation_window_before_connecting() {
+    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-tiny-order",
+            "--config",
+            config.to_str().unwrap(),
+            "--symbol",
+            "AAPL",
+            "--side",
+            "buy",
+            "--qty",
+            "1",
+            "--price",
+            "185.25",
+            "--observe-seconds",
+            "0",
+            "--confirm-ibkr-paper-order",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "IBKR order diagnostic observation timeout must be positive",
+        ));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
 fn ibkr_paper_preflight_with_submit_reports_connection_failure_without_gateway() {
     let config =
         write_ibkr_cli_config_with_order_submit(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
