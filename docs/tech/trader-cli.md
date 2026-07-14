@@ -9,6 +9,7 @@
 - 使用 `clap` 定义 `trader` 命令和大量 subcommand。
 - 主要命令包括 `init`、`migrate`、`import-bars`、`feature-*`、`backtest`、`paper-run`、`replay`、`report`、positions/snapshots/configs/runs/logs 查询。
 - broker 相关命令覆盖 Binance testnet、IBKR paper 的 readonly、open orders、executions、reconcile、tiny order、cancel/recover 等操作。
+- IBKR paper reconciliation 会保留账户/标的下全部远端 execution 总数及 unmatched 数量，但只用当前 run 中可通过 broker order id、client order id 或既有 fill 归属的 execution 计算字段差异与数量差异；外部诊断单不会污染当前 run 验收。
 - `risk-kill-switch`、order/risk/reconciliation event 查询和 ingestion/funding 命令支持运维审计。
 - CLI 负责把 TOML/env/file 参数装配成 crate 调用，不应承载领域规则。
 
@@ -25,4 +26,3 @@
 ## 测试与验证
 
 重点覆盖命令解析、配置装配、无网络 smoke、危险命令确认参数和报告/导出格式。
-

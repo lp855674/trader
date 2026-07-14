@@ -12,6 +12,7 @@
 - Fake/simulated adapter 支持本地测试和无网络 smoke。
 - Binance Spot Testnet adapter 封装 signed request、account balances、open orders、trades、klines 和 status；当前 `place_order` 送单路径仍受未启用保护，不能把 testnet 能力误写成默认可送单。
 - IBKR Paper Gateway adapter 通过 ibapi Gateway client 做 connect/handshake、open orders、executions、cancel 和 limit order 映射。
+- IBKR execution 映射会保留 Gateway `order_reference`，并将其暴露为领域 execution 的 `client_order_id`，供调用方按本地订单归属回报。
 - `cancel_open_orders_for_account_symbol` 等 helper 只做 broker 通道操作，调用方负责运行上下文、审计和风险边界。
 
 ## 输入输出与持久化

@@ -67,8 +67,9 @@ switch ($command) {
         }
     }
     "ibkr-paper-executions" {
-        if ($env:TRADER_FAKE_MODE -in @("filled_execution", "execution_field_drift")) {
-            Write-Output "ibkr paper executions ok: request_id=1 account=DU12345 symbol=AAPL executions=1 order_id=7 trade_id=T1"
+        if ($env:TRADER_FAKE_MODE -in @("filled_execution", "execution_field_drift", "filled_execution_with_external_unmatched")) {
+            $executionCount = if ($env:TRADER_FAKE_MODE -eq "filled_execution_with_external_unmatched") { 2 } else { 1 }
+            Write-Output "ibkr paper executions ok: request_id=1 account=DU12345 symbol=AAPL executions=$executionCount order_id=7 trade_id=T1"
         } else {
             Write-Output "ibkr paper executions ok: executions=0"
         }
@@ -78,6 +79,8 @@ switch ($command) {
             Write-Output "ibkr paper reconcile ok: local_orders=1 local_fills=0 matched_orders=0 local_only_orders=1 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=0 remote_execution_matched=0 remote_execution_unmatched=0 local_fill_qty=0 remote_execution_qty=0 qty_delta=0"
         } elseif ($env:TRADER_FAKE_MODE -eq "filled_execution") {
             Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=1 remote_execution_matched=1 remote_execution_unmatched=0 remote_execution_field_drifts=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
+        } elseif ($env:TRADER_FAKE_MODE -eq "filled_execution_with_external_unmatched") {
+            Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=2 remote_execution_matched=1 remote_execution_unmatched=1 remote_execution_field_drifts=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
         } elseif ($env:TRADER_FAKE_MODE -eq "execution_field_drift") {
             Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=1 remote_execution_matched=1 remote_execution_unmatched=0 remote_execution_field_drifts=1 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
         } else {
@@ -193,6 +196,21 @@ Assert-True ($filledEvidenceSummary.matched_executions -eq 1) "expected one matc
 Assert-True ($filledEvidenceSummary.execution_field_drifts -eq 0) "expected zero execution field drifts"
 Assert-True ($filledEvidenceSummary.local_fills -eq 1) "expected one local fill"
 Assert-True ($filledEvidenceSummary.qty_delta -eq 0) "expected zero filled execution qty delta"
+
+$env:TRADER_TEST_GATEWAY_PORT = "reachable"
+$env:TRADER_FAKE_MODE = "filled_execution_with_external_unmatched"
+$externalExecutionEvidenceOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+$externalExecutionEvidenceOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected filled-order evidence to ignore external unmatched execution drift"
+$externalExecutionEvidenceSummaryPath = ($externalExecutionEvidenceOutput | Select-String -Pattern 'filled-order evidence summary:\s+(.+filled-order-evidence-summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+Assert-True (-not [string]::IsNullOrWhiteSpace($externalExecutionEvidenceSummaryPath)) "expected external execution evidence summary path"
+$externalExecutionEvidenceSummary = Read-Json $externalExecutionEvidenceSummaryPath
+Assert-True ($externalExecutionEvidenceSummary.status -eq "completed") "expected external execution evidence completed status"
+Assert-True ($externalExecutionEvidenceSummary.failure_class -eq "ok") "expected external execution evidence ok failure class"
+Assert-True ($externalExecutionEvidenceSummary.broker_executions -eq 2) "expected external execution to remain visible in broker total"
+Assert-True ($externalExecutionEvidenceSummary.matched_executions -eq 1) "expected only current run execution to match"
+Assert-True ($externalExecutionEvidenceSummary.unmatched_executions -eq 1) "expected external execution to remain visible as unmatched"
+Assert-True ($externalExecutionEvidenceSummary.qty_delta -eq 0) "expected external execution not to affect quantity delta"
 
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "execution_field_drift"

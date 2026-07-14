@@ -971,11 +971,19 @@ struct IbkrPaperReconciliation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct IbkrExecutionMatchSummary {
+    matched: usize,
+    field_drifts: usize,
+    matched_qty: Decimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalOrder {
     id: String,
     client_order_id: String,
     broker_order_id: Option<String>,
     qty: String,
+    filled_qty: String,
     status: String,
 }
 
@@ -986,6 +994,7 @@ impl From<storage::StoredOrder> for LocalOrder {
             client_order_id: order.client_order_id,
             broker_order_id: order.broker_order_id,
             qty: order.qty,
+            filled_qty: order.filled_qty,
             status: order.status,
         }
     }
@@ -1320,7 +1329,7 @@ async fn run_command(command: Command) -> Result<()> {
                 .await?;
             let first_execution = executions.first();
             println!(
-                "ibkr paper executions ok: request_id={} account={} symbol={} executions={} order_id={} trade_id={}",
+                "ibkr paper executions ok: request_id={} account={} symbol={} executions={} order_id={} client_order_id={} trade_id={}",
                 request_id,
                 app_config.paper.account_id,
                 symbol,
@@ -1328,6 +1337,9 @@ async fn run_command(command: Command) -> Result<()> {
                 first_execution
                     .map(|execution| execution.order_id.to_string())
                     .unwrap_or_else(|| "none".to_string()),
+                first_execution
+                    .map(|execution| execution.client_order_id.as_str())
+                    .unwrap_or("none"),
                 first_execution
                     .map(|execution| execution.trade_id.as_str())
                     .unwrap_or("none")
@@ -4204,7 +4216,7 @@ async fn reconcile_ibkr_paper(
             })
         })
         .count();
-    let (remote_execution_matched, remote_execution_field_drifts) =
+    let execution_summary =
         ibkr_execution_match_summary(&remote_executions, &local_orders, &local_fills)?;
     let local_fill_qty = local_fills
         .iter()
@@ -4217,9 +4229,7 @@ async fn reconcile_ibkr_paper(
         .try_fold(Decimal::ZERO, |total, fill| {
             Decimal::from_str(&fill.qty).map(|qty| total + qty)
         })?;
-    let remote_execution_qty = remote_executions
-        .iter()
-        .fold(Decimal::ZERO, |total, execution| total + execution.qty);
+    let remote_execution_qty = execution_summary.matched_qty;
 
     Ok(IbkrPaperReconciliation {
         symbol: symbol.to_string(),
@@ -4231,9 +4241,9 @@ async fn reconcile_ibkr_paper(
         remote_open_matched,
         remote_open_unmatched: remote_open_orders.len() - remote_open_matched,
         remote_executions: remote_executions.len(),
-        remote_execution_matched,
-        remote_execution_unmatched: remote_executions.len() - remote_execution_matched,
-        remote_execution_field_drifts,
+        remote_execution_matched: execution_summary.matched,
+        remote_execution_unmatched: remote_executions.len() - execution_summary.matched,
+        remote_execution_field_drifts: execution_summary.field_drifts,
         local_fill_qty,
         remote_execution_qty,
         qty_delta: remote_execution_qty - local_fill_qty,
@@ -4241,6 +4251,14 @@ async fn reconcile_ibkr_paper(
 }
 
 fn ibkr_local_order_expects_remote_open(local: &LocalOrder) -> bool {
+    let is_fully_filled = Decimal::from_str(&local.filled_qty)
+        .ok()
+        .zip(Decimal::from_str(&local.qty).ok())
+        .is_some_and(|(filled_qty, qty)| filled_qty >= qty);
+    if is_fully_filled {
+        return false;
+    }
+
     matches!(
         local
             .status
@@ -4287,7 +4305,7 @@ fn ibkr_execution_match_summary(
     executions: &[broker::IbkrExecution],
     local_orders: &[LocalOrder],
     local_fills: &[LocalFill],
-) -> Result<(usize, usize)> {
+) -> Result<IbkrExecutionMatchSummary> {
     let mut executions_by_order = BTreeMap::<i64, Vec<&broker::IbkrExecution>>::new();
     for execution in executions {
         executions_by_order
@@ -4298,11 +4316,18 @@ fn ibkr_execution_match_summary(
 
     let mut matched = 0;
     let mut field_drifts = 0;
+    let mut matched_qty = Decimal::ZERO;
     for (broker_order_id, remote) in executions_by_order {
         let broker_order_id = broker_order_id.to_string();
         let local_order_id = local_orders
             .iter()
-            .find(|order| order.broker_order_id.as_deref() == Some(broker_order_id.as_str()))
+            .find(|order| {
+                order.broker_order_id.as_deref() == Some(broker_order_id.as_str())
+                    || remote.iter().any(|execution| {
+                        !execution.client_order_id.is_empty()
+                            && execution.client_order_id == order.client_order_id
+                    })
+            })
             .map(|order| order.id.as_str())
             .or_else(|| {
                 local_fills
@@ -4326,12 +4351,19 @@ fn ibkr_execution_match_summary(
         }
 
         matched += remote.len();
+        matched_qty += remote
+            .iter()
+            .fold(Decimal::ZERO, |total, execution| total + execution.qty);
         if ibkr_execution_group_has_field_drift(&remote, &local)? {
             field_drifts += 1;
         }
     }
 
-    Ok((matched, field_drifts))
+    Ok(IbkrExecutionMatchSummary {
+        matched,
+        field_drifts,
+        matched_qty,
+    })
 }
 
 fn ibkr_execution_group_has_field_drift(
@@ -5990,6 +6022,7 @@ mod tests {
             client_order_id: "client-42".to_string(),
             broker_order_id: None,
             qty: "0.001".to_string(),
+            filled_qty: "0".to_string(),
             status: "NEW".to_string(),
         };
         let mut by_broker = by_client.clone();
@@ -6118,6 +6151,11 @@ mod tests {
                 "status should not require remote open order: {status}"
             );
         }
+
+        let mut filled_order = sample_order("client-filled", None);
+        filled_order.status = "PreSubmitted".to_string();
+        filled_order.filled_qty = "1".to_string();
+        assert!(!ibkr_local_order_expects_remote_open(&filled_order));
     }
 
     #[test]
@@ -6126,6 +6164,7 @@ mod tests {
             IbkrExecution {
                 request_id: 1,
                 order_id: 42,
+                client_order_id: "client-42".to_string(),
                 trade_id: "exec-42-a".to_string(),
                 symbol: "AAPL".to_string(),
                 side: "BOT".to_string(),
@@ -6136,6 +6175,7 @@ mod tests {
             IbkrExecution {
                 request_id: 1,
                 order_id: 42,
+                client_order_id: "client-42".to_string(),
                 trade_id: "exec-42-b".to_string(),
                 symbol: "AAPL".to_string(),
                 side: "BUY".to_string(),
@@ -6143,8 +6183,19 @@ mod tests {
                 price: dec!(185.5),
                 fee: dec!(0.20),
             },
+            IbkrExecution {
+                request_id: 1,
+                order_id: 5,
+                client_order_id: "trader-diagnostic-order".to_string(),
+                trade_id: "exec-diagnostic".to_string(),
+                symbol: "AAPL".to_string(),
+                side: "BUY".to_string(),
+                qty: dec!(1),
+                price: dec!(318.98),
+                fee: dec!(1.000003),
+            },
         ];
-        let order = sample_order("client-42", Some("42"));
+        let order = sample_order("client-42", None);
         let fill = LocalFill {
             id: "fill-42".to_string(),
             order_id: order.id.clone(),
@@ -6155,11 +6206,11 @@ mod tests {
             fee: "0.35".to_string(),
         };
 
-        let (matched, field_drifts) =
-            ibkr_execution_match_summary(&executions, &[order], &[fill]).unwrap();
+        let summary = ibkr_execution_match_summary(&executions, &[order], &[fill]).unwrap();
 
-        assert_eq!(matched, 2);
-        assert_eq!(field_drifts, 0);
+        assert_eq!(summary.matched, 2);
+        assert_eq!(summary.field_drifts, 0);
+        assert_eq!(summary.matched_qty, dec!(1));
     }
 
     #[test]
@@ -6167,6 +6218,7 @@ mod tests {
         let execution = IbkrExecution {
             request_id: 1,
             order_id: 42,
+            client_order_id: "client-42".to_string(),
             trade_id: "exec-42".to_string(),
             symbol: "AAPL".to_string(),
             side: "BUY".to_string(),
@@ -6185,11 +6237,11 @@ mod tests {
             fee: "0.70".to_string(),
         };
 
-        let (matched, field_drifts) =
-            ibkr_execution_match_summary(&[execution], &[order], &[fill]).unwrap();
+        let summary = ibkr_execution_match_summary(&[execution], &[order], &[fill]).unwrap();
 
-        assert_eq!(matched, 1);
-        assert_eq!(field_drifts, 1);
+        assert_eq!(summary.matched, 1);
+        assert_eq!(summary.field_drifts, 1);
+        assert_eq!(summary.matched_qty, dec!(1));
     }
 
     #[test]
@@ -6197,6 +6249,7 @@ mod tests {
         let execution = IbkrExecution {
             request_id: 1,
             order_id: 42,
+            client_order_id: "client-42".to_string(),
             trade_id: "exec-42".to_string(),
             symbol: "AAPL".to_string(),
             side: "BUY".to_string(),
@@ -6205,15 +6258,16 @@ mod tests {
             fee: dec!(0.35),
         };
 
-        let (matched, field_drifts) = ibkr_execution_match_summary(
+        let summary = ibkr_execution_match_summary(
             &[execution],
             &[sample_order("client-42", Some("42"))],
             &[],
         )
         .unwrap();
 
-        assert_eq!(matched, 0);
-        assert_eq!(field_drifts, 0);
+        assert_eq!(summary.matched, 0);
+        assert_eq!(summary.field_drifts, 0);
+        assert_eq!(summary.matched_qty, Decimal::ZERO);
     }
 
     #[test]
@@ -6437,6 +6491,7 @@ mod tests {
             client_order_id: client_order_id.to_string(),
             broker_order_id: broker_order_id.map(str::to_string),
             qty: "1".to_string(),
+            filled_qty: "0".to_string(),
             status: "SUBMITTED".to_string(),
         }
     }

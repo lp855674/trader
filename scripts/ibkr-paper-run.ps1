@@ -405,7 +405,7 @@ function Get-IbkrReconciliationCounters {
     $remoteExecutionUnmatched = Get-ReconciliationInt -Text $output -Name "remote_execution_unmatched"
     $executionFieldDrifts = Get-ReconciliationInt -Text $output -Name "remote_execution_field_drifts"
     $qtyDelta = Get-ReconciliationDecimal -Text $output -Name "qty_delta"
-    $executionDrifts = $remoteExecutionUnmatched + $executionFieldDrifts
+    $executionDrifts = $executionFieldDrifts
     if ($qtyDelta -ne [decimal]0) {
         $executionDrifts += 1
     }
@@ -417,6 +417,7 @@ function Get-IbkrReconciliationCounters {
         open_order_drifts = $localOnlyOrders + $remoteOpenUnmatched
         execution_drifts = $executionDrifts
         execution_field_drifts = $executionFieldDrifts
+        external_execution_unmatched = $remoteExecutionUnmatched
         stale_inputs = 0
         total_drifts = $localOnlyOrders + $remoteOpenUnmatched + $executionDrifts
     }
@@ -588,6 +589,7 @@ try {
         reconciliation_open_order_drifts = $reconciliationCounters.open_order_drifts
         reconciliation_execution_drifts = $reconciliationCounters.execution_drifts
         reconciliation_execution_field_drifts = $reconciliationCounters.execution_field_drifts
+        reconciliation_external_execution_unmatched = $reconciliationCounters.external_execution_unmatched
         reconciliation_stale_inputs = $reconciliationCounters.stale_inputs
         cancel_all_attempted = $cancelAllAttempted
         cancel_all_succeeded = $cancelAllSucceeded

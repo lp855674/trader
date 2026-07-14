@@ -262,6 +262,9 @@ where
             });
         }
         let (qty, price, fee) = aggregate_ibkr_trades(&trades)?;
+        if qty >= order.qty {
+            status = "Filled".to_string();
+        }
 
         Ok(ExecutedPaperOrder {
             client_order_id,

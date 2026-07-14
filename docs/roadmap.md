@@ -93,6 +93,9 @@ Current status:
 4. Broker reconciliation: Binance drift detection covered by broker tests
 5. Contract risk checks: leverage, margin ratio, notional, liquidation buffer, funding bounds
 6. CLI/API readback: complete for contract positions and funding rates
+7. IBKR paper filled-order reconciliation: accepted for AAPL BUY 1 with one current-run
+   execution matched, one external execution left unmatched, and zero field/quantity drift;
+   see `docs/ibkr-paper-filled-order-results-2026-07-14.md`
 ```
 
 Remaining:

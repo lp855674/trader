@@ -252,6 +252,7 @@ impl FakeIbkrGatewayClient {
             executions: vec![IbkrExecution {
                 request_id: 7,
                 order_id: 42,
+                client_order_id: "client-42".to_string(),
                 trade_id: "exec-42".to_string(),
                 symbol: "AAPL".to_string(),
                 side: "BUY".to_string(),
@@ -1187,6 +1188,7 @@ async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client
     assert_eq!(accounts, vec!["DU12345"]);
     assert_eq!(open_orders[0].order_id, 42);
     assert_eq!(executions[0].trade_id, "exec-42");
+    assert_eq!(executions[0].client_order_id, "client-42");
     assert_eq!(next_order_id, 43);
     assert_eq!(
         client.calls(),
@@ -1201,6 +1203,26 @@ async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client
             FakeIbkrGatewayCall::NextOrderId,
         ]
     );
+}
+
+#[tokio::test]
+async fn ibkr_paper_gateway_adapter_preserves_execution_client_order_id() {
+    let client = Arc::new(FakeIbkrGatewayClient::new());
+    let adapter = IbkrPaperGatewayAdapter::new_with_gateway_client(
+        IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 7497,
+            client_id: 7,
+            connect_timeout: Duration::from_secs(1),
+        },
+        client,
+    );
+
+    let executions = Broker::executions(&adapter, "DU12345", Some("AAPL"))
+        .await
+        .unwrap();
+
+    assert_eq!(executions[0].client_order_id.as_deref(), Some("client-42"));
 }
 
 #[tokio::test]

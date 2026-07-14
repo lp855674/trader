@@ -129,6 +129,7 @@ $brokerExecutions = [Math]::Max(
     (Get-OutputInt -Text $reconciliationOutput -Name "remote_executions")
 )
 $matchedExecutions = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_matched"
+$unmatchedExecutions = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_unmatched"
 $executionFieldDrifts = [Math]::Max(
     (Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_field_drifts"),
     [int]$runSummary.reconciliation_execution_field_drifts
@@ -174,6 +175,7 @@ $evidence = [pscustomobject]@{
     reconciliation_execution_drifts = $runSummary.reconciliation_execution_drifts
     broker_executions = $brokerExecutions
     matched_executions = $matchedExecutions
+    unmatched_executions = $unmatchedExecutions
     execution_field_drifts = $executionFieldDrifts
     local_fills = $localFills
     qty_delta = $qtyDelta

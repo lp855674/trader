@@ -2241,8 +2241,8 @@ impl IbkrPaperOrderClient for FakeIbkrClient {
         Ok(IbkrOrderAck {
             order_id,
             client_order_id: "trader-paper-paper-run-1-1".to_string(),
-            status: "Filled".to_string(),
-            filled_qty: dec!(2),
+            status: "PreSubmitted".to_string(),
+            filled_qty: dec!(0),
         })
     }
 

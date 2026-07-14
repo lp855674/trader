@@ -77,6 +77,7 @@ pub struct IbkrOpenOrder {
 pub struct IbkrExecution {
     pub request_id: i64,
     pub order_id: i64,
+    pub client_order_id: String,
     pub trade_id: String,
     pub symbol: String,
     pub side: String,
@@ -886,7 +887,7 @@ fn ibkr_execution_into_broker_execution(
     BrokerExecution {
         trade_id: execution.trade_id,
         broker_order_id: execution.order_id.to_string(),
-        client_order_id: None,
+        client_order_id: non_empty_string(execution.client_order_id),
         account_id: account_id.to_string(),
         symbol: execution.symbol,
         side: parse_broker_order_side(&execution.side),
@@ -1100,6 +1101,7 @@ fn map_execution(
     Ok(IbkrExecution {
         request_id,
         order_id: i64::from(execution_data.execution.order_id),
+        client_order_id: execution_data.execution.order_reference,
         trade_id: execution_data.execution.execution_id,
         symbol: execution_data.contract.symbol.to_string(),
         side: execution_data.execution.side.to_string(),
