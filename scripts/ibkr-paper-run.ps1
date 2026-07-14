@@ -2,6 +2,8 @@ param(
     [string]$Config = "configs/paper/ibkr_aapl_1d_parquet.toml",
     [string]$InputCsv = "datasets/sample/aapl_1d.csv",
     [string]$OutputParquet = "datasets/ibkr/aapl_1d.parquet",
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
+    [string]$RunLabel = "aapl-1d",
     [switch]$SkipRefresh,
     [switch]$ReadOnly,
     [switch]$ConfirmIbkrPaperOrder,
@@ -20,7 +22,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Get-Location
 $traderExe = if ($env:TRADER_TEST_EXE) { $env:TRADER_TEST_EXE } else { Join-Path $repoRoot "target/debug/trader.exe" }
 $id = [guid]::NewGuid().ToString("N")
-$runId = "ibkr-aapl-1d-$($id.Substring(0, 12))"
+$runId = "ibkr-$RunLabel-$($id.Substring(0, 12))"
 $runDir = Join-Path $repoRoot "data/ibkr-paper-runs/$runId"
 $runConfigPath = Join-Path $runDir "config.toml"
 $databasePath = Join-Path $runDir "run.sqlite"
@@ -200,6 +202,26 @@ function Get-IbkrGatewayValue {
         return $Matches[1]
     }
     return $DefaultValue
+}
+
+function Set-TomlSectionValue {
+    param(
+        [string]$Text,
+        [string]$Section,
+        [string]$Name,
+        [string]$Value
+    )
+
+    $sectionPattern = [regex]::Escape($Section)
+    $namePattern = [regex]::Escape($Name)
+    $pattern = "(?ms)(?<prefix>^\[$sectionPattern\]\s*.*?^$namePattern\s*=\s*)(?<value>[^\r\n]+)"
+    $match = [regex]::Match($Text, $pattern)
+    if (-not $match.Success) {
+        throw "config is missing [$Section] $Name"
+    }
+    return $Text.Substring(0, $match.Groups["value"].Index) +
+        $Value +
+        $Text.Substring($match.Groups["value"].Index + $match.Groups["value"].Length)
 }
 
 function Test-GatewayPort {
@@ -468,9 +490,8 @@ try {
         throw "IBKR paper gateway checks require a real IBKR paper account id; pass -AccountId DU... or update the config"
     }
 
-    $runConfigText = $configText `
-        -replace 'run_id = "ibkr-aapl-1d-paper"', "run_id = `"$runId`"" `
-        -replace 'url = "sqlite://data/ibkr-aapl-1d-paper.sqlite"', "url = `"$databaseUrl`""
+    $runConfigText = Set-TomlSectionValue -Text $configText -Section "runtime" -Name "run_id" -Value "`"$runId`""
+    $runConfigText = Set-TomlSectionValue -Text $runConfigText -Section "database" -Name "url" -Value "`"$databaseUrl`""
     if ($ConfirmIbkrPaperOrder) {
         $runConfigText = $runConfigText -replace 'order_submit_enabled = false', 'order_submit_enabled = true'
     }
@@ -486,9 +507,8 @@ try {
     }
 
     if (-not $SkipRefresh) {
-        $refreshConfigText = $runConfigText `
-            -replace 'source = "parquet"', 'source = "csv"' `
-            -replace 'path = "datasets/ibkr/aapl_1d.parquet"', "path = `"$($InputCsv.Replace('\', '/'))`""
+        $refreshConfigText = Set-TomlSectionValue -Text $runConfigText -Section "data" -Name "source" -Value '"csv"'
+        $refreshConfigText = Set-TomlSectionValue -Text $refreshConfigText -Section "data" -Name "path" -Value "`"$($InputCsv.Replace('\', '/'))`""
         Set-Content -Path $refreshConfigPath -Value $refreshConfigText -Encoding UTF8
         Invoke-CheckedTrader @("import-bars", "--config", $refreshConfigPath, "--output-parquet", $OutputParquet)
     }

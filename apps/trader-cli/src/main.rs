@@ -963,8 +963,12 @@ struct IbkrPaperReconciliation {
     remote_open_unmatched: usize,
     remote_executions: usize,
     remote_execution_matched: usize,
+    remote_execution_matched_orders: usize,
+    remote_execution_max_per_order: usize,
     remote_execution_unmatched: usize,
     remote_execution_field_drifts: usize,
+    local_fully_filled_orders: usize,
+    local_partially_filled_orders: usize,
     local_fill_qty: Decimal,
     remote_execution_qty: Decimal,
     qty_delta: Decimal,
@@ -973,6 +977,8 @@ struct IbkrPaperReconciliation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IbkrExecutionMatchSummary {
     matched: usize,
+    matched_orders: usize,
+    max_per_order: usize,
     field_drifts: usize,
     matched_qty: Decimal,
 }
@@ -982,6 +988,8 @@ struct LocalOrder {
     id: String,
     client_order_id: String,
     broker_order_id: Option<String>,
+    account_id: String,
+    symbol: String,
     qty: String,
     filled_qty: String,
     status: String,
@@ -993,6 +1001,8 @@ impl From<storage::StoredOrder> for LocalOrder {
             id: order.id,
             client_order_id: order.client_order_id,
             broker_order_id: order.broker_order_id,
+            account_id: order.account_id,
+            symbol: order.symbol,
             qty: order.qty,
             filled_qty: order.filled_qty,
             status: order.status,
@@ -1370,7 +1380,7 @@ async fn run_command(command: Command) -> Result<()> {
             let report =
                 reconcile_ibkr_paper(&app_config, &db, &adapter, request_id, &symbol).await?;
             println!(
-                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_unmatched={} remote_execution_field_drifts={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
+                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_matched_orders={} remote_execution_max_per_order={} remote_execution_unmatched={} remote_execution_field_drifts={} local_fully_filled_orders={} local_partially_filled_orders={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
                 report.symbol,
                 report.local_orders,
                 report.local_fills,
@@ -1381,8 +1391,12 @@ async fn run_command(command: Command) -> Result<()> {
                 report.remote_open_unmatched,
                 report.remote_executions,
                 report.remote_execution_matched,
+                report.remote_execution_matched_orders,
+                report.remote_execution_max_per_order,
                 report.remote_execution_unmatched,
                 report.remote_execution_field_drifts,
+                report.local_fully_filled_orders,
+                report.local_partially_filled_orders,
                 report.local_fill_qty,
                 report.remote_execution_qty,
                 report.qty_delta
@@ -4191,12 +4205,31 @@ async fn reconcile_ibkr_paper(
     symbol: &str,
 ) -> Result<IbkrPaperReconciliation> {
     let run_id = &app_config.runtime.run_id;
-    let local_orders = local_orders_from_storage(db.list_orders(run_id).await?);
-    let local_fills = local_fills_from_storage(db.list_fills(run_id).await?);
-    let remote_open_orders = adapter.open_orders().await?;
-    let remote_executions = adapter
-        .executions(request_id, &app_config.paper.account_id, symbol)
-        .await?;
+    let account_id = &app_config.paper.account_id;
+    let local_orders = local_orders_from_storage(db.list_orders(run_id).await?)
+        .into_iter()
+        .filter(|order| ibkr_local_order_in_scope(order, account_id, symbol))
+        .collect::<Vec<_>>();
+    let local_order_ids = local_orders
+        .iter()
+        .map(|order| order.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let local_fills = local_fills_from_storage(db.list_fills(run_id).await?)
+        .into_iter()
+        .filter(|fill| {
+            local_order_ids.contains(fill.order_id.as_str())
+                && ibkr_symbol_matches(&fill.symbol, symbol)
+        })
+        .collect::<Vec<_>>();
+    let remote_open_orders = adapter
+        .open_orders()
+        .await?
+        .into_iter()
+        .filter(|order| {
+            order.account_id == *account_id && ibkr_symbol_matches(&order.symbol, symbol)
+        })
+        .collect::<Vec<_>>();
+    let remote_executions = adapter.executions(request_id, account_id, symbol).await?;
     let local_open_orders = local_orders
         .iter()
         .filter(|order| ibkr_local_order_expects_remote_open(order))
@@ -4218,17 +4251,11 @@ async fn reconcile_ibkr_paper(
         .count();
     let execution_summary =
         ibkr_execution_match_summary(&remote_executions, &local_orders, &local_fills)?;
-    let local_fill_qty = local_fills
-        .iter()
-        .filter(|fill| {
-            matches!(
-                paper::ibkr_stock_symbol(&fill.symbol).as_deref(),
-                Ok(fill_symbol) if fill_symbol == symbol
-            )
-        })
-        .try_fold(Decimal::ZERO, |total, fill| {
-            Decimal::from_str(&fill.qty).map(|qty| total + qty)
-        })?;
+    let (local_fully_filled_orders, local_partially_filled_orders) =
+        ibkr_local_fill_state_counts(&local_orders)?;
+    let local_fill_qty = local_fills.iter().try_fold(Decimal::ZERO, |total, fill| {
+        Decimal::from_str(&fill.qty).map(|qty| total + qty)
+    })?;
     let remote_execution_qty = execution_summary.matched_qty;
 
     Ok(IbkrPaperReconciliation {
@@ -4242,12 +4269,42 @@ async fn reconcile_ibkr_paper(
         remote_open_unmatched: remote_open_orders.len() - remote_open_matched,
         remote_executions: remote_executions.len(),
         remote_execution_matched: execution_summary.matched,
+        remote_execution_matched_orders: execution_summary.matched_orders,
+        remote_execution_max_per_order: execution_summary.max_per_order,
         remote_execution_unmatched: remote_executions.len() - execution_summary.matched,
         remote_execution_field_drifts: execution_summary.field_drifts,
+        local_fully_filled_orders,
+        local_partially_filled_orders,
         local_fill_qty,
         remote_execution_qty,
         qty_delta: remote_execution_qty - local_fill_qty,
     })
+}
+
+fn ibkr_symbol_matches(local_symbol: &str, symbol: &str) -> bool {
+    matches!(
+        paper::ibkr_stock_symbol(local_symbol).as_deref(),
+        Ok(local_symbol) if local_symbol == symbol
+    )
+}
+
+fn ibkr_local_order_in_scope(local: &LocalOrder, account_id: &str, symbol: &str) -> bool {
+    local.account_id == account_id && ibkr_symbol_matches(&local.symbol, symbol)
+}
+
+fn ibkr_local_fill_state_counts(local_orders: &[LocalOrder]) -> Result<(usize, usize)> {
+    let mut fully_filled = 0;
+    let mut partially_filled = 0;
+    for order in local_orders {
+        let qty = Decimal::from_str(&order.qty)?;
+        let filled_qty = Decimal::from_str(&order.filled_qty)?;
+        if qty > Decimal::ZERO && filled_qty >= qty {
+            fully_filled += 1;
+        } else if filled_qty > Decimal::ZERO {
+            partially_filled += 1;
+        }
+    }
+    Ok((fully_filled, partially_filled))
 }
 
 fn ibkr_local_order_expects_remote_open(local: &LocalOrder) -> bool {
@@ -4315,6 +4372,8 @@ fn ibkr_execution_match_summary(
     }
 
     let mut matched = 0;
+    let mut matched_orders = 0;
+    let mut max_per_order = 0;
     let mut field_drifts = 0;
     let mut matched_qty = Decimal::ZERO;
     for (broker_order_id, remote) in executions_by_order {
@@ -4351,6 +4410,8 @@ fn ibkr_execution_match_summary(
         }
 
         matched += remote.len();
+        matched_orders += 1;
+        max_per_order = max_per_order.max(remote.len());
         matched_qty += remote
             .iter()
             .fold(Decimal::ZERO, |total, execution| total + execution.qty);
@@ -4361,6 +4422,8 @@ fn ibkr_execution_match_summary(
 
     Ok(IbkrExecutionMatchSummary {
         matched,
+        matched_orders,
+        max_per_order,
         field_drifts,
         matched_qty,
     })
@@ -5899,7 +5962,8 @@ mod tests {
         LocalFill, LocalOrder, backtest_settings, binance_accounting_records_from_fills,
         binance_balance_total, binance_base_asset, binance_cancel_outcome,
         binance_local_order_matches_remote_open, binance_testnet_settings,
-        ibkr_execution_match_summary, ibkr_local_order_expects_remote_open,
+        ibkr_execution_match_summary, ibkr_local_fill_state_counts,
+        ibkr_local_order_expects_remote_open, ibkr_local_order_in_scope,
         ibkr_local_order_matches_remote_open, ibkr_recovered_order_status, paper_settings,
         settings_with_broker_initial_cash, sync_cancelled_open_orders, system_log_retention_policy,
     };
@@ -6021,6 +6085,8 @@ mod tests {
             id: "order-client-42".to_string(),
             client_order_id: "client-42".to_string(),
             broker_order_id: None,
+            account_id: "binance-testnet".to_string(),
+            symbol: "BTCUSDT".to_string(),
             qty: "0.001".to_string(),
             filled_qty: "0".to_string(),
             status: "NEW".to_string(),
@@ -6209,6 +6275,8 @@ mod tests {
         let summary = ibkr_execution_match_summary(&executions, &[order], &[fill]).unwrap();
 
         assert_eq!(summary.matched, 2);
+        assert_eq!(summary.matched_orders, 1);
+        assert_eq!(summary.max_per_order, 2);
         assert_eq!(summary.field_drifts, 0);
         assert_eq!(summary.matched_qty, dec!(1));
     }
@@ -6240,6 +6308,8 @@ mod tests {
         let summary = ibkr_execution_match_summary(&[execution], &[order], &[fill]).unwrap();
 
         assert_eq!(summary.matched, 1);
+        assert_eq!(summary.matched_orders, 1);
+        assert_eq!(summary.max_per_order, 1);
         assert_eq!(summary.field_drifts, 1);
         assert_eq!(summary.matched_qty, dec!(1));
     }
@@ -6266,8 +6336,40 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.matched, 0);
+        assert_eq!(summary.matched_orders, 0);
+        assert_eq!(summary.max_per_order, 0);
         assert_eq!(summary.field_drifts, 0);
         assert_eq!(summary.matched_qty, Decimal::ZERO);
+    }
+
+    #[test]
+    fn ibkr_reconcile_scopes_local_orders_by_account_and_symbol() {
+        let matching = sample_order("client-aapl", Some("42"));
+        let mut other_symbol = matching.clone();
+        other_symbol.symbol = "US:SMART:MSFT:EQUITY".to_string();
+        let mut other_account = matching.clone();
+        other_account.account_id = "DU99999".to_string();
+
+        assert!(ibkr_local_order_in_scope(&matching, "DU12345", "AAPL"));
+        assert!(!ibkr_local_order_in_scope(&other_symbol, "DU12345", "AAPL"));
+        assert!(!ibkr_local_order_in_scope(
+            &other_account,
+            "DU12345",
+            "AAPL"
+        ));
+    }
+
+    #[test]
+    fn ibkr_reconcile_counts_full_and_partial_local_orders() {
+        let mut full = sample_order("client-full", Some("42"));
+        full.filled_qty = "1".to_string();
+        let mut partial = sample_order("client-partial", Some("43"));
+        partial.filled_qty = "0.4".to_string();
+        let unfilled = sample_order("client-unfilled", Some("44"));
+
+        let counts = ibkr_local_fill_state_counts(&[full, partial, unfilled]).unwrap();
+
+        assert_eq!(counts, (1, 1));
     }
 
     #[test]
@@ -6490,6 +6592,8 @@ mod tests {
             id: format!("order-{client_order_id}"),
             client_order_id: client_order_id.to_string(),
             broker_order_id: broker_order_id.map(str::to_string),
+            account_id: "DU12345".to_string(),
+            symbol: "US:SMART:AAPL:EQUITY".to_string(),
             qty: "1".to_string(),
             filled_qty: "0".to_string(),
             status: "SUBMITTED".to_string(),

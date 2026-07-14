@@ -96,16 +96,19 @@ Current status:
 7. IBKR paper filled-order reconciliation: accepted for AAPL BUY 1 with one current-run
    execution matched, one external execution left unmatched, and zero field/quantity drift;
    see `docs/ibkr-paper-filled-order-results-2026-07-14.md`
+8. IBKR paper multi-asset / partial-fill / multi-execution acceptance: accepted against the
+   real Gateway for isolated AAPL and MSFT asset runs, one MSFT order aggregated from three
+   executions, and one BSET partial fill whose remainder was cancelled; see
+   `docs/ibkr-paper-multi-asset-filled-order-results-2026-07-14.md`
 ```
 
 Remaining:
 
 ```text
 1. Live-account verification for shared broker account/position snapshot scheduling
-2. Multi-asset IBKR filled-order reconciliation verification
-3. Real broker-connected account/position snapshot evidence beyond the local shared broker surface and parser coverage
-4. Production alerts for reconciliation drift
-5. Production hardening for reference-data rate limits and stale-data alerts
+2. Real broker-connected account/position snapshot evidence beyond the local shared broker surface and parser coverage
+3. Production alerts for reconciliation drift
+4. Production hardening for reference-data rate limits and stale-data alerts
 ```
 
 目标：

@@ -2,6 +2,8 @@ param(
     [string]$Config = "configs/paper/ibkr_aapl_1d_parquet.toml",
     [string]$InputCsv = "datasets/sample/aapl_1d.csv",
     [string]$OutputParquet = "datasets/ibkr/aapl_1d.parquet",
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
+    [string]$RunLabel = "aapl-1d",
     [switch]$SkipRefresh,
     [switch]$ConfirmIbkrPaperOrder,
     [string]$AccountId = "",
@@ -12,7 +14,12 @@ param(
     [switch]$IbkrOverridePercentageConstraints,
     [int]$OpenOrdersSettleSeconds = 30,
     [int]$OpenOrdersPollSeconds = 2,
-    [int]$MinBrokerExecutions = 1
+    [int]$MinBrokerExecutions = 1,
+    [int]$MinMatchedExecutions = 1,
+    [int]$MinExecutionsPerOrder = 1,
+    [int]$MinLocalFills = 1,
+    [int]$MinFullyFilledOrders = 1,
+    [int]$MinPartiallyFilledOrders = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +76,21 @@ if (-not $ConfirmIbkrPaperOrder) {
 if ($MinBrokerExecutions -lt 1) {
     throw "-MinBrokerExecutions must be at least 1"
 }
+if ($MinMatchedExecutions -lt 1) {
+    throw "-MinMatchedExecutions must be at least 1"
+}
+if ($MinExecutionsPerOrder -lt 1) {
+    throw "-MinExecutionsPerOrder must be at least 1"
+}
+if ($MinLocalFills -lt 1) {
+    throw "-MinLocalFills must be at least 1"
+}
+if ($MinFullyFilledOrders -lt 0) {
+    throw "-MinFullyFilledOrders cannot be negative"
+}
+if ($MinPartiallyFilledOrders -lt 0) {
+    throw "-MinPartiallyFilledOrders cannot be negative"
+}
 
 $repoRoot = Get-Location
 $runArgs = @(
@@ -77,6 +99,7 @@ $runArgs = @(
     "-Config", $Config,
     "-InputCsv", $InputCsv,
     "-OutputParquet", $OutputParquet,
+    "-RunLabel", $RunLabel,
     "-ConfirmIbkrPaperOrder",
     "-OpenOrdersSettleSeconds", $OpenOrdersSettleSeconds.ToString(),
     "-OpenOrdersPollSeconds", $OpenOrdersPollSeconds.ToString()
@@ -129,12 +152,16 @@ $brokerExecutions = [Math]::Max(
     (Get-OutputInt -Text $reconciliationOutput -Name "remote_executions")
 )
 $matchedExecutions = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_matched"
+$matchedExecutionOrders = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_matched_orders"
+$maxExecutionsPerOrder = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_max_per_order"
 $unmatchedExecutions = Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_unmatched"
 $executionFieldDrifts = [Math]::Max(
     (Get-OutputInt -Text $reconciliationOutput -Name "remote_execution_field_drifts"),
     [int]$runSummary.reconciliation_execution_field_drifts
 )
 $localFills = Get-OutputInt -Text $reconciliationOutput -Name "local_fills"
+$fullyFilledOrders = Get-OutputInt -Text $reconciliationOutput -Name "local_fully_filled_orders"
+$partiallyFilledOrders = Get-OutputInt -Text $reconciliationOutput -Name "local_partially_filled_orders"
 $qtyDelta = Get-OutputDecimal -Text $reconciliationOutput -Name "qty_delta"
 
 $failureClass = "ok"
@@ -154,10 +181,16 @@ if ($executionFieldDrifts -ne 0) {
     $failureClass = "reconciliation_drift"
 } elseif ($brokerExecutions -lt $MinBrokerExecutions) {
     $failureClass = "broker_execution_missing"
-} elseif ($matchedExecutions -lt $MinBrokerExecutions) {
+} elseif ($matchedExecutions -lt $MinMatchedExecutions) {
     $failureClass = "execution_match_missing"
-} elseif ($localFills -lt $MinBrokerExecutions) {
+} elseif ($maxExecutionsPerOrder -lt $MinExecutionsPerOrder) {
+    $failureClass = "execution_aggregation_missing"
+} elseif ($localFills -lt $MinLocalFills) {
     $failureClass = "local_fill_missing"
+} elseif ($fullyFilledOrders -lt $MinFullyFilledOrders) {
+    $failureClass = "full_fill_missing"
+} elseif ($partiallyFilledOrders -lt $MinPartiallyFilledOrders) {
+    $failureClass = "partial_fill_missing"
 } elseif ($qtyDelta -ne [decimal]0) {
     $failureClass = "execution_qty_delta"
 }
@@ -175,11 +208,20 @@ $evidence = [pscustomobject]@{
     reconciliation_execution_drifts = $runSummary.reconciliation_execution_drifts
     broker_executions = $brokerExecutions
     matched_executions = $matchedExecutions
+    matched_execution_orders = $matchedExecutionOrders
+    max_executions_per_order = $maxExecutionsPerOrder
     unmatched_executions = $unmatchedExecutions
     execution_field_drifts = $executionFieldDrifts
     local_fills = $localFills
+    fully_filled_orders = $fullyFilledOrders
+    partially_filled_orders = $partiallyFilledOrders
     qty_delta = $qtyDelta
     min_broker_executions = $MinBrokerExecutions
+    min_matched_executions = $MinMatchedExecutions
+    min_executions_per_order = $MinExecutionsPerOrder
+    min_local_fills = $MinLocalFills
+    min_fully_filled_orders = $MinFullyFilledOrders
+    min_partially_filled_orders = $MinPartiallyFilledOrders
     gateway_executions_output = $executionsOutput
     reconciliation_output = $reconciliationOutput
 }

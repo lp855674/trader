@@ -228,16 +228,13 @@ where
             }
         };
         let (mut status, mut trades) = self
-            .wait_for_ibkr_settlement(&symbol, placed.order_id, queried.status.clone())
+            .wait_for_ibkr_settlement(&symbol, placed.order_id, queried.status.clone(), order.qty)
             .await?;
-        if trades.is_empty() && ibkr_order_is_open(&status) {
+        if ibkr_order_is_open(&status) && ibkr_trade_qty(&trades) < order.qty {
             status = match self.client.cancel_order(&symbol, placed.order_id).await {
                 Ok(cancelled) => cancelled.status,
-                Err(BrokerError::Connection(message))
-                    if ibkr_cancel_already_cancelled_message(&message) =>
-                {
-                    "Cancelled".to_string()
-                }
+                Err(BrokerError::Connection(message)) => ibkr_cancel_terminal_status(&message)
+                    .ok_or_else(|| BrokerError::Connection(message))?,
                 Err(error) => return Err(error.into()),
             };
             if ibkr_order_is_open(&status) {
@@ -247,9 +244,8 @@ where
                     Err(error) => return Err(error.into()),
                 };
             }
-            if trades.is_empty() {
-                trades = self.client.executions(&symbol, placed.order_id).await?;
-            }
+            // Capture executions that can arrive while the remaining quantity is cancelled.
+            trades = self.client.executions(&symbol, placed.order_id).await?;
         }
         if trades.is_empty() {
             return Ok(ExecutedPaperOrder {
@@ -286,10 +282,11 @@ where
         symbol: &str,
         order_id: i64,
         initial_status: String,
+        target_qty: Decimal,
     ) -> Result<(String, Vec<IbkrTrade>), BrokerError> {
         let mut status = initial_status;
         let mut trades = self.client.executions(symbol, order_id).await?;
-        if !trades.is_empty() || !ibkr_order_is_open(&status) {
+        if ibkr_trade_qty(&trades) >= target_qty || !ibkr_order_is_open(&status) {
             return Ok((status, trades));
         }
 
@@ -305,7 +302,7 @@ where
                 Err(error) => return Err(error),
             }
             trades = self.client.executions(symbol, order_id).await?;
-            if !trades.is_empty() || !ibkr_order_is_open(&status) {
+            if ibkr_trade_qty(&trades) >= target_qty || !ibkr_order_is_open(&status) {
                 break;
             }
         }
@@ -336,14 +333,24 @@ fn ibkr_client_order_id(client_order_prefix: &str, order_number: usize) -> Strin
     let sanitized = client_order_prefix
         .chars()
         .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
-        .take(16)
         .collect::<String>();
     let prefix = if sanitized.is_empty() {
         "run".to_string()
-    } else {
+    } else if sanitized.len() <= 16 {
         sanitized
+    } else {
+        format!("{:016x}", fnv1a_64(client_order_prefix.as_bytes()))
     };
     format!("trader-paper-{prefix}-{order_number}")
+}
+
+fn fnv1a_64(value: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+
+    value.iter().fold(OFFSET_BASIS, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
+    })
 }
 
 fn ibkr_order_is_open(status: &str) -> bool {
@@ -360,12 +367,30 @@ fn ibkr_order_is_terminal(status: &str) -> bool {
     )
 }
 
-fn ibkr_cancel_already_cancelled_message(message: &str) -> bool {
-    message.contains("[10148]")
-        && (message.contains("Cancelled")
-            || message.contains("Canceled")
-            || message.contains("状态：Cancelled")
-            || message.contains("状态：Canceled"))
+fn ibkr_cancel_terminal_status(message: &str) -> Option<String> {
+    if message.contains("[10147]") {
+        return Some("Cancelled".to_string());
+    }
+    if !message.contains("[10148]") {
+        return None;
+    }
+    if message.contains("Filled") || message.contains("状态：Filled") {
+        return Some("Filled".to_string());
+    }
+    if message.contains("Cancelled")
+        || message.contains("Canceled")
+        || message.contains("状态：Cancelled")
+        || message.contains("状态：Canceled")
+    {
+        return Some("Cancelled".to_string());
+    }
+    None
+}
+
+fn ibkr_trade_qty(trades: &[IbkrTrade]) -> Decimal {
+    trades
+        .iter()
+        .fold(Decimal::ZERO, |total, trade| total + trade.qty)
 }
 
 fn aggregate_ibkr_trades(trades: &[IbkrTrade]) -> anyhow::Result<(Decimal, Decimal, Decimal)> {

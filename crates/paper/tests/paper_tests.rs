@@ -1551,6 +1551,26 @@ async fn ibkr_paper_executor_uses_actual_paper_executions_as_fill() {
     assert_eq!(fill.fee, dec!(0.02));
 }
 
+#[test]
+fn ibkr_paper_executor_keeps_long_run_prefixes_distinct() {
+    let previous = IbkrPaperOrderExecutor::new_with_client_order_prefix(
+        FakeIbkrClient,
+        "ibkr-msft-multi-asset-retry-1d-785cadea1fc0",
+    );
+    let current = IbkrPaperOrderExecutor::new_with_client_order_prefix(
+        FakeIbkrClient,
+        "ibkr-msft-multi-execution-1d-46f16952bf13",
+    );
+
+    let previous_id = previous.client_order_id("", 1);
+    let current_id = current.client_order_id("", 1);
+
+    assert_ne!(previous_id, current_id);
+    assert_eq!(current_id, current.client_order_id("", 1));
+    assert!(previous_id.len() <= 32);
+    assert!(current_id.len() <= 32);
+}
+
 #[tokio::test]
 async fn ibkr_paper_executor_waits_for_presubmitted_execution_before_cancel() {
     let executor = IbkrPaperOrderExecutor::new_with_settlement_polling(
@@ -1622,6 +1642,43 @@ async fn ibkr_paper_executor_cancels_unfilled_open_paper_order() {
 }
 
 #[tokio::test]
+async fn ibkr_paper_executor_cancels_remainder_and_refreshes_partial_executions() {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let executor = IbkrPaperOrderExecutor::new_with_settlement_polling(
+        PartiallyFilledIbkrClient {
+            cancelled: Arc::clone(&cancelled),
+            execution_calls: AtomicUsize::new(0),
+        },
+        "default",
+        2,
+        Duration::ZERO,
+    );
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "AAPL".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(195),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert!(cancelled.load(Ordering::SeqCst));
+    assert_eq!(fill.broker_order_id, "2003");
+    assert_eq!(fill.status, "Cancelled");
+    assert_eq!(fill.qty, dec!(0.5));
+    assert_eq!(fill.price, dec!(195.2));
+    assert_eq!(fill.fee, dec!(0.02));
+}
+
+#[tokio::test]
 async fn ibkr_paper_executor_marks_unfilled_order_cancelled_when_cancel_status_disappears() {
     let executor = IbkrPaperOrderExecutor::new_with_settlement_polling(
         UnfilledIbkrCancelDisappearsClient,
@@ -1677,6 +1734,36 @@ async fn ibkr_paper_executor_treats_already_cancelled_response_as_cancelled() {
         .unwrap();
 
     assert_eq!(fill.broker_order_id, "2011");
+    assert_eq!(fill.status, "Cancelled");
+    assert_eq!(fill.qty, dec!(0));
+}
+
+#[tokio::test]
+async fn ibkr_paper_executor_treats_missing_cancel_order_as_cancelled() {
+    let executor = IbkrPaperOrderExecutor::new_with_settlement_polling(
+        MissingCancelOrderIbkrClient,
+        "default",
+        1,
+        Duration::ZERO,
+    );
+
+    let fill = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "MSFT".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(900),
+            1,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fill.broker_order_id, "2012");
     assert_eq!(fill.status, "Cancelled");
     assert_eq!(fill.qty, dec!(0));
 }
@@ -2397,6 +2484,79 @@ impl IbkrPaperOrderClient for CancellableUnfilledIbkrClient {
     }
 }
 
+struct PartiallyFilledIbkrClient {
+    cancelled: Arc<AtomicBool>,
+    execution_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl IbkrPaperOrderClient for PartiallyFilledIbkrClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id: 2003,
+            client_order_id: order.client_order_id.clone(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0.4),
+        })
+    }
+
+    async fn cancel_order(&self, symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        assert_eq!(symbol, "AAPL");
+        assert_eq!(order_id, 2003);
+        self.cancelled.store(true, Ordering::SeqCst);
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "Cancelled".to_string(),
+            filled_qty: dec!(0.5),
+        })
+    }
+
+    async fn executions(&self, symbol: &str, order_id: i64) -> Result<Vec<IbkrTrade>, BrokerError> {
+        let mut trades = vec![IbkrTrade {
+            trade_id: "exec-partial-1".to_string(),
+            order_id,
+            symbol: symbol.to_string(),
+            price: dec!(195),
+            qty: dec!(0.4),
+            fee: dec!(0.01),
+            ts_ms: 1,
+        }];
+        if self.execution_calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+            trades.push(IbkrTrade {
+                trade_id: "exec-partial-2".to_string(),
+                order_id,
+                symbol: symbol.to_string(),
+                price: dec!(196),
+                qty: dec!(0.1),
+                fee: dec!(0.01),
+                ts_ms: 2,
+            });
+        }
+        Ok(trades)
+    }
+}
+
 struct UnfilledIbkrCancelDisappearsClient;
 
 #[async_trait]
@@ -2487,6 +2647,59 @@ impl IbkrPaperOrderClient for AlreadyCancelledIbkrClient {
     ) -> Result<IbkrOrderAck, BrokerError> {
         Err(BrokerError::Connection(
             "IBKR API error: [10148] unable to cancel order, state: Cancelled".to_string(),
+        ))
+    }
+
+    async fn executions(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<Vec<IbkrTrade>, BrokerError> {
+        Ok(Vec::new())
+    }
+}
+
+struct MissingCancelOrderIbkrClient;
+
+#[async_trait]
+impl IbkrPaperOrderClient for MissingCancelOrderIbkrClient {
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id: 2012,
+            client_order_id: order.client_order_id.clone(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn query_order(&self, _symbol: &str, order_id: i64) -> Result<IbkrOrderAck, BrokerError> {
+        Ok(IbkrOrderAck {
+            order_id,
+            client_order_id: "trader-paper-run-1".to_string(),
+            status: "Submitted".to_string(),
+            filled_qty: dec!(0),
+        })
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        Err(BrokerError::Connection(
+            "IBKR API error: [10147] OrderId 2012 that needs to be cancelled is not found."
+                .to_string(),
         ))
     }
 
