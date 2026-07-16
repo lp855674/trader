@@ -100,6 +100,9 @@ Current status:
    real Gateway for isolated AAPL and MSFT asset runs, one MSFT order aggregated from three
    executions, and one BSET partial fill whose remainder was cancelled; see
    `docs/ibkr-paper-multi-asset-filled-order-results-2026-07-14.md`
+9. IBKR paper filled-order lifecycle soak tooling: local script-contract gate complete for
+   repeated matrix aggregation, fail-fast behavior, unique run/client-order identities, and
+   zero residual open-order aggregation; real Gateway filled-order soak evidence remains open
 ```
 
 Remaining:

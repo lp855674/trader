@@ -9,7 +9,7 @@ use trader_core::{OrderRequest, OrderSide, OrderType};
 
 use crate::{ExecutedPaperOrder, PaperOrderExecutor};
 
-const DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS: usize = 6;
+const DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS: usize = 24;
 const DEFAULT_IBKR_SETTLEMENT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[async_trait]
@@ -414,5 +414,19 @@ fn open_order_ack(order: broker::IbkrOpenOrder) -> IbkrOrderAck {
         client_order_id: order.client_order_id,
         status: order.status,
         filled_qty: order.filled_qty,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS, DEFAULT_IBKR_SETTLEMENT_POLL_INTERVAL};
+    use std::time::Duration;
+
+    #[test]
+    fn default_settlement_polling_observes_orders_for_at_least_45_seconds() {
+        let polling_window = DEFAULT_IBKR_SETTLEMENT_POLL_INTERVAL
+            * (DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS - 1) as u32;
+
+        assert!(polling_window >= Duration::from_secs(45));
     }
 }

@@ -967,6 +967,9 @@ struct IbkrPaperReconciliation {
     remote_execution_max_per_order: usize,
     remote_execution_unmatched: usize,
     remote_execution_field_drifts: usize,
+    remote_execution_order_ids: Vec<String>,
+    remote_execution_client_order_ids: Vec<String>,
+    remote_execution_trade_ids: Vec<String>,
     local_fully_filled_orders: usize,
     local_partially_filled_orders: usize,
     local_fill_qty: Decimal,
@@ -981,6 +984,9 @@ struct IbkrExecutionMatchSummary {
     max_per_order: usize,
     field_drifts: usize,
     matched_qty: Decimal,
+    order_ids: Vec<String>,
+    client_order_ids: Vec<String>,
+    trade_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1380,7 +1386,7 @@ async fn run_command(command: Command) -> Result<()> {
             let report =
                 reconcile_ibkr_paper(&app_config, &db, &adapter, request_id, &symbol).await?;
             println!(
-                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_matched_orders={} remote_execution_max_per_order={} remote_execution_unmatched={} remote_execution_field_drifts={} local_fully_filled_orders={} local_partially_filled_orders={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
+                "ibkr paper reconcile ok: symbol={} local_orders={} local_fills={} matched_orders={} local_only_orders={} remote_open_orders={} remote_open_matched={} remote_open_unmatched={} remote_executions={} remote_execution_matched={} remote_execution_matched_orders={} remote_execution_max_per_order={} remote_execution_unmatched={} remote_execution_field_drifts={} remote_execution_order_ids={} remote_execution_client_order_ids={} remote_execution_trade_ids={} local_fully_filled_orders={} local_partially_filled_orders={} local_fill_qty={} remote_execution_qty={} qty_delta={}",
                 report.symbol,
                 report.local_orders,
                 report.local_fills,
@@ -1395,6 +1401,9 @@ async fn run_command(command: Command) -> Result<()> {
                 report.remote_execution_max_per_order,
                 report.remote_execution_unmatched,
                 report.remote_execution_field_drifts,
+                joined_output_values(&report.remote_execution_order_ids),
+                joined_output_values(&report.remote_execution_client_order_ids),
+                joined_output_values(&report.remote_execution_trade_ids),
                 report.local_fully_filled_orders,
                 report.local_partially_filled_orders,
                 report.local_fill_qty,
@@ -4273,6 +4282,9 @@ async fn reconcile_ibkr_paper(
         remote_execution_max_per_order: execution_summary.max_per_order,
         remote_execution_unmatched: remote_executions.len() - execution_summary.matched,
         remote_execution_field_drifts: execution_summary.field_drifts,
+        remote_execution_order_ids: execution_summary.order_ids,
+        remote_execution_client_order_ids: execution_summary.client_order_ids,
+        remote_execution_trade_ids: execution_summary.trade_ids,
         local_fully_filled_orders,
         local_partially_filled_orders,
         local_fill_qty,
@@ -4376,6 +4388,9 @@ fn ibkr_execution_match_summary(
     let mut max_per_order = 0;
     let mut field_drifts = 0;
     let mut matched_qty = Decimal::ZERO;
+    let mut order_ids = BTreeSet::new();
+    let mut client_order_ids = BTreeSet::new();
+    let mut trade_ids = BTreeSet::new();
     for (broker_order_id, remote) in executions_by_order {
         let broker_order_id = broker_order_id.to_string();
         let local_order_id = local_orders
@@ -4412,6 +4427,15 @@ fn ibkr_execution_match_summary(
         matched += remote.len();
         matched_orders += 1;
         max_per_order = max_per_order.max(remote.len());
+        order_ids.insert(broker_order_id);
+        for execution in &remote {
+            if !execution.client_order_id.is_empty() {
+                client_order_ids.insert(execution.client_order_id.clone());
+            }
+            if !execution.trade_id.is_empty() {
+                trade_ids.insert(execution.trade_id.clone());
+            }
+        }
         matched_qty += remote
             .iter()
             .fold(Decimal::ZERO, |total, execution| total + execution.qty);
@@ -4426,7 +4450,18 @@ fn ibkr_execution_match_summary(
         max_per_order,
         field_drifts,
         matched_qty,
+        order_ids: order_ids.into_iter().collect(),
+        client_order_ids: client_order_ids.into_iter().collect(),
+        trade_ids: trade_ids.into_iter().collect(),
     })
+}
+
+fn joined_output_values(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values.join(",")
+    }
 }
 
 fn ibkr_execution_group_has_field_drift(

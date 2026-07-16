@@ -14,6 +14,7 @@
 - IBKR paper executor 提交 limit order 后会对 open 状态做有限次数 status/execution 轮询，直到累计 execution 数量达到订单数量或订单进入 terminal 状态。轮询窗口结束后如仍有未成交数量，会取消 remainder，并再次读取 executions 以覆盖 cancel race；部分成交结果保留非零 `filled_qty`，订单状态为 `Cancelled`。
 - IBKR 撤单竞态可能返回 API `10147`（订单已不可见）；该响应按 terminal cancellation 处理，但仍会刷新 executions，避免丢失竞态期间到达的成交。
 - IBKR client order id 对短 run id 保留可读 prefix；超过长度预算的 run id 使用完整值的确定性 64-bit 摘要，避免仅截取共同前缀造成跨 run 幂等键碰撞。
+- IBKR filled-order evidence 会保留 Gateway execution 的首个 order/client-order/trade 标识；`ibkr-filled-order-soak.ps1` 顺序重复完整 matrix，聚合 matched executions、local fills 和残留 open orders，并把跨轮重复 run id 或非空 execution client order id 作为终止失败。
 - IBKR paper submit 默认不指定特殊路由，走 IBKR stock contract 的 SMART 路径，并设置 `outside_rth=true`。`ibkr_route_exchange = "OVERNIGHT"` 只用于诊断直接路由行为；它会把 contract exchange 显式改成 `OVERNIGHT`，可能触发 IBKR API `10329` 预防限制。
 
 ## 输入输出与持久化

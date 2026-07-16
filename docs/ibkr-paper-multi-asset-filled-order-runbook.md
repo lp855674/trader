@@ -94,6 +94,42 @@ A passing partial-fill case must have at least one matched execution and local f
 `open_orders_remaining=0`. The local order should preserve its partial `filled_qty` and end in
 `Cancelled` after the unfilled remainder is cancelled.
 
+## Filled-Order Soak
+
+After every matrix case has passed independently, repeat the complete matrix to exercise
+cross-run lifecycle isolation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-soak.ps1 `
+  -CasesPath .\data\ibkr-filled-order-cases.json `
+  -Iterations 3 `
+  -DelaySeconds 30 `
+  -AccountId DU... `
+  -GatewayHost 127.0.0.1 `
+  -Port 4002 `
+  -ClientId 9 `
+  -ConfirmIbkrPaperOrder
+```
+
+This command submits paper orders. It requires the explicit confirmation switch, runs one matrix
+at a time, and stops after the first failed iteration. Its aggregate summary is written under
+`data/ibkr-filled-order-soak/<soak-id>/summary.json`; generated summaries, logs, databases, and
+account-bearing configs must remain uncommitted.
+
+A passing soak requires:
+
+- every matrix and child evidence summary to complete with `failure_class=ok`;
+- unique run ids across all cases and iterations;
+- unique non-empty execution client order ids across all cases and iterations;
+- all matched execution and local-fill thresholds from the matrix cases;
+- aggregate `open_orders_remaining=0`.
+
+`duplicate_run_id` and `duplicate_client_order_id` are terminal soak failures because either can
+allow historical executions to contaminate current-run reconciliation. Local fake-client contract
+tests cover both successful aggregation and duplicate-client-id fail-fast behavior. Real Gateway
+filled-order soak evidence is a separate acceptance step and has not been established by those
+local tests.
+
 ## Acceptance Record
 
 For every real Gateway case, archive or redact:

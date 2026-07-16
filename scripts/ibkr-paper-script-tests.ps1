@@ -28,6 +28,15 @@ New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
 @'
 $command = $args[0]
 $isMatrixFailureCase = $env:TRADER_FAKE_MODE -eq "matrix_second_failure" -and (($args -join " ") -match "ibkr-msft-1d-")
+$configIndex = [Array]::IndexOf($args, "--config")
+$fakeRunId = "unknown-run"
+if ($configIndex -ge 0 -and $configIndex + 1 -lt $args.Count -and (Test-Path -LiteralPath $args[$configIndex + 1])) {
+    $configText = Get-Content -LiteralPath $args[$configIndex + 1] -Raw
+    $runIdMatch = [regex]::Match($configText, 'run_id\s*=\s*"([^"]+)"')
+    if ($runIdMatch.Success) {
+        $fakeRunId = $runIdMatch.Groups[1].Value
+    }
+}
 if ($env:TRADER_FAKE_MODE -eq "gateway_down") {
     Write-Error "unable to connect to IBKR paper gateway"
     exit 1
@@ -68,9 +77,16 @@ switch ($command) {
         }
     }
     "ibkr-paper-executions" {
-        if (($env:TRADER_FAKE_MODE -eq "matrix_second_failure" -and -not $isMatrixFailureCase) -or $env:TRADER_FAKE_MODE -in @("filled_execution", "execution_field_drift", "filled_execution_with_external_unmatched", "multiple_executions", "partial_fill")) {
+        if (($env:TRADER_FAKE_MODE -eq "matrix_second_failure" -and -not $isMatrixFailureCase) -or $env:TRADER_FAKE_MODE -in @("filled_execution", "filled_execution_duplicate_client", "historical_execution_first", "execution_field_drift", "filled_execution_with_external_unmatched", "multiple_executions", "partial_fill")) {
             $executionCount = if ($env:TRADER_FAKE_MODE -in @("filled_execution_with_external_unmatched", "multiple_executions")) { 2 } else { 1 }
-            Write-Output "ibkr paper executions ok: request_id=1 account=DU12345 symbol=AAPL executions=$executionCount order_id=7 trade_id=T1"
+            $clientOrderId = if ($env:TRADER_FAKE_MODE -eq "filled_execution_duplicate_client") {
+                "duplicate-client"
+            } elseif ($env:TRADER_FAKE_MODE -eq "historical_execution_first") {
+                "historical-client"
+            } else {
+                "client-$fakeRunId"
+            }
+            Write-Output "ibkr paper executions ok: request_id=1 account=DU12345 symbol=AAPL executions=$executionCount order_id=7 client_order_id=$clientOrderId trade_id=T1"
         } else {
             Write-Output "ibkr paper executions ok: executions=0"
         }
@@ -78,7 +94,9 @@ switch ($command) {
     "ibkr-paper-reconcile" {
         if ($env:TRADER_FAKE_MODE -eq "reconciliation_drift") {
             Write-Output "ibkr paper reconcile ok: local_orders=1 local_fills=0 matched_orders=0 local_only_orders=1 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=0 remote_execution_matched=0 remote_execution_matched_orders=0 remote_execution_max_per_order=0 remote_execution_unmatched=0 remote_execution_field_drifts=0 local_fully_filled_orders=0 local_partially_filled_orders=0 local_fill_qty=0 remote_execution_qty=0 qty_delta=0"
-        } elseif ($env:TRADER_FAKE_MODE -eq "filled_execution" -or ($env:TRADER_FAKE_MODE -eq "matrix_second_failure" -and -not $isMatrixFailureCase)) {
+        } elseif ($env:TRADER_FAKE_MODE -eq "historical_execution_first") {
+            Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=2 remote_execution_matched=1 remote_execution_matched_orders=1 remote_execution_max_per_order=1 remote_execution_unmatched=1 remote_execution_field_drifts=0 remote_execution_order_ids=8 remote_execution_client_order_ids=client-$fakeRunId remote_execution_trade_ids=T2 local_fully_filled_orders=1 local_partially_filled_orders=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
+        } elseif ($env:TRADER_FAKE_MODE -in @("filled_execution", "filled_execution_duplicate_client") -or ($env:TRADER_FAKE_MODE -eq "matrix_second_failure" -and -not $isMatrixFailureCase)) {
             Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=1 remote_execution_matched=1 remote_execution_matched_orders=1 remote_execution_max_per_order=1 remote_execution_unmatched=0 remote_execution_field_drifts=0 local_fully_filled_orders=1 local_partially_filled_orders=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
         } elseif ($env:TRADER_FAKE_MODE -eq "filled_execution_with_external_unmatched") {
             Write-Output "ibkr paper reconcile ok: symbol=AAPL local_orders=1 local_fills=1 matched_orders=0 local_only_orders=0 remote_open_orders=0 remote_open_matched=0 remote_open_unmatched=0 remote_executions=2 remote_execution_matched=1 remote_execution_matched_orders=1 remote_execution_max_per_order=1 remote_execution_unmatched=1 remote_execution_field_drifts=0 local_fully_filled_orders=1 local_partially_filled_orders=0 local_fill_qty=1 remote_execution_qty=1 qty_delta=0"
@@ -206,6 +224,15 @@ Assert-True ($filledEvidenceSummary.fully_filled_orders -eq 1) "expected one ful
 Assert-True ($filledEvidenceSummary.partially_filled_orders -eq 0) "expected zero partially filled local orders"
 Assert-True ($filledEvidenceSummary.qty_delta -eq 0) "expected zero filled execution qty delta"
 
+$env:TRADER_FAKE_MODE = "historical_execution_first"
+$matchedIdentityOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+$matchedIdentitySummaryPath = ($matchedIdentityOutput | Select-String -Pattern 'filled-order evidence summary:\s+(.+filled-order-evidence-summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+$matchedIdentitySummary = Read-Json $matchedIdentitySummaryPath
+Assert-True ($matchedIdentitySummary.status -eq "completed") "expected matched identity evidence success"
+Assert-True ($matchedIdentitySummary.execution_order_id -eq "8") "expected matched execution order id instead of historical first id"
+Assert-True ($matchedIdentitySummary.execution_client_order_id -like "client-ibkr-aapl-1d-*") "expected matched execution client order id instead of historical first id"
+Assert-True ($matchedIdentitySummary.execution_trade_id -eq "T2") "expected matched execution trade id instead of historical first id"
+
 $env:TRADER_TEST_GATEWAY_PORT = "reachable"
 $env:TRADER_FAKE_MODE = "multiple_executions"
 $aggregateEvidenceOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 -MinBrokerExecutions 2 -MinMatchedExecutions 2 -MinExecutionsPerOrder 2 2>&1
@@ -282,6 +309,46 @@ Assert-True ($matrixSummary.cases_requested -eq 2) "expected two requested matri
 Assert-True ($matrixSummary.cases_completed -eq 2) "expected two completed matrix cases"
 Assert-True ([string]$matrixSummary.cases[0].run_id -like "ibkr-aapl-1d-*") "expected AAPL run label"
 Assert-True ([string]$matrixSummary.cases[1].run_id -like "ibkr-msft-1d-*") "expected MSFT run label"
+
+$filledSoakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-soak.ps1 -CasesPath $matrixCasesPath -Iterations 2 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+$filledSoakOutput | ForEach-Object { Write-Host $_ }
+Assert-True ($LASTEXITCODE -eq 0) "expected two-iteration filled-order soak success"
+$filledSoakSummaryPath = ($filledSoakOutput | Select-String -Pattern 'IBKR filled-order soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+$filledSoakSummary = Read-Json $filledSoakSummaryPath
+Assert-True ($filledSoakSummary.status -eq "completed") "expected completed filled-order soak"
+Assert-True ($filledSoakSummary.iterations_completed -eq 2) "expected two completed filled-order soak iterations"
+Assert-True ($filledSoakSummary.cases_completed -eq 4) "expected four completed filled-order soak cases"
+Assert-True ($filledSoakSummary.unique_run_ids -eq 4) "expected unique run ids across filled-order soak"
+Assert-True ($filledSoakSummary.unique_execution_client_order_ids -eq 4) "expected unique execution client order ids across filled-order soak"
+Assert-True ($filledSoakSummary.matched_executions -eq 4) "expected four matched executions across filled-order soak"
+Assert-True ($filledSoakSummary.local_fills -eq 4) "expected four local fills across filled-order soak"
+Assert-True ($filledSoakSummary.open_orders_remaining -eq 0) "expected zero filled-order soak open orders"
+
+@'
+[
+  {
+    "name": "aapl-1d",
+    "config": "configs/paper/ibkr_aapl_1d_parquet.toml",
+    "input_csv": "datasets/sample/aapl_1d.csv",
+    "output_parquet": "datasets/ibkr/aapl_1d.parquet"
+  }
+]
+'@ | Set-Content -Path $matrixCasesPath -Encoding UTF8
+$env:TRADER_FAKE_MODE = "filled_execution_duplicate_client"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $duplicateClientSoakOutput = powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-soak.ps1 -CasesPath $matrixCasesPath -Iterations 3 -SkipRefresh -ConfirmIbkrPaperOrder -AccountId DU12345 2>&1
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+Assert-True ($LASTEXITCODE -ne 0) "expected filled-order soak failure on reused client order id"
+$duplicateClientSoakSummaryPath = ($duplicateClientSoakOutput | Select-String -Pattern 'IBKR filled-order soak summary:\s+(.+summary\.json)' | Select-Object -Last 1).Matches.Groups[1].Value.Trim()
+$duplicateClientSoakSummary = Read-Json $duplicateClientSoakSummaryPath
+Assert-True ($duplicateClientSoakSummary.status -eq "failed") "expected failed duplicate client id soak"
+Assert-True ($duplicateClientSoakSummary.failure_class -eq "duplicate_client_order_id") "expected duplicate client order id failure class"
+Assert-True ($duplicateClientSoakSummary.failed_iteration -eq 2) "expected duplicate client id failure on second iteration"
+Assert-True ($duplicateClientSoakSummary.iterations_completed -eq 2) "expected duplicate client id soak to stop after second iteration"
 
 @'
 [

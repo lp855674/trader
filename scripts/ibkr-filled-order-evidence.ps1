@@ -50,6 +50,34 @@ function Get-OutputDecimal {
     return [decimal]0
 }
 
+function Get-OutputValue {
+    param(
+        [string]$Text,
+        [string]$Name
+    )
+
+    $match = [regex]::Match($Text, "$Name=([^\s]+)")
+    if ($match.Success) {
+        return $match.Groups[1].Value
+    }
+    return ""
+}
+
+function Get-MatchedExecutionValue {
+    param(
+        [string]$ReconciliationText,
+        [string]$ExecutionsText,
+        [string]$MatchedName,
+        [string]$LegacyName
+    )
+
+    $value = Get-OutputValue -Text $ReconciliationText -Name $MatchedName
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value -ne "none") {
+        return $value
+    }
+    return Get-OutputValue -Text $ExecutionsText -Name $LegacyName
+}
+
 function Get-SummaryPath {
     param([object[]]$Output)
 
@@ -163,6 +191,21 @@ $localFills = Get-OutputInt -Text $reconciliationOutput -Name "local_fills"
 $fullyFilledOrders = Get-OutputInt -Text $reconciliationOutput -Name "local_fully_filled_orders"
 $partiallyFilledOrders = Get-OutputInt -Text $reconciliationOutput -Name "local_partially_filled_orders"
 $qtyDelta = Get-OutputDecimal -Text $reconciliationOutput -Name "qty_delta"
+$executionOrderId = Get-MatchedExecutionValue `
+    -ReconciliationText $reconciliationOutput `
+    -ExecutionsText $executionsOutput `
+    -MatchedName "remote_execution_order_ids" `
+    -LegacyName "order_id"
+$executionClientOrderId = Get-MatchedExecutionValue `
+    -ReconciliationText $reconciliationOutput `
+    -ExecutionsText $executionsOutput `
+    -MatchedName "remote_execution_client_order_ids" `
+    -LegacyName "client_order_id"
+$executionTradeId = Get-MatchedExecutionValue `
+    -ReconciliationText $reconciliationOutput `
+    -ExecutionsText $executionsOutput `
+    -MatchedName "remote_execution_trade_ids" `
+    -LegacyName "trade_id"
 
 $failureClass = "ok"
 if ($executionFieldDrifts -ne 0) {
@@ -216,6 +259,9 @@ $evidence = [pscustomobject]@{
     fully_filled_orders = $fullyFilledOrders
     partially_filled_orders = $partiallyFilledOrders
     qty_delta = $qtyDelta
+    execution_order_id = $executionOrderId
+    execution_client_order_id = $executionClientOrderId
+    execution_trade_id = $executionTradeId
     min_broker_executions = $MinBrokerExecutions
     min_matched_executions = $MinMatchedExecutions
     min_executions_per_order = $MinExecutionsPerOrder
