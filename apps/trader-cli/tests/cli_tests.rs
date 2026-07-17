@@ -1710,6 +1710,23 @@ fn ibkr_paper_readonly_reports_connection_failure_without_gateway() {
 }
 
 #[test]
+fn ibkr_paper_market_data_reports_connection_failure_without_gateway() {
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-market-data",
+            "--config",
+            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            "--symbol",
+            "BSET",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("unable to connect to IBKR paper gateway"));
+}
+
+#[test]
 fn ibkr_paper_open_orders_reports_connection_failure_without_gateway() {
     let mut command = Command::cargo_bin("trader").unwrap();
     command

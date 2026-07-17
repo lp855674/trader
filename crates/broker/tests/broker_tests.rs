@@ -3,11 +3,11 @@ use broker::{
     BinanceHttpClient, BinanceLimitOrderRequest, BinanceOrderSide, BinanceSpotTestnetAdapter,
     BinanceSpotTestnetSettings, Broker, BrokerError, BrokerKind, BrokerOrderStatus,
     BrokerPositionSide, FakeBrokerAdapter, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest,
-    IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
-    IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker, RecoveryOrderKey,
-    RuntimePositionSnapshot, SimulatedBrokerSettings, broker_execution_matches_recovery_order,
-    broker_open_order_matches_recovery_order, cancel_open_orders_for_account_symbol,
-    reconcile_positions, simulate_market_fill,
+    IbkrMarketDataSnapshot, IbkrOpenOrder, IbkrOrderAck, IbkrOrderSide, IbkrOrderStatus,
+    IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion, MockBroker,
+    RecoveryOrderKey, RuntimePositionSnapshot, SimulatedBrokerSettings,
+    broker_execution_matches_recovery_order, broker_open_order_matches_recovery_order,
+    cancel_open_orders_for_account_symbol, reconcile_positions, simulate_market_fill,
 };
 use rust_decimal_macros::dec;
 use std::collections::VecDeque;
@@ -180,6 +180,10 @@ enum FakeIbkrGatewayCall {
         account_id: String,
         symbol: String,
     },
+    MarketDataSnapshot {
+        symbol: String,
+        route_exchange: Option<String>,
+    },
     PositionSnapshots {
         account_id: String,
     },
@@ -349,6 +353,28 @@ impl IbkrGatewayClient for FakeIbkrGatewayClient {
                 symbol: symbol.to_string(),
             });
         Ok(self.executions.clone())
+    }
+
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(FakeIbkrGatewayCall::MarketDataSnapshot {
+                symbol: symbol.to_string(),
+                route_exchange: route_exchange.map(str::to_string),
+            });
+        Ok(IbkrMarketDataSnapshot {
+            symbol: symbol.to_string(),
+            bid: Some(dec!(185.24)),
+            ask: Some(dec!(185.25)),
+            last: Some(dec!(185.20)),
+            ts_ms: 1_700_000_000_000,
+            market_data_type: "realtime".to_string(),
+        })
     }
 
     async fn next_order_id(&self) -> Result<i64, BrokerError> {
@@ -1183,12 +1209,19 @@ async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client
     let accounts = adapter.validate_paper_account("DU12345").await.unwrap();
     let open_orders = adapter.open_orders().await.unwrap();
     let executions = adapter.executions(7, "DU12345", "AAPL").await.unwrap();
+    let market_data = adapter
+        .market_data_snapshot("AAPL", Some("SMART"))
+        .await
+        .unwrap();
     let next_order_id = adapter.next_order_id().await.unwrap();
 
     assert_eq!(accounts, vec!["DU12345"]);
     assert_eq!(open_orders[0].order_id, 42);
     assert_eq!(executions[0].trade_id, "exec-42");
     assert_eq!(executions[0].client_order_id, "client-42");
+    assert_eq!(market_data.bid, Some(dec!(185.24)));
+    assert_eq!(market_data.ask, Some(dec!(185.25)));
+    assert_eq!(market_data.market_data_type, "realtime");
     assert_eq!(next_order_id, 43);
     assert_eq!(
         client.calls(),
@@ -1199,6 +1232,10 @@ async fn ibkr_paper_gateway_adapter_routes_readonly_calls_through_gateway_client
                 request_id: 7,
                 account_id: "DU12345".to_string(),
                 symbol: "AAPL".to_string(),
+            },
+            FakeIbkrGatewayCall::MarketDataSnapshot {
+                symbol: "AAPL".to_string(),
+                route_exchange: Some("SMART".to_string()),
             },
             FakeIbkrGatewayCall::NextOrderId,
         ]

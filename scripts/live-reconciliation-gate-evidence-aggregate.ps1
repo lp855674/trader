@@ -201,7 +201,7 @@ trading_halted = false
 kind = "ibkr"
 mode = "paper"
 host = "127.0.0.1"
-port = 7497
+port = 4002
 client_id = 1
 order_submit_enabled = false
 

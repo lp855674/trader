@@ -11,10 +11,10 @@ pub use binance::{
 };
 
 pub use ibkr::{
-    IbapiIbkrGatewayClient, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest, IbkrOpenOrder,
-    IbkrOrderAck, IbkrOrderDiagnosticEvent, IbkrOrderDiagnosticReport, IbkrOrderSide,
-    IbkrOrderStatus, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings, IbkrServerVersion,
-    IbkrTrade,
+    IbapiIbkrGatewayClient, IbkrExecution, IbkrGatewayClient, IbkrLimitOrderRequest,
+    IbkrMarketDataSnapshot, IbkrOpenOrder, IbkrOrderAck, IbkrOrderDiagnosticEvent,
+    IbkrOrderDiagnosticReport, IbkrOrderSide, IbkrOrderStatus, IbkrPaperGatewayAdapter,
+    IbkrPaperGatewaySettings, IbkrServerVersion, IbkrTrade,
 };
 
 pub use reconciliation_gate::{

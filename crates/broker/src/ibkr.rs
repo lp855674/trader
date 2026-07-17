@@ -3,7 +3,8 @@ use chrono::Utc;
 use ibapi::{
     Client, Notice, NoticeCategory,
     accounts::{AccountSummaryResult, AccountSummaryTags, PositionUpdate, types::AccountGroup},
-    contracts::{Contract, SecurityType},
+    contracts::{Contract, SecurityType, tick_types::TickType},
+    market_data::{MarketDataType, realtime::TickTypes},
     orders::{
         Action, CancelOrder, ExecutionFilter, Executions, Order, Orders, PlaceOrder, TimeInForce,
     },
@@ -57,6 +58,16 @@ pub struct IbkrTrade {
     pub qty: Decimal,
     pub fee: Decimal,
     pub ts_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IbkrMarketDataSnapshot {
+    pub symbol: String,
+    pub bid: Option<Decimal>,
+    pub ask: Option<Decimal>,
+    pub last: Option<Decimal>,
+    pub ts_ms: i64,
+    pub market_data_type: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -199,6 +210,11 @@ pub trait IbkrGatewayClient: Send + Sync {
         account_id: &str,
         symbol: &str,
     ) -> Result<Vec<IbkrExecution>, BrokerError>;
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError>;
     async fn next_order_id(&self) -> Result<i64, BrokerError>;
     async fn position_snapshots(
         &self,
@@ -280,6 +296,16 @@ impl IbkrPaperGatewayAdapter {
 
     pub async fn next_order_id(&self) -> Result<i64, BrokerError> {
         self.client.next_order_id().await
+    }
+
+    pub async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        self.client
+            .market_data_snapshot(symbol, route_exchange)
+            .await
     }
 
     pub async fn cancel_ibkr_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
@@ -499,6 +525,58 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
         }
         client.disconnect().await;
         Ok(executions)
+    }
+
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        let client = self.connect_client().await?;
+        let contract = ibkr_stock_contract(symbol, route_exchange);
+        let mut subscription = timeout(
+            self.settings.connect_timeout,
+            client.market_data(&contract).snapshot().subscribe(),
+        )
+        .await
+        .map_err(|_| self.timeout_error("market data snapshot request"))?
+        .map_err(map_ibapi_error)?;
+        let mut bid = None;
+        let mut ask = None;
+        let mut last = None;
+        let mut market_data_type = MarketDataType::Unknown;
+
+        while let Some(update) = timeout(self.settings.connect_timeout, subscription.next())
+            .await
+            .map_err(|_| self.timeout_error("market data snapshot response"))?
+        {
+            match update.map_err(map_ibapi_error)? {
+                SubscriptionItem::Data(TickTypes::Price(tick)) if tick.price > 0.0 => {
+                    let price = decimal_from_f64(tick.price, "IBKR market data price")?;
+                    match tick.tick_type {
+                        TickType::Bid => bid = Some(price),
+                        TickType::Ask => ask = Some(price),
+                        TickType::Last => last = Some(price),
+                        _ => {}
+                    }
+                }
+                SubscriptionItem::Data(TickTypes::MarketDataType(value)) => {
+                    market_data_type = value;
+                }
+                SubscriptionItem::Data(TickTypes::SnapshotEnd) => break,
+                SubscriptionItem::Data(_) | SubscriptionItem::Notice(_) => {}
+            }
+        }
+        client.disconnect().await;
+
+        Ok(IbkrMarketDataSnapshot {
+            symbol: symbol.to_string(),
+            bid,
+            ask,
+            last,
+            ts_ms: Utc::now().timestamp_millis(),
+            market_data_type: ibkr_market_data_type_name(market_data_type).to_string(),
+        })
     }
 
     async fn next_order_id(&self) -> Result<i64, BrokerError> {
@@ -1365,6 +1443,16 @@ fn client_id_i32(client_id: u32) -> Result<i32, BrokerError> {
 fn order_id_i32(order_id: i64) -> Result<i32, BrokerError> {
     i32::try_from(order_id)
         .map_err(|_| BrokerError::Config(format!("IBKR order id {order_id} exceeds i32 range")))
+}
+
+fn ibkr_market_data_type_name(market_data_type: MarketDataType) -> &'static str {
+    match market_data_type {
+        MarketDataType::Realtime => "realtime",
+        MarketDataType::Frozen => "frozen",
+        MarketDataType::Delayed => "delayed",
+        MarketDataType::DelayedFrozen => "delayed_frozen",
+        MarketDataType::Unknown => "unknown",
+    }
 }
 
 fn map_ibapi_error(error: ibapi::Error) -> BrokerError {

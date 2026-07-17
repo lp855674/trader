@@ -499,7 +499,7 @@ try {
 
     if ($usesGateway) {
         $effectiveGatewayHost = Get-IbkrGatewayValue -ConfigText $runConfigText -Name "host" -DefaultValue "127.0.0.1"
-        $effectiveGatewayPort = [int](Get-IbkrGatewayValue -ConfigText $runConfigText -Name "port" -DefaultValue "7497")
+        $effectiveGatewayPort = [int](Get-IbkrGatewayValue -ConfigText $runConfigText -Name "port" -DefaultValue "4002")
         if (-not (Test-GatewayPort -HostName $effectiveGatewayHost -PortNumber $effectiveGatewayPort)) {
             Write-GatewayPreflightFailureSummary -HostName $effectiveGatewayHost -PortNumber $effectiveGatewayPort
             throw "IBKR paper run failed: gateway_preflight classified as gateway_unreachable; see $summaryPath"

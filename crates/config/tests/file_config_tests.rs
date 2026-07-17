@@ -326,7 +326,7 @@ fn loads_ibkr_stock_parquet_paper_config_from_file() {
     assert_eq!(config.broker.kind, config::BrokerKind::InteractiveBrokers);
     assert_eq!(config.broker.mode, config::BrokerMode::Paper);
     assert_eq!(config.broker.host.as_deref(), Some("127.0.0.1"));
-    assert_eq!(config.broker.port, Some(7497));
+    assert_eq!(config.broker.port, Some(4002));
     assert_eq!(config.broker.client_id, Some(1));
     assert_eq!(config.broker.connect_timeout_ms, Some(15000));
     assert!(!config.broker.order_submit_enabled);

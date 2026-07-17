@@ -6,7 +6,7 @@ param(
     [switch]$ConfirmIbkrPaperOrder,
     [string]$AccountId = "",
     [string]$GatewayHost = "127.0.0.1",
-    [int]$Port = 7497,
+    [int]$Port = 4002,
     [int]$ClientId = 1
 )
 

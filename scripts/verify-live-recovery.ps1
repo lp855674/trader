@@ -6,7 +6,7 @@ param(
     [switch]$IncludeIbkrReadOnly,
     [string]$IbkrAccountId = "",
     [string]$IbkrGatewayHost = "127.0.0.1",
-    [int]$IbkrPort = 7497,
+    [int]$IbkrPort = 4002,
     [int]$IbkrClientId = 1
 )
 

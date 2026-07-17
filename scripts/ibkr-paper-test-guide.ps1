@@ -3,7 +3,7 @@ param(
     [string]$Stage = "Plan",
     [string]$AccountId = "",
     [string]$GatewayHost = "127.0.0.1",
-    [int]$Port = 7497,
+    [int]$Port = 4002,
     [int]$ClientId = 1,
     [string]$Symbol = "AAPL",
     [string]$Side = "buy",
@@ -174,7 +174,7 @@ function Write-TestPlan {
     Write-Section "Prerequisites"
     Write-Host "1. Install and start TWS or IB Gateway in Paper Trading mode."
     Write-Host "2. Enable API socket clients in TWS: Global Configuration -> API -> Settings."
-    Write-Host "3. Use the paper port, normally 7497."
+    Write-Host "3. Use the configured IB Gateway paper port, normally 4002."
     Write-Host "4. Find the paper account id, normally DU..., and pass it with -AccountId."
     Write-Host "5. Keep this account id out of committed config files; pass it as a script parameter."
 

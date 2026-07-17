@@ -4910,10 +4910,19 @@ async fn paper_runtime(
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings,
-                Box::new(IbkrPaperOrderExecutor::new_with_client_order_prefix(
-                    IbkrPaperGatewayOrderClient::new(adapter, app_config.paper.account_id.clone()),
-                    app_config.runtime.run_id.clone(),
-                )),
+                Box::new(
+                    IbkrPaperOrderExecutor::new_with_client_order_prefix(
+                        IbkrPaperGatewayOrderClient::new(
+                            adapter,
+                            app_config.paper.account_id.clone(),
+                        ),
+                        app_config.runtime.run_id.clone(),
+                    )
+                    .with_route_exchange(app_config.broker.ibkr_route_exchange.clone())
+                    .with_override_percentage_constraints(
+                        app_config.broker.ibkr_override_percentage_constraints,
+                    ),
+                ),
             ))
         }
         config::BrokerKind::Simulated | config::BrokerKind::Futu | config::BrokerKind::Okx => {
@@ -4977,7 +4986,7 @@ fn ibkr_paper_gateway_settings(
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string()),
-        port: app_config.broker.port.unwrap_or(7497),
+        port: app_config.broker.port.unwrap_or(4002),
         client_id: app_config.broker.client_id.unwrap_or(1),
         connect_timeout: std::time::Duration::from_millis(
             app_config.broker.connect_timeout_ms.unwrap_or(15_000),

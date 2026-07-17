@@ -116,6 +116,12 @@ enum Command {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
         config: String,
     },
+    IbkrPaperMarketData {
+        #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
+        config: String,
+        #[arg(long = "symbol", required = true)]
+        symbols: Vec<String>,
+    },
     IbkrPaperOpenOrders {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
         config: String,
@@ -1297,6 +1303,20 @@ async fn run_command(command: Command) -> Result<()> {
                 accounts.len(),
                 app_config.broker.order_submit_enabled
             );
+        }
+        Command::IbkrPaperMarketData { config, symbols } => {
+            let app_config = config::AppConfig::from_toml_file(&config)?;
+            ensure_ibkr_paper_config(&app_config, "ibkr paper market data")?;
+            let adapter =
+                IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
+            for symbol in &symbols {
+                let symbol = paper::ibkr_stock_symbol(symbol)?;
+                let snapshot = adapter
+                    .market_data_snapshot(&symbol, app_config.broker.ibkr_route_exchange.as_deref())
+                    .await?;
+                println!("{}", serde_json::to_string(&snapshot)?);
+            }
+            println!("ibkr paper market data ok: snapshots={}", symbols.len());
         }
         Command::IbkrPaperOpenOrders { config } => {
             let app_config = config::AppConfig::from_toml_file(&config)?;
@@ -3645,7 +3665,7 @@ fn ibkr_paper_gateway_settings(app_config: &config::AppConfig) -> Result<IbkrPap
             .host
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string()),
-        port: app_config.broker.port.unwrap_or(7497),
+        port: app_config.broker.port.unwrap_or(4002),
         client_id: app_config.broker.client_id.unwrap_or(1),
         connect_timeout: Duration::from_millis(
             app_config.broker.connect_timeout_ms.unwrap_or(15_000),

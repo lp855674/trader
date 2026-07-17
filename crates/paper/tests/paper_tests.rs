@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use broker::{
     BinanceLimitOrderRequest, BinanceOrderAck, BinanceOrderSide, BinanceTrade, BrokerError,
-    IbkrLimitOrderRequest, IbkrOrderAck, IbkrOrderSide, IbkrTrade,
+    IbkrLimitOrderRequest, IbkrMarketDataSnapshot, IbkrOrderAck, IbkrOrderSide, IbkrTrade,
 };
 use data::{Bar, MarketSlice, SymbolBar};
 use paper::{
@@ -9,12 +9,14 @@ use paper::{
     IbkrPaperOrderExecutor, PaperOrderExecutor, PaperRuntime, PaperSettings, binance_spot_symbol,
     ibkr_stock_symbol,
 };
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use storage::{
     Db, ExternalFillCommand, ExternalOrderCommand, LotSizeRuleCommand, NewFeeRule, NewFeeRuleTier,
     NewMarketCalendar, NewTradingSessionRule,
@@ -1523,7 +1525,7 @@ async fn binance_paper_executor_recovers_existing_order_by_client_order_id() {
 }
 
 #[tokio::test]
-async fn ibkr_paper_executor_uses_actual_paper_executions_as_fill() {
+async fn ibkr_paper_executor_prices_from_realtime_ask_and_uses_actual_executions_as_fill() {
     let executor =
         IbkrPaperOrderExecutor::new_with_client_order_prefix(FakeIbkrClient, "paper-run-1");
 
@@ -1549,6 +1551,33 @@ async fn ibkr_paper_executor_uses_actual_paper_executions_as_fill() {
     assert_eq!(fill.qty, dec!(2));
     assert_eq!(fill.price, dec!(195.25));
     assert_eq!(fill.fee, dec!(0.02));
+}
+
+#[tokio::test]
+async fn ibkr_paper_executor_blocks_order_when_market_data_is_not_realtime() {
+    let place_called = Arc::new(AtomicBool::new(false));
+    let executor = IbkrPaperOrderExecutor::new(NonRealtimeMarketDataIbkrClient {
+        place_called: Arc::clone(&place_called),
+    });
+
+    let error = executor
+        .execute_order(
+            OrderRequest {
+                symbol: "BSET".to_string(),
+                side: OrderSide::Buy,
+                order_type: OrderType::Market,
+                qty: dec!(1),
+                price: None,
+                account_id: "ibkr-paper".to_string(),
+            },
+            dec!(19),
+            1,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("delayed, not realtime"));
+    assert!(!place_called.load(Ordering::SeqCst));
 }
 
 #[test]
@@ -1636,7 +1665,7 @@ async fn ibkr_paper_executor_cancels_unfilled_open_paper_order() {
     assert_eq!(fill.broker_order_id, "2002");
     assert_eq!(fill.status, "Cancelled");
     assert_eq!(fill.qty, dec!(0));
-    assert_eq!(fill.price, dec!(195));
+    assert_eq!(fill.price, dec!(195.390));
     assert_eq!(fill.fee, dec!(0));
     assert!(cancelled.load(Ordering::SeqCst));
 }
@@ -2293,8 +2322,30 @@ impl BinancePaperOrderClient for RecoveringBinanceClient {
 
 struct FakeIbkrClient;
 
+fn realtime_ibkr_snapshot(symbol: &str, bid: Decimal, ask: Decimal) -> IbkrMarketDataSnapshot {
+    IbkrMarketDataSnapshot {
+        symbol: symbol.to_string(),
+        bid: Some(bid),
+        ask: Some(ask),
+        last: Some((bid + ask) / dec!(2)),
+        ts_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64,
+        market_data_type: "realtime".to_string(),
+    }
+}
+
 #[async_trait]
 impl IbkrPaperOrderClient for FakeIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(195.9), dec!(196)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         symbol: &str,
@@ -2312,7 +2363,7 @@ impl IbkrPaperOrderClient for FakeIbkrClient {
         assert_eq!(order.symbol, "AAPL");
         assert_eq!(order.side, IbkrOrderSide::Buy);
         assert_eq!(order.quantity, dec!(2));
-        assert_eq!(order.price, dec!(195));
+        assert_eq!(order.price, dec!(196.392));
         assert_eq!(order.client_order_id, "trader-paper-paper-run-1-1");
         Ok(IbkrOrderAck {
             order_id: 1001,
@@ -2367,6 +2418,63 @@ impl IbkrPaperOrderClient for FakeIbkrClient {
     }
 }
 
+struct NonRealtimeMarketDataIbkrClient {
+    place_called: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl IbkrPaperOrderClient for NonRealtimeMarketDataIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        let mut snapshot = realtime_ibkr_snapshot(symbol, dec!(21.1), dec!(21.2));
+        snapshot.market_data_type = "delayed".to_string();
+        Ok(snapshot)
+    }
+
+    async fn query_order_by_client_order_id(
+        &self,
+        _symbol: &str,
+        _client_order_id: &str,
+    ) -> Result<Option<IbkrOrderAck>, BrokerError> {
+        Ok(None)
+    }
+
+    async fn place_limit_order(
+        &self,
+        _order: &IbkrLimitOrderRequest,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        self.place_called.store(true, Ordering::SeqCst);
+        panic!("place_limit_order must not be called without realtime market data")
+    }
+
+    async fn query_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        unreachable!()
+    }
+
+    async fn cancel_order(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<IbkrOrderAck, BrokerError> {
+        unreachable!()
+    }
+
+    async fn executions(
+        &self,
+        _symbol: &str,
+        _order_id: i64,
+    ) -> Result<Vec<IbkrTrade>, BrokerError> {
+        unreachable!()
+    }
+}
+
 struct DelayedExecutionIbkrClient {
     query_calls: AtomicUsize,
     execution_calls: AtomicUsize,
@@ -2374,6 +2482,14 @@ struct DelayedExecutionIbkrClient {
 
 #[async_trait]
 impl IbkrPaperOrderClient for DelayedExecutionIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(899), dec!(900)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2434,6 +2550,14 @@ struct CancellableUnfilledIbkrClient {
 
 #[async_trait]
 impl IbkrPaperOrderClient for CancellableUnfilledIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(194.9), dec!(195)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2491,6 +2615,14 @@ struct PartiallyFilledIbkrClient {
 
 #[async_trait]
 impl IbkrPaperOrderClient for PartiallyFilledIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(194.9), dec!(195)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2561,6 +2693,14 @@ struct UnfilledIbkrCancelDisappearsClient;
 
 #[async_trait]
 impl IbkrPaperOrderClient for UnfilledIbkrCancelDisappearsClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(194.9), dec!(195)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2611,6 +2751,14 @@ struct AlreadyCancelledIbkrClient;
 
 #[async_trait]
 impl IbkrPaperOrderClient for AlreadyCancelledIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(899), dec!(900)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2663,6 +2811,14 @@ struct MissingCancelOrderIbkrClient;
 
 #[async_trait]
 impl IbkrPaperOrderClient for MissingCancelOrderIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        Ok(realtime_ibkr_snapshot(symbol, dec!(899), dec!(900)))
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         _symbol: &str,
@@ -2716,6 +2872,14 @@ struct RecoveringIbkrClient;
 
 #[async_trait]
 impl IbkrPaperOrderClient for RecoveringIbkrClient {
+    async fn market_data_snapshot(
+        &self,
+        _symbol: &str,
+        _route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        panic!("market_data_snapshot must not be called for recoverable client_order_id")
+    }
+
     async fn query_order_by_client_order_id(
         &self,
         symbol: &str,
