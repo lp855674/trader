@@ -7,7 +7,7 @@ use data::{Bar, MarketSlice, SymbolBar};
 use paper::{
     BinancePaperOrderClient, BinancePaperOrderExecutor, ExecutedPaperOrder, IbkrPaperOrderClient,
     IbkrPaperOrderExecutor, PaperOrderExecutor, PaperRuntime, PaperSettings, binance_spot_symbol,
-    ibkr_stock_symbol,
+    ibkr_stock_symbol, validate_ibkr_market_data_snapshot,
 };
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -1539,7 +1539,7 @@ async fn ibkr_paper_executor_prices_from_realtime_ask_and_uses_actual_executions
                 price: None,
                 account_id: "ibkr-paper".to_string(),
             },
-            dec!(195),
+            Decimal::ZERO,
             1,
         )
         .await
@@ -1576,8 +1576,71 @@ async fn ibkr_paper_executor_blocks_order_when_market_data_is_not_realtime() {
         .await
         .unwrap_err();
 
-    assert!(error.to_string().contains("delayed, not realtime"));
+    assert!(error.to_string().contains("delayed, expected realtime"));
     assert!(!place_called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn ibkr_market_data_gate_accepts_fresh_realtime_snapshot() {
+    let snapshot = IbkrMarketDataSnapshot {
+        symbol: "AAPL".to_string(),
+        bid: Some(dec!(195.9)),
+        ask: Some(dec!(196)),
+        last: Some(dec!(195.95)),
+        ts_ms: 10_000,
+        market_data_type: "realtime".to_string(),
+    };
+
+    validate_ibkr_market_data_snapshot(&snapshot, "realtime", 10_100).unwrap();
+}
+
+#[test]
+fn ibkr_market_data_gate_rejects_invalid_snapshot_shapes() {
+    let base = IbkrMarketDataSnapshot {
+        symbol: "AAPL".to_string(),
+        bid: Some(dec!(195.9)),
+        ask: Some(dec!(196)),
+        last: Some(dec!(195.95)),
+        ts_ms: 10_000,
+        market_data_type: "realtime".to_string(),
+    };
+    let cases = [
+        (
+            IbkrMarketDataSnapshot {
+                market_data_type: "delayed".to_string(),
+                ..base.clone()
+            },
+            10_100,
+            "delayed, expected realtime",
+        ),
+        (
+            IbkrMarketDataSnapshot {
+                bid: None,
+                ..base.clone()
+            },
+            10_100,
+            "no positive bid",
+        ),
+        (
+            IbkrMarketDataSnapshot {
+                bid: Some(dec!(196.1)),
+                ..base.clone()
+            },
+            10_100,
+            "crossed market data snapshot",
+        ),
+        (base.clone(), 15_001, "stale or future-dated"),
+        (base, 9_999, "stale or future-dated"),
+    ];
+
+    for (snapshot, observed_at_ms, expected_error) in cases {
+        let error =
+            validate_ibkr_market_data_snapshot(&snapshot, "realtime", observed_at_ms).unwrap_err();
+        assert!(
+            error.to_string().contains(expected_error),
+            "expected {expected_error:?}, got {error}"
+        );
+    }
 }
 
 #[test]
@@ -1821,6 +1884,7 @@ async fn ibkr_paper_executor_recovers_existing_order_by_client_order_id() {
     assert_eq!(fill.client_order_id, "trader-paper-paper-run-1-1");
     assert_eq!(fill.broker_order_id, "3003");
     assert_eq!(fill.status, "Filled");
+    assert_eq!(fill.price, dec!(195));
     assert_eq!(fill.qty, dec!(1));
 }
 

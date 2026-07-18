@@ -9,6 +9,9 @@ use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use rust_decimal_macros::dec;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_OUTPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn check_config_prints_ok() {
@@ -1696,88 +1699,144 @@ fn binance_paper_readonly_requires_testnet_credentials() {
 
 #[test]
 fn ibkr_paper_readonly_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
-        .args([
-            "ibkr-paper-readonly",
-            "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
-        ])
+        .args(["ibkr-paper-readonly", "--config", config.to_str().unwrap()])
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_market_data_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-market-data",
             "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            config.to_str().unwrap(),
             "--symbol",
             "BSET",
+            "--delayed",
         ])
         .assert()
         .failure()
+        .stderr(contains("symbol=BSET"))
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_market_data_reports_each_symbol_failure() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-market-data",
+            "--config",
+            config.to_str().unwrap(),
+            "--symbol",
+            "BSET",
+            "--symbol",
+            "MSFT",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("symbol=BSET"))
+        .stderr(contains("symbol=MSFT"))
+        .stderr(contains("failed for 2 realtime snapshot(s)"));
+
+    std::fs::remove_file(config).unwrap();
+}
+
+#[test]
+fn ibkr_paper_market_data_uses_configured_symbols_when_flags_are_absent() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let mut command = Command::cargo_bin("trader").unwrap();
+    command
+        .current_dir(workspace_root())
+        .args([
+            "ibkr-paper-market-data",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("symbol=AAPL"))
+        .stderr(contains("failed for 1 realtime snapshot(s)"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_open_orders_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-open-orders",
             "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            config.to_str().unwrap(),
         ])
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_executions_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-executions",
             "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            config.to_str().unwrap(),
             "--request-id",
             "77",
         ])
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_reconcile_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-reconcile",
             "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            config.to_str().unwrap(),
             "--request-id",
             "77",
         ])
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_recover_succeeds_with_no_recoverable_orders() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1791,22 +1850,25 @@ fn ibkr_paper_recover_succeeds_with_no_recoverable_orders() {
 
 #[test]
 fn ibkr_paper_next_order_id_reports_connection_failure_without_gateway() {
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
         .args([
             "ibkr-paper-next-order-id",
             "--config",
-            "configs/paper/ibkr_aapl_1d_parquet.toml",
+            config.to_str().unwrap(),
         ])
         .assert()
         .failure()
         .stderr(contains("unable to connect to IBKR paper gateway"));
+
+    std::fs::remove_file(config).unwrap();
 }
 
 #[test]
 fn ibkr_paper_cancel_order_requires_explicit_confirmation() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
 
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -1827,7 +1889,7 @@ fn ibkr_paper_cancel_order_requires_explicit_confirmation() {
 
 #[test]
 fn ibkr_paper_cancel_order_reports_connection_failure_without_gateway_after_confirmation() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1848,7 +1910,7 @@ fn ibkr_paper_cancel_order_reports_connection_failure_without_gateway_after_conf
 
 #[test]
 fn ibkr_paper_tiny_order_requires_explicit_confirmation() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
 
     let mut command = Command::cargo_bin("trader").unwrap();
     command
@@ -1875,7 +1937,7 @@ fn ibkr_paper_tiny_order_requires_explicit_confirmation() {
 
 #[test]
 fn ibkr_paper_tiny_order_reports_connection_failure_without_gateway_after_confirmation() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1902,7 +1964,7 @@ fn ibkr_paper_tiny_order_reports_connection_failure_without_gateway_after_confir
 
 #[test]
 fn ibkr_paper_tiny_order_rejects_zero_observation_window_before_connecting() {
-    let config = write_ibkr_cli_config(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY");
+    let config = write_ibkr_cli_config(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY");
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1934,7 +1996,7 @@ fn ibkr_paper_tiny_order_rejects_zero_observation_window_before_connecting() {
 #[test]
 fn ibkr_paper_preflight_with_submit_reports_connection_failure_without_gateway() {
     let config =
-        write_ibkr_cli_config_with_order_submit(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
+        write_ibkr_cli_config_with_order_submit(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -1949,7 +2011,7 @@ fn ibkr_paper_preflight_with_submit_reports_connection_failure_without_gateway()
 #[test]
 fn ibkr_paper_run_with_submit_reports_connection_failure_without_gateway() {
     let config =
-        write_ibkr_cli_config_with_order_submit(7497, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
+        write_ibkr_cli_config_with_order_submit(65534, "DU12345", "US:NASDAQ:AAPL:EQUITY", true);
     let mut command = Command::cargo_bin("trader").unwrap();
     command
         .current_dir(workspace_root())
@@ -4152,12 +4214,13 @@ fn run_paper() {
 
 fn temp_output(prefix: &str, extension: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "{}-{}.{}",
+        "{}-{}-{}.{}",
         prefix,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos(),
+        TEMP_OUTPUT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         extension
     ))
 }

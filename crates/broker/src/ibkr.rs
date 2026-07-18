@@ -9,12 +9,12 @@ use ibapi::{
         Action, CancelOrder, ExecutionFilter, Executions, Order, Orders, PlaceOrder, TimeInForce,
     },
     prelude::StreamExt,
-    subscriptions::SubscriptionItem,
+    subscriptions::{Subscription, SubscriptionItem},
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use serde::Serialize;
 use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 use trader_core::OrderRequest;
 
 use crate::{
@@ -215,6 +215,13 @@ pub trait IbkrGatewayClient: Send + Sync {
         symbol: &str,
         route_exchange: Option<&str>,
     ) -> Result<IbkrMarketDataSnapshot, BrokerError>;
+    async fn delayed_market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        self.market_data_snapshot(symbol, route_exchange).await
+    }
     async fn next_order_id(&self) -> Result<i64, BrokerError>;
     async fn position_snapshots(
         &self,
@@ -308,6 +315,16 @@ impl IbkrPaperGatewayAdapter {
             .await
     }
 
+    pub async fn delayed_market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        self.client
+            .delayed_market_data_snapshot(symbol, route_exchange)
+            .await
+    }
+
     pub async fn cancel_ibkr_order(&self, order_id: i64) -> Result<IbkrOrderStatus, BrokerError> {
         self.client.cancel_order(order_id).await
     }
@@ -384,6 +401,113 @@ impl IbapiIbkrGatewayClient {
             "IBKR paper gateway {operation} timed out at {}",
             self.address()
         ))
+    }
+
+    async fn request_market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+        requested_type: MarketDataType,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        let client = self.connect_client().await?;
+        let deadline = Instant::now() + self.settings.connect_timeout;
+        let result = async {
+            if requested_type != MarketDataType::Realtime {
+                timeout_at(deadline, client.switch_market_data_type(requested_type))
+                    .await
+                    .map_err(|_| self.timeout_error("market data type switch"))?
+                    .map_err(map_ibapi_error)?;
+            }
+            let contract = ibkr_stock_contract(symbol, route_exchange);
+            let market_data = client.market_data(&contract);
+            let market_data = if requested_type == MarketDataType::Delayed {
+                market_data.streaming()
+            } else {
+                market_data.snapshot()
+            };
+            let mut subscription = timeout_at(deadline, market_data.subscribe())
+                .await
+                .map_err(|_| self.timeout_error("market data snapshot request"))?
+                .map_err(map_ibapi_error)?;
+            let (bid, ask, last, market_data_type) = self
+                .collect_market_data_ticks(&mut subscription, requested_type, deadline)
+                .await?;
+
+            Ok(IbkrMarketDataSnapshot {
+                symbol: symbol.to_string(),
+                bid,
+                ask,
+                last,
+                ts_ms: Utc::now().timestamp_millis(),
+                market_data_type: ibkr_market_data_type_name(market_data_type).to_string(),
+            })
+        }
+        .await;
+        client.disconnect().await;
+        result
+    }
+
+    async fn collect_market_data_ticks(
+        &self,
+        subscription: &mut Subscription<TickTypes>,
+        requested_type: MarketDataType,
+        deadline: Instant,
+    ) -> Result<
+        (
+            Option<Decimal>,
+            Option<Decimal>,
+            Option<Decimal>,
+            MarketDataType,
+        ),
+        BrokerError,
+    > {
+        let mut bid = None;
+        let mut ask = None;
+        let mut last = None;
+        let mut market_data_type = MarketDataType::Unknown;
+
+        while let Some(update) = timeout_at(deadline, subscription.next())
+            .await
+            .map_err(|_| self.timeout_error("market data snapshot response"))?
+        {
+            let update = match update {
+                Ok(update) => update,
+                Err(error) if is_delayed_market_data_notice(&error, requested_type) => continue,
+                Err(error) => return Err(map_ibapi_error(error)),
+            };
+            match update {
+                SubscriptionItem::Data(TickTypes::Price(tick)) if tick.price > 0.0 => {
+                    let price = decimal_from_f64(tick.price, "IBKR market data price")?;
+                    match tick.tick_type {
+                        TickType::Bid => bid = Some(price),
+                        TickType::Ask => ask = Some(price),
+                        TickType::Last => last = Some(price),
+                        TickType::DelayedBid => {
+                            bid = Some(price);
+                            market_data_type = MarketDataType::Delayed;
+                        }
+                        TickType::DelayedAsk => {
+                            ask = Some(price);
+                            market_data_type = MarketDataType::Delayed;
+                        }
+                        TickType::DelayedLast => {
+                            last = Some(price);
+                            market_data_type = MarketDataType::Delayed;
+                        }
+                        _ => {}
+                    }
+                }
+                SubscriptionItem::Data(TickTypes::MarketDataType(value)) => {
+                    market_data_type = value;
+                }
+                SubscriptionItem::Data(TickTypes::SnapshotEnd) => break,
+                SubscriptionItem::Data(_) | SubscriptionItem::Notice(_) => {}
+            }
+            if requested_type == MarketDataType::Delayed && bid.is_some() && ask.is_some() {
+                break;
+            }
+        }
+        Ok((bid, ask, last, market_data_type))
     }
 }
 
@@ -532,51 +656,17 @@ impl IbkrGatewayClient for IbapiIbkrGatewayClient {
         symbol: &str,
         route_exchange: Option<&str>,
     ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
-        let client = self.connect_client().await?;
-        let contract = ibkr_stock_contract(symbol, route_exchange);
-        let mut subscription = timeout(
-            self.settings.connect_timeout,
-            client.market_data(&contract).snapshot().subscribe(),
-        )
-        .await
-        .map_err(|_| self.timeout_error("market data snapshot request"))?
-        .map_err(map_ibapi_error)?;
-        let mut bid = None;
-        let mut ask = None;
-        let mut last = None;
-        let mut market_data_type = MarketDataType::Unknown;
-
-        while let Some(update) = timeout(self.settings.connect_timeout, subscription.next())
+        self.request_market_data_snapshot(symbol, route_exchange, MarketDataType::Realtime)
             .await
-            .map_err(|_| self.timeout_error("market data snapshot response"))?
-        {
-            match update.map_err(map_ibapi_error)? {
-                SubscriptionItem::Data(TickTypes::Price(tick)) if tick.price > 0.0 => {
-                    let price = decimal_from_f64(tick.price, "IBKR market data price")?;
-                    match tick.tick_type {
-                        TickType::Bid => bid = Some(price),
-                        TickType::Ask => ask = Some(price),
-                        TickType::Last => last = Some(price),
-                        _ => {}
-                    }
-                }
-                SubscriptionItem::Data(TickTypes::MarketDataType(value)) => {
-                    market_data_type = value;
-                }
-                SubscriptionItem::Data(TickTypes::SnapshotEnd) => break,
-                SubscriptionItem::Data(_) | SubscriptionItem::Notice(_) => {}
-            }
-        }
-        client.disconnect().await;
+    }
 
-        Ok(IbkrMarketDataSnapshot {
-            symbol: symbol.to_string(),
-            bid,
-            ask,
-            last,
-            ts_ms: Utc::now().timestamp_millis(),
-            market_data_type: ibkr_market_data_type_name(market_data_type).to_string(),
-        })
+    async fn delayed_market_data_snapshot(
+        &self,
+        symbol: &str,
+        route_exchange: Option<&str>,
+    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
+        self.request_market_data_snapshot(symbol, route_exchange, MarketDataType::Delayed)
+            .await
     }
 
     async fn next_order_id(&self) -> Result<i64, BrokerError> {
@@ -1455,6 +1545,11 @@ fn ibkr_market_data_type_name(market_data_type: MarketDataType) -> &'static str 
     }
 }
 
+fn is_delayed_market_data_notice(error: &ibapi::Error, requested_type: MarketDataType) -> bool {
+    requested_type == MarketDataType::Delayed
+        && matches!(error, ibapi::Error::Notice(notice) if notice.code == 10167)
+}
+
 fn map_ibapi_error(error: ibapi::Error) -> BrokerError {
     BrokerError::Connection(format!("IBKR API error: {error}"))
 }
@@ -1470,6 +1565,72 @@ mod ibkr_contract_metadata_tests {
     use super::*;
     use ibapi::orders::{OrderStatus, OrderStatusKind};
     use rust_decimal_macros::dec;
+
+    #[test]
+    fn delayed_market_data_request_ignores_only_delayed_availability_notice() {
+        let delayed_notice = ibapi::Error::Notice(Notice {
+            code: 10167,
+            message: "displaying delayed market data".to_string(),
+            error_time: None,
+            advanced_order_reject_json: String::new(),
+        });
+        let competing_session = ibapi::Error::Notice(Notice {
+            code: 10197,
+            message: "competing live session".to_string(),
+            error_time: None,
+            advanced_order_reject_json: String::new(),
+        });
+
+        assert!(is_delayed_market_data_notice(
+            &delayed_notice,
+            MarketDataType::Delayed
+        ));
+        assert!(!is_delayed_market_data_notice(
+            &delayed_notice,
+            MarketDataType::Realtime
+        ));
+        assert!(!is_delayed_market_data_notice(
+            &competing_session,
+            MarketDataType::Delayed
+        ));
+    }
+
+    #[tokio::test]
+    async fn delayed_market_data_updates_do_not_extend_snapshot_deadline() {
+        let client = IbapiIbkrGatewayClient::new(IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port: 4002,
+            client_id: 1,
+            connect_timeout: Duration::from_millis(50),
+        });
+        let (sender, receiver) =
+            tokio::sync::mpsc::unbounded_channel::<Result<TickTypes, ibapi::Error>>();
+        let producer = tokio::spawn(async move {
+            loop {
+                if sender
+                    .send(Ok(TickTypes::MarketDataType(MarketDataType::Delayed)))
+                    .is_err()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let mut subscription = Subscription::new(receiver);
+        let deadline = Instant::now() + client.settings.connect_timeout;
+
+        let error = client
+            .collect_market_data_ticks(&mut subscription, MarketDataType::Delayed, deadline)
+            .await
+            .unwrap_err();
+        producer.abort();
+
+        assert!(
+            error
+                .to_string()
+                .contains("market data snapshot response timed out")
+        );
+    }
 
     fn diagnostic_report() -> IbkrOrderDiagnosticReport {
         IbkrOrderDiagnosticReport {

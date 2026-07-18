@@ -6,7 +6,7 @@ This runbook verifies broker-reported account balances, positions, open orders, 
 
 ## Preconditions
 
-- IBKR paper Gateway is running on `127.0.0.1:7497`.
+- IBKR paper Gateway is running on `127.0.0.1:4002`.
 - API mode is ReadOnly unless the run explicitly uses `-ConfirmIbkrPaperOrder`.
 - Account id is a real paper account such as `DU...`.
 - Runtime config enables broker snapshot and production reconciliation intervals.
@@ -14,13 +14,13 @@ This runbook verifies broker-reported account balances, positions, open orders, 
 ## Read-Only Soak
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 4002 -ClientId 1
 ```
 
 ## Order-Recovery Soak
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -DelaySeconds 10 -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -DelaySeconds 10 -AccountId DU... -GatewayHost 127.0.0.1 -Port 4002 -ClientId 1
 ```
 
 ## Evidence

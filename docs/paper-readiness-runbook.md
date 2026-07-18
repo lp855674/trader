@@ -134,7 +134,7 @@ Prerequisites:
 
 - Start TWS or IB Gateway in Paper Trading mode.
 - Enable API socket clients.
-- Use paper port `7497` unless your local setup differs.
+- Use IB Gateway paper port `4002` unless your local setup differs.
 - Use the real paper account id returned by Gateway, usually `DU...`.
 - Keep the account id out of committed config files; pass it as a parameter.
 
@@ -145,7 +145,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
   -Stage ReadOnly `
   -AccountId DU12345 `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1
 ```
 
@@ -166,6 +166,26 @@ account_mismatch
 command_failed
 ```
 
+Real-time market data gate:
+
+```powershell
+cargo run -p trader-cli -- ibkr-paper-market-data `
+  --config configs/paper/ibkr_aapl_1d_parquet.toml
+```
+
+Without `--symbol`, the command checks every configured strategy symbol. Before
+`TinyOrder`, `AutoRun`, or soak, every symbol must return a positive bid and ask,
+`bid <= ask`, `market_data_type = realtime`, and a snapshot no older than five
+seconds. Both CLI and API `paper-preflight` and `paper-run` paths apply the same
+gate whenever `order_submit_enabled = true`. The run path requests fresh
+snapshots again before constructing the IBKR order executor, so a previously
+successful preflight cannot bypass a later subscription or session failure.
+
+Do not continue to an order command when the probe reports an IBKR subscription
+error, a competing session, delayed or unknown data, a crossed quote, missing
+bid or ask, or a stale snapshot. The optional `--delayed` mode is diagnostic
+only and never satisfies the order-submission gate.
+
 Tiny order validation:
 
 ```powershell
@@ -173,7 +193,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
   -Stage TinyOrder `
   -AccountId DU12345 `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1 `
   -ConfirmTinyOrder
 ```
@@ -185,7 +205,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 `
   -Stage AutoRun `
   -AccountId DU12345 `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1 `
   -ConfirmAutoRun
 ```
@@ -217,7 +237,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 `
   -Iterations 3 `
   -AccountId DU12345 `
   -GatewayHost 127.0.0.1 `
-  -Port 7497 `
+  -Port 4002 `
   -ClientId 1 `
   -ConfirmIbkrPaperOrder
 ```

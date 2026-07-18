@@ -4858,6 +4858,7 @@ async fn paper_real_broker_connection_ready(
                 .validate_paper_account(&app_config.paper.account_id)
                 .await
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            run_ibkr_realtime_market_data_gate(&adapter, app_config).await?;
             Ok(true)
         }
         config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
@@ -4907,6 +4908,7 @@ async fn paper_runtime(
                 .validate_paper_account(&app_config.paper.account_id)
                 .await
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+            run_ibkr_realtime_market_data_gate(&adapter, app_config).await?;
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings,
@@ -4931,6 +4933,49 @@ async fn paper_runtime(
             )))
         }
     }
+}
+
+async fn run_ibkr_realtime_market_data_gate(
+    adapter: &IbkrPaperGatewayAdapter,
+    app_config: &config::AppConfig,
+) -> Result<(), ApiError> {
+    let mut seen = BTreeSet::new();
+    let mut failures = Vec::new();
+    let route_exchange = app_config.broker.ibkr_route_exchange.as_deref();
+
+    for configured_symbol in &app_config.strategy.symbols {
+        let symbol = paper::ibkr_stock_symbol(configured_symbol)
+            .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
+        if !seen.insert(symbol.clone()) {
+            continue;
+        }
+        let snapshot = match adapter.market_data_snapshot(&symbol, route_exchange).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                failures.push(format!("{symbol}: {error}"));
+                continue;
+            }
+        };
+        if let Err(error) =
+            paper::validate_ibkr_market_data_snapshot(&snapshot, "realtime", now_ms())
+        {
+            failures.push(format!("{symbol}: {error}"));
+        }
+    }
+
+    if seen.is_empty() {
+        return Err(ApiError(anyhow::anyhow!(
+            "IBKR paper market data gate requires at least one configured strategy symbol"
+        )));
+    }
+    if !failures.is_empty() {
+        return Err(ApiError(anyhow::anyhow!(
+            "IBKR paper market data gate failed for {} realtime snapshot(s): {}",
+            failures.len(),
+            failures.join("; ")
+        )));
+    }
+    Ok(())
 }
 
 fn settings_with_broker_initial_cash(

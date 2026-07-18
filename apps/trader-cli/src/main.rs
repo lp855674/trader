@@ -119,8 +119,10 @@ enum Command {
     IbkrPaperMarketData {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
         config: String,
-        #[arg(long = "symbol", required = true)]
+        #[arg(long = "symbol")]
         symbols: Vec<String>,
+        #[arg(long)]
+        delayed: bool,
     },
     IbkrPaperOpenOrders {
         #[arg(long, default_value = "configs/paper/ibkr_aapl_1d_parquet.toml")]
@@ -1304,19 +1306,18 @@ async fn run_command(command: Command) -> Result<()> {
                 app_config.broker.order_submit_enabled
             );
         }
-        Command::IbkrPaperMarketData { config, symbols } => {
+        Command::IbkrPaperMarketData {
+            config,
+            symbols,
+            delayed,
+        } => {
             let app_config = config::AppConfig::from_toml_file(&config)?;
             ensure_ibkr_paper_config(&app_config, "ibkr paper market data")?;
             let adapter =
                 IbkrPaperGatewayAdapter::try_new(ibkr_paper_gateway_settings(&app_config)?)?;
-            for symbol in &symbols {
-                let symbol = paper::ibkr_stock_symbol(symbol)?;
-                let snapshot = adapter
-                    .market_data_snapshot(&symbol, app_config.broker.ibkr_route_exchange.as_deref())
-                    .await?;
-                println!("{}", serde_json::to_string(&snapshot)?);
-            }
-            println!("ibkr paper market data ok: snapshots={}", symbols.len());
+            let snapshot_count =
+                run_ibkr_market_data_probe(&adapter, &app_config, &symbols, delayed, true).await?;
+            println!("ibkr paper market data ok: snapshots={snapshot_count}");
         }
         Command::IbkrPaperOpenOrders { config } => {
             let app_config = config::AppConfig::from_toml_file(&config)?;
@@ -3707,10 +3708,92 @@ async fn paper_real_broker_connection_ready(app_config: &config::AppConfig) -> R
             adapter
                 .validate_paper_account(&app_config.paper.account_id)
                 .await?;
+            run_ibkr_market_data_probe(&adapter, app_config, &[], false, false).await?;
             Ok(true)
         }
         config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
     }
+}
+
+async fn run_ibkr_market_data_probe(
+    adapter: &IbkrPaperGatewayAdapter,
+    app_config: &config::AppConfig,
+    requested_symbols: &[String],
+    delayed: bool,
+    emit_snapshots: bool,
+) -> Result<usize> {
+    let symbols = ibkr_market_data_probe_symbols(app_config, requested_symbols)?;
+    let expected_market_data_type = if delayed { "delayed" } else { "realtime" };
+    let route_exchange = app_config.broker.ibkr_route_exchange.as_deref();
+    let mut failures = Vec::new();
+
+    for symbol in &symbols {
+        let snapshot_result = if delayed {
+            adapter
+                .delayed_market_data_snapshot(symbol, route_exchange)
+                .await
+        } else {
+            adapter.market_data_snapshot(symbol, route_exchange).await
+        };
+        let snapshot = match snapshot_result {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                eprintln!(
+                    "IBKR paper market data probe failed: symbol={} type={} error={}",
+                    symbol, expected_market_data_type, error
+                );
+                failures.push(format!("{symbol}: {error}"));
+                continue;
+            }
+        };
+        if emit_snapshots {
+            println!("{}", serde_json::to_string(&snapshot)?);
+        }
+        if let Err(error) = paper::validate_ibkr_market_data_snapshot(
+            &snapshot,
+            expected_market_data_type,
+            now_ms(),
+        ) {
+            eprintln!(
+                "IBKR paper market data probe rejected: symbol={} type={} error={}",
+                symbol, expected_market_data_type, error
+            );
+            failures.push(format!("{symbol}: {error}"));
+        }
+    }
+
+    if !failures.is_empty() {
+        bail!(
+            "IBKR paper market data probe failed for {} {} snapshot(s): {}",
+            failures.len(),
+            expected_market_data_type,
+            failures.join("; ")
+        );
+    }
+    Ok(symbols.len())
+}
+
+fn ibkr_market_data_probe_symbols(
+    app_config: &config::AppConfig,
+    requested_symbols: &[String],
+) -> Result<Vec<String>> {
+    let source = if requested_symbols.is_empty() {
+        &app_config.strategy.symbols
+    } else {
+        requested_symbols
+    };
+    let mut seen = BTreeSet::new();
+    let mut symbols = Vec::new();
+    for symbol in source {
+        let symbol = paper::ibkr_stock_symbol(symbol)?;
+        if seen.insert(symbol.clone()) {
+            symbols.push(symbol);
+        }
+    }
+    if symbols.is_empty() {
+        bail!("IBKR paper market data probe requires at least one strategy or --symbol value");
+    }
+    Ok(symbols)
 }
 
 async fn paper_runtime(
@@ -3749,6 +3832,7 @@ async fn paper_runtime(
             adapter
                 .validate_paper_account(&app_config.paper.account_id)
                 .await?;
+            run_ibkr_market_data_probe(&adapter, app_config, &[], false, false).await?;
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings,

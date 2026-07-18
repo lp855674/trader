@@ -205,14 +205,11 @@ where
     async fn execute_order(
         &self,
         order: OrderRequest,
-        mark_price: Decimal,
+        _mark_price: Decimal,
         order_number: usize,
     ) -> anyhow::Result<ExecutedPaperOrder> {
         if order.order_type != OrderType::Market {
             anyhow::bail!("IBKR paper executor only accepts market intents");
-        }
-        if mark_price <= Decimal::ZERO {
-            anyhow::bail!("IBKR paper executor requires positive mark price");
         }
         let symbol = ibkr_stock_symbol(&order.symbol)?;
         let client_order_id = self.client_order_id("", order_number);
@@ -220,7 +217,7 @@ where
             .client
             .query_order_by_client_order_id(&symbol, &client_order_id)
             .await?;
-        let mut submitted_price = mark_price;
+        let mut submitted_price = Decimal::ZERO;
         let placed = match existing {
             Some(existing) => existing,
             None => {
@@ -238,7 +235,7 @@ where
                     market_data_type = %snapshot.market_data_type,
                     "IBKR market data snapshot captured for paper order"
                 );
-                validate_ibkr_market_data_snapshot(&snapshot)?;
+                validate_ibkr_realtime_market_data_snapshot(&snapshot)?;
                 submitted_price = ibkr_marketable_limit_price(order.side, &snapshot)?;
                 tracing::info!(
                     symbol = %snapshot.symbol,
@@ -315,12 +312,17 @@ where
     }
 }
 
-fn validate_ibkr_market_data_snapshot(snapshot: &IbkrMarketDataSnapshot) -> anyhow::Result<()> {
-    if snapshot.market_data_type != "realtime" {
+pub fn validate_ibkr_market_data_snapshot(
+    snapshot: &IbkrMarketDataSnapshot,
+    expected_market_data_type: &str,
+    observed_at_ms: i64,
+) -> anyhow::Result<()> {
+    if snapshot.market_data_type != expected_market_data_type {
         anyhow::bail!(
-            "IBKR paper order blocked: market data for {} is {}, not realtime",
+            "IBKR paper order blocked: market data for {} is {}, expected {}",
             snapshot.symbol,
-            snapshot.market_data_type
+            snapshot.market_data_type,
+            expected_market_data_type
         );
     }
     let bid = snapshot
@@ -349,7 +351,7 @@ fn validate_ibkr_market_data_snapshot(snapshot: &IbkrMarketDataSnapshot) -> anyh
             ask
         );
     }
-    let age_ms = unix_timestamp_ms()?.saturating_sub(snapshot.ts_ms);
+    let age_ms = observed_at_ms.saturating_sub(snapshot.ts_ms);
     if age_ms < 0 || age_ms > IBKR_MARKET_DATA_MAX_AGE_MS {
         anyhow::bail!(
             "IBKR paper order blocked: market data snapshot for {} is stale or future-dated (age_ms={age_ms}, max_age_ms={IBKR_MARKET_DATA_MAX_AGE_MS})",
@@ -357,6 +359,12 @@ fn validate_ibkr_market_data_snapshot(snapshot: &IbkrMarketDataSnapshot) -> anyh
         );
     }
     Ok(())
+}
+
+fn validate_ibkr_realtime_market_data_snapshot(
+    snapshot: &IbkrMarketDataSnapshot,
+) -> anyhow::Result<()> {
+    validate_ibkr_market_data_snapshot(snapshot, "realtime", unix_timestamp_ms()?)
 }
 
 fn ibkr_marketable_limit_price(
