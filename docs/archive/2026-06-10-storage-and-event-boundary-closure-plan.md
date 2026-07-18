@@ -13,12 +13,12 @@
 ### Task 1: Add a Runtime DTO Boundary Check
 
 **Files:**
-- Create: `scripts/check-storage-dto-boundary.ps1`
-- Test: `scripts/check-storage-dto-boundary.ps1`
+- Create: `scripts/check/check-storage-dto-boundary.ps1`
+- Test: `scripts/check/check-storage-dto-boundary.ps1`
 
 - [x] **Step 1: Write the failing boundary check**
 
-Create `scripts/check-storage-dto-boundary.ps1`:
+Create `scripts/check/check-storage-dto-boundary.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -54,7 +54,7 @@ Write-Host "Storage DTO boundary check passed."
 
 - [x] **Step 2: Run the boundary check to verify it fails**
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
 
 Expected: FAIL, listing `crates/backtest/src/backtest.rs` and `crates/paper/src/paper.rs`.
 
@@ -116,7 +116,7 @@ Remove `NewStrategyRun`, `NewAccountBalance`, and `NewPosition` imports from pap
 
 Run: `cargo test -p paper`
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
 
 Expected: Paper no longer appears in the boundary check output.
 
@@ -167,7 +167,7 @@ Remove `BacktestExecutionRecord`, `BacktestPositionRecord`, and `StoredRuntimeEv
 
 Run: `cargo test -p backtest`
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
 
 Expected: PASS with `Storage DTO boundary check passed.`
 
@@ -216,15 +216,15 @@ Run: `cargo test -p storage -p backtest -p paper -p algorithm -p events`
 
 - [x] **Step 2: Run boundary checks**
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
 
 - [x] **Step 3: Run smoke scripts**
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\mvp-smoke.ps1`
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\paper-smoke.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\paper-smoke.ps1`
 
 - [x] **Step 4: Run diff check**
 

@@ -10,15 +10,15 @@
 
 ## Current Status (2026-07-08 Sync)
 
-Implementation, unit/boundary verification, runbook updates, and broker-connected IBKR paper-account evidence are complete for the current production reconciliation hardening scope. Accepted evidence is summarized in `docs/production-reconciliation-acceptance-summary.md` and the committed result documents:
+Implementation, unit/boundary verification, runbook updates, and broker-connected IBKR paper-account evidence are complete for the current production reconciliation hardening scope. Accepted evidence is summarized in `docs/results/production-reconciliation/production-reconciliation-acceptance-summary.md` and the committed result documents:
 
-- `docs/production-reconciliation-results-production-reconciliation-ibkr-7b95d49938eb.md`
-- `docs/production-reconciliation-results-production-reconciliation-ibkr-5c6291757824.md`
-- `docs/production-reconciliation-results-production-reconciliation-ibkr-83c4db22f6a9.md`
+- `docs/results/ibkr/production-reconciliation-results-production-reconciliation-ibkr-7b95d49938eb.md`
+- `docs/results/ibkr/production-reconciliation-results-production-reconciliation-ibkr-5c6291757824.md`
+- `docs/results/ibkr/production-reconciliation-results-production-reconciliation-ibkr-83c4db22f6a9.md`
 
 Across those accepted runs, the IBKR paper-account gate records 39 reconciliation audits with cash, position, open-order, execution, and stale-input counters all zero. This closes the planned paper-account production reconciliation evidence loop, including read-only and protected paper order-submit modes. It does not prove live-account trading behavior, filled paper orders, multi-symbol order bursts, IBKR Gateway restart recovery, overnight soak behavior, or real-money readiness.
 
-Additional 2026-07-08 operator evidence attempted IBKR paper order-submit reconciliation after the accepted loop. The first attempt failed at paper order submission with a Gateway `place limit order` timeout; post-failure checks reported no visible open orders or executions. After increasing the configured Gateway response timeout, a follow-up attempt submitted one low-priced AAPL paper limit order successfully; non-fill was expected because the limit price was far below market, and the run then exposed a generic IBKR paper cleanup-cancel bug that has since been fixed. A post-fix wrapper run (`production-reconciliation-ibkr-d7e9c0474e72`) completed with `failure_class=ok`, one reconciliation audit, zero drifts, and no remaining open orders. Separate marketable-price attempts did not produce IBKR executions. See `docs/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. Filled paper-order reconciliation remains open.
+Additional 2026-07-08 operator evidence attempted IBKR paper order-submit reconciliation after the accepted loop. The first attempt failed at paper order submission with a Gateway `place limit order` timeout; post-failure checks reported no visible open orders or executions. After increasing the configured Gateway response timeout, a follow-up attempt submitted one low-priced AAPL paper limit order successfully; non-fill was expected because the limit price was far below market, and the run then exposed a generic IBKR paper cleanup-cancel bug that has since been fixed. A post-fix wrapper run (`production-reconciliation-ibkr-d7e9c0474e72`) completed with `failure_class=ok`, one reconciliation audit, zero drifts, and no remaining open orders. Separate marketable-price attempts did not produce IBKR executions. See `docs/results/ibkr/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. Filled paper-order reconciliation remains open.
 
 ## Global Constraints
 
@@ -75,13 +75,13 @@ Additional 2026-07-08 operator evidence attempted IBKR paper order-submit reconc
 
 ### Scripts and Evidence
 
-- Create: `scripts/production-reconciliation-soak.ps1`
+- Create: `scripts/reconciliation/production-reconciliation-soak.ps1`
   - Run broker-specific soak commands over a longer window.
   - Aggregate failure classes and reconciliation stats.
-  - Write raw JSON evidence under `data/production-reconciliation/<soak_id>/`.
-- Modify: `scripts/ibkr-paper-soak.ps1`
+  - Write raw JSON evidence under `data/reconciliation/production/<soak_id>/`.
+- Modify: `scripts/ibkr/ibkr-paper-soak.ps1`
   - Include new reconciliation audit counters in `summary.json`.
-- Create: `docs/production-reconciliation-runbook.md`
+- Create: `docs/runbooks/production-reconciliation-runbook.md`
   - Document pre-production run procedure, required environment variables, evidence retention, and failure classes.
 - Create after execution: `docs/production-reconciliation-results-<soak_id>.md`
   - Summarize a real run. The implementation tasks create the template and script; the final evidence doc is produced during a broker-connected run.
@@ -101,9 +101,9 @@ Every task must preserve:
 - `cargo test -p runtime`
 - `cargo test -p config`
 - `cargo check --workspace`
-- `bash ./scripts/check-db-boundary`
-- `bash ./scripts/check-storage-dto-boundary`
-- `bash ./scripts/check-api-read-model-boundary`
+- `bash ./scripts/check/check-db-boundary`
+- `bash ./scripts/check/check-storage-dto-boundary`
+- `bash ./scripts/check/check-api-read-model-boundary`
 
 New gates:
 
@@ -111,7 +111,7 @@ New gates:
 - `cargo test -p broker broker_reconciliation_report`
 - `cargo test -p storage production_reconciliation`
 - `cargo test -p runtime production_reconciliation`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -ReadOnly -AccountId <DU_ACCOUNT> -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -ReadOnly -AccountId <DU_ACCOUNT> -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1`
 
 Expected for credential-free CI: unit tests pass, broker-connected PowerShell soak is documented but skipped unless a real paper account and Gateway are supplied.
 
@@ -908,8 +908,8 @@ Expected: pass.
 Run:
 
 ```powershell
-bash ./scripts/check-db-boundary
-bash ./scripts/check-storage-dto-boundary
+bash ./scripts/check/check-db-boundary
+bash ./scripts/check/check-storage-dto-boundary
 ```
 
 Expected: both pass.
@@ -1279,17 +1279,17 @@ git commit -m "feat: enrich IBKR contract metadata mapping"
 
 **Files:**
 
-- Create: `scripts/production-reconciliation-soak.ps1`
-- Modify: `scripts/ibkr-paper-soak.ps1`
+- Create: `scripts/reconciliation/production-reconciliation-soak.ps1`
+- Modify: `scripts/ibkr/ibkr-paper-soak.ps1`
 
 **Interfaces:**
 
-- Consumes: existing `scripts/ibkr-paper-soak.ps1` summary format.
-- Produces: `data/production-reconciliation/<soak_id>/summary.json` with audit counters and failure class.
+- Consumes: existing `scripts/ibkr/ibkr-paper-soak.ps1` summary format.
+- Produces: `data/reconciliation/production/<soak_id>/summary.json` with audit counters and failure class.
 
 - [x] **Step 1: Create production soak script**
 
-Create `scripts/production-reconciliation-soak.ps1`:
+Create `scripts/reconciliation/production-reconciliation-soak.ps1`:
 
 ```powershell
 param(
@@ -1316,7 +1316,7 @@ if ($Broker -eq "ibkr" -and $AccountId.Trim().Length -eq 0) {
 $repoRoot = Get-Location
 $id = [guid]::NewGuid().ToString("N")
 $soakId = "production-reconciliation-$Broker-$($id.Substring(0, 12))"
-$soakDir = Join-Path $repoRoot "data/production-reconciliation/$soakId"
+$soakDir = Join-Path $repoRoot "data/reconciliation/production/$soakId"
 $summaryPath = Join-Path $soakDir "summary.json"
 New-Item -ItemType Directory -Force -Path $soakDir | Out-Null
 
@@ -1328,7 +1328,7 @@ for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
     $iterationLog = Join-Path $soakDir "iteration-$iteration.log"
     $args = @(
         "-ExecutionPolicy", "Bypass",
-        "-File", ".\scripts\ibkr-paper-soak.ps1",
+        "-File", ".\scripts\ibkr\ibkr-paper-soak.ps1",
         "-Iterations", "1",
         "-SkipRefresh",
         "-AccountId", $AccountId,
@@ -1396,7 +1396,7 @@ $summary
 
 - [x] **Step 2: Extend IBKR soak summary counters**
 
-Modify `scripts/ibkr-paper-soak.ps1` so each iteration summary includes:
+Modify `scripts/ibkr/ibkr-paper-soak.ps1` so each iteration summary includes:
 
 ```powershell
 reconciliation_audits = if ($null -ne $runSummary -and $null -ne $runSummary.reconciliation_audits) { [int]$runSummary.reconciliation_audits } else { 0 }
@@ -1411,8 +1411,8 @@ reconciliation_execution_drifts = if ($null -ne $runSummary -and $null -ne $runS
 Run:
 
 ```powershell
-powershell -NoProfile -Command "$null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\scripts\production-reconciliation-soak.ps1 -Raw), [ref]$null)"
-powershell -NoProfile -Command "$null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\scripts\ibkr-paper-soak.ps1 -Raw), [ref]$null)"
+powershell -NoProfile -Command "$null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\scripts\reconciliation\production-reconciliation-soak.ps1 -Raw), [ref]$null)"
+powershell -NoProfile -Command "$null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\scripts\ibkr\ibkr-paper-soak.ps1 -Raw), [ref]$null)"
 ```
 
 Expected: both commands exit 0.
@@ -1422,7 +1422,7 @@ Expected: both commands exit 0.
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 0 -ReadOnly -AccountId DU123
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 0 -ReadOnly -AccountId DU123
 ```
 
 Expected: fails with `Iterations must be at least 1`.
@@ -1430,7 +1430,7 @@ Expected: fails with `Iterations must be at least 1`.
 - [x] **Step 5: Commit**
 
 ```powershell
-git add scripts/production-reconciliation-soak.ps1 scripts/ibkr-paper-soak.ps1
+git add scripts/reconciliation/production-reconciliation-soak.ps1 scripts/ibkr/ibkr-paper-soak.ps1
 git commit -m "feat: add production reconciliation soak script"
 ```
 
@@ -1440,8 +1440,8 @@ git commit -m "feat: add production reconciliation soak script"
 
 **Files:**
 
-- Create: `docs/production-reconciliation-runbook.md`
-- Create: `docs/production-reconciliation-results-template.md`
+- Create: `docs/runbooks/production-reconciliation-runbook.md`
+- Create: `docs/templates/production-reconciliation-results-template.md`
 - Modify: `docs/roadmap.md`
 - Modify: `docs/分析.md`
 
@@ -1452,7 +1452,7 @@ git commit -m "feat: add production reconciliation soak script"
 
 - [x] **Step 1: Write runbook**
 
-Create `docs/production-reconciliation-runbook.md`:
+Create `docs/runbooks/production-reconciliation-runbook.md`:
 
 ```markdown
 # Production Reconciliation Runbook
@@ -1471,18 +1471,18 @@ This runbook verifies broker-reported account balances, positions, open orders, 
 ## Read-Only Soak
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
 ```
 
 ## Order-Recovery Soak
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -DelaySeconds 10 -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 3 -DelaySeconds 10 -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
 ```
 
 ## Evidence
 
-- Raw logs and summaries are written under `data/production-reconciliation/<soak_id>/`.
+- Raw logs and summaries are written under `data/reconciliation/production/<soak_id>/`.
 - Commit only a result document under `docs/production-reconciliation-results-<soak_id>.md`.
 - Result documents must include run ids, account id redaction policy, broker, window, iteration count, drift counts, stale input counts, failure class, and raw evidence path.
 
@@ -1497,7 +1497,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soa
 
 - [x] **Step 2: Write result template**
 
-Create `docs/production-reconciliation-results-template.md`:
+Create `docs/templates/production-reconciliation-results-template.md`:
 
 ```markdown
 # Production Reconciliation Results: <soak_id>
@@ -1511,7 +1511,7 @@ Create `docs/production-reconciliation-results-template.md`:
 - Iterations completed: 6
 - Status: completed
 - Failure class: ok
-- Evidence directory: `data/production-reconciliation/<soak_id>/`
+- Evidence directory: `data/reconciliation/production/<soak_id>/`
 
 ## Audit Counters
 
@@ -1570,7 +1570,7 @@ Remaining limits after this plan starts:
 - [x] **Step 5: Commit docs**
 
 ```powershell
-git add docs/production-reconciliation-runbook.md docs/production-reconciliation-results-template.md docs/roadmap.md docs/分析.md
+git add docs/runbooks/production-reconciliation-runbook.md docs/templates/production-reconciliation-results-template.md docs/roadmap.md docs/分析.md
 git commit -m "docs: add production reconciliation runbook"
 ```
 
@@ -1597,9 +1597,9 @@ cargo test -p storage
 cargo test -p runtime
 cargo test -p config
 cargo check --workspace
-bash ./scripts/check-db-boundary
-bash ./scripts/check-storage-dto-boundary
-bash ./scripts/check-api-read-model-boundary
+bash ./scripts/check/check-db-boundary
+bash ./scripts/check/check-storage-dto-boundary
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: all pass.
@@ -1609,19 +1609,19 @@ Expected: all pass.
 Run with the actual paper account:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 -Broker ibkr -Iterations 6 -DelaySeconds 10 -ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
 ```
 
 Expected:
 
-- Summary path is printed as `data/production-reconciliation/<soak_id>/summary.json`.
+- Summary path is printed as `data/reconciliation/production/<soak_id>/summary.json`.
 - `status` is `completed`.
 - `failure_class` is `ok`.
 - Drift counters are zero, or the result document records the exact drift and the run is not accepted.
 
 - [x] **Step 3: Create committed results document**
 
-Copy the fields from `docs/production-reconciliation-results-template.md` into `docs/production-reconciliation-results-<soak_id>.md`, replacing template markers with the actual values from the summary JSON. Redact account id to the first two and last two visible characters, for example `DU****89`.
+Copy the fields from `docs/templates/production-reconciliation-results-template.md` into `docs/production-reconciliation-results-<soak_id>.md`, replacing template markers with the actual values from the summary JSON. Redact account id to the first two and last two visible characters, for example `DU****89`.
 
 - [x] **Step 4: Commit final evidence document**
 
@@ -1683,7 +1683,7 @@ The project is materially closer to pre-production when:
 - Added optional `[broker] ibkr_override_percentage_constraints = true` support and reran direct `OVERNIGHT` as `ibkr-aapl-1d-a4759b7284cc`; IBKR still rejected with API error `10329`, with no broker order id, no open order, and no execution. This points to explicit `exchange=OVERNIGHT` as the trigger; the acceptance path should prefer the default SMART stock contract plus `outside_rth=true`, not direct `OVERNIGHT`, unless diagnosing route-specific IBKR behavior.
 - SMART follow-up `ibkr-aapl-1d-5d5c51ae6e66` avoided `10329` but did not reach clean submit because Gateway open-orders preflight timed out; read-only retry `ibkr-aapl-1d-eb03d46a1e5b` with client id `2` also timed out on open-orders.
 - Client id `9` restored Gateway checks in `ibkr-aapl-1d-1235746d1e37`, then SMART submit run `ibkr-aapl-1d-1910a169d3ee` completed without `10329` but still produced local fills `0` and remote executions `0`; a direct SMART tiny-order probe at limit `900` remained `Submitted` for about 60 seconds, then was cancelled and verified with open orders `0` and executions `0`.
-- Post-commit local verification follow-up: `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1` and `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1` both passed on the committed hardening branch after updating one CLI test fixture to match the current gate-block alert dedup key shape. The runtime currently emits `reconciliation_gate.block.alert|<run_id>||||reconciliation_gate_block` for missing-audit gate alerts because `account_id` is nested under `failures` / `requirements`, not promoted to the top-level alert fields used by dedup.
+- Post-commit local verification follow-up: `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1` and `powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1` both passed on the committed hardening branch after updating one CLI test fixture to match the current gate-block alert dedup key shape. The runtime currently emits `reconciliation_gate.block.alert|<run_id>||||reconciliation_gate_block` for missing-audit gate alerts because `account_id` is nested under `failures` / `requirements`, not promoted to the top-level alert fields used by dedup.
 - Do not mark this plan as filled-order acceptance or live-money readiness until a broker execution is observed and reconciled to local fills with zero drift.
 - Runtime-to-broker `execution_missing_broker` remains intentionally deferred until the broker execution query window is authoritative for the audit interval. Current broker execution snapshots can be windowed or symbol-scoped, so treating absence as broker drift would create false positives during long reconciliation runs.
 
@@ -1693,20 +1693,20 @@ The project is materially closer to pre-production when:
 - Clean local proof: `live_runtime_reconciliation_audit_matches_broker_execution_by_full_fill_fields` seeds a filled local order/fill and a matching broker execution, then verifies a clean reconciliation audit with zero `execution_drifts`.
 - Drift local proof: `live_runtime_reconciliation_audit_surfaces_broker_execution_field_drift` seeds a filled local order/fill whose price, quantity, and fee disagree with the broker execution, then verifies `execution_field_drift` in the persisted audit payload plus `runtime.reconciliation` and `runtime.alert` surfaces.
 - Broker pure-model proof: `reconciliation_report_detects_execution_field_drift_after_identity_match` verifies the broker reconciliation model distinguishes "execution exists but fields disagree" from "execution missing".
-- Local verification passed after the field-level reconciliation change: `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, `cargo test -p config`, `cargo check --workspace`, `bash ./scripts/check-db-boundary`, `bash ./scripts/check-storage-dto-boundary`, and `bash ./scripts/check-api-read-model-boundary`.
+- Local verification passed after the field-level reconciliation change: `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, `cargo test -p config`, `cargo check --workspace`, `bash ./scripts/check/check-db-boundary`, `bash ./scripts/check/check-storage-dto-boundary`, and `bash ./scripts/check/check-api-read-model-boundary`.
 - This closes the credential-free deterministic filled-order reconciliation gap. It does not close real broker filled execution evidence: a real IBKR/Binance/etc. broker execution still must be observed and reconciled to local fills with zero drift before claiming broker-connected filled-order acceptance.
 
 ## 2026-07-13 IBKR Filled-Order Evidence Gate
 
-- Added `scripts/ibkr-filled-order-evidence.ps1` as the explicit external acceptance wrapper for real IBKR paper filled-order evidence. It requires `-ConfirmIbkrPaperOrder`, delegates to `scripts/ibkr-paper-run.ps1`, then fails unless the run has order submit enabled, zero open orders, reconciliation status `ok`, zero open-order/execution drift counters, at least one broker execution, at least one matched execution, at least one local fill, and `qty_delta=0`.
+- Added `scripts/ibkr/ibkr-filled-order-evidence.ps1` as the explicit external acceptance wrapper for real IBKR paper filled-order evidence. It requires `-ConfirmIbkrPaperOrder`, delegates to `scripts/ibkr/ibkr-paper-run.ps1`, then fails unless the run has order submit enabled, zero open orders, reconciliation status `ok`, zero open-order/execution drift counters, at least one broker execution, at least one matched execution, at least one local fill, and `qty_delta=0`.
 - The wrapper writes `filled-order-evidence-summary.json` next to the child `summary.json` for both pass and fail outcomes. A normal paper-submit run with no broker execution is intentionally classified as `broker_execution_missing`, so paper order submission can no longer be confused with filled-order acceptance.
-- Local script-contract coverage was added to `scripts/ibkr-paper-script-tests.ps1`: fake `filled_execution` evidence passes with one broker execution matched to one local fill, while the existing no-execution fake path fails the wrapper.
+- Local script-contract coverage was added to `scripts/ibkr/ibkr-paper-script-tests.ps1`: fake `filled_execution` evidence passes with one broker execution matched to one local fill, while the existing no-execution fake path fails the wrapper.
 - The IBKR CLI reconciliation path now requires a remote execution to resolve to a local fill; a matching broker order id without a persisted local fill is no longer counted as execution matched. Because the IBKR paper executor persists one aggregate local fill for potentially multiple broker executions, remote executions are grouped by broker order id and compared to the corresponding local fill aggregate across normalized symbol, normalized side, weighted execution price, total quantity, and total fee.
 - `ibkr-paper-reconcile` now emits `remote_execution_field_drifts`, `ibkr-paper-run.ps1` includes that value in its execution drift total, and the filled-order wrapper classifies it explicitly as `execution_field_drift`. Account identity remains constrained by the account-scoped Gateway execution query, while client order identity is resolved through the persisted local order to broker order id mapping.
 - Operator command for the real evidence attempt:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 -AccountId DU... -ConfirmIbkrPaperOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-filled-order-evidence.ps1 -AccountId DU... -ConfirmIbkrPaperOrder
 ```
 
 - This still does not create real broker filled execution evidence by itself. The acceptance claim remains open until that command is run against a real IBKR paper Gateway/session and its `filled-order-evidence-summary.json` records `status=completed`, `failure_class=ok`, `broker_executions >= 1`, `matched_executions >= 1`, `execution_field_drifts=0`, and zero aggregate drift counters.

@@ -105,10 +105,10 @@ Every task must preserve:
 - `cargo test -p api`
 - `cargo test -p paper`
 - `cargo test -p backtest`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1`
-- `bash ./scripts/check-db-boundary`
-- `bash ./scripts/check-storage-dto-boundary`
-- `bash ./scripts/check-api-read-model-boundary`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1`
+- `bash ./scripts/check/check-db-boundary`
+- `bash ./scripts/check/check-storage-dto-boundary`
+- `bash ./scripts/check/check-api-read-model-boundary`
 
 New gates:
 
@@ -340,7 +340,7 @@ Add to `docs/api.md` with full endpoint documentation.
 
 ```powershell
 cargo test -p api config
-bash ./scripts/check-api-read-model-boundary
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: pass.

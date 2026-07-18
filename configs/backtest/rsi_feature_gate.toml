@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-rsi-feature-gate"
 
 [database]
-url = "sqlite://data/rsi_feature_gate.sqlite"
+url = "sqlite://data/backtest/rsi_feature_gate.sqlite"
 
 [data]
 source = "csv"

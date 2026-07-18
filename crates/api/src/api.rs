@@ -1776,6 +1776,9 @@ async fn run_paper(
         persist_run_config_snapshot(&state, &run_spec, &snapshot, started_at_ms).await?;
     let mut settings = paper_settings_with_config_json(&app_config, config_json.clone())?;
     settings.logging.metrics = state.log_writer_metrics.clone();
+    let runtime = paper_runtime(&app_config, state.db.clone(), settings.clone())
+        .await?
+        .with_event_bus(state.event_bus.clone());
 
     state
         .db
@@ -1818,9 +1821,6 @@ async fn run_paper(
     let run_id = settings.run_id.clone();
     let db = state.db.clone();
     let task_settings = settings.clone();
-    let runtime = paper_runtime(&app_config, db.clone(), task_settings.clone())
-        .await?
-        .with_event_bus(state.event_bus.clone());
     state
         .runtime_manager
         .spawn_with_metadata(

@@ -41,27 +41,27 @@ cargo test -p paper
 cargo test -p broker
 cargo test -p trader-cli
 cargo check --workspace
-powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-script-tests.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU... -Port 4002
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DU... -Port 4002 -ConfirmAutoRun
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU... -Port 4002 -ConfirmIbkrPaperOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-soak.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-script-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU... -Port 4002
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DU... -Port 4002 -ConfirmAutoRun
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU... -Port 4002 -ConfirmIbkrPaperOrder
 ```
 
 Result: PASS.
 
 IBKR evidence artifacts:
 
-- Read-only summary: `data/ibkr-paper-test/read-only-414fa8a031fb/summary.json`
-- AutoRun summary: `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`
-- Soak summary: `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`
+- Read-only summary: `data/ibkr/paper-test/read-only-414fa8a031fb/summary.json`
+- AutoRun summary: `data/ibkr/paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`
+- Soak summary: `data/ibkr/paper-soak/ibkr-paper-soak-af20e6620229/summary.json`
 
 Binance evidence artifacts:
 
-- Paper run summary: `data/binance-paper-runs/binance-btcusdt-1m-ded445c8fc88/summary.json`
-- Paper soak summary: `data/binance-paper-soak/binance-paper-soak-8e077496f463/summary.json`
+- Paper run summary: `data/binance/paper-runs/binance-btcusdt-1m-ded445c8fc88/summary.json`
+- Paper soak summary: `data/binance/paper-soak/binance-paper-soak-8e077496f463/summary.json`
 
 IBKR acceptance observations:
 
@@ -77,7 +77,7 @@ Binance acceptance observations:
 Acceptance verification:
 
 - [x] Full crate test set exits successfully.
-- [x] `scripts\verify.ps1` exits successfully.
+- [x] `scripts\check\verify.ps1` exits successfully.
 - [x] Binance paper runner exits with `failure_class = ok`, `halt_reason = null`, and `open_orders_remaining = 0`.
 - [x] Binance paper soak exits with every iteration `failure_class = ok`.
 - [x] IBKR read-only Gateway checks exit with `failure_class = ok`.
@@ -87,9 +87,9 @@ Acceptance verification:
 
 This completes the paper-validation scope for this plan. It does not claim production real-money readiness; broader production gaps remain in RBAC, multi-environment approvals, managed log collection, reference-data stale alerts, and wider real broker reconciliation coverage.
 
-2026-07-08 sync: subsequent live-reconciliation gate evidence now records both archival replay and fresh read-only multi-broker checks from accepted IBKR paper Gateway and Binance paper/Testnet evidence. See `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md` and `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`. This strengthens the operator evidence trail for the paper/testnet readiness bucket, but does not change this plan's boundary: no live-money claim, no production real-money order support, and no RBAC / multi-approval / managed-ops completion claim.
+2026-07-08 sync: subsequent live-reconciliation gate evidence now records both archival replay and fresh read-only multi-broker checks from accepted IBKR paper Gateway and Binance paper/Testnet evidence. See `docs/results/live-reconciliation/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md` and `docs/results/live-reconciliation/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`. This strengthens the operator evidence trail for the paper/testnet readiness bucket, but does not change this plan's boundary: no live-money claim, no production real-money order support, and no RBAC / multi-approval / managed-ops completion claim.
 
-Additional 2026-07-08 IBKR paper order-submit follow-up exposed that the dedicated `ibkr-paper-cancel-order` path worked, but the generic `Broker::cancel_order` path used by `risk-kill-switch --cancel-open-orders` still returned `OrderNotFound` for IBKR paper open orders. That cleanup-cancel gap has been fixed and covered by `cargo test -p broker ibkr_paper_gateway_adapter_cancels_broker_open_order_by_id`. See `docs/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. This is cleanup evidence for paper open orders, not live-money readiness or filled-order reconciliation acceptance.
+Additional 2026-07-08 IBKR paper order-submit follow-up exposed that the dedicated `ibkr-paper-cancel-order` path worked, but the generic `Broker::cancel_order` path used by `risk-kill-switch --cancel-open-orders` still returned `OrderNotFound` for IBKR paper open orders. That cleanup-cancel gap has been fixed and covered by `cargo test -p broker ibkr_paper_gateway_adapter_cancels_broker_open_order_by_id`. See `docs/results/ibkr/ibkr-paper-order-submit-reconciliation-results-2026-07-08.md`. This is cleanup evidence for paper open orders, not live-money readiness or filled-order reconciliation acceptance.
 
 ## Global Constraints
 
@@ -125,12 +125,12 @@ Modify:
 - `crates/broker/tests/broker_tests.rs` - cancel-all and open-order matching tests.
 - `apps/trader-cli/src/main.rs` - operator commands for kill switch and cancel-all.
 - `apps/trader-cli/tests/cli_tests.rs` - CLI regression coverage.
-- `scripts/binance-paper-run.ps1` - assert no residual open orders after run and collect richer evidence.
-- `scripts/ibkr-paper-run.ps1` - same evidence contract for IBKR paper.
-- `scripts/binance-paper-soak.ps1` - fail on new hard-risk halt reasons and open-order residue.
-- `scripts/ibkr-paper-soak.ps1` - same for IBKR.
+- `scripts/binance/binance-paper-run.ps1` - assert no residual open orders after run and collect richer evidence.
+- `scripts/ibkr/ibkr-paper-run.ps1` - same evidence contract for IBKR paper.
+- `scripts/binance/binance-paper-soak.ps1` - fail on new hard-risk halt reasons and open-order residue.
+- `scripts/ibkr/ibkr-paper-soak.ps1` - same for IBKR.
 - `docs/broker.md` - document new risk gates and kill-switch operation.
-- `docs/paper-readiness-runbook.md` - operator sequence for readonly, autorun, soak, and emergency stop.
+- `docs/runbooks/paper-readiness-runbook.md` - operator sequence for readonly, autorun, soak, and emergency stop.
 - `docs/roadmap.md` - move "real-money hardening" items out of vague backlog into concrete stage gates.
 
 ---
@@ -628,12 +628,12 @@ git commit -m "feat: add operator kill switch and cancel-all workflow"
 ### Task 5: Tighten Binance / IBKR Paper Evidence And Soak Gates
 
 **Files:**
-- Modify: `scripts/binance-paper-run.ps1`
-- Modify: `scripts/binance-paper-soak.ps1`
-- Modify: `scripts/ibkr-paper-run.ps1`
-- Modify: `scripts/ibkr-paper-soak.ps1`
+- Modify: `scripts/binance/binance-paper-run.ps1`
+- Modify: `scripts/binance/binance-paper-soak.ps1`
+- Modify: `scripts/ibkr/ibkr-paper-run.ps1`
+- Modify: `scripts/ibkr/ibkr-paper-soak.ps1`
 - Modify: `docs/broker.md`
-- Modify: `docs/paper-readiness-runbook.md`
+- Modify: `docs/runbooks/paper-readiness-runbook.md`
 
 **Interfaces:**
 - Consumes: runner summaries, open-order checks, reconcile output, risk-event output
@@ -680,7 +680,7 @@ Add failure classes:
 
 - [x] **Step 4: Document operator evidence chain**
 
-In [docs/broker.md](/abs/path/D:/code/trader/trader/docs/broker.md) and [docs/paper-readiness-runbook.md](/abs/path/D:/code/trader/trader/docs/paper-readiness-runbook.md), add the exact progression:
+In [docs/broker.md](/abs/path/D:/code/trader/trader/docs/broker.md) and [docs/runbooks/paper-readiness-runbook.md](/abs/path/D:/code/trader/trader/docs/runbooks/paper-readiness-runbook.md), add the exact progression:
 1. readonly
 2. tiny order
 3. autorun with submit enabled
@@ -696,8 +696,8 @@ Current status: IBKR broker-facing script verification and Binance paper verific
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-run.ps1
 ```
 
 Then run the soak scripts in readonly/dry-run mode if available.
@@ -706,16 +706,16 @@ Expected: summaries contain the new fields and no existing script contract regre
 
 IBKR evidence:
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-script-tests.ps1` passed, including transient `PendingCancel` open-order settlement coverage.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DU... -Port 4002 -ConfirmAutoRun` passed with summary `data/ibkr-paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU... -Port 4002 -ConfirmIbkrPaperOrder` passed with summary `data/ibkr-paper-soak/ibkr-paper-soak-af20e6620229/summary.json`.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1` passed with summary `data/binance-paper-runs/binance-btcusdt-1m-ded445c8fc88/summary.json`.
-- `powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1` passed with summary `data/binance-paper-soak/binance-paper-soak-8e077496f463/summary.json`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-script-tests.ps1` passed, including transient `PendingCancel` open-order settlement coverage.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-test-guide.ps1 -Stage AutoRun -AccountId DU... -Port 4002 -ConfirmAutoRun` passed with summary `data/ibkr/paper-runs/ibkr-aapl-1d-afb4fdab9323/summary.json`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU... -Port 4002 -ConfirmIbkrPaperOrder` passed with summary `data/ibkr/paper-soak/ibkr-paper-soak-af20e6620229/summary.json`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-run.ps1` passed with summary `data/binance/paper-runs/binance-btcusdt-1m-ded445c8fc88/summary.json`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-soak.ps1` passed with summary `data/binance/paper-soak/binance-paper-soak-8e077496f463/summary.json`.
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add scripts docs/broker.md docs/paper-readiness-runbook.md
+git add scripts docs/broker.md docs/runbooks/paper-readiness-runbook.md
 git commit -m "feat: harden paper evidence and soak gates"
 ```
 
@@ -745,7 +745,7 @@ Criteria for `tiny-size real-money candidate` must include all of:
 
 - [x] **Step 2: Run acceptance test set**
 
-Current status: complete. `cargo check --workspace`, the full crate test set, `scripts\verify.ps1`, IBKR script contracts, IBKR read-only, IBKR AutoRun, IBKR three-iteration soak, Binance paper run, and Binance three-iteration soak all passed.
+Current status: complete. `cargo check --workspace`, the full crate test set, `scripts\check\verify.ps1`, IBKR script contracts, IBKR read-only, IBKR AutoRun, IBKR three-iteration soak, Binance paper run, and Binance three-iteration soak all passed.
 
 Run:
 
@@ -762,7 +762,7 @@ cargo check --workspace
 Also run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1
 ```
 
 Expected: PASS. If broker-network-dependent scripts cannot run in the current environment, record that gap explicitly in the final implementation notes.

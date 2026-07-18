@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+if command -v rg >/dev/null 2>&1; then
+    set +e
+    matches="$(rg -n "sqlx|SqlitePool|Pool<Sqlite>|SqliteConnection|Transaction<" \
+        crates \
+        --glob "*.rs" \
+        --glob "Cargo.toml" \
+        --glob "!crates/storage/**")"
+    status=$?
+    set -e
+else
+    set +e
+    matches="$(grep -RInE "sqlx|SqlitePool|Pool<Sqlite>|SqliteConnection|Transaction<" \
+        crates \
+        --include="*.rs" \
+        --include="Cargo.toml" \
+        --exclude-dir="storage")"
+    status=$?
+    set -e
+fi
+
+if [[ "$status" -eq 0 ]]; then
+    echo "Database boundary violation found outside the persistence boundary:"
+    echo "$matches"
+    exit 1
+fi
+
+if [[ "$status" -gt 1 ]]; then
+    exit "$status"
+fi
+
+echo "Database boundary check passed."

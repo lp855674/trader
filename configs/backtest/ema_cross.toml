@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-ema-cross"
 
 [database]
-url = "sqlite://data/trader-ema-cross.sqlite"
+url = "sqlite://data/backtest/trader-ema-cross.sqlite"
 
 [data]
 source = "csv"

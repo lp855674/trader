@@ -92,11 +92,11 @@ Out of scope for the first pass:
   - Add read-only inspection commands only if they are useful for local verification.
 - Modify: `apps/trader-cli/tests/cli_tests.rs`
   - Cover any new CLI inspection commands.
-- Modify: `scripts/v1-smoke.ps1`
+- Modify: `scripts/smoke/v1-smoke.ps1`
   - Verify existing MVP behavior still passes after migrations.
-- Create: `scripts/schema-gap-check.ps1`
+- Create: `scripts/check/schema-gap-check.ps1`
   - Report implemented vs target schema without claiming target schema is complete.
-- Modify: `scripts/verify.ps1`
+- Modify: `scripts/check/verify.ps1`
   - Add schema boundary checks after Rust tests if runtime remains acceptable.
 
 ### Documentation
@@ -122,10 +122,10 @@ Every task must preserve these gates:
 - `cargo test -p backtest`
 - `cargo test -p api`
 - `cargo test -p market_rules`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1`
-- `bash ./scripts/check-db-boundary`
-- `bash ./scripts/check-storage-dto-boundary`
-- `bash ./scripts/check-api-read-model-boundary`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1`
+- `bash ./scripts/check/check-db-boundary`
+- `bash ./scripts/check/check-storage-dto-boundary`
+- `bash ./scripts/check/check-api-read-model-boundary`
 
 If a task only changes docs, run:
 
@@ -824,7 +824,7 @@ These are read-only audit projection routes. They do not replace `event_store`; 
 ```powershell
 cargo test -p api order_events
 cargo test -p api risk_events
-bash ./scripts/check-api-read-model-boundary
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: pass.
@@ -1132,11 +1132,11 @@ git commit -m "feat: add contract accounting storage boundary"
 
 **Files:**
 
-- Create: `scripts/schema-gap-check.ps1`
-- Modify: `scripts/verify.ps1`
+- Create: `scripts/check/schema-gap-check.ps1`
+- Modify: `scripts/check/verify.ps1`
 - Modify: `docs/分析.md`
 
-- [ ] **Step 1: Create `scripts/schema-gap-check.ps1`**
+- [ ] **Step 1: Create `scripts/check/schema-gap-check.ps1`**
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -1196,23 +1196,23 @@ if ($missing.Count -gt 0) {
 - [ ] **Step 2: Run script**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\schema-gap-check.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\schema-gap-check.ps1
 ```
 
 Expected: prints implemented and missing target tables. It must not fail just because target schema is incomplete.
 
-- [ ] **Step 3: Add to `scripts/verify.ps1`**
+- [ ] **Step 3: Add to `scripts/check/verify.ps1`**
 
 Call schema-gap-check near the docs/schema verification section:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\schema-gap-check.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\schema-gap-check.ps1
 ```
 
 - [ ] **Step 4: Commit**
 
 ```powershell
-git add scripts/schema-gap-check.ps1 scripts/verify.ps1 docs/分析.md
+git add scripts/check/schema-gap-check.ps1 scripts/check/verify.ps1 docs/分析.md
 git commit -m "chore: add schema gap verification"
 ```
 
@@ -1228,9 +1228,9 @@ git commit -m "chore: add schema gap verification"
 
 ```powershell
 cargo test -p storage
-bash ./scripts/check-db-boundary
-bash ./scripts/check-storage-dto-boundary
-bash ./scripts/check-api-read-model-boundary
+bash ./scripts/check/check-db-boundary
+bash ./scripts/check/check-storage-dto-boundary
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: all pass.
@@ -1250,7 +1250,7 @@ Expected: all pass.
 - [ ] **Step 3: Run local smoke**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1
 ```
 
 Expected: validates CLI, REST, WebSocket, SQLite, Parquet, Replay control, reports, fake broker/live surface.
@@ -1258,7 +1258,7 @@ Expected: validates CLI, REST, WebSocket, SQLite, Parquet, Replay control, repor
 - [ ] **Step 4: Run schema gap script**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\schema-gap-check.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\schema-gap-check.ps1
 ```
 
 Expected: any remaining missing tables are intentional and documented in `docs/分析.md` / `docs/roadmap.md`.

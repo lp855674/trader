@@ -11,10 +11,10 @@
 ## Current Status (2026-07-08 Sync)
 
 - Implementation completed for pure gate evaluation, config parsing, storage latest-audit lookup, CLI evaluation, operator script, and runbook.
-- Local fixture validation completed and recorded in `docs/live-reconciliation-gate-results-local-2026-07-07.md`.
-- Archival real-broker replay validation completed and recorded in `docs/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md`.
-- Fresh read-only broker/testnet evidence validation completed and recorded in `docs/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`.
-- Long fresh read-only multi-broker gate validation completed and recorded in `docs/live-reconciliation-gate-results-long-readonly-2026-07-08.md`; the gate allowed with `MinSuccessfulAudits=10`.
+- Local fixture validation completed and recorded in `docs/results/live-reconciliation/live-reconciliation-gate-results-local-2026-07-07.md`.
+- Archival real-broker replay validation completed and recorded in `docs/results/live-reconciliation/live-reconciliation-gate-results-real-broker-replay-2026-07-08.md`.
+- Fresh read-only broker/testnet evidence validation completed and recorded in `docs/results/live-reconciliation/live-reconciliation-gate-results-fresh-readonly-2026-07-08.md`.
+- Long fresh read-only multi-broker gate validation completed and recorded in `docs/results/live-reconciliation/live-reconciliation-gate-results-long-readonly-2026-07-08.md`; the gate allowed with `MinSuccessfulAudits=10`.
 - No live-money support is claimed by this plan, and no live orders are part of the accepted evidence.
 
 The accepted operator evidence now covers local fixtures, archival replay from accepted real-broker-derived paper/testnet evidence, fresh read-only IBKR paper Gateway plus Binance paper/Testnet no-submit evidence, and a longer fresh read-only gate with 10 clean rows per required account. This closes the planned multi-broker reconciliation-gate evidence loop for paper/testnet readiness; live-money promotion still requires separate operator approval, production controls, and real-account evidence beyond this plan.
@@ -46,11 +46,11 @@ The accepted operator evidence now covers local fixtures, archival replay from a
   - Adds a narrowly scoped query helper for latest reconciliation audits by broker/account.
 - Modify: `crates/storage/tests/runtime_repository_tests.rs`
   - Covers latest-audit selection and multi-account filtering.
-- Create: `scripts/live-reconciliation-gate.ps1`
+- Create: `scripts/reconciliation/live-reconciliation-gate.ps1`
   - Wraps the CLI gate for local/operator use.
-- Create: `scripts/live-reconciliation-gate-tests.ps1`
+- Create: `scripts/check/live-reconciliation-gate-tests.ps1`
   - Smoke-tests CLI exit behavior with fixture SQLite data.
-- Create: `docs/live-reconciliation-gate-runbook.md`
+- Create: `docs/runbooks/live-reconciliation-gate-runbook.md`
   - Documents how to run the gate for paper, live dry-run, and multi-broker readiness.
 
 ---
@@ -770,9 +770,9 @@ git commit -m "feat: add reconciliation gate cli"
 ### Task 4: Operator Script and Runbook
 
 **Files:**
-- Create: `scripts/live-reconciliation-gate.ps1`
-- Create: `scripts/live-reconciliation-gate-tests.ps1`
-- Create: `docs/live-reconciliation-gate-runbook.md`
+- Create: `scripts/reconciliation/live-reconciliation-gate.ps1`
+- Create: `scripts/check/live-reconciliation-gate-tests.ps1`
+- Create: `docs/runbooks/live-reconciliation-gate-runbook.md`
 
 **Interfaces:**
 - Consumes: `trader reconciliation-gate`
@@ -780,7 +780,7 @@ git commit -m "feat: add reconciliation gate cli"
 
 - [x] **Step 1: Create wrapper script**
 
-Create `scripts/live-reconciliation-gate.ps1`:
+Create `scripts/reconciliation/live-reconciliation-gate.ps1`:
 
 ```powershell
 param(
@@ -810,7 +810,7 @@ exit $LASTEXITCODE
 
 - [x] **Step 2: Create script test**
 
-Create `scripts/live-reconciliation-gate-tests.ps1`:
+Create `scripts/check/live-reconciliation-gate-tests.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -836,7 +836,7 @@ Write-Host "live reconciliation gate script tests ok"
 
 - [x] **Step 3: Create runbook**
 
-Create `docs/live-reconciliation-gate-runbook.md`:
+Create `docs/runbooks/live-reconciliation-gate-runbook.md`:
 
 ```markdown
 # Live Reconciliation Gate Runbook
@@ -848,7 +848,7 @@ The live reconciliation gate blocks live-account promotion unless every required
 ## Single Broker
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\live-reconciliation-gate.ps1 `
   -Config configs/paper/ibkr_aapl_1d_parquet.toml `
   -Account ibkr:DU****91 `
   -MinSuccessfulAudits 3 `
@@ -860,7 +860,7 @@ Expected: exits `0` and prints `reconciliation gate ok`.
 ## Multi Broker
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\live-reconciliation-gate.ps1 `
   -Config configs/paper/ibkr_aapl_1d_parquet.toml `
   -Account ibkr:DU****91 `
   -Account binance:paper `
@@ -887,7 +887,7 @@ This command reads stored audit evidence only. It does not submit orders.
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\live-reconciliation-gate-tests.ps1
 ```
 
 Expected: prints `live reconciliation gate script tests ok`.
@@ -895,7 +895,7 @@ Expected: prints `live reconciliation gate script tests ok`.
 Commit:
 
 ```powershell
-git add scripts/live-reconciliation-gate.ps1 scripts/live-reconciliation-gate-tests.ps1 docs/live-reconciliation-gate-runbook.md
+git add scripts/reconciliation/live-reconciliation-gate.ps1 scripts/check/live-reconciliation-gate-tests.ps1 docs/runbooks/live-reconciliation-gate-runbook.md
 git commit -m "docs: add live reconciliation gate runbook"
 ```
 
@@ -904,8 +904,8 @@ git commit -m "docs: add live reconciliation gate runbook"
 ### Task 5: End-to-End Verification and Acceptance Evidence
 
 **Files:**
-- Modify: `docs/live-reconciliation-gate-runbook.md`
-- Create: `docs/live-reconciliation-gate-results-local-2026-07-07.md`
+- Modify: `docs/runbooks/live-reconciliation-gate-runbook.md`
+- Create: `docs/results/live-reconciliation/live-reconciliation-gate-results-local-2026-07-07.md`
 
 **Interfaces:**
 - Consumes: completed Tasks 1-4.
@@ -921,7 +921,7 @@ cargo test -p config live_reconciliation_gate
 cargo test -p storage lists_latest_reconciliation_audits_for_gate
 cargo test -p trader-cli gate_account_requirement
 cargo check --workspace
-powershell -ExecutionPolicy Bypass -File .\scripts\live-reconciliation-gate-tests.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\live-reconciliation-gate-tests.ps1
 ```
 
 Expected: all commands PASS.
@@ -931,7 +931,7 @@ Expected: all commands PASS.
 Use this only after a fresh read-only production reconciliation run records clean audits:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\production-reconciliation-soak.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\reconciliation\production-reconciliation-soak.ps1 `
   -Broker ibkr `
   -Iterations 3 `
   -DelaySeconds 10 `
@@ -946,7 +946,7 @@ Expected: production reconciliation summary has `status = completed`, `failure_c
 
 - [x] **Step 3: Record results document**
 
-Create `docs/live-reconciliation-gate-results-local-2026-07-07.md`:
+Create `docs/results/live-reconciliation/live-reconciliation-gate-results-local-2026-07-07.md`:
 
 ```markdown
 # Live Reconciliation Gate Results: local-2026-07-07
@@ -967,7 +967,7 @@ Create `docs/live-reconciliation-gate-results-local-2026-07-07.md`:
 | `cargo test -p storage lists_latest_reconciliation_audits_for_gate` | pass |
 | `cargo test -p trader-cli gate_account_requirement` | pass |
 | `cargo check --workspace` | pass |
-| `scripts/live-reconciliation-gate-tests.ps1` | pass |
+| `scripts/check/live-reconciliation-gate-tests.ps1` | pass |
 
 ## Decision
 
@@ -979,7 +979,7 @@ The reconciliation gate is acceptable for blocking live-account promotion from s
 Run:
 
 ```powershell
-git add docs/live-reconciliation-gate-results-local-2026-07-07.md docs/live-reconciliation-gate-runbook.md
+git add docs/results/live-reconciliation/live-reconciliation-gate-results-local-2026-07-07.md docs/runbooks/live-reconciliation-gate-runbook.md
 git commit -m "docs: record live reconciliation gate results"
 git push
 ```

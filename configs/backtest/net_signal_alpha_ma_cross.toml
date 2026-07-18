@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-net-signal-alpha-ma-cross"
 
 [database]
-url = "sqlite://data/trader-net-signal-alpha.sqlite"
+url = "sqlite://data/backtest/trader-net-signal-alpha.sqlite"
 
 [data]
 source = "csv"

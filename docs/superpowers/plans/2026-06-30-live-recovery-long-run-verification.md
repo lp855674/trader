@@ -4,7 +4,7 @@
 
 **Goal:** Build a repeatable long-run verification loop for Live startup recovery, broker snapshots, reconciliation drift detection, and alert delivery before starting Live process isolation design.
 
-**Status (2026-07-08 Sync):** Completed for the default local verification path. The committed result document `docs/live-recovery-long-run-results-live-recovery-df3cec2a63f1.md` records 20 local fake/injected broker iterations and 320 runtime test invocations with zero non-zero exits. The optional adapter read-only passes remain skipped in that runner because `verify-live-recovery.ps1` was not rerun with Binance testnet credentials or an IBKR paper Gateway account.
+**Status (2026-07-08 Sync):** Completed for the default local verification path. The committed result document `docs/results/live-recovery/live-recovery-long-run-results-live-recovery-df3cec2a63f1.md` records 20 local fake/injected broker iterations and 320 runtime test invocations with zero non-zero exits. The optional adapter read-only passes remain skipped in that runner because `verify-live-recovery.ps1` was not rerun with Binance testnet credentials or an IBKR paper Gateway account.
 
 Follow-up broker evidence now exists outside this runner: IBKR paper Gateway ReadOnly/AutoRun/Soak evidence, Binance paper/Testnet soak evidence, and 2026-07-08 multi-broker live-reconciliation gate evidence are documented in their dedicated result files. Those artifacts strengthen the broader paper/testnet readiness trail, but they do not change this plan's direct acceptance record: the live recovery long-run gate is local-first, and adapter recovery remains opt-in for this script.
 
@@ -17,7 +17,7 @@ Follow-up broker evidence now exists outside this runner: IBKR paper Gateway Rea
 - Do not touch real broker credentials or submit orders in the default verification path.
 - Default verification must run with local fake/injected broker tests only.
 - Binance/IBKR adapter recovery checks are read-only and opt-in; run only when the operator passes the explicit switch.
-- Verification outputs must be written under `data/live-recovery-verification/` and must not include secrets.
+- Verification outputs must be written under `data/verification/live-recovery/` and must not include secrets.
 - Process isolation design is out of scope until this verification produces credible results.
 
 ---
@@ -31,19 +31,19 @@ Follow-up broker evidence now exists outside this runner: IBKR paper Gateway Rea
 | Recovered executions de-dup | `live_runtime_adds_new_recovered_executions_to_existing_fills`, `live_runtime_does_not_decrease_local_filled_qty_when_recovery_lacks_executions` | Add duplicate-trade-id stress case if a gap appears | Re-running recovery does not duplicate fills or reduce local filled qty |
 | Broker snapshot drift | cash/position snapshot tests plus reconciliation drift tests | Repeat across long-run iterations | Cash and position snapshots are recorded; drift events appear only when expected |
 | Alert delivery retry/cooldown | file/webhook/multi/retry/cooldown tests | Repeat across long-run iterations | Delivery logs record sent/failed status; cooldown suppresses duplicate file alerts |
-| Binance adapter read-only recovery | skipped by default | `scripts/binance-paper-recover-smoke.ps1 -SkipNetwork` or with explicit network switch | Config/preflight/migration pass; network recovery runs only when opted in |
-| IBKR adapter read-only recovery | skipped by default | `scripts/ibkr-paper-test-guide.ps1 -Stage ReadOnly` with real paper account | Read-only open orders/executions/reconcile/recover commands complete |
+| Binance adapter read-only recovery | skipped by default | `scripts/binance/binance-paper-recover-smoke.ps1 -SkipNetwork` or with explicit network switch | Config/preflight/migration pass; network recovery runs only when opted in |
+| IBKR adapter read-only recovery | skipped by default | `scripts/ibkr/ibkr-paper-test-guide.ps1 -Stage ReadOnly` with real paper account | Read-only open orders/executions/reconcile/recover commands complete |
 
 ## File Structure
 
-- Create: `scripts/verify-live-recovery.ps1`
+- Create: `scripts/check/verify-live-recovery.ps1`
   - Runs the local fake/injected broker recovery matrix for N iterations.
   - Captures one log per test group per iteration.
   - Writes `summary.json` with iteration status, command, exit code, and log path.
   - Supports opt-in adapter recovery checks without enabling order submission.
 - Create: `docs/superpowers/plans/2026-06-30-live-recovery-long-run-verification.md`
   - Defines the verification matrix, execution steps, acceptance gates, and decision criteria for process isolation.
-- Future result document: `docs/live-recovery-long-run-results-<run-id>.md`
+- Future result document: `docs/results/live-recovery/live-recovery-long-run-results-<run-id>.md`
   - Summarizes observed failures, flake rate, recovery behavior, adapter coverage, and the go/no-go decision for process isolation.
 
 ---
@@ -51,11 +51,11 @@ Follow-up broker evidence now exists outside this runner: IBKR paper Gateway Rea
 ### Task 1: Add Repeatable Live Recovery Verification Script
 
 **Files:**
-- Create: `scripts/verify-live-recovery.ps1`
+- Create: `scripts/check/verify-live-recovery.ps1`
 
 **Interfaces:**
 - Consumes: existing runtime test names in `crates/runtime/tests/live_runtime_tests.rs`.
-- Produces: `data/live-recovery-verification/<verification_id>/summary.json`.
+- Produces: `data/verification/live-recovery/<verification_id>/summary.json`.
 
 - [x] **Step 1: Create the script with safe defaults**
 
@@ -97,7 +97,7 @@ Expected: each group exits `0`; failures stop the run after the current group su
 - [x] **Step 4: Add optional Binance read-only recovery check**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-recover-smoke.ps1 -SkipNetwork
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-recover-smoke.ps1 -SkipNetwork
 ```
 
 Expected: runs only when `-IncludeBinanceReadOnly` is passed. If `-IncludeBinanceNetwork` is also passed, omit `-SkipNetwork`.
@@ -105,7 +105,7 @@ Expected: runs only when `-IncludeBinanceReadOnly` is passed. If `-IncludeBinanc
 - [x] **Step 5: Add optional IBKR read-only recovery check**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-test-guide.ps1 -Stage ReadOnly -AccountId DU... -GatewayHost 127.0.0.1 -Port 7497 -ClientId 1
 ```
 
 Expected: runs only when `-IncludeIbkrReadOnly` is passed and `-IbkrAccountId` is a non-placeholder paper account id.
@@ -113,7 +113,7 @@ Expected: runs only when `-IncludeIbkrReadOnly` is passed and `-IbkrAccountId` i
 - [x] **Step 6: Run local smoke verification**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1
 ```
 
 Expected: `status = "completed"` in the generated summary.
@@ -123,8 +123,8 @@ Expected: `status = "completed"` in the generated summary.
 ### Task 2: Execute Local Fake/Injected Broker Long Run
 
 **Files:**
-- Read: `data/live-recovery-verification/<verification_id>/summary.json`
-- Create: `docs/live-recovery-long-run-results-<verification_id>.md`
+- Read: `data/verification/live-recovery/<verification_id>/summary.json`
+- Create: `docs/results/live-recovery/live-recovery-long-run-results-<verification_id>.md`
 
 **Interfaces:**
 - Consumes: JSON summary from Task 1.
@@ -133,7 +133,7 @@ Expected: `status = "completed"` in the generated summary.
 - [x] **Step 1: Run the long-run matrix**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
 ```
 
 Expected: all local groups pass for all 20 iterations.
@@ -141,7 +141,7 @@ Expected: all local groups pass for all 20 iterations.
 - [x] **Step 2: Inspect the summary**
 
 ```powershell
-Get-Content .\data\live-recovery-verification\<verification_id>\summary.json
+Get-Content .\data\verification\live-recovery\<verification_id>\summary.json
 ```
 
 Expected: `iterations_completed = 20`, `status = "completed"`, no group with non-zero `exit_code`.
@@ -178,7 +178,7 @@ Live recovery is stable enough to start a focused Live process isolation design 
 - [x] **Step 4: Commit**
 
 ```powershell
-git add scripts/verify-live-recovery.ps1 docs/superpowers/plans/2026-06-30-live-recovery-long-run-verification.md docs/live-recovery-long-run-results-<verification_id>.md
+git add scripts/check/verify-live-recovery.ps1 docs/superpowers/plans/2026-06-30-live-recovery-long-run-verification.md docs/results/live-recovery/live-recovery-long-run-results-<verification_id>.md
 git commit -m "test: add live recovery long-run verification"
 ```
 
@@ -189,8 +189,8 @@ git commit -m "test: add live recovery long-run verification"
 Status: deferred by design for this pass. The result document records Binance and IBKR adapter coverage as skipped because no operator-provided testnet credentials, paper account, or running Gateway were supplied.
 
 **Files:**
-- Read: `data/live-recovery-verification/<verification_id>/summary.json`
-- Modify: `docs/live-recovery-long-run-results-<verification_id>.md`
+- Read: `data/verification/live-recovery/<verification_id>/summary.json`
+- Modify: `docs/results/live-recovery/live-recovery-long-run-results-<verification_id>.md`
 
 **Interfaces:**
 - Consumes: generated configs and databases from existing Binance/IBKR scripts.
@@ -199,7 +199,7 @@ Status: deferred by design for this pass. The result document records Binance an
 - [ ] **Step 1: Run Binance safe read-only path without network recovery**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly
 ```
 
 Expected: Binance config/preflight/migration pass; `recover_network = "skipped"`.
@@ -207,7 +207,7 @@ Expected: Binance config/preflight/migration pass; `recover_network = "skipped"`
 - [ ] **Step 2: Run Binance network recovery only when testnet credentials are intentionally available**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork
 ```
 
 Expected: `binance-paper-recover` completes against testnet read-only recovery path.
@@ -215,7 +215,7 @@ Expected: `binance-paper-recover` completes against testnet read-only recovery p
 - [ ] **Step 3: Run IBKR read-only path only with a paper account and running Gateway**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeIbkrReadOnly -IbkrAccountId DU... -IbkrGatewayHost 127.0.0.1 -IbkrPort 7497 -IbkrClientId 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeIbkrReadOnly -IbkrAccountId DU... -IbkrGatewayHost 127.0.0.1 -IbkrPort 7497 -IbkrClientId 1
 ```
 
 Expected: IBKR read-only, open orders, executions, reconcile, recover, and next-order-id commands complete without order submission.
@@ -228,10 +228,10 @@ Record each adapter as `pass`, `fail`, or `skipped`, with the summary path and a
 
 ## Acceptance Gates
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1`
-- Optional: `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly`
-- Optional: `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeIbkrReadOnly -IbkrAccountId DU...`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1`
+- Optional: `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly`
+- Optional: `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeIbkrReadOnly -IbkrAccountId DU...`
 
 ## Risks and Controls
 

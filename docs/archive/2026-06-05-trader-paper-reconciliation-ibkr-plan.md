@@ -24,8 +24,8 @@
 
 1. [x] 支持 `[broker] kind = "ibkr"` 作为 `interactive_brokers` 的配置别名。
 2. [x] 新增 `configs/paper/ibkr_aapl_1d_parquet.toml`，固定使用 Parquet 股票行情。
-3. [x] 新增 `scripts/ibkr-paper-run.ps1`：把样例 AAPL CSV 转 Parquet，创建 per-run config/SQLite/report，执行 preflight、paper-run、report。
-4. [x] 验证：`cargo test -p config`、`powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1`。
+3. [x] 新增 `scripts/ibkr/ibkr-paper-run.ps1`：把样例 AAPL CSV 转 Parquet，创建 per-run config/SQLite/report，执行 preflight、paper-run、report。
+4. [x] 验证：`cargo test -p config`、`powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-run.ps1`。
 
 ## 阶段 3：IBKR Read-only Preflight
 

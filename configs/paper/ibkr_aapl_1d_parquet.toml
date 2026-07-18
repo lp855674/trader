@@ -3,7 +3,7 @@ mode = "paper"
 run_id = "ibkr-aapl-1d-paper"
 
 [database]
-url = "sqlite://data/ibkr-aapl-1d-paper.sqlite"
+url = "sqlite://data/ibkr/databases/ibkr-aapl-1d-paper.sqlite"
 
 [data]
 source = "parquet"

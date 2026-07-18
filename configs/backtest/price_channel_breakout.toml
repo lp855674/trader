@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-price-channel-breakout"
 
 [database]
-url = "sqlite://data/trader-price-channel-breakout.sqlite"
+url = "sqlite://data/backtest/trader-price-channel-breakout.sqlite"
 
 [data]
 source = "csv"

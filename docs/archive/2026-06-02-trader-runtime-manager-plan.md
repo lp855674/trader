@@ -17,7 +17,7 @@
 - `GET /api/v1/runs/{run_id}/status` returns persisted status.
 - `POST /api/v1/runs/{run_id}/cancel` currently marks an existing run `cancelled`, but cannot interrupt an active synchronous request.
 - `PaperRuntime::run_bars` owns the bar loop and writes the final `completed` run record.
-- `scripts/server-smoke.ps1` starts a real server with temp target/db and runs `scripts/rest-smoke.ps1`.
+- `scripts/smoke/server-smoke.ps1` starts a real server with temp target/db and runs `scripts/smoke/rest-smoke.ps1`.
 
 ## Execution Rules
 
@@ -53,7 +53,7 @@ Modify:
 - `crates/api/src/state.rs`: store `RuntimeManager`.
 - `crates/api/src/api.rs`: start paper in background, return accepted response, cancel active runs.
 - `crates/api/tests/backtest_api_tests.rs`: update POST expectations and add active cancellation test.
-- `scripts/rest-smoke.ps1`: poll status after accepted paper run.
+- `scripts/smoke/rest-smoke.ps1`: poll status after accepted paper run.
 - `README.md`: document async paper run start and status polling.
 - `tech.md`: document runtime manager and cancellation semantics.
 - `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`: track execution.
@@ -948,14 +948,14 @@ git commit -m "feat: cancel active paper runs"
 ### Task 5: Smoke Scripts and Documentation
 
 **Files:**
-- Modify: `scripts/rest-smoke.ps1`
+- Modify: `scripts/smoke/rest-smoke.ps1`
 - Modify: `README.md`
 - Modify: `tech.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md`
 
 - [x] **Step 1: Update REST smoke for async paper start**
 
-Modify `scripts/rest-smoke.ps1` after `POST /api/v1/paper-runs`:
+Modify `scripts/smoke/rest-smoke.ps1` after `POST /api/v1/paper-runs`:
 
 ```powershell
 $paper = Invoke-RestMethod -Method Post "$baseUrl/api/v1/paper-runs"
@@ -977,7 +977,7 @@ Keep the existing fills, balances, snapshots, and metrics assertions after the p
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\server-smoke.ps1
 ```
 
 Expected: PASS with summary containing `orders = 1`, `fills = 1`, and non-empty snapshots.
@@ -1027,7 +1027,7 @@ Expected:
 Commit:
 
 ```powershell
-git add scripts/rest-smoke.ps1 README.md tech.md docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md
+git add scripts/smoke/rest-smoke.ps1 README.md tech.md docs/superpowers/plans/2026-06-02-trader-runtime-manager-plan.md
 git commit -m "docs: document runtime manager workflow"
 ```
 
@@ -1042,7 +1042,7 @@ This phase is complete when:
 - `POST /api/v1/runs/{run_id}/cancel` signals an active task and the paper loop observes cancellation.
 - Cancelled active paper runs persist `cancelled` and are not overwritten to `completed`.
 - Completed runs are not changed by a late cancel request.
-- `scripts/server-smoke.ps1` still passes against a real `trader-server`.
+- `scripts/smoke/server-smoke.ps1` still passes against a real `trader-server`.
 - `cargo fmt --all -- --check` passes.
 - `cargo check --workspace --locked` passes.
 - `cargo test --workspace` passes.

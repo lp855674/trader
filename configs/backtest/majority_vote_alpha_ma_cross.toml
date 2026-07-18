@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-majority-vote-alpha-ma-cross"
 
 [database]
-url = "sqlite://data/trader-majority-vote-alpha.sqlite"
+url = "sqlite://data/backtest/trader-majority-vote-alpha.sqlite"
 
 [data]
 source = "csv"

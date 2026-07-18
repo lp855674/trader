@@ -951,7 +951,7 @@ cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace
 cargo run -p trader-cli -- paper-run --config configs/backtest/ma_cross.toml
-powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\server-smoke.ps1
 Get-ChildItem crates -Directory | ForEach-Object { Join-Path $_.FullName 'src\lib.rs' } | Where-Object { Test-Path $_ }
 rg "= \{ path =" apps crates -g Cargo.toml
 ```

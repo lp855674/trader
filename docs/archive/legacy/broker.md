@@ -561,7 +561,7 @@ Binance signed 请求不依赖本机时钟直接签名；adapter 会先读取 Sp
 只读 smoke：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-smoke.ps1
 ```
 
 该脚本会复制临时 config 并使用临时 SQLite，执行 `check-config`、`paper-preflight`、`migrate` 和 `binance-paper-readonly`，不会发送订单。无网络环境可追加 `-SkipNetwork` 只验证配置、凭证环境变量和 SQLite migration。
@@ -601,24 +601,24 @@ event_store: binance.testnet_order.started / completed
 
 ```powershell
 trader binance-paper-klines --config configs/paper/binance_btcusdt_1m_parquet.toml --symbol BTCUSDT --interval 1m --limit 100 --format parquet --output datasets/binance/btcusdt_1m.parquet
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-refresh-klines.ps1 -Limit 100
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-refresh-klines.ps1 -Limit 100
 ```
 
-正式配置 `configs/paper/binance_btcusdt_1m_parquet.toml` 固定使用 `[data] source = "parquet"` 与 `datasets/binance/btcusdt_1m.parquet`；`scripts/binance-refresh-klines.ps1` 只刷新数据并执行 preflight，不运行策略、不下单。Parquet 使用现有 `data::write_bars_to_parquet` / Polars 写入，字段为 `ts_ms,open,high,low,close,volume`。CSV 仅作为兼容格式，需显式加 `--format csv`。对应 smoke 默认走 Parquet：
+正式配置 `configs/paper/binance_btcusdt_1m_parquet.toml` 固定使用 `[data] source = "parquet"` 与 `datasets/binance/btcusdt_1m.parquet`；`scripts/binance/binance-refresh-klines.ps1` 只刷新数据并执行 preflight，不运行策略、不下单。Parquet 使用现有 `data::write_bars_to_parquet` / Polars 写入，字段为 `ts_ms,open,high,low,close,volume`。CSV 仅作为兼容格式，需显式加 `--format csv`。对应 smoke 默认走 Parquet：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-klines-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-klines-smoke.ps1
 ```
 
 真实行情 runner：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-real-run.ps1 -Limit 100 -RunPaper
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-run.ps1 -Limit 1000
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-real-run.ps1 -Limit 100
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-real-run.ps1 -Limit 100 -RunPaper
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-run.ps1 -Limit 1000
 ```
 
-`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有追加 `-ConfirmTestnetOrder` 时才会打开 Binance Spot Testnet 策略送单。`binance-paper-run.ps1` 开闸送单时禁止同时使用 `-SkipRefresh`，并会读取一次 Spot Testnet ticker price 写入运行输出，避免用旧 Parquet 数据直接送单；如果 testnet paper-run 因 broker 错误失败，脚本会先 best-effort 执行 recover 与 open order 巡检，再保留原始失败。
+`binance-paper-real-run.ps1` 使用临时 config/DB，适合 smoke。`binance-paper-run.ps1` 使用正式 Parquet 配置刷新 `datasets/binance/btcusdt_1m.parquet`，并为每次运行在 `data/binance/paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv` 和 `report.html`，执行 paper-run、report、recover 和 open order 巡检。两者默认都不下单；只有追加 `-ConfirmTestnetOrder` 时才会打开 Binance Spot Testnet 策略送单。`binance-paper-run.ps1` 开闸送单时禁止同时使用 `-SkipRefresh`，并会读取一次 Spot Testnet ticker price 写入运行输出，避免用旧 Parquet 数据直接送单；如果 testnet paper-run 因 broker 错误失败，脚本会先 best-effort 执行 recover 与 open order 巡检，再保留原始失败。
 
 `binance-paper-run.ps1` 成功完成后还会运行只读对账命令，并写入 `summary.json`。该文件记录 run id、配置、SQLite、Parquet、report 路径、ticker price、order_submit 状态、recover/open-orders 输出和 reconciliation 输出。只读对账命令：
 
@@ -654,18 +654,18 @@ Paper runtime 会为自动订单写入订单生命周期事件：`paper.order.su
 Binance soak 验证脚本用于多轮执行固定 runner，并汇总每轮 transcript、summary.json、open order 巡检和 reconciliation：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 3 -Limit 100
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -ConfirmTestnetOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-soak.ps1 -Iterations 3 -Limit 100
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -ConfirmTestnetOrder
 ```
 
-该脚本默认不下单；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。任一轮失败或 `open_orders != 0` 都会让 soak 失败，并在 `data/binance-paper-soak/{soak_id}/summary.json` 保留证据。
+该脚本默认不下单；只有 `-ConfirmTestnetOrder` 会打开 Binance Spot Testnet 策略送单。任一轮失败或 `open_orders != 0` 都会让 soak 失败，并在 `data/binance/paper-soak/{soak_id}/summary.json` 保留证据。
 
 Binance soak 的 iteration summary 现在直接继承每轮 runner summary 的 `failure_class`、`halt_reason`、`risk_rejections`、`open_orders_remaining` 和 cancel-all 结果，因此 `daily_loss_limit`、`max_order_attempts`、`max_order_failures`、`stale_market_data`、`price_deviation`、`trading_session_closed`、`operator_kill_switch`、`open_orders_remaining` 都会被明确分类，而不是只看控制台退出码。
 
 自动策略送单 smoke 可用：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-auto-smoke.ps1 -ConfirmTestnetOrder
 ```
 
 该脚本读取 Binance Spot Testnet 当前 BTCUSDT ticker，生成临时 BTCUSDT bars、临时配置和临时 SQLite，然后打开 `order_submit_enabled = true` 执行 `paper-run`。完成 report 后会查询 BTCUSDT open orders，确认没有遗留挂单。没有 `-ConfirmTestnetOrder` 时会拒绝执行。
@@ -681,7 +681,7 @@ trader binance-paper-recover --config configs/paper/binance_testnet.toml
 恢复 smoke 可用：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-recover-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-recover-smoke.ps1
 ```
 
 该脚本使用临时配置和临时 SQLite，执行 `check-config`、`paper-preflight`、`migrate` 与 `binance-paper-recover`。它不会打开 `order_submit_enabled`，也不会提交新订单；无网络环境可追加 `-SkipNetwork` 只验证配置和 migration。
@@ -695,7 +695,7 @@ trader binance-paper-open-orders --config configs/paper/binance_testnet.toml --s
 该命令只查询 Binance Spot Testnet 当前 symbol 的 open orders，不会下单或撤单。对应 smoke：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-open-orders-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-open-orders-smoke.ps1
 ```
 
 如确认需要清理 testnet 挂单，必须显式加确认开关：
@@ -711,10 +711,10 @@ trader binance-paper-cancel-open-orders --config configs/paper/binance_testnet.t
 股票 paper 方向固定为 IBKR。当前 IBKR AAPL Parquet runner 用来验证股票链路的配置、Parquet 数据、SQLite、paper runtime 和报告归档；默认不连接 IBKR TWS / Gateway，也不提交 IBKR paper 订单：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-run.ps1
 ```
 
-固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr-paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
+固定配置为 `configs/paper/ibkr_aapl_1d_parquet.toml`，使用 `[broker] kind = "ibkr"`、`mode = "paper"`、`host = "127.0.0.1"`、`port = 7497`、`client_id = 1`、`order_submit_enabled = false`，行情文件为 `datasets/ibkr/aapl_1d.parquet`。脚本会把 `datasets/sample/aapl_1d.csv` 转成 Parquet 作为本地验证输入，并为每次运行在 `data/ibkr/paper-runs/{run_id}/` 生成独立 `config.toml`、`run.sqlite`、`report.txt`、`report.csv`、`report.html` 和 `summary.json`。
 
 `ibkr-paper-run.ps1` 的 `summary.json` 包含顶层 `status` 和 `failure_class`。默认本地 dry-run 不连接 Gateway，`order_submit = disabled` 且 `failure_class = ok`；开闸后脚本会先做 Gateway TCP preflight，再把 post-run Gateway checks 写入 `gateway_checks.status`、`gateway_checks.failure_class`、`gateway_checks.failed_check` 和逐项 `checks`。如果 preflight 或 post-run 只读巡检失败，脚本会先写 summary，再以非零退出，避免真实 Gateway 长跑失败只留控制台 warning。
 
@@ -740,7 +740,7 @@ trader risk-kill-switch --config <run-config> --run-id <run_id> --cancel-open-or
 真实 IBKR paper 自动下单必须显式开闸：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId DU12345 -ConfirmIbkrPaperOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-run.ps1 -AccountId DU12345 -ConfirmIbkrPaperOrder
 ```
 
 `-ConfirmIbkrPaperOrder` 会把临时 run config 的 `order_submit_enabled` 改为 `true`，先确认 TWS / IB Gateway socket 可达，再执行 `paper-preflight` 连接 Gateway 并校验账号，然后让 `paper-run` 注入 `IbkrPaperOrderExecutor` 发送股票 LMT paper order。开闸时必须提供真实 `-AccountId DU...` 或提前修改配置中的 `[paper] account_id`；默认占位 `DU000000` 会被脚本拒绝。可用 `-GatewayHost`、`-Port`、`-ClientId` 覆盖 Gateway 连接参数。脚本成功后会运行 read-only Gateway checks，并把输出写入 `summary.json`；如果自动下单失败，也会 best-effort 执行 read-only 巡检后保留原始失败。
@@ -748,10 +748,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-run.ps1 -AccountId
 完整测试步骤脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-test-guide.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-test-guide.ps1
 ```
 
-该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。`-Stage ReadOnly` 会为每次验证生成 `data/ibkr-paper-test/read-only-{id}/`，其中包含临时 `config.toml`、每个只读命令的 `.log` 和 `summary.json`。summary 记录 `status`、`failure_class`、`failed_check`、Gateway 连接参数和 6 个 read-only check 的退出码，方便没有 Gateway 时也能留下可排查证据。
+该脚本默认只打印测试计划，不连接 Gateway、不下单；账号准备好后可用 `-Stage ReadOnly`、`-Stage TinyOrder`、`-Stage AutoRun` 分阶段执行。`-Stage ReadOnly` 会为每次验证生成 `data/ibkr/paper-test/read-only-{id}/`，其中包含临时 `config.toml`、每个只读命令的 `.log` 和 `summary.json`。summary 记录 `status`、`failure_class`、`failed_check`、Gateway 连接参数和 6 个 read-only check 的退出码，方便没有 Gateway 时也能留下可排查证据。
 
 常见 `failure_class`：
 
@@ -767,22 +767,22 @@ iteration_failed
 多轮 soak 验证用于连续跑多次 runner，检查稳定性和每轮 `summary.json`。默认不连接 Gateway、不下单：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -SkipRefresh
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU12345 -ConfirmIbkrPaperOrder
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-soak.ps1 -Iterations 3 -SkipRefresh
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-paper-soak.ps1 -Iterations 3 -AccountId DU12345 -ConfirmIbkrPaperOrder
 ```
 
-soak 输出位于 `data/ibkr-paper-soak/{soak_id}/summary.json`。顶层字段包含 `status`、`failure_class`、`failed_iteration` 和 `first_failed_log`；每轮也记录 `status`、`failure_class`、runner summary、open order 巡检、reconcile 与 recover 摘要。真实 Gateway 长跑时，如果某轮命令失败会归类为 `gateway_unreachable`、`account_mismatch` 或 `iteration_failed`；如果开闸下单后仍有远端 open orders，会归类为 `open_orders_remaining`。
+soak 输出位于 `data/ibkr/paper-soak/{soak_id}/summary.json`。顶层字段包含 `status`、`failure_class`、`failed_iteration` 和 `first_failed_log`；每轮也记录 `status`、`failure_class`、runner summary、open order 巡检、reconcile 与 recover 摘要。真实 Gateway 长跑时，如果某轮命令失败会归类为 `gateway_unreachable`、`account_mismatch` 或 `iteration_failed`；如果开闸下单后仍有远端 open orders，会归类为 `open_orders_remaining`。
 
 IBKR soak 每轮现在同样会保存 `halt_reason`、`risk_rejections`、`open_orders_remaining`、`cancel_all_attempted`、`cancel_all_succeeded` 和 `reconciliation_status`。因此 hard-stop 风控失败和 Gateway 失败会在同一个证据链里落盘。
 
 本地 paper readiness 门禁用于账号未就绪时的无网络回归检查：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\paper-readiness.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\paper-readiness.ps1
 ```
 
 默认会跑 cargo 格式/检查/测试、Binance 无网络 smoke，以及 IBKR 本地 test plan + dry-run soak；不会连接真实 Gateway，也不会下单。可用 `-SkipCargo`、`-SkipBinance`、`-SkipIbkr` 缩小范围。
-完整门禁项、真实 Gateway 验证步骤和 `failure_class` 排查见 `paper-readiness-runbook.md`。
+完整门禁项、真实 Gateway 验证步骤和 `failure_class` 排查见 `runbooks/paper-readiness-runbook.md`。
 
 IBKR read-only preflight：
 

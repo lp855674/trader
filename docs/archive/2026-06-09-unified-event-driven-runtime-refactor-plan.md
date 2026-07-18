@@ -13,7 +13,7 @@
 ### Task 1: Enforce Database Boundary
 
 **Files:**
-- Create: `scripts/check-db-boundary.ps1`
+- Create: `scripts/check/check-db-boundary.ps1`
 - Modify: `crates/storage/src/db.rs`
 - Modify: `crates/storage/src/repositories.rs`
 - Modify: `crates/storage/src/storage.rs`
@@ -21,11 +21,11 @@
 - Modify: `crates/api/Cargo.toml`
 - Modify: `crates/runtime/src/live.rs`
 - Modify: `crates/runtime/Cargo.toml`
-- Test: `scripts/check-db-boundary.ps1`
+- Test: `scripts/check/check-db-boundary.ps1`
 
 - [x] **Step 1: Write the failing boundary check**
 
-Create `scripts/check-db-boundary.ps1`:
+Create `scripts/check/check-db-boundary.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -54,7 +54,7 @@ Write-Host "Database boundary check passed."
 
 - [x] **Step 2: Run the boundary check to verify it fails**
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
 
 Expected: FAIL, listing `crates/api` and `crates/runtime` references to `sqlx`.
 
@@ -68,7 +68,7 @@ Replace `sqlx::Error` signatures in `api` and `runtime` with `storage::StorageRe
 
 - [x] **Step 5: Run the boundary check to verify it passes**
 
-Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
+Run: `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
 
 Expected: PASS with `Database boundary check passed.`
 

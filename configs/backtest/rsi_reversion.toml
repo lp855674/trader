@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-rsi-reversion"
 
 [database]
-url = "sqlite://data/trader-rsi-reversion.sqlite"
+url = "sqlite://data/backtest/trader-rsi-reversion.sqlite"
 
 [data]
 source = "csv"

@@ -54,7 +54,7 @@ V1 is complete only when all of these are true:
 - Modify: `crates/oms/src/oms.rs`, `crates/oms/tests/oms_tests.rs` for report idempotency/recovery.
 - Modify: `crates/broker/src/broker.rs`, `crates/broker/tests/broker_tests.rs` for connector surfaces and fake adapters.
 - Create: `crates/live/` or add `LiveRuntime` in `crates/runtime` after checking crate direction.
-- Modify: `scripts/mvp-smoke.ps1` or create `scripts/v1-smoke.ps1` for V1 acceptance.
+- Modify: `scripts/smoke/mvp-smoke.ps1` or create `scripts/smoke/v1-smoke.ps1` for V1 acceptance.
 - Modify: `tech.md`, `docs/api.md`, `docs/database.md`, `docs/events.md`, `docs/roadmap.md` only after implementation changes.
 
 ## Task 1: V1 Metrics
@@ -170,13 +170,13 @@ V1 is complete only when all of these are true:
 
 ## Task 14: V1 Smoke And Documentation
 
-- [ ] Create `scripts/v1-smoke.ps1`.
+- [ ] Create `scripts/smoke/v1-smoke.ps1`.
 - [ ] Script must validate CLI, REST, WebSocket, SQLite, Parquet, replay control, report export, and fake broker/live surfaces.
 - [ ] Update `tech.md` and docs to distinguish completed V1 from future production/live-real-money work.
 - [ ] Run `cargo fmt --all -- --check`.
 - [ ] Run `cargo check --workspace --locked`.
 - [ ] Run `cargo test --workspace`.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1`.
+- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1`.
 - [ ] Commit with `docs: document v1 completion`.
 
 ## Current Baseline

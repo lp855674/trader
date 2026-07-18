@@ -53,7 +53,7 @@ Create or modify these paths:
 - Create: `configs/` for example TOML configs.
 - Create: `migrations/` for SQLite schema.
 - Create: `datasets/` for sample data and local generated data.
-- Create: `scripts/verify.ps1` and `scripts/verify` for repeatable checks.
+- Create: `scripts/check/verify.ps1` and `scripts/check/verify` for repeatable checks.
 
 ## Execution Rules
 
@@ -77,8 +77,8 @@ Create or modify these paths:
 - Create: `apps/trader-server/src/main.rs`
 - Create: `crates/*/Cargo.toml`
 - Create: `crates/*/src/lib.rs`
-- Create: `scripts/verify.ps1`
-- Create: `scripts/verify`
+- Create: `scripts/check/verify.ps1`
+- Create: `scripts/check/verify`
 
 - [x] **Step 1: Replace root workspace manifest**
 
@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
 
 - [x] **Step 5: Add verification scripts**
 
-`scripts/verify.ps1`:
+`scripts/check/verify.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -273,7 +273,7 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-`scripts/verify`:
+`scripts/check/verify`:
 
 ```bash
 #!/usr/bin/env bash
@@ -2303,7 +2303,7 @@ Milestone 1, workspace foundation:
 
 - `cargo check --workspace` passes.
 - All target apps and crates exist.
-- `scripts/verify.ps1` and `scripts/verify` run the same checks.
+- `scripts/check/verify.ps1` and `scripts/check/verify` run the same checks.
 
 Milestone 2, domain and event foundation:
 

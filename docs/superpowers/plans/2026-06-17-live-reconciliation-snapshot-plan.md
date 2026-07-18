@@ -130,10 +130,10 @@ Every task must preserve:
 - `cargo test -p backtest`
 - `cargo test -p algorithm`
 - `cargo test -p api`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1`
-- `bash ./scripts/check-db-boundary`
-- `bash ./scripts/check-storage-dto-boundary`
-- `bash ./scripts/check-api-read-model-boundary`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1`
+- `bash ./scripts/check/check-db-boundary`
+- `bash ./scripts/check/check-storage-dto-boundary`
+- `bash ./scripts/check/check-api-read-model-boundary`
 
 New gates:
 
@@ -542,7 +542,7 @@ trader reconciliation --run-id <id>
 
 - API tests for all 3 endpoints.
 - `docs/api.md` documentation.
-- `bash ./scripts/check-api-read-model-boundary` passes.
+- `bash ./scripts/check/check-api-read-model-boundary` passes.
 
 - [x] **Step 5: Run full acceptance**
 
@@ -550,8 +550,8 @@ trader reconciliation --run-id <id>
 cargo test -p api
 cargo test -p paper
 cargo test -p algorithm
-powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
-bash ./scripts/check-api-read-model-boundary
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: all pass.

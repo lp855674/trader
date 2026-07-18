@@ -17,10 +17,16 @@
 | `tech/alpha.md` | AlphaModel、信号组合、冲突处理和确定性聚合。 |
 | `tech/broker.md` | Broker trait、fake/simulated、Binance Spot Testnet、IBKR paper adapter。 |
 | `web-admin-api.md` | Web 管理页页面映射、常用接口、轮询与实时更新约定。 |
-| `paper-readiness-runbook.md` | 本地 paper-readiness 门禁、IBKR Gateway 验证步骤和 failure_class 排查。 |
+| `runbooks/` | Paper readiness、live reconciliation 与 production reconciliation 运维手册。 |
+| `templates/` | Market rules、snapshot recovery 与 production reconciliation 结果模板。 |
 | `分析.md` | 当前实现差距分析、生产化差距跟踪表和下一步验证优先级。 |
 | `superpowers/plans/2026-07-03-ibkr-paper-gateway-long-run-verification.md` | IBKR paper Gateway ReadOnly / AutoRun / Soak 长跑验证计划。 |
-| `ibkr-paper-gateway-long-run-results-paper-readiness-afc967981176.md` | IBKR Gateway Local readiness / ReadOnly / AutoRun / Soak 验证结果。 |
+| `results/ibkr/` | IBKR paper、成交与 production reconciliation 验证结果。 |
+| `results/binance/` | Binance paper 与 live snapshot 验证结果。 |
+| `results/live-reconciliation/` | Live reconciliation gate 的本地、回放与只读验证结果。 |
+| `results/live-recovery/` | Live recovery 与 multi-broker snapshot recovery 验证结果。 |
+| `results/market-rules/` | Market rules runtime governance 验证结果。 |
+| `results/production-reconciliation/` | Production reconciliation 验收摘要。 |
 | `roadmap.md` | 阶段目标、MVP 范围、发布计划。 |
 | `archive/legacy/*.md` | 已归档旧版设计文档，仅作历史参考，不作为当前实现真源。 |
 

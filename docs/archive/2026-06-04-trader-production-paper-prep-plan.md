@@ -19,7 +19,7 @@
 - CLI 与 REST 启动 paper/live surface 时使用同一套配置映射。
 - Paper runtime 可以用 paced bar stream 进行更接近在线 paper 的本地验证，并支持取消。
 - Fake broker 提供 paper 测试需要的订单查询、撤单、账户状态接口。
-- 提供 `scripts/paper-smoke.ps1`，一条命令完成 migrate、paper start、status/control、report、broker/account 查询验证。
+- 提供 `scripts/smoke/paper-smoke.ps1`，一条命令完成 migrate、paper start、status/control、report、broker/account 查询验证。
 - `cargo fmt --all -- --check`、`cargo check --workspace --locked`、相关 crate 测试和 smoke 通过。
 
 ## 阶段 1：配置真源
@@ -48,9 +48,9 @@
 ## 阶段 4：Paper Smoke
 
 1. 新增 `configs/paper/local.toml` 或更新现有样例，覆盖风险、broker、paper pacing。
-2. 新增 `scripts/paper-smoke.ps1`：迁移、启动 server、发起 paper run、查询 status/events/orders/fills/account/report、验证 broker surface。
+2. 新增 `scripts/smoke/paper-smoke.ps1`：迁移、启动 server、发起 paper run、查询 status/events/orders/fills/account/report、验证 broker surface。
 3. 文档写清 paper 测试启动步骤、失败排查、当前不包含真实券商网络。
-4. 验证：`powershell -ExecutionPolicy Bypass -File .\scripts\paper-smoke.ps1`。
+4. 验证：`powershell -ExecutionPolicy Bypass -File .\scripts\smoke\paper-smoke.ps1`。
 
 ## 阶段 5：进入真实 Paper 前检查
 

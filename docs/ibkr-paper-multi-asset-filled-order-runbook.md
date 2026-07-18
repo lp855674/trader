@@ -11,7 +11,7 @@ It covers:
 
 The scripts and fake-client contracts are locally verified. Real Gateway acceptance results for
 the tested AAPL, MSFT, and BSET paper cases are recorded in
-`docs/ibkr-paper-multi-asset-filled-order-results-2026-07-14.md`. This runbook does not establish
+`docs/results/ibkr/ibkr-paper-multi-asset-filled-order-results-2026-07-14.md`. This runbook does not establish
 live-account or live-money readiness.
 
 ## Matrix Input
@@ -50,8 +50,8 @@ id. The config remains authoritative for account, strategy symbol, quantity, and
 With Gateway connected to the paper account:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-matrix.ps1 `
-  -CasesPath .\data\ibkr-filled-order-cases.json `
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-filled-order-matrix.ps1 `
+  -CasesPath .\data\ibkr\fixtures\filled-order-cases.json `
   -AccountId DU... `
   -GatewayHost 127.0.0.1 `
   -Port 4002 `
@@ -60,15 +60,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-matrix.ps1 
 ```
 
 The matrix executes cases sequentially and stops after the first failure. Its aggregate result is
-written under `data/ibkr-filled-order-matrix/<matrix-id>/summary.json`. Each child evidence file
-remains under `data/ibkr-paper-runs/<run-id>/filled-order-evidence-summary.json`.
+written under `data/ibkr/filled-order-matrix/<matrix-id>/summary.json`. Each child evidence file
+remains under `data/ibkr/paper-runs/<run-id>/filled-order-evidence-summary.json`.
 
 ## Multiple Executions
 
 To accept only an order represented by at least two matched Gateway executions:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-filled-order-evidence.ps1 `
   -Config <config> -InputCsv <csv> -OutputParquet <parquet> -RunLabel <asset-label> `
   -AccountId DU... -Port 4002 -ClientId 9 -ConfirmIbkrPaperOrder `
   -MinBrokerExecutions 2 -MinMatchedExecutions 2 -MinExecutionsPerOrder 2
@@ -83,7 +83,7 @@ Execution count and local fill count are intentionally not required to be equal.
 Use explicit thresholds so a partial fill cannot satisfy the default full-fill gate:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-evidence.ps1 `
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-filled-order-evidence.ps1 `
   -Config <config> -InputCsv <csv> -OutputParquet <parquet> -RunLabel <asset-label> `
   -AccountId DU... -Port 4002 -ClientId 9 -ConfirmIbkrPaperOrder `
   -MinFullyFilledOrders 0 -MinPartiallyFilledOrders 1
@@ -100,8 +100,8 @@ After every matrix case has passed independently, repeat the complete matrix to 
 cross-run lifecycle isolation:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-soak.ps1 `
-  -CasesPath .\data\ibkr-filled-order-cases.json `
+powershell -ExecutionPolicy Bypass -File .\scripts\ibkr\ibkr-filled-order-soak.ps1 `
+  -CasesPath .\data\ibkr\fixtures\filled-order-cases.json `
   -Iterations 3 `
   -DelaySeconds 30 `
   -AccountId DU... `
@@ -113,7 +113,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ibkr-filled-order-soak.ps1 `
 
 This command submits paper orders. It requires the explicit confirmation switch, runs one matrix
 at a time, and stops after the first failed iteration. Its aggregate summary is written under
-`data/ibkr-filled-order-soak/<soak-id>/summary.json`; generated summaries, logs, databases, and
+`data/ibkr/filled-order-soak/<soak-id>/summary.json`; generated summaries, logs, databases, and
 account-bearing configs must remain uncommitted.
 
 A passing soak requires:

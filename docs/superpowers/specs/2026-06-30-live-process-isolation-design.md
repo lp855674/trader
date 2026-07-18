@@ -66,7 +66,7 @@ The first implementation should add a `trader-cli live-worker` subcommand rather
 The worker command accepts a local launch file path:
 
 ```powershell
-trader live-worker --launch-file data/live-process/<run_id>/launch.json
+trader live-worker --launch-file data/runtime/live-process/<run_id>/launch.json
 ```
 
 The launch file contains:
@@ -157,8 +157,8 @@ The implementation plan should keep tests local and deterministic:
 - Existing long-run verification script must keep passing:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
 ```
 
 ## Acceptance Criteria

@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-price-channel-reversion"
 
 [database]
-url = "sqlite://data/trader-price-channel-reversion.sqlite"
+url = "sqlite://data/backtest/trader-price-channel-reversion.sqlite"
 
 [data]
 source = "csv"

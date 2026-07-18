@@ -1907,7 +1907,7 @@ async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
     let db = Db::connect("sqlite::memory:").await.unwrap();
     db.migrate().await.unwrap();
     let app = router_with_state(AppState::with_default_run_config(
-        db,
+        db.clone(),
         config_path.to_string_lossy().into_owned(),
     ));
 
@@ -1927,6 +1927,13 @@ async fn post_paper_run_requires_credentials_for_enabled_binance_submit() {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(body.contains("BINANCE_TESTNET_API_KEY"));
+    assert!(
+        db.get_strategy_run("binance-testnet-readonly")
+            .await
+            .unwrap()
+            .is_none(),
+        "a failed startup gate must not leave a running strategy record"
+    );
 
     std::fs::remove_file(config_path).unwrap();
 }

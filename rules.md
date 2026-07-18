@@ -80,21 +80,21 @@
 ## 7) 验证规范
 
 - 代码改动后至少执行：
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`
-  - Linux/macOS：`bash ./scripts/verify`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`
+  - Linux/macOS：`bash ./scripts/check/verify`
   - 至少包含 `cargo check`
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`
-  - Linux/macOS：`bash ./scripts/clippy`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1`
+  - Linux/macOS：`bash ./scripts/check/clippy`
   - 不要直接 `cargo clippy`
 - 触及 DB 边界时额外执行：
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
-  - Linux/macOS：`bash ./scripts/check-db-boundary`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check/check-db-boundary`
 - 触及 storage 写入 DTO、repository command 或持久化调用边界时额外执行：
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
-  - Linux/macOS：`bash ./scripts/check-storage-dto-boundary`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check/check-storage-dto-boundary`
 - 触及 API 查询路由或 response read model 时额外执行：
-  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check-api-read-model-boundary.ps1`
-  - Linux/macOS：`bash ./scripts/check-api-read-model-boundary`
+  - Windows：`powershell -ExecutionPolicy Bypass -File .\scripts\check\check-api-read-model-boundary.ps1`
+  - Linux/macOS：`bash ./scripts/check/check-api-read-model-boundary`
 - 高风险改动（gateway/tools/daemon/db）需要补充风险说明与回滚思路。
 
 ## 8) 风险分级

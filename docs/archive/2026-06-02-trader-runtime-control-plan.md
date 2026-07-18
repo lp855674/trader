@@ -16,7 +16,7 @@
 - `POST /api/v1/paper-runs` runs local paper workflow and persists orders, fills, positions, account balances, portfolio snapshots, metrics inputs, and strategy run record.
 - `POST /api/v1/backtests` runs backtest workflow.
 - `GET /api/v1/runs` and `GET /api/v1/runs/{run_id}` query run records.
-- `scripts/rest-smoke.ps1` validates a running server, but has not been executed in this shell because Windows refused `target` artifact writes/removals for `cargo build -p trader-server`.
+- `scripts/smoke/rest-smoke.ps1` validates a running server, but has not been executed in this shell because Windows refused `target` artifact writes/removals for `cargo build -p trader-server`.
 
 ## Execution Rules
 
@@ -45,7 +45,7 @@ Modify:
 
 Create:
 
-- `scripts/server-smoke.ps1`
+- `scripts/smoke/server-smoke.ps1`
 
 ---
 
@@ -302,12 +302,12 @@ git commit -m "feat: record failed paper runs"
 ### Task 4: Server Smoke Script with Build Workaround
 
 **Files:**
-- Create: `scripts/server-smoke.ps1`
+- Create: `scripts/smoke/server-smoke.ps1`
 - Modify: `README.md`
 
 - [x] **Step 1: Create script**
 
-Create `scripts/server-smoke.ps1`:
+Create `scripts/smoke/server-smoke.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -318,7 +318,7 @@ if (-not $targetDir) {
 }
 
 $env:CARGO_TARGET_DIR = $targetDir
-$env:TRADER_DATABASE_URL = "sqlite://data/server-smoke.sqlite"
+$env:TRADER_DATABASE_URL = "sqlite://data/verification/smoke/server-smoke.sqlite"
 
 $server = Start-Process -FilePath "cargo" `
     -ArgumentList @("run", "-p", "trader-server") `
@@ -338,7 +338,7 @@ try {
     }
     if (-not $ready) { throw "trader-server did not become ready" }
 
-    powershell -ExecutionPolicy Bypass -File ".\scripts\rest-smoke.ps1"
+    powershell -ExecutionPolicy Bypass -File ".\scripts\smoke\rest-smoke.ps1"
 } finally {
     if ($server -and -not $server.HasExited) {
         Stop-Process -Id $server.Id -Force
@@ -351,7 +351,7 @@ try {
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\server-smoke.ps1
 ```
 
 Expected:
@@ -366,7 +366,7 @@ Result: Passed locally with `signals=1`, `orders=1`, `fills=1`, `balances=1`, `s
 Update README to include:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\server-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\server-smoke.ps1
 ```
 
 - [x] **Step 4: Verify and commit**
@@ -381,7 +381,7 @@ cargo test --workspace
 Commit:
 
 ```powershell
-git add scripts/server-smoke.ps1 README.md docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md
+git add scripts/smoke/server-smoke.ps1 README.md docs/superpowers/plans/2026-06-02-trader-runtime-control-plan.md
 git commit -m "test: add server smoke script"
 ```
 

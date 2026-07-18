@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-multi-symbol-ma-cross"
 
 [database]
-url = "sqlite://data/trader-multi-symbol.sqlite"
+url = "sqlite://data/backtest/trader-multi-symbol.sqlite"
 
 [data]
 [[data.inputs]]

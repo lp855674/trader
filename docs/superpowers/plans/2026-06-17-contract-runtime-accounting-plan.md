@@ -133,10 +133,10 @@ Every task must preserve these gates:
 - `cargo test -p market_rules`
 - `cargo test -p binance` (if adapter exists)
 - `cargo test -p ibkr` (if adapter exists)
-- `powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1`
-- `bash ./scripts/check-db-boundary`
-- `bash ./scripts/check-storage-dto-boundary`
-- `bash ./scripts/check-api-read-model-boundary`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1`
+- `bash ./scripts/check/check-db-boundary`
+- `bash ./scripts/check/check-storage-dto-boundary`
+- `bash ./scripts/check/check-api-read-model-boundary`
 
 New gates for this plan:
 
@@ -450,8 +450,8 @@ trader funding list --exchange <ex> [--symbol <sym>] [--from <ts>] [--to <ts>]
 ```powershell
 cargo test -p api
 cargo test -p market_rules
-powershell -ExecutionPolicy Bypass -File .\scripts\v1-smoke.ps1
-bash ./scripts/check-api-read-model-boundary
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\v1-smoke.ps1
+bash ./scripts/check/check-api-read-model-boundary
 ```
 
 Expected: all pass.

@@ -12,7 +12,7 @@ Target Markets: A股 / 港股 / 美股 / 数字货币
 
 当前代码实现的是 V1 local-verifiable API surface，不是生产实盘 API。
 
-已实现并由 `scripts/v1-smoke.ps1` 覆盖：
+已实现并由 `scripts/smoke/v1-smoke.ps1` 覆盖：
 
 ```text
 GET  /api/v1/health

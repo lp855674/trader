@@ -34,7 +34,7 @@ impl Default for LiveProcessSupervisorOptions {
     fn default() -> Self {
         Self {
             trader_exe: default_trader_exe(),
-            launch_root: PathBuf::from("data/live-process"),
+            launch_root: PathBuf::from("data/runtime/live-process"),
             handshake_timeout_ms: 5_000,
             graceful_shutdown_timeout_ms: 5_000,
             heartbeat_stale_after_ms: 5_000,

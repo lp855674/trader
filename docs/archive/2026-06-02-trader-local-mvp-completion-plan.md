@@ -42,8 +42,8 @@ The MVP is complete when a developer can run one script and verify:
 - Modify: `crates/api/src/api.rs` for replay and event query endpoints.
 - Modify: `crates/api/Cargo.toml` to add workspace `replay` and `serde_json` dependencies.
 - Modify: `crates/api/tests/backtest_api_tests.rs` for replay/events API behavior.
-- Create: `scripts/mvp-smoke.ps1` for local end-to-end validation.
-- Modify: `scripts/rest-smoke.ps1` to include replay and events checks.
+- Create: `scripts/smoke/mvp-smoke.ps1` for local end-to-end validation.
+- Modify: `scripts/smoke/rest-smoke.ps1` to include replay and events checks.
 - Modify: `tech.md` to document the actual local MVP and verification commands.
 
 ## Task 1: Storage Event Repository
@@ -85,10 +85,10 @@ The MVP is complete when a developer can run one script and verify:
 
 ## Task 5: MVP Smoke Script
 
-- [ ] Create `scripts/mvp-smoke.ps1`.
-- [ ] Script must create a temporary config and SQLite path, run CLI `check-config`, `migrate`, `backtest`, `paper-run`, `replay`, `report`, and then run `scripts/server-smoke.ps1`.
-- [ ] Extend `scripts/rest-smoke.ps1` to validate replay and events routes.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1`.
+- [ ] Create `scripts/smoke/mvp-smoke.ps1`.
+- [ ] Script must create a temporary config and SQLite path, run CLI `check-config`, `migrate`, `backtest`, `paper-run`, `replay`, `report`, and then run `scripts/smoke/server-smoke.ps1`.
+- [ ] Extend `scripts/smoke/rest-smoke.ps1` to validate replay and events routes.
+- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\mvp-smoke.ps1`.
 - [ ] Commit with `test: add mvp smoke validation`.
 
 ## Task 6: Documentation And Final Verification
@@ -97,7 +97,7 @@ The MVP is complete when a developer can run one script and verify:
 - [ ] Run `cargo fmt --all -- --check`.
 - [ ] Run `cargo check --workspace --locked`.
 - [ ] Run `cargo test --workspace`.
-- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\mvp-smoke.ps1`.
+- [ ] Run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\mvp-smoke.ps1`.
 - [ ] Commit with `docs: document local mvp completion`.
 
 ## Final Answer Requirement

@@ -3,7 +3,7 @@ mode = "paper"
 run_id = "binance-testnet-readonly"
 
 [database]
-url = "sqlite://data/binance-testnet.sqlite"
+url = "sqlite://data/binance/databases/binance-testnet.sqlite"
 
 [data]
 source = "csv"

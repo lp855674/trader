@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-category-majority-alpha-ma-cross"
 
 [database]
-url = "sqlite://data/trader-category-majority-alpha.sqlite"
+url = "sqlite://data/backtest/trader-category-majority-alpha.sqlite"
 
 [data]
 source = "csv"

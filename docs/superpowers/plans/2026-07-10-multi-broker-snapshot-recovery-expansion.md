@@ -44,22 +44,22 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 
 ## 2026-07-12 Task 4 Follow-Up
 
-- `scripts/ops-smoke.ps1` now asserts the CLI reconciliation audit evidence fields emitted by the broadened readback path.
+- `scripts/smoke/ops-smoke.ps1` now asserts the CLI reconciliation audit evidence fields emitted by the broadened readback path.
 - The smoke remains credential-free and continues to exercise the fake broker live run while checking that broker/account/severity audit evidence is visible to operators.
 
 ## 2026-07-12 Task 5 Follow-Up
 
-- Fresh local verification passed with `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`, `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`, `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, and the three standalone boundary scripts.
+- Fresh local verification passed with `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`, `powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1`, `cargo test -p broker`, `cargo test -p runtime`, `cargo test -p storage`, and the three standalone boundary scripts.
 - `clippy.ps1` exited 0 with existing warnings; no new clippy failure blocked this slice.
-- Broker-connected evidence was available for a Binance Testnet no-submit recovery/read-only path: `powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork` completed as `live-recovery-83853c8d89b6`; the adapter log reported `order_submit = not_run` and `scanned=0 recovered=0 missing=0 remaining=0 trades=0`.
+- Broker-connected evidence was available for a Binance Testnet no-submit recovery/read-only path: `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1 -IncludeBinanceReadOnly -IncludeBinanceNetwork` completed as `live-recovery-83853c8d89b6`; the adapter log reported `order_submit = not_run` and `scanned=0 recovered=0 missing=0 remaining=0 trades=0`.
 - This broker-connected check is partial evidence for recovery connectivity, not full acceptance evidence for persisted snapshot/reconciliation-audit writes. The remaining gap is external broker-connected snapshot/reconciliation evidence, not local wiring or local code health.
 
 ## 2026-07-12 Binance Paper Soak Follow-Up
 
-- A stronger Binance Testnet no-submit paper/read-only soak ran with `powershell -ExecutionPolicy Bypass -File .\scripts\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -DelaySeconds 0 -SkipRefresh`.
+- A stronger Binance Testnet no-submit paper/read-only soak ran with `powershell -ExecutionPolicy Bypass -File .\scripts\binance\binance-paper-soak.ps1 -Iterations 3 -Limit 100 -DelaySeconds 0 -SkipRefresh`.
 - The soak completed as `binance-paper-soak-c38b82cd44ed` with 3 completed iterations, `failure_class=ok`, `order_submit=disabled`, `reconciliation_status=ok`, and zero remaining open orders in every iteration.
 - Run-scoped CLI reconciliation readback for each retained SQLite database reported `cash_snapshots=101`, `position_snapshots=98`, `drift_events=0`, and `reconciliation_audits=0`.
-- The committed result document is `docs/multi-broker-snapshot-recovery-results-binance-paper-soak-c38b82cd44ed.md`.
+- The committed result document is `docs/results/binance/multi-broker-snapshot-recovery-results-binance-paper-soak-c38b82cd44ed.md`.
 - This improves Binance Testnet paper/no-submit snapshot evidence beyond the earlier recovery-only check, but it still does not close the full external broker-connected snapshot/reconciliation audit gap because the Binance paper path does not persist `broker_reconciliation_audits`. Full closure still requires a broker-connected runtime path that writes reconciliation audit rows, currently the IBKR paper Gateway production-reconciliation path.
 
 ## 2026-07-12 Binance Live-Worker Broker-Connected Follow-Up
@@ -69,7 +69,7 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 - A broker-connected Binance Spot Testnet live-worker run completed as `binance-live-snapshot-20260712161639` with `order_submit_enabled=false`, `trading_halted=true`, exit code 0, and empty stderr.
 - CLI reconciliation readback reported `status=ok`, `cash_snapshots=5`, `position_snapshots=0`, `reconciliation_audits=4`, `latest_audit_broker=binance`, `latest_audit_account=binance-testnet`, `latest_audit_severity=info`, and `drift_events=0`.
 - Direct SQLite audit readback showed all 4 `broker_reconciliation_audits` rows were `info|0|0|0|0|0`, with no cash drift, position drift, open-order drift, execution drift, or stale inputs.
-- The committed result document is `docs/multi-broker-snapshot-recovery-results-binance-live-snapshot-20260712161639.md`.
+- The committed result document is `docs/results/binance/multi-broker-snapshot-recovery-results-binance-live-snapshot-20260712161639.md`.
 - This closes the previously documented external broker-connected snapshot/reconciliation audit evidence gap for Binance Testnet read-only coverage. Remaining validation gaps are filled-order proof, production spot cost-basis/valuation SLA evidence, and live-money controls, not persisted broker-connected snapshot/audit wiring.
 
 ## 2026-07-12 Binance Spot Valuation Follow-Up
@@ -126,13 +126,13 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
   - Cover any new snapshot/recovery readback helpers.
 - Modify: `apps/trader-cli/src/main.rs`
   - Extend existing reconciliation/recovery inspection commands only if current output cannot distinguish the broader broker evidence.
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
   - Expand local operator smoke only where a broker-agnostic path can be exercised without external credentials.
 - Modify: `docs/roadmap.md`
   - Update remaining broker breadth and recovery limitations after implementation.
 - Modify: `docs/分析.md`
   - Record the new broker snapshot/recovery coverage and remaining production limits.
-- Create template: `docs/multi-broker-snapshot-recovery-results-template.md`
+- Create template: `docs/templates/multi-broker-snapshot-recovery-results-template.md`
 - Create after broker-connected verification: `docs/multi-broker-snapshot-recovery-results-<run_id>.md`
   - Summarize one committed operator evidence run after implementation lands.
 
@@ -142,14 +142,14 @@ This plan intentionally excludes RBAC, multi-person approval, and live-money tra
 
 Every task must preserve:
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1`
 - `cargo test -p broker`
 - `cargo test -p runtime`
 - `cargo test -p storage`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-api-read-model-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-api-read-model-boundary.ps1`
 
 New focused gates:
 
@@ -157,7 +157,7 @@ New focused gates:
 - `cargo test -p broker startup_recovery`
 - `cargo test -p runtime live_runtime_reconciliation`
 - `cargo test -p runtime live_runtime_startup_recovery`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`
 
 Broker-connected operator gate (documented, not required for credential-free local validation):
 
@@ -221,10 +221,10 @@ Broker-connected operator gate (documented, not required for credential-free loc
 ## Task 4: Extend Local Operator Smoke And Documentation
 
 **Files:**
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
 - Modify: `docs/roadmap.md`
 - Modify: `docs/分析.md`
-- Create template: `docs/multi-broker-snapshot-recovery-results-template.md`
+- Create template: `docs/templates/multi-broker-snapshot-recovery-results-template.md`
 - Create after broker-connected execution: `docs/multi-broker-snapshot-recovery-results-<run_id>.md`
 
 **Produces:**

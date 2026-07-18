@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-multi-symbol-sma-feature-gate"
 
 [database]
-url = "sqlite://data/multi_symbol_sma_feature_gate.sqlite"
+url = "sqlite://data/backtest/multi_symbol_sma_feature_gate.sqlite"
 
 [data]
 [[data.inputs]]

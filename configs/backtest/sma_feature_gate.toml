@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-sma-feature-gate"
 
 [database]
-url = "sqlite://data/sma_feature_gate.sqlite"
+url = "sqlite://data/backtest/sma_feature_gate.sqlite"
 
 [data]
 source = "csv"

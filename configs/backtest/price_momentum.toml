@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-price-momentum"
 
 [database]
-url = "sqlite://data/trader-price-momentum.sqlite"
+url = "sqlite://data/backtest/trader-price-momentum.sqlite"
 
 [data]
 source = "csv"

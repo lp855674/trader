@@ -1033,8 +1033,8 @@ Expected: PASS.
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 1
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify-live-recovery.ps1 -Iterations 20 -DelaySeconds 1
 ```
 
 Expected: both scripts finish with zero non-zero runtime exits and no credential prompts.
@@ -1044,7 +1044,7 @@ Expected: both scripts finish with zero non-zero runtime exits and no credential
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1
 ```
 
 Expected: PASS.

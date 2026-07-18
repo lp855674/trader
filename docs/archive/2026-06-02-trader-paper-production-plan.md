@@ -62,7 +62,7 @@ Modify:
 
 Create:
 
-- `scripts/rest-smoke.ps1`
+- `scripts/smoke/rest-smoke.ps1`
 
 ---
 
@@ -676,13 +676,13 @@ git commit -m "feat: add explicit paper run api"
 ### Task 7: REST Smoke Script
 
 **Files:**
-- Create: `scripts/rest-smoke.ps1`
+- Create: `scripts/smoke/rest-smoke.ps1`
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md`
 
 - [x] **Step 1: Create smoke script**
 
-Create `scripts/rest-smoke.ps1`:
+Create `scripts/smoke/rest-smoke.ps1`:
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -726,7 +726,7 @@ cargo run -p trader-server
 In another shell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\rest-smoke.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke\rest-smoke.ps1
 ```
 
 Expected: prints an object with `fills`, `balances`, and `snapshots` all at least `1`.
@@ -756,7 +756,7 @@ cargo test --workspace
 Commit:
 
 ```powershell
-git add scripts/rest-smoke.ps1 README.md docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md
+git add scripts/smoke/rest-smoke.ps1 README.md docs/superpowers/plans/2026-06-02-trader-paper-production-plan.md
 git commit -m "test: add rest smoke script"
 ```
 
@@ -803,7 +803,7 @@ README must include:
 
 - CLI `paper-run`;
 - server start command;
-- `scripts/rest-smoke.ps1`;
+- `scripts/smoke/rest-smoke.ps1`;
 - query routes.
 
 `tech.md` must say:
@@ -836,7 +836,7 @@ This phase is complete when:
 - Portfolio snapshots persist realized and unrealized PnL.
 - REST exposes explicit `POST /api/v1/paper-runs`.
 - REST exposes run list/detail queries.
-- `scripts/rest-smoke.ps1` validates health, paper run, fills, balances, snapshots, and metrics against a running server.
+- `scripts/smoke/rest-smoke.ps1` validates health, paper run, fills, balances, snapshots, and metrics against a running server.
 - Crate root naming convention remains satisfied: no library crate uses default `src/lib.rs`.
 - Member crates do not use direct internal `{ path = ... }` dependencies.
 

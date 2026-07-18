@@ -72,7 +72,7 @@ This plan intentionally excludes real authentication, secret management, externa
 
 ### Operator Smoke And Documentation
 
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
   - Add a credential-free governance smoke that proves staging and production policy/queue readback.
 - Modify: `docs/roadmap.md`
   - Update config governance status and remaining production identity limits.
@@ -91,19 +91,19 @@ Every task must preserve:
 - `cargo test -p storage`
 - `cargo test -p api`
 - `cargo test -p trader-cli`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-api-read-model-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-api-read-model-boundary.ps1`
 
 New focused gates:
 
 - `cargo test -p storage config_governance`
 - `cargo test -p api config_governance`
 - `cargo test -p trader-cli config_management_commands`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`
 
 ---
 
@@ -176,7 +176,7 @@ New focused gates:
 ## Task 5: Update Operator Smoke And Docs
 
 **Files:**
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
 - Modify: `docs/roadmap.md`
 - Modify: `docs/分析.md`
 - Create: `docs/config-governance-rbac-results-template.md`
@@ -202,9 +202,9 @@ New focused gates:
 
 - [x] Run `cargo fmt`.
 - [x] Run focused storage/API/CLI governance tests.
-- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
-- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
-- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\clippy.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\check\clippy.ps1`.
 - [x] Run the three boundary scripts.
 - [x] Commit only files related to this plan.
 

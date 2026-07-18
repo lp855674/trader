@@ -32,4 +32,4 @@
 
 重点覆盖 tick/lot 边界、min notional、合约保证金、fee tier、账户成交量窗口和未知规则 fallback。
 
-本地运维证据由 `scripts/ops-smoke.ps1` 串联 focused gates：storage market-rule audit、paper market-rule/trading-session runtime enforcement、API effective readback、CLI effective/audit readback。
+本地运维证据由 `scripts/smoke/ops-smoke.ps1` 串联 focused gates：storage market-rule audit、paper market-rule/trading-session runtime enforcement、API effective readback、CLI effective/audit readback。

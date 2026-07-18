@@ -378,9 +378,14 @@ impl IbkrPaperGatewayAdapter {
 
 impl IbapiIbkrGatewayClient {
     async fn connect_client(&self) -> Result<Client, BrokerError> {
+        self.connect_client_until(Instant::now() + self.settings.connect_timeout)
+            .await
+    }
+
+    async fn connect_client_until(&self, deadline: Instant) -> Result<Client, BrokerError> {
         let address = self.address();
-        timeout(
-            self.settings.connect_timeout,
+        timeout_at(
+            deadline,
             Client::connect(&address, client_id_i32(self.settings.client_id)?),
         )
         .await
@@ -409,8 +414,8 @@ impl IbapiIbkrGatewayClient {
         route_exchange: Option<&str>,
         requested_type: MarketDataType,
     ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
-        let client = self.connect_client().await?;
         let deadline = Instant::now() + self.settings.connect_timeout;
+        let client = self.connect_client_until(deadline).await?;
         let result = async {
             if requested_type != MarketDataType::Realtime {
                 timeout_at(deadline, client.switch_market_data_type(requested_type))
@@ -1551,7 +1556,30 @@ fn is_delayed_market_data_notice(error: &ibapi::Error, requested_type: MarketDat
 }
 
 fn map_ibapi_error(error: ibapi::Error) -> BrokerError {
-    BrokerError::Connection(format!("IBKR API error: {error}"))
+    let remediation = match &error {
+        ibapi::Error::Notice(notice) => ibkr_notice_remediation(notice.code),
+        _ => None,
+    };
+    let message = match remediation {
+        Some(remediation) => format!("IBKR API error: {error}; action: {remediation}"),
+        None => format!("IBKR API error: {error}"),
+    };
+    BrokerError::Connection(message)
+}
+
+fn ibkr_notice_remediation(code: i32) -> Option<&'static str> {
+    match code {
+        10089 => Some(
+            "enable the required real-time API market-data subscription for this contract; for NASDAQ stocks verify NASDAQ.NMS/TOP/ALL",
+        ),
+        10168 => Some(
+            "enable the required real-time API market-data subscription; delayed data may be enabled for diagnosis but does not satisfy the order-submission gate",
+        ),
+        10197 => Some(
+            "close or resolve the competing TWS/IB Gateway trading session for this account before retrying",
+        ),
+        _ => None,
+    }
 }
 
 fn map_ibapi_connect_error(address: &str, error: ibapi::Error) -> BrokerError {
@@ -1593,6 +1621,93 @@ mod ibkr_contract_metadata_tests {
             &competing_session,
             MarketDataType::Delayed
         ));
+    }
+
+    #[test]
+    fn known_market_data_notices_include_actionable_remediation() {
+        let cases = [
+            (
+                10089,
+                "NASDAQ.NMS/TOP/ALL",
+                "market data subscription is required",
+            ),
+            (
+                10168,
+                "does not satisfy the order-submission gate",
+                "market data is not subscribed",
+            ),
+            (
+                10197,
+                "competing TWS/IB Gateway trading session",
+                "competing live session",
+            ),
+        ];
+
+        for (code, expected_remediation, message) in cases {
+            let error = map_ibapi_error(ibapi::Error::Notice(Notice {
+                code,
+                message: message.to_string(),
+                error_time: None,
+                advanced_order_reject_json: String::new(),
+            }));
+            let error = error.to_string();
+
+            assert!(error.contains(&code.to_string()));
+            assert!(error.contains(message));
+            assert!(error.contains(expected_remediation));
+        }
+    }
+
+    #[test]
+    fn unknown_ibkr_notice_preserves_original_error_without_action_hint() {
+        let error = map_ibapi_error(ibapi::Error::Notice(Notice {
+            code: 99999,
+            message: "unknown notice".to_string(),
+            error_time: None,
+            advanced_order_reject_json: String::new(),
+        }))
+        .to_string();
+
+        assert!(error.contains("99999"));
+        assert!(error.contains("unknown notice"));
+        assert!(!error.contains("; action:"));
+    }
+
+    #[tokio::test]
+    async fn market_data_connection_uses_existing_absolute_deadline() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+        let client = IbapiIbkrGatewayClient::new(IbkrPaperGatewaySettings {
+            host: "127.0.0.1".to_string(),
+            port,
+            client_id: 1,
+            connect_timeout: Duration::from_secs(1),
+        });
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(80);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+
+        let error = match client.connect_client_until(deadline).await {
+            Ok(_) => panic!("connection unexpectedly completed"),
+            Err(error) => error,
+        };
+        server.abort();
+
+        assert!(
+            error
+                .to_string()
+                .contains("unable to connect to IBKR paper gateway")
+        );
+        assert!(error.to_string().contains("timeout"));
+        assert!(
+            started.elapsed() < Duration::from_millis(140),
+            "connection deadline was restarted: elapsed={:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]

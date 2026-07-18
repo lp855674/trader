@@ -3,7 +3,7 @@ mode = "backtest"
 run_id = "sample-ranked-universe-ma-cross"
 
 [database]
-url = "sqlite://data/trader-ranked-universe-ma-cross.sqlite"
+url = "sqlite://data/backtest/trader-ranked-universe-ma-cross.sqlite"
 
 [data]
 [[data.inputs]]

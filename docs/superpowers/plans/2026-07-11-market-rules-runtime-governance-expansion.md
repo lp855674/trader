@@ -75,7 +75,7 @@ This plan intentionally excludes live-money trading, external broker validation,
   - Add or extend read-only inspection commands only if API/storage evidence is not already reachable from CLI.
 - Modify: `apps/trader-cli/tests/cli_tests.rs`
   - Cover any new market-rule readback command output.
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
   - Add credential-free local smoke checks for market-rule setup, effective readback, runtime behavior, and governance/audit evidence.
 
 ### Documentation
@@ -86,9 +86,9 @@ This plan intentionally excludes live-money trading, external broker validation,
   - Record new local runtime/governance evidence and remaining production gaps.
 - Modify: `docs/tech/market_rules.md`
   - Document runtime assembly, effective-time selection, and local governance/readback expectations.
-- Create: `docs/market-rules-runtime-governance-results-template.md`
+- Create: `docs/templates/market-rules-runtime-governance-results-template.md`
   - Template for local market-rule governance/runtime evidence runs.
-- Create after local verification: `docs/market-rules-runtime-governance-results-<run_id>.md`
+- Create after local verification: `docs/results/market-rules/market-rules-runtime-governance-results-<run_id>.md`
   - Summarize one committed local evidence run after implementation lands.
 
 ---
@@ -102,10 +102,10 @@ Every task must preserve:
 - `cargo test -p storage`
 - `cargo test -p paper`
 - `cargo test -p api`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-db-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-storage-dto-boundary.ps1`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\check-api-read-model-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-db-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-storage-dto-boundary.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\check\check-api-read-model-boundary.ps1`
 
 Focused gates for this plan:
 
@@ -115,7 +115,7 @@ Focused gates for this plan:
 - `cargo test -p paper trading_session`
 - `cargo test -p api fee_rules`
 - `cargo test -p trader-cli market_rule` if CLI surface changes
-- `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`
 
 Optional external-data gate, documented but not required for credential-free local validation:
 
@@ -210,12 +210,12 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 ## Task 4: Extend Operator Smoke And Documentation
 
 **Files:**
-- Modify: `scripts/ops-smoke.ps1`
+- Modify: `scripts/smoke/ops-smoke.ps1`
 - Modify: `docs/tech/market_rules.md`
 - Modify: `docs/roadmap.md`
 - Modify: `docs/分析.md`
-- Create: `docs/market-rules-runtime-governance-results-template.md`
-- Create: `docs/market-rules-runtime-governance-results-<run_id>.md`
+- Create: `docs/templates/market-rules-runtime-governance-results-template.md`
+- Create: `docs/results/market-rules/market-rules-runtime-governance-results-<run_id>.md`
 
 **Produces:**
 - Credential-free operator smoke that proves configured market-rule setup, effective readback, runtime enforcement, and local governance/audit evidence.
@@ -225,15 +225,15 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 - [x] Add smoke assertions for effective readback and runtime enforcement.
 - [x] Add smoke assertions for local governance/audit evidence.
 - [x] Update docs and evidence template.
-- [x] Verify `scripts/ops-smoke.ps1`.
+- [x] Verify `scripts/smoke/ops-smoke.ps1`.
 
 ### Task 4 Implementation Notes
 
-- Extended `scripts/ops-smoke.ps1` with `Invoke-MarketRuleGovernanceSmoke`, covering deterministic storage audit setup, paper market-rule/trading-session runtime gates, API effective readback, and CLI effective/audit readback.
+- Extended `scripts/smoke/ops-smoke.ps1` with `Invoke-MarketRuleGovernanceSmoke`, covering deterministic storage audit setup, paper market-rule/trading-session runtime gates, API effective readback, and CLI effective/audit readback.
 - Added `market_rules_governance_smoke = "passed"` to the ops-smoke summary output.
 - Updated market-rule technical docs, roadmap, and analysis docs to distinguish local deterministic evidence from remaining real-broker, live-money, production RBAC, and hosted approval gaps.
-- Added `docs/market-rules-runtime-governance-results-template.md` for local evidence capture.
-- Verified `scripts/ops-smoke.ps1` with run id `ops-live-92d55838ea48490498690394d84c9f75`; summary included `market_rules_governance_smoke = "passed"`.
+- Added `docs/templates/market-rules-runtime-governance-results-template.md` for local evidence capture.
+- Verified `scripts/smoke/ops-smoke.ps1` with run id `ops-live-92d55838ea48490498690394d84c9f75`; summary included `market_rules_governance_smoke = "passed"`.
 
 ## Task 5: Full Local Verification And Commit
 
@@ -247,8 +247,8 @@ Tasks 2-4 should therefore avoid changing the core rule engine unless a missing 
 
 - [x] Run `cargo fmt`.
 - [x] Run focused market-rule/storage/paper/API/CLI gates.
-- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\ops-smoke.ps1`.
-- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\smoke\ops-smoke.ps1`.
+- [x] Run `powershell -ExecutionPolicy Bypass -File .\scripts\check\verify.ps1`.
 - [x] Run boundary scripts if storage/API read models changed.
 - [x] Update status, docs, and evidence summary.
 - [x] Commit the scoped changes.
