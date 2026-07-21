@@ -1,0 +1,20 @@
+[package]
+name = "market_data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/market_data.rs"
+
+[dependencies]
+async-trait.workspace = true
+broker.workspace = true
+data.workspace = true
+longbridge = "4.3.3"
+rust_decimal.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true

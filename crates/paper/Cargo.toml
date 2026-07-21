@@ -19,6 +19,7 @@ data.workspace = true
 events.workspace = true
 execution.workspace = true
 market_rules.workspace = true
+market_data.workspace = true
 oms.workspace = true
 portfolio.workspace = true
 risk.workspace = true

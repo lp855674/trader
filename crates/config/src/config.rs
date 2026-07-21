@@ -43,6 +43,14 @@ pub enum BrokerMode {
     Live,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketDataProviderKind {
+    #[default]
+    Ibkr,
+    Longbridge,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     /// Run launch template. Server startup must not treat this as deployment identity.
@@ -53,6 +61,8 @@ pub struct AppConfig {
     pub portfolio: PortfolioConfig,
     pub risk: RiskConfig,
     pub broker: BrokerConfig,
+    #[serde(default)]
+    pub market_data: MarketDataConfig,
     pub paper: PaperConfig,
     pub live: LiveConfig,
     #[serde(default)]
@@ -320,6 +330,29 @@ pub struct LiveReconciliationGateConfig {
     pub log_write_failure: LiveReconciliationGateFailurePolicy,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarketDataConfig {
+    #[serde(default)]
+    pub provider: MarketDataProviderKind,
+    #[serde(default = "default_longbridge_app_key_env")]
+    pub longbridge_app_key_env: String,
+    #[serde(default = "default_longbridge_app_secret_env")]
+    pub longbridge_app_secret_env: String,
+    #[serde(default = "default_longbridge_access_token_env")]
+    pub longbridge_access_token_env: String,
+}
+
+impl Default for MarketDataConfig {
+    fn default() -> Self {
+        Self {
+            provider: MarketDataProviderKind::default(),
+            longbridge_app_key_env: default_longbridge_app_key_env(),
+            longbridge_app_secret_env: default_longbridge_app_secret_env(),
+            longbridge_access_token_env: default_longbridge_access_token_env(),
+        }
+    }
+}
+
 impl Default for LiveReconciliationGateConfig {
     fn default() -> Self {
         Self {
@@ -500,6 +533,18 @@ fn default_logging_retention_days() -> u32 {
 
 fn default_logging_console_output() -> bool {
     true
+}
+
+fn default_longbridge_app_key_env() -> String {
+    "LONGBRIDGE_APP_KEY".to_string()
+}
+
+fn default_longbridge_app_secret_env() -> String {
+    "LONGBRIDGE_APP_SECRET".to_string()
+}
+
+fn default_longbridge_access_token_env() -> String {
+    "LONGBRIDGE_ACCESS_TOKEN".to_string()
 }
 
 impl AppConfig {

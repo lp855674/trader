@@ -8,6 +8,7 @@ members = [
     "crates/config",
     "crates/storage",
     "crates/data",
+    "crates/market_data",
     "crates/market_rules",
     "crates/universe",
     "crates/alpha",
@@ -56,6 +57,7 @@ ibapi = "3"
 indicators = { path = "crates/indicators" }
 metrics = { path = "crates/metrics" }
 market_rules = { path = "crates/market_rules" }
+market_data = { path = "crates/market_data" }
 oms = { path = "crates/oms" }
 paper = { path = "crates/paper" }
 portfolio = { path = "crates/portfolio" }

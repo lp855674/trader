@@ -24,6 +24,7 @@ hex.workspace = true
 hmac.workspace = true
 indicators.workspace = true
 metrics.workspace = true
+market_data.workspace = true
 paper.workspace = true
 replay.workspace = true
 reqwest.workspace = true

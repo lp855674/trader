@@ -4,12 +4,14 @@ mod bar;
 mod csv;
 pub mod ingestion;
 mod parquet;
+mod quote;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use bar::*;
 pub use csv::*;
 pub use parquet::*;
+pub use quote::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarInput {

@@ -3,6 +3,8 @@ use broker::{
     BrokerError, IbkrLimitOrderRequest, IbkrMarketDataSnapshot, IbkrOrderAck, IbkrOrderSide,
     IbkrPaperGatewayAdapter, IbkrTrade,
 };
+use data::{MarketDataKind, MarketDataSource, Quote};
+use market_data::MarketDataProvider;
 use rust_decimal::Decimal;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use trader_core::{OrderRequest, OrderSide, OrderType};
@@ -16,12 +18,6 @@ const IBKR_MARKETABLE_LIMIT_OFFSET_BPS: i64 = 20;
 
 #[async_trait]
 pub trait IbkrPaperOrderClient: Send + Sync {
-    async fn market_data_snapshot(
-        &self,
-        symbol: &str,
-        route_exchange: Option<&str>,
-    ) -> Result<IbkrMarketDataSnapshot, BrokerError>;
-
     async fn query_order_by_client_order_id(
         &self,
         symbol: &str,
@@ -56,16 +52,6 @@ impl IbkrPaperGatewayOrderClient {
 
 #[async_trait]
 impl IbkrPaperOrderClient for IbkrPaperGatewayOrderClient {
-    async fn market_data_snapshot(
-        &self,
-        symbol: &str,
-        route_exchange: Option<&str>,
-    ) -> Result<IbkrMarketDataSnapshot, BrokerError> {
-        self.adapter
-            .market_data_snapshot(symbol, route_exchange)
-            .await
-    }
-
     async fn query_order_by_client_order_id(
         &self,
         symbol: &str,
@@ -133,7 +119,8 @@ impl IbkrPaperOrderClient for IbkrPaperGatewayOrderClient {
     }
 }
 
-pub struct IbkrPaperOrderExecutor<Client> {
+pub struct IbkrPaperOrderExecutor<Provider, Client> {
+    market_data_provider: Provider,
     client: Client,
     client_order_prefix: String,
     route_exchange: Option<String>,
@@ -142,16 +129,18 @@ pub struct IbkrPaperOrderExecutor<Client> {
     settlement_poll_interval: Duration,
 }
 
-impl<Client> IbkrPaperOrderExecutor<Client> {
-    pub fn new(client: Client) -> Self {
-        Self::new_with_client_order_prefix(client, "default")
+impl<Provider, Client> IbkrPaperOrderExecutor<Provider, Client> {
+    pub fn new(market_data_provider: Provider, client: Client) -> Self {
+        Self::new_with_client_order_prefix(market_data_provider, client, "default")
     }
 
     pub fn new_with_client_order_prefix(
+        market_data_provider: Provider,
         client: Client,
         client_order_prefix: impl Into<String>,
     ) -> Self {
         Self::new_with_settlement_polling(
+            market_data_provider,
             client,
             client_order_prefix,
             DEFAULT_IBKR_SETTLEMENT_POLL_ATTEMPTS,
@@ -160,12 +149,14 @@ impl<Client> IbkrPaperOrderExecutor<Client> {
     }
 
     pub fn new_with_settlement_polling(
+        market_data_provider: Provider,
         client: Client,
         client_order_prefix: impl Into<String>,
         settlement_poll_attempts: usize,
         settlement_poll_interval: Duration,
     ) -> Self {
         Self {
+            market_data_provider,
             client,
             client_order_prefix: client_order_prefix.into(),
             route_exchange: None,
@@ -194,8 +185,9 @@ impl<Client> IbkrPaperOrderExecutor<Client> {
 }
 
 #[async_trait]
-impl<Client> PaperOrderExecutor for IbkrPaperOrderExecutor<Client>
+impl<Provider, Client> PaperOrderExecutor for IbkrPaperOrderExecutor<Provider, Client>
 where
+    Provider: MarketDataProvider,
     Client: IbkrPaperOrderClient,
 {
     fn client_order_id(&self, _run_id: &str, order_number: usize) -> String {
@@ -221,24 +213,22 @@ where
         let placed = match existing {
             Some(existing) => existing,
             None => {
-                let snapshot = self
-                    .client
-                    .market_data_snapshot(&symbol, self.route_exchange.as_deref())
-                    .await?;
+                let quote = self.market_data_provider.snapshot(&symbol).await?;
                 tracing::info!(
-                    symbol = %snapshot.symbol,
+                    symbol = %quote.symbol,
                     side = ?order.side,
-                    bid = ?snapshot.bid,
-                    ask = ?snapshot.ask,
-                    last = ?snapshot.last,
-                    snapshot_ts_ms = snapshot.ts_ms,
-                    market_data_type = %snapshot.market_data_type,
-                    "IBKR market data snapshot captured for paper order"
+                    bid = ?quote.bid,
+                    ask = ?quote.ask,
+                    last = ?quote.last,
+                    quote_received_ts_ms = quote.received_ts_ms,
+                    market_data_source = ?quote.source,
+                    market_data_kind = ?quote.kind,
+                    "market data quote captured for IBKR paper order"
                 );
-                validate_ibkr_realtime_market_data_snapshot(&snapshot)?;
-                submitted_price = ibkr_marketable_limit_price(order.side, &snapshot)?;
+                validate_realtime_market_data_quote(&quote)?;
+                submitted_price = ibkr_marketable_limit_price(order.side, &quote)?;
                 tracing::info!(
-                    symbol = %snapshot.symbol,
+                    symbol = %quote.symbol,
                     side = ?order.side,
                     limit_price = %submitted_price,
                     offset_bps = IBKR_MARKETABLE_LIMIT_OFFSET_BPS,
@@ -317,67 +307,83 @@ pub fn validate_ibkr_market_data_snapshot(
     expected_market_data_type: &str,
     observed_at_ms: i64,
 ) -> anyhow::Result<()> {
-    if snapshot.market_data_type != expected_market_data_type {
+    validate_market_data_quote(
+        &Quote::new(
+            snapshot.symbol.clone(),
+            snapshot.bid,
+            snapshot.ask,
+            snapshot.last,
+            None,
+            snapshot.ts_ms,
+            MarketDataSource::Ibkr,
+            MarketDataKind::from_provider_name(&snapshot.market_data_type),
+        ),
+        &MarketDataKind::from_provider_name(expected_market_data_type),
+        observed_at_ms,
+    )
+}
+
+pub fn validate_market_data_quote(
+    quote: &Quote,
+    expected_kind: &MarketDataKind,
+    observed_at_ms: i64,
+) -> anyhow::Result<()> {
+    if &quote.kind != expected_kind {
         anyhow::bail!(
             "IBKR paper order blocked: market data for {} is {}, expected {}",
-            snapshot.symbol,
-            snapshot.market_data_type,
-            expected_market_data_type
+            quote.symbol,
+            quote.kind,
+            expected_kind
         );
     }
-    let bid = snapshot
+    let bid = quote
         .bid
         .filter(|price| *price > Decimal::ZERO)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "IBKR paper order blocked: market data snapshot for {} has no positive bid",
-                snapshot.symbol
+                quote.symbol
             )
         })?;
-    let ask = snapshot
+    let ask = quote
         .ask
         .filter(|price| *price > Decimal::ZERO)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "IBKR paper order blocked: market data snapshot for {} has no positive ask",
-                snapshot.symbol
+                quote.symbol
             )
         })?;
     if bid > ask {
         anyhow::bail!(
             "IBKR paper order blocked: crossed market data snapshot for {} has bid {} above ask {}",
-            snapshot.symbol,
+            quote.symbol,
             bid,
             ask
         );
     }
-    let age_ms = observed_at_ms.saturating_sub(snapshot.ts_ms);
+    let age_ms = observed_at_ms.saturating_sub(quote.received_ts_ms);
     if age_ms < 0 || age_ms > IBKR_MARKET_DATA_MAX_AGE_MS {
         anyhow::bail!(
             "IBKR paper order blocked: market data snapshot for {} is stale or future-dated (age_ms={age_ms}, max_age_ms={IBKR_MARKET_DATA_MAX_AGE_MS})",
-            snapshot.symbol
+            quote.symbol
         );
     }
     Ok(())
 }
 
-fn validate_ibkr_realtime_market_data_snapshot(
-    snapshot: &IbkrMarketDataSnapshot,
-) -> anyhow::Result<()> {
-    validate_ibkr_market_data_snapshot(snapshot, "realtime", unix_timestamp_ms()?)
+fn validate_realtime_market_data_quote(quote: &Quote) -> anyhow::Result<()> {
+    validate_market_data_quote(quote, &MarketDataKind::Realtime, unix_timestamp_ms()?)
 }
 
-fn ibkr_marketable_limit_price(
-    side: OrderSide,
-    snapshot: &IbkrMarketDataSnapshot,
-) -> anyhow::Result<Decimal> {
+fn ibkr_marketable_limit_price(side: OrderSide, quote: &Quote) -> anyhow::Result<Decimal> {
     let offset = Decimal::from(IBKR_MARKETABLE_LIMIT_OFFSET_BPS) / Decimal::from(10_000_i64);
     match side {
-        OrderSide::Buy => snapshot
+        OrderSide::Buy => quote
             .ask
             .map(|ask| ask * (Decimal::ONE + offset))
             .ok_or_else(|| anyhow::anyhow!("IBKR market data snapshot has no ask")),
-        OrderSide::Sell => snapshot
+        OrderSide::Sell => quote
             .bid
             .map(|bid| bid * (Decimal::ONE - offset))
             .ok_or_else(|| anyhow::anyhow!("IBKR market data snapshot has no bid")),
@@ -392,8 +398,9 @@ fn unix_timestamp_ms() -> anyhow::Result<i64> {
         .map_err(|_| anyhow::anyhow!("system timestamp does not fit in i64 milliseconds"))
 }
 
-impl<Client> IbkrPaperOrderExecutor<Client>
+impl<Provider, Client> IbkrPaperOrderExecutor<Provider, Client>
 where
+    Provider: MarketDataProvider,
     Client: IbkrPaperOrderClient,
 {
     async fn wait_for_ibkr_settlement(

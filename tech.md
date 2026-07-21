@@ -75,6 +75,7 @@ Trader/
 | `config` | 只负责 TOML / 环境变量配置解析和有效配置派生。 |
 | `storage` | 只负责 SQLite、Parquet、repository、migration 和持久化转换。 |
 | `data` | 只负责历史/实时行情模型、bars、ticks、order book 和 `MarketSlice`。 |
+| `market_data` | 只负责外部实时行情 provider、供应商适配和标准化 `Quote` 输出。 |
 | `market_rules` | 只负责市场规则、交易单位、tick、min notional、保证金率等校验。 |
 | `universe` | 只负责标的池选择。 |
 | `alpha` / `strategies` | 只负责信号生成，不负责下单、持仓、风控或持久化。 |
@@ -102,6 +103,7 @@ Trader/
 | `config` | `crates/config` | `docs/tech/config.md` | TOML 模型、server/run 配置分离、broker/risk/live/paper 配置派生。 |
 | `storage` | `crates/storage` | `docs/tech/storage.md` | SQLite、migration、repository、command/read model、审计真源。 |
 | `data` | `crates/data` | `docs/tech/data.md` | Bar/MarketSlice、CSV/Parquet、外部元数据/资金费率/公司行为采集。 |
+| `market_data` | `crates/market_data` | `docs/tech/market-data.md` | 实时行情 provider、IBKR 兼容适配、供应商数据到统一 Quote 的转换。 |
 | `market_rules` | `crates/market_rules` | `docs/tech/market_rules.md` | lot/tick/min notional、合约规则、fee rule 和 tier engine。 |
 | `universe` | `crates/universe` | `docs/tech/universe.md` | static/filtered/ranked 标的池选择和当前行情过滤。 |
 | `alpha` | `crates/alpha` | `docs/tech/alpha.md` | AlphaModel、最高置信度、净信号、投票和权重聚合。 |
@@ -130,7 +132,8 @@ Trader/
 - `events` 统一事件 envelope、运行时广播和结构化日志写入边界。
 - `config` 是行为配置入口，区分 run template 与 server deployment。
 - `storage` 是 SQLite、repository、migration 和审计 read/write model 真源。
-- `data` 管理行情模型、历史文件、market slice 和外部数据采集。
+- `data` 管理行情模型、历史文件、market slice 和批量外部数据采集。
+- `market_data` 管理实时行情连接和 provider 适配，只向上层输出 `data::Quote`。
 - `market_rules` 在 broker 前校验市场交易规则并计算费用。
 - `universe` 只选择标的池，不处理风控、订单或持久化。
 - `alpha` 和 `strategies` 只生成/组合信号，并保持策略运行可复现。

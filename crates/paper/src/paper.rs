@@ -6,7 +6,7 @@ pub mod ibkr;
 pub use binance::{BinancePaperOrderClient, BinancePaperOrderExecutor, binance_spot_symbol};
 pub use ibkr::{
     IbkrPaperGatewayOrderClient, IbkrPaperOrderClient, IbkrPaperOrderExecutor, ibkr_stock_symbol,
-    validate_ibkr_market_data_snapshot,
+    validate_ibkr_market_data_snapshot, validate_market_data_quote,
 };
 
 use algorithm::{

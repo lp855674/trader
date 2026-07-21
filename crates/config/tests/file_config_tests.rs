@@ -330,6 +330,22 @@ fn loads_ibkr_stock_parquet_paper_config_from_file() {
     assert_eq!(config.broker.client_id, Some(1));
     assert_eq!(config.broker.connect_timeout_ms, Some(15000));
     assert!(!config.broker.order_submit_enabled);
+    assert_eq!(
+        config.market_data.provider,
+        config::MarketDataProviderKind::Ibkr
+    );
+    assert_eq!(
+        config.market_data.longbridge_app_key_env,
+        "LONGBRIDGE_APP_KEY"
+    );
+    assert_eq!(
+        config.market_data.longbridge_app_secret_env,
+        "LONGBRIDGE_APP_SECRET"
+    );
+    assert_eq!(
+        config.market_data.longbridge_access_token_env,
+        "LONGBRIDGE_ACCESS_TOKEN"
+    );
     assert_eq!(config.risk.daily_loss_limit, None);
     assert_eq!(config.risk.max_order_attempts_per_day, None);
     assert_eq!(config.risk.max_order_failures_per_day, None);
@@ -338,6 +354,54 @@ fn loads_ibkr_stock_parquet_paper_config_from_file() {
     assert_eq!(config.risk.max_consecutive_strategy_losses, None);
     assert_eq!(config.risk.max_consecutive_strategy_errors, None);
     assert!(config.risk.trading_session.is_none());
+}
+
+#[test]
+fn loads_longbridge_market_data_config_with_custom_environment_names() {
+    let mut input =
+        std::fs::read_to_string("../../configs/paper/ibkr_aapl_1d_parquet.toml").unwrap();
+    input.push_str(
+        r#"
+
+[market_data]
+provider = "longbridge"
+longbridge_app_key_env = "TRADER_LB_APP_KEY"
+longbridge_app_secret_env = "TRADER_LB_APP_SECRET"
+longbridge_access_token_env = "TRADER_LB_ACCESS_TOKEN"
+"#,
+    );
+
+    let config = AppConfig::from_toml_str(&input).unwrap();
+
+    assert_eq!(
+        config.market_data.provider,
+        config::MarketDataProviderKind::Longbridge
+    );
+    assert_eq!(
+        config.market_data.longbridge_app_key_env,
+        "TRADER_LB_APP_KEY"
+    );
+    assert_eq!(
+        config.market_data.longbridge_app_secret_env,
+        "TRADER_LB_APP_SECRET"
+    );
+    assert_eq!(
+        config.market_data.longbridge_access_token_env,
+        "TRADER_LB_ACCESS_TOKEN"
+    );
+}
+
+#[test]
+fn loads_ibkr_order_with_longbridge_market_data_sample() {
+    let config =
+        AppConfig::from_toml_file("../../configs/paper/ibkr_aapl_1d_longbridge.toml").unwrap();
+
+    assert_eq!(config.broker.kind, config::BrokerKind::InteractiveBrokers);
+    assert_eq!(
+        config.market_data.provider,
+        config::MarketDataProviderKind::Longbridge
+    );
+    assert!(!config.broker.order_submit_enabled);
 }
 
 #[test]

@@ -18,6 +18,10 @@ use broker::{
     BrokerKind, BrokerStatus, FakeBrokerAdapter, IbkrPaperGatewayAdapter, IbkrPaperGatewaySettings,
 };
 use events::{LogWriter, LogWriterMetricsSnapshot, LogWriterSettings, SystemLogLayer};
+use market_data::{
+    IbkrMarketDataProvider, LongbridgeMarketDataProvider, LongbridgeMarketDataSettings,
+    MarketDataProvider,
+};
 use metrics::{MetricsSummary, equity_returns, paper_summary};
 use paper::{
     BinancePaperOrderExecutor, IbkrPaperGatewayOrderClient, IbkrPaperOrderExecutor, PaperRuntime,
@@ -4858,7 +4862,9 @@ async fn paper_real_broker_connection_ready(
                 .validate_paper_account(&app_config.paper.account_id)
                 .await
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
-            run_ibkr_realtime_market_data_gate(&adapter, app_config).await?;
+            let market_data_provider =
+                configured_market_data_provider(app_config, adapter.clone())?;
+            run_realtime_market_data_gate(market_data_provider.as_ref(), app_config).await?;
             Ok(true)
         }
         config::BrokerKind::Futu | config::BrokerKind::Okx => Ok(false),
@@ -4908,12 +4914,15 @@ async fn paper_runtime(
                 .validate_paper_account(&app_config.paper.account_id)
                 .await
                 .map_err(|error| ApiError(anyhow::anyhow!(error)))?;
-            run_ibkr_realtime_market_data_gate(&adapter, app_config).await?;
+            let market_data_provider =
+                configured_market_data_provider(app_config, adapter.clone())?;
+            run_realtime_market_data_gate(market_data_provider.as_ref(), app_config).await?;
             Ok(PaperRuntime::new_with_executor(
                 db,
                 settings,
                 Box::new(
                     IbkrPaperOrderExecutor::new_with_client_order_prefix(
+                        market_data_provider,
                         IbkrPaperGatewayOrderClient::new(
                             adapter,
                             app_config.paper.account_id.clone(),
@@ -4935,13 +4944,35 @@ async fn paper_runtime(
     }
 }
 
-async fn run_ibkr_realtime_market_data_gate(
-    adapter: &IbkrPaperGatewayAdapter,
+fn configured_market_data_provider(
+    app_config: &config::AppConfig,
+    ibkr_adapter: IbkrPaperGatewayAdapter,
+) -> Result<Box<dyn MarketDataProvider>, ApiError> {
+    match app_config.market_data.provider {
+        config::MarketDataProviderKind::Ibkr => Ok(Box::new(IbkrMarketDataProvider::new(
+            ibkr_adapter,
+            app_config.broker.ibkr_route_exchange.clone(),
+        ))),
+        config::MarketDataProviderKind::Longbridge => {
+            let settings = LongbridgeMarketDataSettings::new(
+                &app_config.market_data.longbridge_app_key_env,
+                &app_config.market_data.longbridge_app_secret_env,
+                &app_config.market_data.longbridge_access_token_env,
+            );
+            Ok(Box::new(
+                LongbridgeMarketDataProvider::from_env(&settings)
+                    .map_err(|error| ApiError(anyhow::anyhow!(error)))?,
+            ))
+        }
+    }
+}
+
+async fn run_realtime_market_data_gate(
+    provider: &dyn MarketDataProvider,
     app_config: &config::AppConfig,
 ) -> Result<(), ApiError> {
     let mut seen = BTreeSet::new();
     let mut failures = Vec::new();
-    let route_exchange = app_config.broker.ibkr_route_exchange.as_deref();
 
     for configured_symbol in &app_config.strategy.symbols {
         let symbol = paper::ibkr_stock_symbol(configured_symbol)
@@ -4949,15 +4980,15 @@ async fn run_ibkr_realtime_market_data_gate(
         if !seen.insert(symbol.clone()) {
             continue;
         }
-        let snapshot = match adapter.market_data_snapshot(&symbol, route_exchange).await {
-            Ok(snapshot) => snapshot,
+        let quote = match provider.snapshot(&symbol).await {
+            Ok(quote) => quote,
             Err(error) => {
                 failures.push(format!("{symbol}: {error}"));
                 continue;
             }
         };
         if let Err(error) =
-            paper::validate_ibkr_market_data_snapshot(&snapshot, "realtime", now_ms())
+            paper::validate_market_data_quote(&quote, &data::MarketDataKind::Realtime, now_ms())
         {
             failures.push(format!("{symbol}: {error}"));
         }
@@ -4965,12 +4996,12 @@ async fn run_ibkr_realtime_market_data_gate(
 
     if seen.is_empty() {
         return Err(ApiError(anyhow::anyhow!(
-            "IBKR paper market data gate requires at least one configured strategy symbol"
+            "paper market data gate requires at least one configured strategy symbol"
         )));
     }
     if !failures.is_empty() {
         return Err(ApiError(anyhow::anyhow!(
-            "IBKR paper market data gate failed for {} realtime snapshot(s): {}",
+            "paper market data gate failed for {} realtime snapshot(s): {}",
             failures.len(),
             failures.join("; ")
         )));
